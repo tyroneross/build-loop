@@ -14,6 +14,7 @@ from pathlib import Path
 
 import json
 import os
+from argparse import Namespace
 
 import pytest
 
@@ -165,6 +166,61 @@ def test_env_max_lifetime_falls_back_on_bad_value(monkeypatch):
     assert watch._env_max_lifetime() == watch._DEFAULT_MAX_LIFETIME_SECONDS
 
 
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "0", "-1"])
+def test_env_max_lifetime_rejects_non_finite_or_non_positive(monkeypatch, raw):
+    monkeypatch.setenv(watch._ENV_MAX_LIFETIME, raw)
+    assert watch._env_max_lifetime() == watch._DEFAULT_MAX_LIFETIME_SECONDS
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "0", "-1"])
+def test_cli_rejects_non_finite_or_non_positive_max_lifetime(raw):
+    with pytest.raises(SystemExit) as exc_info:
+        watch.parse_args(
+            ["--session-id", "invalid-lifetime", "--max-lifetime-seconds", raw]
+        )
+    assert exc_info.value.code == 2
+
+
+def test_high_transition_snapshot_stays_bounded_and_keeps_latest(tmp_path):
+    snapshot = tmp_path / "watcher.log"
+    args = Namespace(snapshot_file=str(snapshot), jsonl=True)
+
+    for revision in range(2_000):
+        watch._emit_event(
+            {
+                "event": "coordination_state_changed",
+                "revision": revision,
+                "status": "ok",
+                "payload": "x" * 2048,
+            },
+            args,
+        )
+
+    assert snapshot.stat().st_size <= watch._MAX_SNAPSHOT_BYTES
+    assert json.loads(snapshot.read_text(encoding="utf-8"))["revision"] == 1_999
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_oversize_snapshot_is_valid_bounded_digest(tmp_path):
+    snapshot = tmp_path / "watcher.log"
+    args = Namespace(snapshot_file=str(snapshot), jsonl=True)
+    watch._emit_event(
+        {
+            "event": "coordination_state_changed",
+            "revision": 7,
+            "status": "ok",
+            "payload": "x" * (watch._MAX_SNAPSHOT_BYTES * 2),
+        },
+        args,
+    )
+
+    saved = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert snapshot.stat().st_size <= watch._MAX_SNAPSHOT_BYTES
+    assert saved["snapshot_truncated"] is True
+    assert saved["revision"] == 7
+    assert len(saved["sha256"]) == 64
+
+
 # ---- main() integration with --parent-pid ---------------------------------
 
 def test_explicit_parent_pid_dead_exits_first_loop(monkeypatch):
@@ -271,8 +327,10 @@ def test_exit_on_wake_due_emits_due_event_and_exits(monkeypatch, capsys):
 # ---- main() integration with --max-lifetime-seconds -----------------------
 
 def test_max_lifetime_exceeded_exits_immediately(monkeypatch):
-    """--max-lifetime-seconds 0 exits on the FIRST loop pass."""
+    """A positive elapsed max lifetime exits on the first loop pass."""
     monkeypatch.setattr(watch.os, "getppid", lambda: 4242)
+    ticks = iter([10.0, 12.0])
+    monkeypatch.setattr(watch.time, "monotonic", lambda: next(ticks))
 
     def fail_if_called(_args):
         raise AssertionError("watcher must exit before polling status")
@@ -281,7 +339,7 @@ def test_max_lifetime_exceeded_exits_immediately(monkeypatch):
     rc = watch.main(
         ["--session-id", "test-lifetime",
          "--workdir", ".",
-         "--max-lifetime-seconds", "0",
+         "--max-lifetime-seconds", "1",
          "--iterations", "5"]
     )
     assert rc == 0
@@ -291,7 +349,9 @@ def test_max_lifetime_uses_env_default(monkeypatch):
     """When --max-lifetime-seconds is omitted, env var BUILD_LOOP_WATCHER_*
     sets the default."""
     monkeypatch.setattr(watch.os, "getppid", lambda: 4242)
-    monkeypatch.setenv(watch._ENV_MAX_LIFETIME, "0")  # exit immediately
+    monkeypatch.setenv(watch._ENV_MAX_LIFETIME, "1")
+    ticks = iter([10.0, 12.0])
+    monkeypatch.setattr(watch.time, "monotonic", lambda: next(ticks))
 
     def fail_if_called(_args):
         raise AssertionError("watcher must exit before polling status")

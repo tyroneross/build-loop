@@ -184,6 +184,7 @@ def level_for_resolved_via(resolved_via: str, coordination_unavailable: str | No
     if coordination_unavailable in (
         REASON_INCOMPATIBLE_PROTOCOL,
         "incompatible_protocol",  # discovery alias
+        "ambiguous_host",
         REASON_UNSUPPORTED_HOST,
         REASON_BINARY_ERROR,
     ):

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for stop_closeout.py — structural Stop-hook closeout for inline runs (f6)."""
 import json
+import os
+import shutil
 import subprocess
 import sys
 from datetime import timedelta
@@ -12,6 +14,7 @@ import stop_closeout  # noqa: E402
 
 SCRIPT = Path(__file__).parent / "stop_closeout.py"
 SESSION = "sess-abc"
+LEGACY_STOP_HOOK = Path(__file__).parent / "hooks" / "stop_finalize.sh"
 
 
 def _now():
@@ -134,72 +137,64 @@ def test_idle_stop_skips_rewrite_when_record_current(tmp_path):
 # --- Rally file-claim release on Stop (2026-06-29) --------------------------
 
 
-class _FakeRally:
-    """In-memory rally stand-in: claims live until released by event id.
+class _FakeStopFacade:
+    """Capture the one exact-session call delegated to agent_rally.py."""
 
-    Models the verified live behavior — ``room --tool`` lists this tool's open
-    claims with event ids; ``say release --tool --ref <id>`` releases that claim.
-    Lets the acceptance test claim a temp path, run the closeout release logic,
-    and assert the claim is gone, with no live rally binary.
-    """
-
-    def __init__(self, claims):
-        # claims: list of (event_id, tool, scope_path)
-        self.claims = list(claims)
+    def __init__(self, claims_released=None, *, accepted=True, returncode=0):
+        self.claims_released = list(claims_released or [])
+        self.accepted = accepted
+        self.returncode = returncode
         self.calls = []
 
     def __call__(self, args, workdir):
-        import subprocess as _sp
-        self.calls.append(list(args))
-        if args[:1] == ["room"]:
-            tool = args[args.index("--tool") + 1]
-            facts = [
-                {"kind": "claim", "tool": t, "event_id": e, "scope": [f"file:{p}"]}
-                for (e, t, p) in self.claims
-                if t == tool
-            ]
-            envelope = {"data": {"room": {"facts": facts}}}
-            return _sp.CompletedProcess(args, 0, stdout=json.dumps(envelope), stderr="")
-        if args[:2] == ["say", "release"]:
-            tool = args[args.index("--tool") + 1]
-            ref = args[args.index("--ref") + 1]
-            before = len(self.claims)
-            self.claims = [c for c in self.claims if not (c[0] == ref and c[1] == tool)]
-            ok = len(self.claims) < before
-            return _sp.CompletedProcess(args, 0 if ok else 3, stdout="{}", stderr="")
-        return _sp.CompletedProcess(args, 1, stdout="", stderr="unexpected")
+        self.calls.append((list(args), workdir))
+        envelope = {
+            "accepted": self.accepted,
+            "claims_released": self.claims_released,
+            "rally_tool": "claude_code:sess-abc",
+            "rally_session_id": "sess-abc",
+        }
+        return subprocess.CompletedProcess(
+            args,
+            self.returncode,
+            stdout=json.dumps(envelope),
+            stderr="",
+        )
 
 
-def test_release_my_claims_releases_this_tools_claims(tmp_path):
-    # ACCEPTANCE: claim a temp path as a fake claude_code session, run the
-    # release logic, assert the claim is released and other tools are untouched.
-    probe = "/tmp/__stop_release_probe__.txt"
-    fake = _FakeRally(
-        claims=[
-            ("fact_mine_1", "claude_code", probe),
-            ("fact_mine_2", "claude_code", "/tmp/other_mine.txt"),
-            ("fact_peer_1", "codex", "/tmp/peer.txt"),  # must NOT be touched
-        ]
+def test_release_my_claims_uses_exact_session_stop_facade(tmp_path):
+    fake = _FakeStopFacade(["fact_mine_1", "fact_mine_2"])
+
+    released = stop_closeout.release_my_claims(
+        tmp_path,
+        SESSION,
+        tool="claude_code",
+        runner=fake,
     )
-    released = stop_closeout.release_my_claims(tmp_path, "claude_code", runner=fake)
-    assert released == 2  # both claude_code claims released
-    remaining = {(e, t) for (e, t, _p) in fake.claims}
-    assert ("fact_mine_1", "claude_code") not in remaining  # the probe claim is gone
-    assert ("fact_mine_2", "claude_code") not in remaining
-    assert ("fact_peer_1", "codex") in remaining  # peer's claim preserved
+
+    assert released == 2
+    assert len(fake.calls) == 1
+    args, workdir = fake.calls[0]
+    assert workdir == tmp_path
+    assert args[0] == "stop"
+    assert args[args.index("--tool") + 1] == "claude_code"
+    assert args[args.index("--session-id") + 1] == SESSION
+    assert args[args.index("--workdir") + 1] == str(tmp_path)
+    assert "room" not in args
+    assert "release" not in args
 
 
 def test_release_my_claims_fail_open_when_rally_absent(tmp_path):
-    # rally absent → runner returns None → 0 released, no raise.
     none_runner = lambda args, workdir: None  # noqa: E731
-    assert stop_closeout.release_my_claims(tmp_path, "claude_code", runner=none_runner) == 0
+    assert stop_closeout.release_my_claims(
+        tmp_path, SESSION, runner=none_runner
+    ) == 0
 
 
-def test_release_my_claims_capped(tmp_path):
-    many = [(f"fact_{i}", "claude_code", f"/tmp/f{i}") for i in range(stop_closeout._MAX_RELEASE_PER_STOP + 50)]
-    fake = _FakeRally(claims=many)
-    released = stop_closeout.release_my_claims(tmp_path, "claude_code", runner=fake)
-    assert released == stop_closeout._MAX_RELEASE_PER_STOP  # capped, not all 250
+def test_release_my_claims_refuses_missing_session_without_calling_facade(tmp_path):
+    fake = _FakeStopFacade(["must-not-release"])
+    assert stop_closeout.release_my_claims(tmp_path, "", runner=fake) == 0
+    assert fake.calls == []
 
 
 def test_run_stop_invokes_claim_release(tmp_path, monkeypatch):
@@ -211,6 +206,100 @@ def test_run_stop_invokes_claim_release(tmp_path, monkeypatch):
     out = stop_closeout.run_stop(tmp_path, SESSION)
     assert out == {}
     assert called["n"] == 1
+
+
+def test_legacy_stop_finalize_uses_exact_session_facade():
+    text = LEGACY_STOP_HOOK.read_text(encoding="utf-8")
+    assert "rally stop claude_code" not in text
+    assert "agent_rally.py" in text
+    assert '--tool claude_code' in text
+    assert '--session-id "$SESSION_ID"' in text
+
+
+def _run_legacy_stop_hook(
+    tmp_path: Path,
+    event: dict,
+    *,
+    state: dict | None = None,
+) -> list[list[str]]:
+    """Run the shell hook against a recording facade in an isolated plugin."""
+    plugin = tmp_path / "plugin"
+    hook_dir = plugin / "scripts" / "hooks"
+    hook_dir.mkdir(parents=True)
+    hook = hook_dir / "stop_finalize.sh"
+    shutil.copyfile(LEGACY_STOP_HOOK, hook)
+    facade = plugin / "scripts" / "agent_rally.py"
+    facade.write_text(
+        """import json, os, sys
+with open(os.environ[\"_BL_TEST_FACADE_CALLS\"], \"a\", encoding=\"utf-8\") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + \"\\n\")
+print(\"{}\")
+""",
+        encoding="utf-8",
+    )
+    workdir = Path(event.get("cwd") or tmp_path / "repo")
+    workdir.mkdir(parents=True, exist_ok=True)
+    if state is not None:
+        state_dir = workdir / ".build-loop"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    capture = tmp_path / "facade-calls.jsonl"
+    env = dict(os.environ)
+    env["_BL_TEST_FACADE_CALLS"] = str(capture)
+    proc = subprocess.run(
+        ["bash", str(hook)],
+        input=json.dumps({**event, "cwd": str(workdir)}),
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    if not capture.exists():
+        return []
+    return [json.loads(line) for line in capture.read_text().splitlines() if line]
+
+
+def _assert_exact_legacy_stop_call(calls: list[list[str]], session_id: str) -> None:
+    assert len(calls) == 1
+    args = calls[0]
+    assert args[0] == "stop"
+    assert args[args.index("--tool") + 1] == "claude_code"
+    assert args[args.index("--session-id") + 1] == session_id
+
+
+def test_legacy_stop_finalize_releases_before_no_state_return(tmp_path):
+    calls = _run_legacy_stop_hook(
+        tmp_path,
+        {"session_id": "event-no-state"},
+    )
+    _assert_exact_legacy_stop_call(calls, "event-no-state")
+
+
+def test_legacy_stop_finalize_releases_before_non_report_return(tmp_path):
+    calls = _run_legacy_stop_hook(
+        tmp_path,
+        {"session_id": "event-non-report"},
+        state={"phase": "execute", "runs": []},
+    )
+    _assert_exact_legacy_stop_call(calls, "event-non-report")
+
+
+def test_legacy_stop_finalize_releases_before_idempotent_return(tmp_path):
+    calls = _run_legacy_stop_hook(
+        tmp_path,
+        {"session_id": "event-recorded"},
+        state={"phase": "report", "runs": [{"session_id": "event-recorded"}]},
+    )
+    _assert_exact_legacy_stop_call(calls, "event-recorded")
+
+
+def test_legacy_stop_finalize_reentry_guard_prevents_facade_call(tmp_path):
+    calls = _run_legacy_stop_hook(
+        tmp_path,
+        {"session_id": "event-recursive", "stop_hook_active": True},
+    )
+    assert calls == []
 
 
 # --- terminal identity release (W5) -----------------------------------------

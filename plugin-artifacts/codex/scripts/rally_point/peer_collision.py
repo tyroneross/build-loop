@@ -62,7 +62,7 @@ def warn_line_for(peers: list, self_session: str) -> str:
 
 def _channel_dir(workdir: Path):
     slug = channel_paths.app_slug(workdir)
-    return channel_paths.app_channel_dir(slug)
+    return channel_paths.fallback_channel_dir(workdir, slug)
 
 
 def collision_warn(workdir: Path, self_session: str = "") -> str:

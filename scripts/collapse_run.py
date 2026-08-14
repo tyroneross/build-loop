@@ -20,7 +20,9 @@ always safe to call as an idempotent cleanup step.
 
 CLI:
   collapse_run.py --workdir <repo> [--run-id latest|<id>] [--branch <name>]
-      [--strict] [--owner-released] [--dry-run] [--json]
+      [--strict] [--owner-released] [--tool <owner-host>]
+      [--session-id <owner-session>]
+      [--dry-run] [--json]
 
 SessionStart and background discovery never supply owner release. They report
 candidates only; this module is the sole destructive authority.
@@ -47,6 +49,13 @@ try:
 except ImportError:  # package import: python3 -m scripts.worktree_reaper
     from scripts.atomic_io import LockedFile, atomic_write_bytes
 
+try:
+    from rally_point import actor_identity
+    from rally_point import backend_adapter as rally_backend
+except ImportError:  # package import
+    from scripts.rally_point import actor_identity
+    from scripts.rally_point import backend_adapter as rally_backend
+
 
 STATE_REL = Path(".build-loop") / "state.json"
 RECEIPT_DIR_REL = Path(".build-loop") / "branch-closeout"
@@ -55,19 +64,6 @@ RECEIPT_DIR_REL = Path(".build-loop") / "branch-closeout"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _rally_tool() -> str:
-    """Host tool identity for rally *release* calls (the releaser, not the claim owner).
-
-    Resolved from env so a non-Claude host (Codex, etc.) running worktree
-    teardown releases under its own identity rather than a hardcoded label
-    (per Codex A/B review 2026-07-02). Defaults to claude_code.
-    """
-    return (
-        os.environ.get("RALLY_POINT_TOOL")
-        or os.environ.get("APP_PULSE_TOOL")
-        or "claude_code"
-    )
 
 def _now_utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -174,47 +170,14 @@ def _delete_branch_expected(workdir: Path, branch: str, expected_oid: str) -> st
         return str(exc)
 
 
-def _rally_runner(args: list[str], workdir: Path) -> subprocess.CompletedProcess | None:
-    """Run ``rally <args>`` in ``workdir``. None when rally is absent/errors.
-
-    Injectable so worktree-claim release is unit-testable without a live
-    rally binary. Gated on ``shutil.which`` so this is a no-op when rally
-    isn't installed (mirrors ``scripts/stop_closeout.py::_rally_runner``).
-    """
-    binary = shutil.which("rally")
-    if not binary:
-        return None
-    try:
-        return subprocess.run(
-            [binary, *args],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
 def _worktree_claim_event_ids(
-    workdir: Path, wt_relpath: str, runner=_rally_runner
+    claims: object,
+    wt_relpath: str,
+    *,
+    native_tool: str,
+    protocol_session_id: str,
 ) -> list[str]:
-    """Event ids of live rally claims scoped under the removed worktree.
-
-    Rally file-claims are per-file (e.g. ``file:.claude/worktrees/agent-x/foo.py``),
-    not one claim per worktree folder, so an exact ``rally room --path`` match on
-    the worktree folder itself returns nothing. Query broadly
-    (``rally room --tool claude_code --json``) and filter client-side for any
-    claim whose scope contains ``file:<wt_relpath>``. Fail-open: returns []
-    on any error (rally absent, non-zero exit, unparseable JSON).
-    """
-    proc = runner(["room", "--tool", _rally_tool(), "--json"], workdir)
-    if proc is None or proc.returncode != 0 or not (proc.stdout or "").strip():
-        return []
-    try:
-        envelope = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return []
+    """Return exact-session claim ids scoped beneath one removed worktree."""
     # Match on a path BOUNDARY, not a bare substring: the worktree folder
     # itself (exact) or any file beneath it (prefix + "/"). A bare substring
     # would false-match a sibling worktree whose name shares this prefix
@@ -227,29 +190,98 @@ def _worktree_claim_event_ids(
 
     def _walk(node) -> None:
         if isinstance(node, dict):
-            if node.get("kind") == "claim":
-                scope = node.get("scope")
+            fact = node.get("fact") if isinstance(node.get("fact"), dict) else node
+            if (
+                fact.get("kind") == "claim"
+                and fact.get("tool") == native_tool
+                and fact.get("from_session_id") == protocol_session_id
+            ):
+                scope = fact.get("scope")
                 scopes = scope if isinstance(scope, list) else ([scope] if scope else [])
                 if any(
                     isinstance(s, str)
                     and (s == prefix or s.startswith(prefix + "/"))
                     for s in scopes
                 ):
-                    ev = node.get("event_id")
+                    ev = fact.get("event_id")
                     if isinstance(ev, str) and ev and ev not in seen:
                         seen.add(ev)
                         ids.append(ev)
-            for v in node.values():
-                _walk(v)
+            # A wrapped fact was already examined; do not visit it twice.
+            if fact is node:
+                for v in node.values():
+                    _walk(v)
         elif isinstance(node, list):
             for v in node:
                 _walk(v)
 
-    _walk(envelope)
+    _walk(claims)
     return ids
 
 
-def _release_worktree_claims(workdir: Path, path: str, runner=_rally_runner) -> int:
+def _protocol_session_id(
+    context: rally_backend.BackendContext,
+    *,
+    native_tool: str,
+    session_id: str,
+) -> str | None:
+    """Resolve Rally's exact managed-session generation through typed whoami."""
+    result = rally_backend.invoke_native(
+        context,
+        ["whoami", "--json", "--tool", native_tool],
+        expected_schema="agent-rally.command.whoami.v1",
+        tool=native_tool,
+        session_id=session_id,
+    )
+    if not result.ok or not isinstance(result.payload, dict):
+        return None
+    data = result.payload.get("data")
+    outer = data.get("whoami") if isinstance(data, dict) else None
+    whoami = (
+        outer.get("whoami")
+        if isinstance(outer, dict) and isinstance(outer.get("whoami"), dict)
+        else outer
+    )
+    identity = whoami.get("session_identity") if isinstance(whoami, dict) else None
+    protocol_session_id = (
+        identity.get("session_id") if isinstance(identity, dict) else None
+    )
+    if not isinstance(protocol_session_id, str) or not protocol_session_id.strip():
+        return None
+    return protocol_session_id
+
+
+def _exact_release_receipt(
+    result: rally_backend.NativeResult,
+    *,
+    native_tool: str,
+    protocol_session_id: str,
+    event_id: str,
+) -> bool:
+    """Require the release fact itself to use the typed whoami generation."""
+    if not result.ok or not isinstance(result.payload, dict):
+        return False
+    data = result.payload.get("data")
+    say = data.get("say") if isinstance(data, dict) else None
+    fact = say.get("fact") if isinstance(say, dict) else None
+    return bool(
+        isinstance(fact, dict)
+        and fact.get("kind") == "release"
+        and fact.get("tool") == native_tool
+        and fact.get("from_session_id") == protocol_session_id
+        and (fact.get("ref") == event_id or fact.get("ref_id") == event_id)
+        and type(fact.get("seq")) is int
+        and fact["seq"] > 0
+    )
+
+
+def _release_worktree_claims(
+    workdir: Path,
+    path: str,
+    *,
+    session_id: str | None,
+    tool: str | None,
+) -> int:
     """Best-effort release of rally file-claims orphaned by a removed worktree.
 
     Root cause this addresses: when a dispatch worktree folder is deleted, its
@@ -257,48 +289,105 @@ def _release_worktree_claims(workdir: Path, path: str, runner=_rally_runner) -> 
     so they orphan the instant the backing folder vanishes (84 dead-worktree
     claims observed live for an already-empty .claude/worktrees/).
 
-    Fire-and-forget: swallows all errors and never raises, so a rally outage
-    or CLI error never breaks worktree teardown. No-op when rally is not
-    installed (gated inside ``_rally_runner`` via ``shutil.which``) or when
-    ``path`` doesn't resolve under ``workdir``. Returns the count released.
+    Fire-and-forget: swallows all errors and never raises, so a Rally outage
+    or CLI error never breaks worktree teardown. Native reads and releases go
+    through the typed backend adapter. A claim must match the exact resolved
+    actor, exact typed-whoami session generation, and worktree path boundary; ambiguous or
+    partial outcomes stop the release loop without retrying. Local fallback is
+    unchanged (no embedded cleanup mutation). Returns the count released.
     """
     try:
         try:
             wt_relpath = str(Path(path).resolve().relative_to(workdir.resolve()))
         except ValueError:
             return 0
-        event_ids = _worktree_claim_event_ids(workdir, wt_relpath, runner=runner)
+        if (
+            not isinstance(session_id, str)
+            or not session_id.strip()
+            or not isinstance(tool, str)
+            or not tool.strip()
+        ):
+            return 0
+        raw_session_id = session_id.strip()
+        identity = actor_identity.resolve_identity(
+            actor_identity.base_tool(tool),
+            raw_session_id,
+        )
+        context = rally_backend.resolve_context(workdir)
+        if not context.native:
+            return 0
+        protocol_session_id = _protocol_session_id(
+            context,
+            native_tool=identity.native_tool,
+            session_id=identity.session_id,
+        )
+        if protocol_session_id is None:
+            return 0
+        snapshot = rally_backend.room_snapshot(
+            context,
+            actor=identity.native_tool,
+        )
+        if not snapshot.ok:
+            return 0
+        claims = rally_backend.native_room_summary(snapshot).get("active_claims")
+        event_ids = _worktree_claim_event_ids(
+            claims,
+            wt_relpath,
+            native_tool=identity.native_tool,
+            protocol_session_id=protocol_session_id,
+        )
         released = 0
         for ev in event_ids:
-            proc = runner(
+            result = rally_backend.invoke_native(
+                context,
                 [
                     "say",
                     "release",
+                    "--json",
                     "--tool",
-                    _rally_tool(),
+                    identity.native_tool,
                     "--ref",
                     ev,
                     "--subject",
                     "worktree teardown: releasing orphaned claim",
-                    "--json",
                 ],
-                workdir,
+                expected_schema="agent-rally.command.say.v1",
+                tool=identity.native_tool,
+                session_id=identity.session_id,
+                mutating=True,
             )
-            if proc is not None and proc.returncode == 0:
-                released += 1
+            if not _exact_release_receipt(
+                result,
+                native_tool=identity.native_tool,
+                protocol_session_id=protocol_session_id,
+                event_id=ev,
+            ):
+                break
+            released += 1
         return released
     except Exception:  # noqa: BLE001 — teardown must never break on rally errors
         return 0
 
 
-def _remove_worktree(workdir: Path, path: str) -> str | None:
+def _remove_worktree(
+    workdir: Path,
+    path: str,
+    *,
+    session_id: str | None = None,
+    tool: str | None = None,
+) -> str | None:
     """Remove a worktree folder. Returns None on success, error string on failure."""
     wt_path = Path(path)
     if not wt_path.exists():
         # Idempotent: already gone is fine. Still release any orphaned claims
         # left behind from a prior removal that predates this fix.
         try:
-            _release_worktree_claims(workdir, path)
+            _release_worktree_claims(
+                workdir,
+                path,
+                session_id=session_id,
+                tool=tool,
+            )
         except Exception:  # noqa: BLE001 — teardown must never break on rally errors
             pass
         return None
@@ -308,7 +397,12 @@ def _remove_worktree(workdir: Path, path: str) -> str | None:
         r = _git(workdir, "worktree", "remove", str(wt_path), check=False)
         if r.returncode == 0:
             try:
-                _release_worktree_claims(workdir, path)
+                _release_worktree_claims(
+                    workdir,
+                    path,
+                    session_id=session_id,
+                    tool=tool,
+                )
             except Exception:  # noqa: BLE001 — teardown must never break on rally errors
                 pass
             return None
@@ -401,6 +495,32 @@ def _execution_for_run(
             if isinstance(entry, dict) and _rows_share_identity(run, entry):
                 return entry
     return None
+
+
+def _claim_release_session_id(
+    execution: dict[str, Any] | None,
+    explicit: str | None,
+) -> tuple[str | None, str | None]:
+    """Return destructive cleanup identity only from explicit/selected state."""
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip(), "cli"
+    value = execution.get("current_session_id") if isinstance(execution, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip(), "execution.current_session_id"
+    return None, None
+
+
+def _claim_release_tool(
+    execution: dict[str, Any] | None,
+    explicit: str | None,
+) -> tuple[str | None, str | None]:
+    """Return owner host only from explicit/selected state, never current host."""
+    if isinstance(explicit, str) and explicit.strip():
+        return actor_identity.base_tool(explicit), "cli"
+    value = execution.get("started_by_tool") if isinstance(execution, dict) else None
+    if isinstance(value, str) and value.strip():
+        return actor_identity.base_tool(value), "execution.started_by_tool"
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1212,8 @@ def collapse(
     require_run_root: bool = False,
     release_source: str = "direct",
     expected_path: str | None = None,
+    session_id: str | None = None,
+    tool: str | None = None,
 ) -> dict[str, Any]:
     """Finalize attributable refs through a verified, replayable transaction.
 
@@ -1124,6 +1246,8 @@ def collapse(
         "strict": strict,
         "strict_success": False,
         "ledger_updated": [],
+        "claim_release_session_source": None,
+        "claim_release_tool_source": None,
     }
 
     if strict and run_id == "latest":
@@ -1143,6 +1267,15 @@ def collapse(
         run,
         allow_anonymous_latest=(run_id == "latest"),
     )
+    claim_release_session_id, claim_release_session_source = (
+        _claim_release_session_id(execution, session_id)
+    )
+    claim_release_tool, claim_release_tool_source = _claim_release_tool(
+        execution,
+        tool,
+    )
+    result["claim_release_session_source"] = claim_release_session_source
+    result["claim_release_tool_source"] = claim_release_tool_source
     refs, skipped_notes = _normalize_refs(run, execution, workdir)
     result["errors"].extend(skipped_notes)
     if branch:
@@ -1648,7 +1781,12 @@ def collapse(
             continue
 
         if path:
-            wt_err = _remove_worktree(workdir, str(path))
+            wt_err = _remove_worktree(
+                workdir,
+                str(path),
+                session_id=claim_release_session_id,
+                tool=claim_release_tool,
+            )
             if wt_err:
                 reason = f"worktree remove failed for {ref_branch}: {wt_err}"
                 result["errors"].append(reason)
@@ -1849,6 +1987,20 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-path",
         help="Require the attributed worktree path to match this exact path",
     )
+    parser.add_argument(
+        "--session-id",
+        help=(
+            "Exact owner session for Rally claim cleanup; defaults only to the "
+            "selected execution.current_session_id, never process environment"
+        ),
+    )
+    parser.add_argument(
+        "--tool",
+        help=(
+            "Owner host family for Rally claim cleanup; defaults only to the "
+            "selected execution.started_by_tool, never the current host"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Classify refs but perform no git operations")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Print result JSON to stdout")
     args = parser.parse_args(argv)
@@ -1867,6 +2019,8 @@ def main(argv: list[str] | None = None) -> int:
             require_run_root=args.require_run_root,
             release_source=args.release_source,
             expected_path=args.expected_path,
+            session_id=args.session_id,
+            tool=args.tool,
         )
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)

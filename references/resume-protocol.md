@@ -41,20 +41,43 @@ The fault-injection helper lives in `tests/test_resume_orchestration.py:_maybe_i
 > nothing to do with concurrent-presence collision, which is now owned solely
 > by Rally Point presence (`scripts/rally_point/presence.py` — see
 > `references/multi-session-coordination.md` and `KNOWN-ISSUES.md` §M4). The
-> label is disambiguated below; the behavior is unchanged.
+> label is disambiguated below; its fail-closed behavior is specified here.
+
+Resolve `RUNTIME_PLUGIN_ROOT` to the root of the currently loaded Build Loop
+package (the directory containing `scripts/` and `skills/`). Use
+`BUILD_LOOP_ROOT` when the host exports it; otherwise derive the root from the
+already-resolved Build Loop `SKILL.md` path. This is a host-neutral runtime
+pointer: do not require a Claude-, Codex-, or Cursor-specific environment
+variable, and do not substitute the target project's root unless Build Loop is
+the target.
 
 When `/build-loop:run` is invoked WITHOUT `--resume`, the Skill body runs the resume resolver with `--resume-arg ""`:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py \
+python3 "$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py" \
     --workdir "$PWD" \
     --resume-arg "" \
     --staleness-minutes 5
 ```
 
+When the host exposes a stable current session id, append
+`--current-session-id "<id>"`. An exact match to
+`execution.current_session_id` proves host/thread continuity, not unique
+invocation ownership, so it resumes the existing run and never authorizes a
+fresh one. Heartbeat freshness is never ownership proof.
+
 If the resolver returns `decision: "prompt_user"`, the Skill body surfaces to the user verbatim (using the `reason` field from the resolver):
 
 > "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+
+A terminal pre-schema crash is a separate, fail-closed path. The first read-only
+resolution returns `decision: "abort"` with
+`required_action: "archive_legacy_crash"`; the Skill body immediately reruns the
+resolver with `--archive-terminal-legacy-crash`. That mode locks `state.json`,
+revalidates the exact execution and its terminal evidence, moves it to
+`historicalExecutions`, and clears `execution`. A fresh run may start only after
+the applied result reports `archive_applied: true` and `fresh_ready: true`.
+Ambiguous or potentially active schema-less executions remain aborts.
 
 This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
 
@@ -63,9 +86,15 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 | `--resume-arg` value | Pre-state               | Decision     | Action                                                                  |
 |----------------------|-------------------------|--------------|-------------------------------------------------------------------------|
 | `""` (no flag)       | no state.json            | `fresh`      | proceed normally                                                         |
+| `""` (no flag)       | malformed/unreadable state.json | `abort` | refuse; absence and unreadability are distinct                           |
 | `""` (no flag)       | execution.phase=report   | `fresh`      | proceed normally (clean prior exit)                                      |
-| `""` (no flag)       | heartbeat fresh          | `fresh`      | proceed normally                                                         |
+| `""` + matching session id | nonterminal execution from the same host/thread | `resume` | continue the existing run; never mint a fresh identity                   |
+| `""` (no owner proof)| heartbeat fresh          | `abort`      | refuse; another invocation may still be active                           |
+| `""` (no owner proof)| heartbeat missing/unparseable | `abort` | refuse; liveness and ownership are unknown                               |
 | `""` (no flag)       | heartbeat stale          | `prompt_user`| skill surfaces resume-or-fresh prompt                                    |
+| `""` (no flag)       | terminal schema-less crash residue | `abort` | rerun with `--archive-terminal-legacy-crash`; proceed only after applied `fresh` |
+| `""` (archive mode)  | terminal schema-less crash residue | `fresh` | exact execution archived atomically; fresh identity may now be minted    |
+| `""` (no flag)       | ambiguous/active schema-less execution | `abort` | refuse archive and fresh start                                            |
 | `"<run-id>"`         | run_id mismatch          | `abort`      | refuse with reason; user picks correct id or starts fresh                |
 | `"<run-id>"`         | schema_version mismatch  | `abort`      | refuse with reason; user upgrades or starts fresh                         |
 | `"<run-id>"`         | phase=report             | `abort`      | refuse — already complete                                                |

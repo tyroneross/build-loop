@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import coordination_status as cs  # noqa: E402
 import coordination_watch as cw  # noqa: E402
+import agent_rally  # noqa: E402
 from rally_point import (  # noqa: E402
     changes,
     channel_paths,
@@ -25,6 +30,9 @@ from rally_point import (  # noqa: E402
     task_heartbeat,
 )
 from rally_point import discovery_bridge as _bridge  # test isolation
+from rally_point.backend_adapter import BackendContext, NativeResult  # noqa: E402
+from rally_point.discovery_bridge import DiscoveryEnvelope  # noqa: E402
+from rally_point.payload_codec import encode_event  # noqa: E402
 
 
 class CoordinationStatusTests(unittest.TestCase):
@@ -33,12 +41,25 @@ class CoordinationStatusTests(unittest.TestCase):
         self.apps = self.tmp / "apps"
         self.workdir = self.tmp / "repo"
         self.workdir.mkdir()
+        self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
+        self._old_internal_only = os.environ.get("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
         os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
-        from rally_point import discovery_bridge as _bridge
         _bridge.clear_cache()
         subprocess.run(["git", "init"], cwd=self.workdir, check=True,
                        capture_output=True)
+
+    def tearDown(self):
+        if self._old_apps_root is None:
+            os.environ.pop("BUILD_LOOP_APPS_ROOT", None)
+        else:
+            os.environ["BUILD_LOOP_APPS_ROOT"] = self._old_apps_root
+        if self._old_internal_only is None:
+            os.environ.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        else:
+            os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = self._old_internal_only
+        _bridge.clear_cache()
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run(self, *args: str) -> dict:
         cmd = [
@@ -339,11 +360,12 @@ class CoordinationStatusTests(unittest.TestCase):
         )
         return str(fake_root)
 
-    def test_resolved_via_delegates_when_agent_rally_point_installed(self):
-        """Delegation: when ``agent_rally_point.discover`` is importable
-        AND returns ``installed=true``, the status envelope reports
-        ``resolved_via: "python-import"`` and uses the discovered
-        channel_dir verbatim — not the build-loop-internal value.
+    def test_legacy_python_discovery_does_not_become_status_authority(self):
+        """A legacy discovery result cannot authorize reads from its channel.
+
+        The only writable/readable authorities are the native Rally CLI and
+        Build Loop's private fallback. A Python discovery package may locate an
+        old channel, but status must not treat that path as an active ledger.
         """
         fake_channel = str(self.tmp / "fake_channel")
         fake_slug = "fake-slug-from-discover"
@@ -370,9 +392,15 @@ class CoordinationStatusTests(unittest.TestCase):
         r = subprocess.run(cmd, capture_output=True, text=True,
                            check=True, env=env)
         status = json.loads(r.stdout)
-        self.assertEqual(status["resolved_via"], "python-import")
-        self.assertEqual(status["channel_dir"], fake_channel)
-        self.assertEqual(status["app_slug"], fake_slug)
+        self.assertEqual(status["resolved_via"], "build-loop-internal")
+        expected_slug = channel_paths.app_slug(self.workdir)
+        self.assertEqual(
+            status["channel_dir"],
+            str(channel_paths.app_channel_dir(expected_slug)),
+        )
+        self.assertEqual(status["app_slug"], expected_slug)
+        self.assertNotEqual(status["channel_dir"], fake_channel)
+        self.assertNotEqual(status["app_slug"], fake_slug)
 
     def test_resolved_via_falls_back_when_agent_rally_point_missing(self):
         """Fallback: when ``agent_rally_point`` is not importable, the
@@ -400,6 +428,528 @@ class CoordinationStatusTests(unittest.TestCase):
         slug = channel_paths.app_slug(self.workdir)
         self.assertEqual(status["channel_dir"],
                          str(channel_paths.app_channel_dir(slug)))
+
+    def test_native_status_uses_only_rally_adapter_data_plane(self):
+        """Healthy native mode must never read or reap embedded .rally state."""
+        native_channel = self.workdir / ".rally"
+        envelope = DiscoveryEnvelope(
+            channel_dir=str(native_channel),
+            app_slug="repo-native",
+            repo_id="repo-native",
+            channel_layout="repo-local-rally",
+            policy="repo-local",
+            protocol_version="1.0",
+            last_resolved_at="2026-08-14T00:00:00Z",
+            resolved_via="repo-local-rally-cli",
+            raw={"rally_binary": "/fake/rally"},
+        )
+        context = BackendContext(
+            workdir=self.workdir,
+            envelope=envelope,
+            local_channel_dir=self.apps / "repo-native",
+        )
+        room_result = NativeResult(
+            "ok",
+            payload={
+                "ok": True,
+                "product": "rally",
+                "schema": "agent-rally.command.room.v1",
+                "data": {
+                    "readers": [{"tool": "codex:me", "last_read_seq": 5}],
+                    "room": {
+                        "max_seq": 11,
+                        "squads": [
+                            {"tool": "codex:me", "status": "active"},
+                            {"tool": "codex:peer", "status": "active"},
+                            {"tool": "cursor:live", "status": "active"},
+                            {"tool": "claude:done", "status": "active"},
+                            {"tool": "claude:stale", "status": "active"},
+                            {"tool": "claude:idle", "status": "idle"},
+                        ],
+                        "active_claims": [
+                            {
+                                "event_id": "claim-same-host-peer",
+                                "tool": "codex:peer",
+                                "scope": ["file:src/peer.py", "run:r2"],
+                                "evidence": ["claimhash:src/peer.py=def456"],
+                            },
+                            {
+                                "event_id": "claim-live",
+                                "tool": "cursor:live",
+                                "scope": ["file:src/native.py", "run:r1"],
+                                "evidence": [
+                                    "claimhash:src/native.py=abc123",
+                                ],
+                            },
+                        ],
+                        "open_handoffs": [
+                            {
+                                "seq": 6,
+                                "event_id": "handoff-direct",
+                                "kind": "handoff",
+                                "tool": "cursor:live",
+                                "target": "codex:me",
+                                "subject": "review native branch",
+                            },
+                            {
+                                "seq": 7,
+                                "event_id": "handoff-all",
+                                "kind": "handoff",
+                                "tool": "claude:done",
+                                "target": "all",
+                                "subject": "broadcast",
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+        status_result = NativeResult(
+            "ok",
+            payload={
+                "ok": True,
+                "product": "rally",
+                "schema": "agent-rally.command.status_read.v1",
+                "data": {
+                    "status_read": {
+                        "states": [
+                            {
+                                "tool": "codex:peer",
+                                "state": "working",
+                                "file": "src/peer.py",
+                                "intent": "same-host peer status",
+                                "stale": False,
+                            },
+                            {
+                                "tool": "cursor:live",
+                                "state": "working",
+                                "file": "src/native.py",
+                                "intent": "native status",
+                                "stale": False,
+                            },
+                            {
+                                "tool": "claude:done",
+                                "state": "done",
+                                "stale": False,
+                            },
+                            {
+                                "tool": "claude:stale",
+                                "state": "working",
+                                "file": "src/stale.py",
+                                "stale": True,
+                            },
+                            {
+                                "tool": "claude:idle",
+                                "state": "idle",
+                                "stale": False,
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+
+        heartbeat = task_heartbeat.make_record(
+            session_id="me",
+            tool="codex:me",
+            app_slug="repo-native",
+            task_ref="claim-1",
+            progress_since_last="native payload recovered",
+            ts=100.0,
+            next_check_in_at=700.0,
+        )
+
+        def native_fact(seq: int, payload: dict, *, kind: str = "message") -> dict:
+            return {
+                "schema": "agent-rally.fact.v1",
+                "event_id": f"fact-{seq}",
+                "seq": seq,
+                "thread_id": "run-native",
+                "kind": "artifact",
+                "tool": "codex:me",
+                "subject": f"native-{seq}",
+                "scope": [],
+                "created_at": f"2026-08-14T00:00:{seq:02d}Z",
+                "evidence": encode_event(
+                    kind=kind,
+                    payload=payload,
+                    model="gpt-native",
+                    run_id="run-native",
+                    app_slug="repo-native",
+                ),
+            }
+
+        recent_result = NativeResult(
+            "ok",
+            payload={
+                "ok": True,
+                "product": "rally",
+                "schema": "agent-rally.command.recent.v1",
+                "data": {
+                    "recent": {
+                        "rows": [
+                            {
+                                "repo_root": str(self.workdir),
+                                "seq": 11,
+                                "fact": native_fact(
+                                    11,
+                                    {"reason": "exact", "nested": {"x": 1}},
+                                ),
+                            },
+                            {
+                                "repo_root": str(self.tmp / "other-repo"),
+                                "seq": 99,
+                                "fact": native_fact(99, {"summary": "wrong repo"}),
+                            },
+                            {
+                                "repo_root": str(self.workdir),
+                                "seq": 9,
+                                "fact": native_fact(
+                                    9,
+                                    {"task_heartbeat": heartbeat},
+                                    kind="phase",
+                                ),
+                            },
+                        ],
+                    },
+                },
+            },
+        )
+        normalized = cs._normalize_native_recent(
+            recent_result,
+            repo_root=self.workdir.resolve(),
+            app_slug="repo-native",
+            limit=20,
+        )
+        self.assertEqual(
+            normalized[1]["payload"],
+            {"reason": "exact", "nested": {"x": 1}},
+        )
+
+        legacy_readers = (
+            mock.patch.object(
+                cs.presence,
+                "read_active_presence",
+                side_effect=AssertionError("legacy presence reader touched"),
+            ),
+            mock.patch.object(
+                cs,
+                "_read_recent_changes",
+                side_effect=AssertionError("legacy changes reader touched"),
+            ),
+            mock.patch.object(
+                cs.revision,
+                "read_revision",
+                side_effect=AssertionError("legacy revision reader touched"),
+            ),
+            mock.patch.object(
+                cs,
+                "_read_inbox_unread_counts",
+                side_effect=AssertionError("legacy inbox reader touched"),
+            ),
+            mock.patch.object(
+                cs,
+                "_read_inbox_latest_messages",
+                side_effect=AssertionError("legacy inbox summary touched"),
+            ),
+            mock.patch.object(
+                cs,
+                "_read_task_heartbeat",
+                side_effect=AssertionError("legacy heartbeat reader touched"),
+            ),
+            mock.patch.object(
+                cs,
+                "_read_rejection_count",
+                side_effect=AssertionError("legacy rejection reader touched"),
+            ),
+            mock.patch.object(
+                task_heartbeat,
+                "read_heartbeats",
+                side_effect=AssertionError("heartbeat sidecar touched"),
+            ),
+        )
+        args = cs.parse_args(
+            [
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--files-in-flight",
+                "src/native.py",
+                "--task-ref",
+                "claim-1",
+                "--task-heartbeat-now",
+                "200",
+            ]
+        )
+        with mock.patch.object(cs, "resolve_context", return_value=context), \
+                mock.patch.object(cs, "room_snapshot", return_value=room_result), \
+                mock.patch.object(cs, "status_read", return_value=status_result), \
+                mock.patch.object(cs, "_native_recent", return_value=recent_result):
+            with ExitStack() as stack:
+                for patcher in legacy_readers:
+                    stack.enter_context(patcher)
+                status = cs.build_status(args)
+
+        self.assertEqual(status["revision"], 11)
+        self.assertEqual(
+            [peer["tool"] for peer in status["active_peers"]],
+            ["codex:peer", "cursor:live"],
+        )
+        self.assertEqual(status["tool"], "codex")
+        self.assertEqual(status["rally_tool"], "codex:me")
+        self.assertEqual(status["peer_overlap_files"], ["src/native.py"])
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(status["inbox_unread_counts"], {
+            "direct": 1,
+            "broadcast": 1,
+            "total": 2,
+        })
+        self.assertEqual(
+            [change["revision"] for change in status["new_changes"]],
+            [9, 11],
+        )
+        self.assertEqual(
+            status["new_changes"][1]["payload"],
+            {"reason": "exact"},
+        )
+        self.assertEqual(status["task_heartbeat"]["health"], "current")
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["progress_since_last"],
+            "native payload recovered",
+        )
+
+    def test_native_heartbeat_writer_and_status_keep_cursor_sessions_distinct(self):
+        """Writer payloads survive Rally normalization with exact actors."""
+        native_channel = self.workdir / ".rally"
+        context = BackendContext(
+            workdir=self.workdir,
+            envelope=DiscoveryEnvelope(
+                channel_dir=str(native_channel),
+                app_slug="repo-native",
+                repo_id="repo-native",
+                channel_layout="repo-local-rally",
+                policy="repo-local",
+                protocol_version="1.0",
+                last_resolved_at="2026-08-14T00:00:00Z",
+                resolved_via="repo-local-rally-cli",
+                raw={"rally_binary": "/fake/rally"},
+            ),
+            local_channel_dir=self.apps / "repo-native",
+        )
+        posted: list[dict] = []
+
+        def capture_post(**kwargs):
+            posted.append(dict(kwargs))
+            kwargs["outcome"].update(
+                status="posted", backend="rally", transport="rally-cli"
+            )
+            return len(posted)
+
+        def heartbeat_args(session_id: str, task_ref: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                workdir=str(self.workdir),
+                session_id=session_id,
+                tool="cursor",
+                model="cursor-agent",
+                run_id=f"run-{session_id}",
+                task_ref=task_ref,
+                status="running",
+                not_on_task=False,
+                progress=f"working {task_ref}",
+                evidence="",
+                attention_reason="",
+                interval_seconds=600,
+            )
+
+        with mock.patch.object(
+            agent_rally, "resolve_context", return_value=context
+        ), mock.patch.object(agent_rally, "post", side_effect=capture_post), \
+                mock.patch.object(agent_rally, "_emit", return_value=0):
+            self.assertEqual(
+                agent_rally.cmd_heartbeat(heartbeat_args("cursor-a", "task-a")),
+                0,
+            )
+            self.assertEqual(
+                agent_rally.cmd_heartbeat(heartbeat_args("cursor-b", "task-b")),
+                0,
+            )
+
+        self.assertEqual(
+            [entry["tool"] for entry in posted],
+            ["cursor:cursor-a", "cursor:cursor-b"],
+        )
+        self.assertEqual(
+            [entry["payload"]["task_heartbeat"]["tool"] for entry in posted],
+            ["cursor:cursor-a", "cursor:cursor-b"],
+        )
+        self.assertEqual(
+            [entry["payload"]["task_heartbeat"]["session_id"] for entry in posted],
+            ["cursor-a", "cursor-b"],
+        )
+
+        rows = []
+        for seq, entry in enumerate(posted, start=1):
+            rows.append({
+                "repo_root": str(self.workdir),
+                "seq": seq,
+                "fact": {
+                    "schema": "agent-rally.fact.v1",
+                    "event_id": f"heartbeat-{seq}",
+                    "seq": seq,
+                    "thread_id": entry["run_id"],
+                    "kind": "presence",
+                    "tool": entry["tool"],
+                    "subject": "task-heartbeat",
+                    "scope": [],
+                    "created_at": f"2026-08-14T00:00:0{seq}Z",
+                    "evidence": encode_event(
+                        kind="presence",
+                        payload=entry["payload"],
+                        model=entry["model"],
+                        run_id=entry["run_id"],
+                        app_slug=entry["app_slug"],
+                    ),
+                },
+            })
+        recent_result = NativeResult(
+            "ok",
+            payload={"data": {"recent": {"rows": rows}}},
+        )
+        room_result = NativeResult(
+            "ok",
+            payload={
+                "data": {
+                    "readers": [],
+                    "room": {
+                        "max_seq": 2,
+                        "squads": [
+                            {"tool": "cursor:cursor-a", "status": "active"},
+                            {"tool": "cursor:cursor-b", "status": "active"},
+                        ],
+                        "active_claims": [],
+                        "open_handoffs": [],
+                    },
+                },
+            },
+        )
+        status_result = NativeResult(
+            "ok",
+            payload={"data": {"status_read": {"states": []}}},
+        )
+
+        with mock.patch.object(cs, "resolve_context", return_value=context), \
+                mock.patch.object(cs, "room_snapshot", return_value=room_result), \
+                mock.patch.object(cs, "status_read", return_value=status_result), \
+                mock.patch.object(cs, "_native_recent", return_value=recent_result):
+            statuses = []
+            for session_id, task_ref in (("cursor-a", "task-a"), ("cursor-b", "task-b")):
+                args = cs.parse_args([
+                    "--workdir", str(self.workdir),
+                    "--tool", "cursor",
+                    "--session-id", session_id,
+                    "--task-ref", task_ref,
+                ])
+                statuses.append(cs.build_status(args))
+
+        self.assertEqual(
+            [item["task_heartbeat"]["health"] for item in statuses],
+            ["current", "current"],
+        )
+        self.assertEqual(
+            [item["task_heartbeat"]["latest"]["task_ref"] for item in statuses],
+            ["task-a", "task-b"],
+        )
+        self.assertEqual(
+            [item["task_heartbeat"]["latest"]["tool"] for item in statuses],
+            ["cursor:cursor-a", "cursor:cursor-b"],
+        )
+
+    def test_saturated_native_recent_makes_heartbeat_absence_unknown(self):
+        context = BackendContext(
+            workdir=self.workdir,
+            envelope=DiscoveryEnvelope(
+                channel_dir=str(self.workdir / ".rally"),
+                app_slug="repo-native",
+                repo_id="repo-native",
+                channel_layout="repo-local-rally",
+                policy="repo-local",
+                protocol_version="1.0",
+                last_resolved_at="2026-08-14T00:00:00Z",
+                resolved_via="repo-local-rally-cli",
+                raw={"rally_binary": "/fake/rally"},
+            ),
+            local_channel_dir=self.apps / "repo-native",
+        )
+        rows = [
+            {
+                "repo_root": str(self.workdir),
+                "seq": seq,
+                "fact": {
+                    "event_id": f"artifact-{seq}",
+                    "seq": seq,
+                    "kind": "artifact",
+                    "tool": "cursor:peer",
+                    "subject": f"artifact {seq}",
+                    "scope": [],
+                    "created_at": "2026-08-14T00:00:00Z",
+                    "evidence": [],
+                },
+            }
+            for seq in range(1, 501)
+        ]
+        recent_result = NativeResult(
+            "ok",
+            payload={
+                "data": {
+                    "recent": {"limit": 500, "rows": rows, "warnings": []}
+                }
+            },
+        )
+        room_result = NativeResult(
+            "ok",
+            payload={
+                "data": {
+                    "readers": [],
+                    "room": {
+                        "max_seq": 500,
+                        "squads": [
+                            {"tool": "cursor:cursor-a", "status": "active"}
+                        ],
+                        "active_claims": [],
+                        "open_handoffs": [],
+                    },
+                }
+            },
+        )
+        status_result = NativeResult(
+            "ok", payload={"data": {"status_read": {"states": []}}}
+        )
+        args = cs.parse_args([
+            "--workdir", str(self.workdir),
+            "--tool", "cursor",
+            "--session-id", "cursor-a",
+            "--task-ref", "task-a",
+        ])
+
+        with mock.patch.object(cs, "resolve_context", return_value=context), \
+                mock.patch.object(cs, "room_snapshot", return_value=room_result), \
+                mock.patch.object(cs, "status_read", return_value=status_result), \
+                mock.patch.object(cs, "_native_recent", return_value=recent_result):
+            status = cs.build_status(args)
+
+        self.assertEqual(status["task_heartbeat"]["health"], "unknown")
+        self.assertTrue(status["task_heartbeat"]["coverage_incomplete"])
+        self.assertEqual(
+            status["task_heartbeat"]["reason"],
+            "native_recent_limit_saturated",
+        )
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(
+            status["required_action"], "inspect_native_heartbeat_coverage"
+        )
 
     def test_watch_emits_one_state(self):
         cmd = [
@@ -621,6 +1171,46 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(
             status["task_heartbeat"]["latest"]["progress_since_last"],
             "ran focused tests",
+        )
+
+    def test_local_task_heartbeat_eviction_is_unknown_not_missing(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        path = task_heartbeat.heartbeat_path(channel, "codex")
+        retained = task_heartbeat.make_record(
+            session_id="other-session",
+            tool="codex",
+            app_slug=slug,
+            task_ref="other-task",
+            ts=200.0,
+        )
+        retention = {
+            "schema_version": "1.0",
+            "kind": "task-heartbeat-retention",
+            "truncated": True,
+            "retained_keys": 1,
+            "updated_at": 200.0,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(retained, separators=(",", ":"))
+            + "\n"
+            + json.dumps(retention, separators=(",", ":"))
+            + "\n",
+            encoding="utf-8",
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-evicted",
+            "--task-heartbeat-now", "250",
+        )
+
+        self.assertEqual(status["task_heartbeat"]["health"], "unknown")
+        self.assertTrue(status["task_heartbeat"]["coverage_incomplete"])
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(
+            status["required_action"], "inspect_task_heartbeat_coverage"
         )
 
     def test_task_heartbeat_one_missed_checkin_warns(self):

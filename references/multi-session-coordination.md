@@ -65,10 +65,12 @@ archive/delete. During high-overlap work, run `coordination_watch.py --interval
 prints only state transitions plus inbox unread count and task-heartbeat
 health.
 
-For long-running tasks, write the task heartbeat separately from presence:
+For long-running tasks, set `RUNTIME_PLUGIN_ROOT` to the active Build Loop
+package root (the directory containing `scripts/`) and write the task heartbeat
+separately from presence:
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+python3 "$RUNTIME_PLUGIN_ROOT/scripts/agent_rally.py" heartbeat \
   --workdir "$PWD" \
   --session-id "$SESSION_ID" \
   --tool "$TOOL_NAME" \
@@ -80,17 +82,23 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
   --json
 ```
 
-Use the same rule for every coding host. Claude Code uses `claude_code`, Codex
-uses `codex`, Cursor can use `cursor`, and future agents should pick a stable
-tool id before writing presence or inbox messages.
+Use the same rule for every coding host: choose a stable base tool
+(`claude_code`, `codex`, `cursor`) and a stable session id. Build Loop qualifies
+that pair into a session-unique native Rally actor while local fallback retains
+the base tool plus its session scope. Pass both values on every read, ACK, and
+write; do not reuse a bare native host id across concurrent sessions.
 
-Inbox routing has two wake paths. Targeted messages append to
-`inbox/<tool>.jsonl`; broadcast messages append to `inbox/all.jsonl`. Agents
-read both their direct inbox and `all`, while still mirroring important
-messages to `changes.jsonl` for durable channel polling.
+Inbox routing has two wake paths. Native Rally stores targeted and broadcast
+messages in its ledger and reader checkpoints; it creates no Build Loop inbox
+sidecar. Build Loop local fallback appends targeted messages to
+`inbox/<base-tool>.jsonl`, broadcasts to `inbox/all.jsonl`, and mirrors important
+messages to `changes.jsonl` for durable polling.
 ### Rally Point presence — On clean completion:
 
-No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.
+Run `python3 "$RUNTIME_PLUGIN_ROOT/scripts/agent_rally.py" stop --workdir "$PWD" --tool "$TOOL_NAME"
+--session-id "$SESSION_ID" --json`. The facade closes only that exact native
+actor, or removes only that session's base-tool local presence. Stale reaping is
+the crash backstop, not the normal closeout path.
 
 ### M5 — Between phases, scan for new sibling learnings:
 

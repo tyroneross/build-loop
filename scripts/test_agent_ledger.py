@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,6 +106,133 @@ class AppendReadTests(unittest.TestCase):
             rows = agent_ledger.read(path)
             self.assertEqual(len(rows), 1, "torn final line must be skipped, valid row kept")
 
+    def test_append_quarantines_torn_tail_then_preserves_next_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "agent-ledger.jsonl"
+            first = agent_ledger.build_row(
+                run_id="first", agent="advisor", action="author"
+            )
+            second = agent_ledger.build_row(
+                run_id="second", agent="cursor", action="verify"
+            )
+            self.assertTrue(agent_ledger.append(path, first)["ok"])
+            torn = b'{"run_id":"torn"'
+            with path.open("ab") as fh:
+                fh.write(torn)
+
+            result = agent_ledger.append(path, second)
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(
+                [row["run_id"] for row in agent_ledger.read(path)],
+                ["first", "second"],
+            )
+            quarantined = list(
+                (path.parent / "agent-ledger-corrupt-tails").glob("*.partial")
+            )
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(quarantined[0].read_bytes(), torn)
+
+    def test_torn_tail_quarantine_keeps_newest_with_bounded_count_and_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "agent-ledger.jsonl"
+            latest = b""
+            for index in range(agent_ledger.MAX_CORRUPT_TAIL_FILES + 8):
+                latest = (
+                    f'{{"torn":"newest-{index}","padding":"'.encode("utf-8")
+                    + (b"x" * (96 * 1024))
+                )
+                with path.open("ab") as fh:
+                    fh.write(latest)
+                agent_ledger._append_local_row(
+                    path,
+                    agent_ledger.build_row(
+                        run_id=f"row-{index}", agent="cursor", action="verify"
+                    ),
+                )
+
+            quarantine = path.parent / "agent-ledger-corrupt-tails"
+            artifacts = list(quarantine.glob("*.partial"))
+            self.assertLessEqual(
+                len(artifacts), agent_ledger.MAX_CORRUPT_TAIL_FILES
+            )
+            self.assertLessEqual(
+                sum(artifact.stat().st_size for artifact in artifacts),
+                agent_ledger.MAX_CORRUPT_TAIL_BYTES,
+            )
+            self.assertTrue(
+                any(artifact.read_bytes() == latest for artifact in artifacts),
+                "newest torn-tail evidence must survive bounded pruning",
+            )
+
+    def test_reconciliation_waits_for_partial_append_and_advances_only_complete_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "agent-ledger.jsonl"
+            first = agent_ledger.build_row(
+                run_id="first", agent="cursor", action="verify"
+            )
+            second = agent_ledger.build_row(
+                run_id="second", agent="cursor", action="verify"
+            )
+            agent_ledger._append_local_row(path, first)
+            partial_written = threading.Event()
+            finish_write = threading.Event()
+            original_write_all = agent_ledger._write_all
+            writer_errors: list[BaseException] = []
+            reconcile_results: list[dict] = []
+
+            def blocking_write(fd: int, data: bytes) -> None:
+                split = max(1, len(data) // 2)
+                original_write_all(fd, data[:split])
+                partial_written.set()
+                if not finish_write.wait(timeout=2):
+                    raise TimeoutError("test did not release partial append")
+                original_write_all(fd, data[split:])
+
+            def write_second() -> None:
+                try:
+                    agent_ledger._append_local_row(path, second)
+                except BaseException as exc:  # pragma: no cover - assertion below
+                    writer_errors.append(exc)
+
+            def reconcile() -> None:
+                reconcile_results.append(
+                    agent_ledger._reconcile_to_rally(path, root)
+                )
+
+            projected = agent_ledger._projection_result(
+                "projected", backend="rally", transport="rally-cli"
+            )
+            with (
+                mock.patch.object(agent_ledger, "_write_all", blocking_write),
+                mock.patch.object(
+                    agent_ledger, "_project_to_rally", return_value=projected
+                ),
+            ):
+                writer = threading.Thread(target=write_second)
+                writer.start()
+                self.assertTrue(partial_written.wait(timeout=1))
+                reconciler = threading.Thread(target=reconcile)
+                reconciler.start()
+                time.sleep(0.05)
+                self.assertTrue(
+                    reconciler.is_alive(),
+                    "reconciliation observed a line while its writer lock was held",
+                )
+                finish_write.set()
+                writer.join(timeout=2)
+                reconciler.join(timeout=2)
+
+            self.assertFalse(writer_errors)
+            self.assertEqual(len(reconcile_results), 1)
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 2)
+            self.assertEqual(marker["cursor_offset"], path.stat().st_size)
+            self.assertEqual(marker["terminal"], [])
+
     def test_read_missing_file_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(agent_ledger.read(Path(td) / "nope.jsonl"), [])
@@ -141,7 +270,14 @@ class AppendReadTests(unittest.TestCase):
             resolve = mock.Mock(return_value=resolved)
             post = mock.Mock(return_value=41)
 
-            with mock.patch.object(agent_ledger, "_rally_adapter", return_value=(resolve, post)):
+            with (
+                mock.patch.dict(
+                    os.environ, {"BUILD_LOOP_RALLY_TOOL": "codex:r1-test"}
+                ),
+                mock.patch.object(
+                    agent_ledger, "_rally_adapter", return_value=(resolve, post)
+                ),
+            ):
                 env = agent_ledger.append(path, row)
 
             self.assertTrue(env["ok"], env)
@@ -152,18 +288,110 @@ class AppendReadTests(unittest.TestCase):
             call = post.call_args.kwargs
             self.assertEqual(call["channel_dir"], channel)
             self.assertEqual(call["kind"], "artifact")
-            self.assertEqual(call["tool"], row["agent"])
+            self.assertEqual(call["tool"], "codex:r1-test")
+            self.assertNotEqual(call["tool"], row["agent"])
             self.assertEqual(call["model"], row["model"])
             self.assertEqual(call["run_id"], row["run_id"])
             self.assertEqual(call["workdir"], repo.resolve())
             self.assertEqual(call["payload"]["agent_ledger"], row)
-            evidence = json.dumps(row, sort_keys=True, separators=(",", ":"))
-            self.assertEqual(call["payload"]["evidence"], [evidence])
+            self.assertNotIn("evidence", call["payload"])
             self.assertEqual(
                 call["payload"]["subject"],
                 agent_ledger._projection_payload(row)["subject"],
             )
             self.assertEqual(agent_ledger.read(path), [row])
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 1)
+            self.assertEqual(marker["pending"], [])
+
+    def test_native_projection_uses_host_session_actor_and_payload_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(
+                run_id="native-row",
+                agent="advisor",
+                action="author",
+                ts="2026-08-14T00:00:00Z",
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+                raw={},
+            )
+            post = mock.Mock(return_value=44)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "BUILD_LOOP_RALLY_TOOL": "codex:explicit-ledger-actor",
+                        "CODEX_THREAD_ID": "thread-ledger",
+                    },
+                    clear=False,
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "_rally_adapter",
+                    return_value=(mock.Mock(return_value=resolved), post),
+                ),
+            ):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            posted = post.call_args.kwargs
+            self.assertEqual(posted["tool"], "codex:explicit-ledger-actor")
+            self.assertEqual(posted["local_tool"], "codex")
+            self.assertEqual(posted["local_session_id"], "thread-ledger")
+            self.assertEqual(posted["payload"]["host_tool"], "codex")
+            self.assertEqual(posted["payload"]["session_id"], "thread-ledger")
+            self.assertEqual(posted["payload"]["agent_ledger"], row)
+
+    def test_local_projection_keeps_base_tool_and_original_payload_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(
+                run_id="local-row", agent="cursor", action="verify"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "fallback"),
+                app_slug="repo",
+                resolved_via="build-loop-internal",
+                backend="build-loop-local",
+                transport="fact-v1",
+            )
+            post = mock.Mock(return_value=2)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "BUILD_LOOP_RALLY_TOOL": "cursor",
+                        "CURSOR_SESSION_ID": "cursor-local-session",
+                    },
+                    clear=False,
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "_rally_adapter",
+                    return_value=(mock.Mock(return_value=resolved), post),
+                ),
+            ):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            posted = post.call_args.kwargs
+            self.assertEqual(posted["tool"], "cursor")
+            self.assertNotIn("host_tool", posted["payload"])
+            self.assertNotIn("session_id", posted["payload"])
 
     def test_arbitrary_ledger_path_stays_local_without_explicit_workdir(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -244,6 +472,618 @@ class AppendReadTests(unittest.TestCase):
             self.assertIn("rally unavailable", env["projection"]["error"])
             self.assertEqual(agent_ledger.read(path), [row])
 
+    def test_outcome_unknown_preserves_typed_native_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(
+                run_id="r-unknown", agent="advisor", action="author"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+            )
+
+            def ambiguous_post(**kwargs):
+                kwargs["outcome"].update(
+                    {
+                        "status": "outcome_unknown",
+                        "backend": "rally",
+                        "transport": "rally-cli",
+                        "reason": "native mutation timed out",
+                        "event_id": "evt-maybe-committed",
+                        "remedy": "read Rally before deciding whether to retry",
+                    }
+                )
+                return None
+
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), ambiguous_post),
+            ):
+                env = agent_ledger.append(path, row)
+
+            projection = env["projection"]
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(projection["status"], "outcome_unknown")
+            self.assertIsNone(projection["ok"])
+            self.assertEqual(projection["reason"], "native mutation timed out")
+            self.assertEqual(projection["event_id"], "evt-maybe-committed")
+            self.assertEqual(
+                projection["remedy"], "read Rally before deciding whether to retry"
+            )
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["pending"], [])
+            self.assertEqual(marker["terminal"][0]["status"], "outcome_unknown")
+            self.assertEqual(
+                marker["terminal"][0]["remedy"],
+                "read Rally before deciding whether to retry",
+            )
+
+            later = agent_ledger.build_row(
+                run_id="r-after-unknown", agent="verifier", action="verify"
+            )
+            later_post = mock.Mock(return_value=9)
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), later_post),
+            ):
+                later_env = agent_ledger.append(path, later)
+            self.assertEqual(later_env["projection"]["status"], "projected")
+            later_post.assert_called_once()
+            self.assertEqual(
+                later_post.call_args.kwargs["payload"]["agent_ledger"], later
+            )
+
+    def test_missing_marker_uses_native_receipt_before_reposting(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            path.parent.mkdir(parents=True)
+            row = agent_ledger.build_row(
+                run_id="r-committed", agent="advisor", action="author",
+                ts="2026-08-14T00:00:00Z",
+            )
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+            )
+            receipt = agent_ledger._projection_result(
+                "projected",
+                backend="rally",
+                transport="rally-cli",
+                revision=77,
+                reason="already-present-in-rally",
+                event_id="evt-existing",
+                write_attempted=False,
+            )
+            post = mock.Mock(return_value=78)
+            with (
+                mock.patch.object(
+                    agent_ledger,
+                    "_rally_adapter",
+                    return_value=(mock.Mock(return_value=resolved), post),
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "_native_projection_receipts",
+                    return_value=(True, {agent_ledger._row_digest(row): receipt}, None),
+                ),
+            ):
+                projection = agent_ledger._reconcile_to_rally(
+                    path, repo, current_index=0
+                )
+
+            self.assertEqual(projection["status"], "projected")
+            self.assertEqual(projection["event_id"], "evt-existing")
+            self.assertFalse(projection["write_attempted"])
+            post.assert_not_called()
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 1)
+            self.assertEqual(marker["pending"], [])
+
+    def test_native_receipt_requires_current_repo_and_exact_decoded_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            other = Path(td) / "other"
+            repo.mkdir()
+            other.mkdir()
+            row = agent_ledger.build_row(
+                run_id="r-receipt", agent="advisor", action="author",
+                ts="2026-08-14T00:00:00Z",
+            )
+            payload = agent_ledger._projection_payload(row)
+            from rally_point.payload_codec import encode_event
+
+            exact_fact = {
+                "subject": payload["subject"],
+                "seq": 12,
+                "event_id": "evt-exact",
+                "evidence": encode_event(
+                    kind="artifact",
+                    payload=payload,
+                    model="",
+                    run_id=row["run_id"],
+                    app_slug="repo",
+                ),
+            }
+            wrong_row = {**row, "note": "different"}
+            wrong_payload = agent_ledger._projection_payload(wrong_row)
+            wrong_fact = {
+                "subject": payload["subject"],
+                "seq": 13,
+                "event_id": "evt-wrong-payload",
+                "evidence": encode_event(
+                    kind="artifact",
+                    payload=wrong_payload,
+                    model="",
+                    run_id=row["run_id"],
+                    app_slug="repo",
+                ),
+            }
+            native_result = SimpleNamespace(
+                ok=True,
+                reason=None,
+                payload={
+                    "data": {
+                        "recent": {
+                            "rows": [
+                                {"repo_root": str(other), "fact": exact_fact},
+                                {"repo_root": str(repo), "fact": wrong_fact},
+                                {"repo_root": str(repo), "fact": exact_fact},
+                            ]
+                        }
+                    }
+                },
+            )
+            envelope = SimpleNamespace(
+                app_slug="repo",
+                raw={
+                    "whoami": {
+                        "data": {"whoami": {"repo_root": str(repo)}}
+                    }
+                },
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "BUILD_LOOP_RALLY_TOOL": "cursor",
+                        "CURSOR_SESSION_ID": "cursor-receipt",
+                    },
+                    clear=False,
+                ),
+                mock.patch(
+                    "scripts.rally_point.discovery_bridge.maybe_auto_migrate"
+                ) as migrate,
+                mock.patch(
+                    "scripts.rally_point.backend_adapter.resolve_context",
+                    return_value=object(),
+                ),
+                mock.patch(
+                    "scripts.rally_point.backend_adapter.invoke_native",
+                    return_value=native_result,
+                ) as invoke,
+            ):
+                available, receipts, reason = agent_ledger._native_projection_receipts(
+                    repo, envelope
+                )
+
+            self.assertTrue(available, reason)
+            self.assertIsNone(reason)
+            self.assertEqual(list(receipts), [agent_ledger._row_digest(row)])
+            self.assertEqual(receipts[agent_ledger._row_digest(row)]["event_id"], "evt-exact")
+            migrate.assert_called_once_with(repo, envelope)
+            self.assertEqual(invoke.call_args.kwargs["tool"], "cursor:cursor-receipt")
+            self.assertEqual(invoke.call_args.kwargs["session_id"], "cursor-receipt")
+
+    def test_more_than_terminal_ring_oversize_rows_do_not_block_later_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            path.parent.mkdir(parents=True)
+            oversized = [
+                agent_ledger.build_row(
+                    run_id=f"large-{index}",
+                    agent="advisor",
+                    action="author",
+                    note="x" * 40000,
+                    ts=f"2026-08-14T00:{index:02d}:00Z",
+                )
+                for index in range(agent_ledger.MAX_TERMINAL_DIAGNOSTICS + 6)
+            ]
+            path.write_text(
+                "".join(json.dumps(row) + "\n" for row in oversized),
+                encoding="utf-8",
+            )
+            later = agent_ledger.build_row(
+                run_id="small-later", agent="verifier", action="verify"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "fallback"),
+                app_slug="repo",
+                resolved_via="build-loop-internal",
+                backend="build-loop-local",
+                transport="fact-v1",
+            )
+            post = mock.Mock(return_value=1)
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), post),
+            ):
+                env = agent_ledger.append(path, later)
+
+            self.assertEqual(env["projection"]["status"], "projected")
+            post.assert_called_once()
+            self.assertEqual(post.call_args.kwargs["payload"]["agent_ledger"], later)
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], len(oversized) + 1)
+            self.assertEqual(marker["pending"], [])
+            self.assertEqual(
+                len(marker["terminal"]), agent_ledger.MAX_TERMINAL_DIAGNOSTICS
+            )
+            self.assertTrue(
+                all(item["status"] == "oversize" for item in marker["terminal"])
+            )
+
+    def test_hot_append_streams_from_marker_without_full_ledger_read(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            path.parent.mkdir(parents=True)
+            rows = [
+                agent_ledger.build_row(
+                    run_id=f"old-{index}",
+                    agent="advisor",
+                    action="author",
+                    ts="2026-08-14T00:00:00Z",
+                )
+                for index in range(5000)
+            ]
+            raw_lines = [
+                (json.dumps(row, ensure_ascii=False, sort_keys=False) + "\n").encode()
+                for row in rows
+            ]
+            path.write_bytes(b"".join(raw_lines))
+            prefix = agent_ledger._EMPTY_PREFIX_SHA256
+            for raw in raw_lines:
+                prefix = agent_ledger._advance_prefix_digest(
+                    prefix, agent_ledger.hashlib.sha256(raw).hexdigest(), len(raw)
+                )
+            device, inode = agent_ledger._ledger_identity(path)
+            marker = {
+                "schema": agent_ledger.SYNC_MARKER_SCHEMA,
+                "cursor": len(rows),
+                "cursor_offset": path.stat().st_size,
+                "prefix_sha256": prefix,
+                "prefix_tail_sha256": agent_ledger._prefix_tail_probe(
+                    path, path.stat().st_size
+                ),
+                "ledger_device": device,
+                "ledger_inode": inode,
+                "pending": [],
+                "terminal": [],
+            }
+            (path.parent / agent_ledger.SYNC_MARKER_NAME).write_text(
+                json.dumps(marker), encoding="utf-8"
+            )
+            current = agent_ledger.build_row(
+                run_id="current", agent="cursor", action="verify"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "fallback"),
+                app_slug="repo",
+                resolved_via="build-loop-internal",
+                backend="build-loop-local",
+            )
+            post = mock.Mock(return_value=7)
+            with (
+                mock.patch.object(
+                    agent_ledger,
+                    "_rally_adapter",
+                    return_value=(mock.Mock(return_value=resolved), post),
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "read",
+                    side_effect=AssertionError("hot append must not materialize ledger"),
+                ),
+            ):
+                result = agent_ledger.append(path, current)
+
+            self.assertEqual(result["projection"]["status"], "projected")
+            post.assert_called_once()
+            updated = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(updated["cursor"], 5001)
+            self.assertEqual(updated["cursor_offset"], path.stat().st_size)
+
+    def test_concurrent_build_loops_share_one_append_and_projection_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            path = agent_ledger.default_ledger_path(repo)
+            apps = root / "apps"
+            script = (
+                "import sys; sys.path.insert(0, %r); import agent_ledger as a; "
+                "i=sys.argv[2]; row=a.build_row(run_id='run-'+i,agent='cursor',"
+                "action='verify',ts='2026-08-14T00:00:00Z'); "
+                "print(a.append(a.default_ledger_path(__import__('pathlib').Path(sys.argv[1])),row))"
+            ) % str(HERE)
+            env = dict(os.environ)
+            env.update(
+                BUILD_LOOP_BRIDGE_INTERNAL_ONLY="1",
+                BUILD_LOOP_APPS_ROOT=str(apps),
+                BUILD_LOOP_RALLY_TOOL="cursor",
+            )
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", script, str(repo), str(index)],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for index in range(6)
+            ]
+            results = [proc.communicate(timeout=30) for proc in procs]
+            self.assertTrue(all(proc.returncode == 0 for proc in procs), results)
+
+            final = agent_ledger.build_row(
+                run_id="run-final",
+                agent="cursor",
+                action="verify",
+                ts="2026-08-14T00:00:00Z",
+            )
+            with mock.patch.dict(os.environ, env, clear=False):
+                from rally_point import discovery_bridge
+
+                discovery_bridge.clear_cache()
+                final_result = agent_ledger.append(path, final, workdir=repo)
+            self.assertTrue(final_result["ok"], final_result)
+            self.assertEqual(len(agent_ledger.read(path)), 7)
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 7)
+            self.assertEqual(marker["pending"], [])
+
+            from rally_point import payload_codec
+
+            facts = [
+                json.loads(line)
+                for line in (apps / "repo" / "changes.jsonl").read_text().splitlines()
+            ]
+            projected = []
+            for fact in facts:
+                event = payload_codec.decode_event(fact.get("evidence"))
+                payload = event.get("payload") if isinstance(event, dict) else None
+                row = payload.get("agent_ledger") if isinstance(payload, dict) else None
+                if isinstance(row, dict):
+                    projected.append(agent_ledger._row_digest(row))
+            self.assertEqual(len(projected), 7)
+            self.assertEqual(len(set(projected)), 7)
+
+    def test_existing_rows_backfill_once_and_marker_skips_them_later(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            path.parent.mkdir(parents=True)
+            old_row = agent_ledger.build_row(
+                run_id="old", agent="advisor", action="author",
+                ts="2026-08-13T00:00:00Z",
+            )
+            path.write_text(json.dumps(old_row) + "\n", encoding="utf-8")
+            current_row = agent_ledger.build_row(
+                run_id="current", agent="implementer", action="execute",
+                ts="2026-08-14T00:00:00Z",
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+            )
+            first_post = mock.Mock(side_effect=[31, 32])
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), first_post),
+            ):
+                env = agent_ledger.append(path, current_row)
+
+            self.assertEqual(env["projection"]["status"], "projected")
+            self.assertEqual(
+                [call.kwargs["payload"]["agent_ledger"] for call in first_post.call_args_list],
+                [old_row, current_row],
+            )
+            marker_path = path.parent / agent_ledger.SYNC_MARKER_NAME
+            marker = json.loads(marker_path.read_text())
+            self.assertEqual(marker["schema"], agent_ledger.SYNC_MARKER_SCHEMA)
+            self.assertEqual(marker["cursor"], 2)
+            self.assertEqual(marker["pending"], [])
+            self.assertEqual(
+                list(marker_path.parent.glob(f".{marker_path.name}.*.tmp")), []
+            )
+
+            later_row = agent_ledger.build_row(
+                run_id="later", agent="verifier", action="verify",
+                ts="2026-08-14T01:00:00Z",
+            )
+            later_post = mock.Mock(return_value=33)
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), later_post),
+            ):
+                later_env = agent_ledger.append(path, later_row)
+
+            self.assertEqual(later_env["projection"]["status"], "projected")
+            later_post.assert_called_once()
+            self.assertEqual(
+                later_post.call_args.kwargs["payload"]["agent_ledger"], later_row
+            )
+
+    def test_failed_row_retries_on_next_append_then_clears_pending_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            first_row = agent_ledger.build_row(
+                run_id="first", agent="advisor", action="author"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+            )
+
+            def failed_post(**kwargs):
+                kwargs["outcome"].update(
+                    {
+                        "status": "failed",
+                        "backend": "rally",
+                        "transport": "rally-cli",
+                        "reason": "temporary transport failure",
+                    }
+                )
+                return None
+
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), failed_post),
+            ):
+                first_env = agent_ledger.append(path, first_row)
+            self.assertEqual(first_env["projection"]["status"], "failed")
+
+            second_row = agent_ledger.build_row(
+                run_id="second", agent="implementer", action="execute"
+            )
+            recovered_post = mock.Mock(side_effect=[41, 42])
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), recovered_post),
+            ):
+                second_env = agent_ledger.append(path, second_row)
+
+            self.assertEqual(second_env["projection"]["status"], "projected")
+            self.assertEqual(
+                [
+                    call.kwargs["payload"]["agent_ledger"]
+                    for call in recovered_post.call_args_list
+                ],
+                [first_row, second_row],
+            )
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 2)
+            self.assertEqual(marker["pending"], [])
+
+    def test_native_post_failover_reports_build_loop_local_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(
+                run_id="r-failover", agent="advisor", action="author"
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(repo / ".rally"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+                transport="rally-cli",
+            )
+
+            def fallback_post(**kwargs):
+                kwargs["outcome"].update(
+                    {
+                        "status": "posted",
+                        "backend": "build-loop-local",
+                        "transport": "fact-v1",
+                        "revision": 3,
+                    }
+                )
+                return 3
+
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), fallback_post),
+            ):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "projected")
+            self.assertEqual(env["projection"]["backend"], "build-loop-local")
+            self.assertEqual(env["projection"]["transport"], "fact-v1")
+            marker = json.loads(
+                (path.parent / agent_ledger.SYNC_MARKER_NAME).read_text()
+            )
+            self.assertEqual(marker["cursor"], 1)
+            self.assertEqual(marker["pending"], [])
+
+            # A committed fallback fact is not re-posted row-by-row. The next
+            # native post owns maybe_auto_migrate() for the fallback spool.
+            recovered = agent_ledger.build_row(
+                run_id="r-recovered", agent="verifier", action="verify"
+            )
+
+            def native_post(**kwargs):
+                kwargs["outcome"].update(
+                    {
+                        "status": "posted",
+                        "backend": "rally",
+                        "transport": "rally-cli",
+                        "revision": 4,
+                    }
+                )
+                return 4
+
+            native_post_mock = mock.Mock(side_effect=native_post)
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), native_post_mock),
+            ):
+                recovered_env = agent_ledger.append(path, recovered)
+            self.assertEqual(recovered_env["projection"]["backend"], "rally")
+            native_post_mock.assert_called_once()
+            self.assertEqual(
+                native_post_mock.call_args.kwargs["payload"]["agent_ledger"],
+                recovered,
+            )
+
     def test_projection_guard_prevents_recursive_posting(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -290,7 +1130,10 @@ class AppendReadTests(unittest.TestCase):
                 status="pass",
                 ts="2026-08-14T00:00:00Z",
             )
-            updates = {"HOME": str(home)}
+            updates = {
+                "HOME": str(home),
+                "BUILD_LOOP_RALLY_TOOL": "codex:real-rally-row",
+            }
             with mock.patch.dict(os.environ, updates, clear=False):
                 for key in (
                     "AGENT_RALLY_BINARY",
@@ -321,16 +1164,20 @@ class AppendReadTests(unittest.TestCase):
                 )
             matching = [
                 item for item in raw_rows
-                if (item.get("payload") or {}).get("tool") == "cursor"
+                if (item.get("payload") or {}).get("tool")
+                == "codex:real-rally-row"
                 and (item.get("payload") or {}).get("kind") == "artifact"
                 and str((item.get("payload") or {}).get("subject", "")).startswith(
                     "agent-ledger:"
                 )
             ]
             self.assertEqual(len(matching), 1)
-            evidence = (matching[0]["payload"].get("evidence") or [None])[0]
-            projected_payload = json.loads(evidence)
-            self.assertEqual(projected_payload["agent_ledger"], row)
+            from rally_point.payload_codec import decode_event
+
+            evidence = matching[0]["payload"].get("evidence") or []
+            projected_payload = decode_event(evidence)
+            self.assertIsNotNone(projected_payload)
+            self.assertEqual(projected_payload["payload"]["agent_ledger"], row)
 
 
 class SummarizeTests(unittest.TestCase):

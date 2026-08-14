@@ -27,11 +27,13 @@ Also re-verifies coordination_bootstrap's join semantics:
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -201,14 +203,27 @@ class BootstrapJoinSemanticsTests(unittest.TestCase):
             "# {{RUN_TITLE}} {{DATE_YYYY_MM_DD}}\n\n{{SCOPE_SUMMARY_2_TO_4_SENTENCES}}\n",
             encoding="utf-8",
         )
-        self.fake_channel = self.workdir / "fake-channel"
-        from rally_point import channel_paths
-        self._orig = channel_paths.app_channel_dir
-        self._channel_paths = channel_paths
-        channel_paths.app_channel_dir = lambda slug: self.fake_channel
+        self._env_patch = patch.dict(
+            os.environ,
+            {
+                "BUILD_LOOP_APPS_ROOT": str(self.workdir / "apps"),
+                "BUILD_LOOP_BRIDGE_INTERNAL_ONLY": "1",
+                "BUILD_LOOP_DISABLE_BINARY_FETCH": "1",
+                "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
+            },
+        )
+        self._env_patch.start()
+        from rally_point import channel_paths, discovery_bridge
+        discovery_bridge.clear_cache()
+        # Bootstrap now resolves through the backend adapter.  Force the
+        # private fallback and inspect its identity-keyed channel rather than
+        # monkeypatching the retired basename-only ``app_channel_dir`` path.
+        self.fake_channel = channel_paths.fallback_channel_dir(self.workdir)
 
     def tearDown(self):
-        self._channel_paths.app_channel_dir = self._orig
+        from rally_point import discovery_bridge
+        discovery_bridge.clear_cache()
+        self._env_patch.stop()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _read_channel_changes(self) -> list[dict]:

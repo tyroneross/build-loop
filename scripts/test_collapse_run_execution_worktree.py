@@ -112,6 +112,53 @@ def test_collapse_deletes_merged_run_worktree(tmp_path: Path) -> None:
     assert result["bundle_path"] is not None
 
 
+def test_collapse_threads_selected_execution_session_to_claim_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    run_id = "bl-20260601T000000Z-test-session"
+    wt_path, wt_branch = _make_run_worktree(repo, run_id)
+    _commit_run_work(wt_path)
+    _git(repo, "merge", "--no-ff", wt_branch, "-m", f"merge {wt_branch}")
+    _write_state_with_execution(
+        repo,
+        run_id,
+        wt_path,
+        wt_branch,
+        run_entry={"run_id": run_id, "createdRefs": []},
+    )
+    state_path = repo / ".build-loop" / "state.json"
+    state = json.loads(state_path.read_text())
+    state["execution"]["current_session_id"] = "cursor-owner-session"
+    state["execution"]["started_by_tool"] = "cursor"
+    state_path.write_text(json.dumps(state, indent=2))
+    for name in (
+        "BUILD_LOOP_RALLY_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "RALLY_AGENT_ID",
+        "RALLY_SESSION_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("RALLY_POINT_TOOL", "codex")
+    monkeypatch.setenv("BUILD_LOOP_RALLY_SESSION_ID", "codex-integrator-session")
+    seen: list[tuple[str | None, str | None]] = []
+    monkeypatch.setattr(
+        collapse_run,
+        "_release_worktree_claims",
+        lambda _workdir, _path, *, session_id, tool: (
+            seen.append((session_id, tool)) or 0
+        ),
+    )
+
+    result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
+
+    assert result["errors"] == []
+    assert result["claim_release_session_source"] == "execution.current_session_id"
+    assert result["claim_release_tool_source"] == "execution.started_by_tool"
+    assert seen == [("cursor-owner-session", "cursor")]
+
+
 # ---------------------------------------------------------------------------
 # Unmerged run-worktree → surfaced (worktree folder removed, branch kept)
 # ---------------------------------------------------------------------------
@@ -644,9 +691,9 @@ def test_non_force_removal_preserves_worktree_that_becomes_dirty(
     )
     real_remove = collapse_run._remove_worktree
 
-    def dirty_then_remove(workdir, path):
+    def dirty_then_remove(workdir, path, *, session_id=None, tool=None):
         (Path(path) / "late-dirty.txt").write_text("changed after inspection\n")
-        return real_remove(workdir, path)
+        return real_remove(workdir, path, session_id=session_id, tool=tool)
 
     monkeypatch.setattr(collapse_run, "_remove_worktree", dirty_then_remove)
 
@@ -676,8 +723,8 @@ def test_branch_recheckout_after_removal_prevents_ref_deletion(
     real_remove = collapse_run._remove_worktree
     replacement = repo / ".build-loop/worktrees/run-recheckout-replacement"
 
-    def remove_then_recheckout(workdir, path):
-        error = real_remove(workdir, path)
+    def remove_then_recheckout(workdir, path, *, session_id=None, tool=None):
+        error = real_remove(workdir, path, session_id=session_id, tool=tool)
         assert error is None
         _git(repo, "worktree", "add", str(replacement), wt_branch)
         return None

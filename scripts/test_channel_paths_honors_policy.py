@@ -1,19 +1,17 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the channel_paths audit fix (post-cutover legacy-leak).
+"""Tests for Build Loop watcher metadata routing.
 
-These verify the two production leak sites — the install_git_hook
-``_CAPTURE_SRC`` and ``session_probe._launch_watcher`` — now route
-through ``discovery_bridge.resolve`` so canonical policy is honored:
+Watcher metadata belongs to Build Loop, even when standalone Rally owns the
+coordination ledger.  These tests verify that ``session_probe._launch_watcher``
+uses the backend context's identity-keyed private channel and never creates a
+``watchers`` sidecar inside a healthy ``.rally`` room:
 
-  AC-C1: With policy=canonical, writes go ONLY to canonical (no legacy).
-  AC-C2: With policy=migration, writes go to BOTH (β1.2 mirror).
-  AC-C3: When the bridge is unavailable, writes fall back to legacy.
+  AC-C1: Native Rally selected -> watcher metadata stays private.
+  AC-C2: Build Loop fallback selected -> watcher metadata uses that fallback.
+  AC-C3: Resolver failure -> direct fallback remains repo-identity keyed.
 
-Approach: monkeypatch ``discovery_bridge.resolve`` to return shaped
-envelopes (canonical / migration / internal-fallback) so we can prove
-the routing decision without depending on agent-rally-point being
-installed in the test sandbox.
+The post-commit hook assertion below remains as a source-wiring guard.
 """
 from __future__ import annotations
 
@@ -28,6 +26,7 @@ if str(_HERE) not in sys.path:
 
 from rally_point import discovery_bridge as _bridge  # noqa: E402
 from rally_point import session_probe  # noqa: E402
+from rally_point.backend_adapter import BackendContext  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +87,7 @@ def _internal_envelope(legacy: Path) -> _bridge.DiscoveryEnvelope:
 
 
 # ---------------------------------------------------------------------------
-# session_probe._launch_watcher routes via the bridge
+# session_probe._launch_watcher keeps Build Loop metadata private
 # ---------------------------------------------------------------------------
 
 class _CapturedLauncher:
@@ -107,20 +106,24 @@ class _CapturedLauncher:
         return 12345
 
 
-def test_launch_watcher_uses_canonical_channel_when_policy_canonical(
+def test_launch_watcher_keeps_metadata_private_when_native_rally_is_canonical(
     tmp_path: Path, monkeypatch
 ):
     canonical = tmp_path / "canonical"
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
+    private = tmp_path / "private-fallback"
+    workdir = tmp_path / "repo"
     monkeypatch.setattr(
         session_probe,
-        "_bridge_resolve",
-        lambda wd: _canonical_envelope(canonical),
+        "resolve_context",
+        lambda wd: BackendContext(
+            workdir=Path(wd).resolve(),
+            envelope=_canonical_envelope(canonical),
+            local_channel_dir=private,
+        ),
     )
     launcher = _CapturedLauncher()
     pid_file = session_probe._launch_watcher(
-        workdir=str(tmp_path / "repo"),
+        workdir=str(workdir),
         session_id="s1",
         tool="claude_code",
         slug="test-app",
@@ -128,24 +131,28 @@ def test_launch_watcher_uses_canonical_channel_when_policy_canonical(
         errors=[],
     )
     assert pid_file is not None
-    # PID file lives under the canonical channel, never under legacy.
-    assert str(canonical) in pid_file
-    assert str(legacy) not in pid_file
+    # PID files are Build Loop process metadata, never Rally ledger state.
+    assert str(private) in pid_file
+    assert str(canonical) not in pid_file
 
 
-def test_launch_watcher_uses_legacy_when_bridge_is_internal_fallback(
+def test_launch_watcher_uses_private_channel_when_backend_is_internal_fallback(
     tmp_path: Path, monkeypatch
 ):
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
+    private = tmp_path / "private-fallback"
+    workdir = tmp_path / "repo"
     monkeypatch.setattr(
         session_probe,
-        "_bridge_resolve",
-        lambda wd: _internal_envelope(legacy),
+        "resolve_context",
+        lambda wd: BackendContext(
+            workdir=Path(wd).resolve(),
+            envelope=_internal_envelope(private),
+            local_channel_dir=private,
+        ),
     )
     launcher = _CapturedLauncher()
     pid_file = session_probe._launch_watcher(
-        workdir=str(tmp_path / "repo"),
+        workdir=str(workdir),
         session_id="s2",
         tool="claude_code",
         slug="test-app",
@@ -153,7 +160,7 @@ def test_launch_watcher_uses_legacy_when_bridge_is_internal_fallback(
         errors=[],
     )
     assert pid_file is not None
-    assert str(legacy) in pid_file
+    assert str(private) in pid_file
 
 
 def test_launch_watcher_falls_back_when_bridge_raises(
@@ -162,14 +169,13 @@ def test_launch_watcher_falls_back_when_bridge_raises(
     def _boom(wd):
         raise RuntimeError("bridge unavailable")
 
-    monkeypatch.setattr(session_probe, "_bridge_resolve", _boom)
-    # apps_root() default → ~/.build-loop/apps/<slug>/watchers/.
-    # We just need the call to succeed without raising.
+    monkeypatch.setattr(session_probe, "resolve_context", _boom)
     launcher = _CapturedLauncher()
     apps_root = tmp_path / "fallback-apps"
     monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(apps_root))
+    workdir = tmp_path / "repo"
     pid_file = session_probe._launch_watcher(
-        workdir=str(tmp_path / "repo"),
+        workdir=str(workdir),
         session_id="s3",
         tool="claude_code",
         slug="test-app",
@@ -177,9 +183,12 @@ def test_launch_watcher_falls_back_when_bridge_raises(
         errors=[],
     )
     assert pid_file is not None
-    # Fell back to apps_root()/<slug>/watchers/.
-    assert "test-app" in pid_file
-    assert "watchers" in pid_file
+    expected = (
+        session_probe.channel_paths.fallback_channel_dir(workdir, "test-app")
+        / "watchers"
+        / "s3.json"
+    )
+    assert Path(pid_file) == expected
 
 
 # ---------------------------------------------------------------------------

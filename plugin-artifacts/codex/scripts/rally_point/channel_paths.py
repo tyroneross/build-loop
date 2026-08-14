@@ -5,11 +5,11 @@
 
 Production writers should call ``rally_point.discovery_bridge.resolve`` first.
 This module supplies the embedded fallback channel under
-``~/.agent-rally-point/apps/<slug>/`` and the slug helper used when native
-``agent-rally-point`` discovery is unavailable. The slug MUST be identical
-across a clone, the main checkout, and any ``git worktree`` of the same
-canonical repo — otherwise concurrent sessions (the exact scenario Rally Point
-targets, often under ``isolation: "worktree"``) split the channel.
+``~/.build-loop/apps/<repo>-<identity>/`` and the slug helper used when native
+Rally discovery is unavailable. The identity MUST be identical across the main
+checkout and every ``git worktree`` of the same canonical repo, while remaining
+distinct for unrelated repositories that share a basename. Otherwise concurrent
+Build Loops either split their channel or coordinate with the wrong repository.
 
 D1 (amended 2026-05-17): resolve the slug from
 ``git rev-parse --git-common-dir``. A worktree's git-common-dir points
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import re
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -53,20 +54,21 @@ SUBCOMPONENT_PATTERNS = _mem.SUBCOMPONENT_PATTERNS
 _safe_project_tag = _mem._safe_project_tag
 derive_slug_from_cwd = _mem.derive_slug_from_cwd
 
-DEFAULT_APPS_ROOT = "~/.agent-rally-point/apps"
+DEFAULT_APPS_ROOT = "~/.build-loop/apps"
+LEGACY_APPS_ROOT = "~/.agent-rally-point/apps"
 
 
 def apps_root() -> Path:
     """Return the embedded fallback apps-channel root.
 
-    ``$AGENT_RALLY_APPS_ROOT`` is the preferred override.
-    ``$BUILD_LOOP_APPS_ROOT`` remains a compatibility/test override.
+    ``$BUILD_LOOP_APPS_ROOT`` is the Build Loop-owned override.
+    ``$AGENT_RALLY_APPS_ROOT`` remains an explicit legacy/test override only.
     The root is not required to exist; ``ensure_channel_dir`` creates on
     demand.
     """
     raw = (
-        os.environ.get("AGENT_RALLY_APPS_ROOT")
-        or os.environ.get("BUILD_LOOP_APPS_ROOT")
+        os.environ.get("BUILD_LOOP_APPS_ROOT")
+        or os.environ.get("AGENT_RALLY_APPS_ROOT")
         or DEFAULT_APPS_ROOT
     )
     return Path(os.path.expanduser(raw))
@@ -206,6 +208,53 @@ def app_channel_dir(slug: str) -> Path:
     # could differ if a path component was a symlink, or be re-resolved
     # later against a mutated filesystem.
     return candidate
+
+
+def _repo_storage_identity(cwd: Path, slug: str) -> str:
+    """Return a stable, non-secret identity for collision-safe local storage."""
+    canonical = canonical_workdir(cwd)
+    remote = ""
+    try:
+        remote = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=str(canonical),
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except OSError:
+        remote = ""
+    material = f"remote:{remote}" if remote else f"path:{canonical}"
+    return f"{material}\x1fcomponent:{slug}"
+
+
+def fallback_channel_dir(cwd: Path | str, slug: str | None = None) -> Path:
+    """Return Build Loop's private, repo-identity-keyed fallback channel.
+
+    The production default lives under ``~/.build-loop/apps`` and includes a
+    stable remote/path digest, preventing unrelated repositories with the same
+    basename from sharing coordination. Explicit legacy/test root overrides
+    retain their historical plain-slug layout for compatibility.
+    """
+    cwd_path = Path(cwd).expanduser().resolve()
+    semantic_slug = slug or app_slug(cwd_path)
+    if os.environ.get("BUILD_LOOP_APPS_ROOT") or os.environ.get(
+        "AGENT_RALLY_APPS_ROOT"
+    ):
+        return app_channel_dir(semantic_slug)
+    base = _normalize_base(semantic_slug.split("/", 1)[0]) or "_unscoped"
+    digest = hashlib.sha256(
+        _repo_storage_identity(cwd_path, semantic_slug).encode("utf-8")
+    ).hexdigest()[:12]
+    return app_channel_dir(f"{base}-{digest}")
+
+
+def legacy_channel_dir(slug: str) -> Path:
+    """Return the retired shared fallback location for one semantic slug."""
+    parts = slug.split("/")
+    for segment in parts:
+        _safe_project_tag(segment)
+    return Path(os.path.expanduser(LEGACY_APPS_ROOT)).joinpath(*parts)
 
 
 def ensure_channel_dir(slug: str) -> Path:

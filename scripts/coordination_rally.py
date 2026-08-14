@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -32,10 +31,11 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from rally_point import changes, channel_paths, presence, revision  # noqa: E402
-from rally_point.discovery_bridge import (  # noqa: E402
-    repo_local_rally_binary,
-    resolve as _bridge_resolve,
+from rally_point import actor_identity, changes, channel_paths, mece_gate, revision  # noqa: E402
+from rally_point.backend_adapter import (  # noqa: E402
+    resolve_context,
+    write_local_presence,
+    write_presence as write_backend_presence,
 )
 from rally_point.post import post  # noqa: E402
 
@@ -76,12 +76,24 @@ def rally(
     # β1: resolve via the shared discovery bridge. When the canonical
     # source is unreachable the bridge returns the internal-fallback
     # channel and we still need to ensure it exists on first use.
-    envelope = _bridge_resolve(workdir)
+    context = resolve_context(workdir)
+    envelope = context.envelope
     slug = envelope.app_slug
     channel_dir = Path(envelope.channel_dir)
     active_resolved_via = envelope.resolved_via
     active_backend = envelope.backend
     active_transport = envelope.transport
+    native_identity = (
+        actor_identity.resolve_identity(tool, session_id)
+        if context.native
+        else None
+    )
+    coordination_tool = (
+        native_identity.native_tool if native_identity is not None else tool
+    )
+    coordination_session_id = (
+        native_identity.session_id if native_identity is not None else session_id
+    )
     if envelope.resolved_via == "build-loop-internal":
         channel_dir.mkdir(parents=True, exist_ok=True)
     owns = list(owns or [])
@@ -95,55 +107,6 @@ def rally(
         "Peer should rerun coordination_status.py for this workdir and confirm "
         "this active presence plus handoff revision are visible."
     )
-
-    presence_written = False
-    errors: list[str] = []
-    if envelope.transport == "rally-cli":
-        presence_written = _enter_repo_local_session(
-            workdir=workdir,
-            session_id=session_id,
-            tool=tool,
-            message=message,
-            owns=owns,
-        )
-        if not presence_written:
-            errors.append("rally enter failed; using Build Loop local coordination")
-            active_resolved_via = "build-loop-internal"
-            active_backend = "build-loop-local"
-            active_transport = "fact-v1"
-            channel_dir = channel_paths.app_channel_dir(slug)
-            channel_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                presence.write_presence(
-                    channel_dir,
-                    session_id=session_id,
-                    tool=tool,
-                    model=model,
-                    run_id=effective_run_id,
-                    app_slug=slug,
-                    phase=phase,
-                    files_in_flight=owns,
-                    cwd=workdir,
-                )
-                presence_written = True
-            except Exception as exc:  # noqa: BLE001 - presence is fire-and-forget
-                errors.append(f"presence.write_presence failed: {exc}")
-    else:
-        try:
-            presence.write_presence(
-                channel_dir,
-                session_id=session_id,
-                tool=tool,
-                model=model,
-                run_id=effective_run_id,
-                app_slug=slug,
-                phase=phase,
-                files_in_flight=owns,
-                cwd=workdir,
-            )
-            presence_written = True
-        except Exception as exc:  # noqa: BLE001 - presence is fire-and-forget
-            errors.append(f"presence.write_presence failed: {exc}")
 
     payload = {
         "from": tool,
@@ -165,42 +128,156 @@ def rally(
             "denied_tools": [],
         },
     }
-    # One adapter owns both routes. It delegates to ``rally say`` when the
-    # standalone room is operational and spools a fact-v1 event when it is not.
-    before_revision = revision.read_revision(channel_dir) if verify else None
-    channel_rev = post(
-        channel_dir=channel_dir,
-        kind="handoff",
-        tool=tool,
+    valid, rejection = mece_gate.validate_handoff(payload, tool=tool)
+    if not valid:
+        return {
+            "schema_version": "1.0",
+            "action": "rally-point-rejected",
+            "workdir": str(workdir),
+            "app_slug": slug,
+            "channel_dir": str(channel_dir),
+            "resolved_via": active_resolved_via,
+            "backend": active_backend,
+            "transport": active_transport,
+            "channel_revision": None,
+            "session_id": session_id,
+            "run_id": effective_run_id,
+            "phase": phase,
+            "presence_written": False,
+            "ownership": payload["ownership"],
+            "errors": [f"invalid handoff: {rejection}"],
+            "posted": False,
+        }
+
+    presence_written = False
+    errors: list[str] = []
+    presence_result = write_backend_presence(
+        context,
+        session_id=coordination_session_id,
+        tool=coordination_tool,
+        local_session_id=session_id,
+        local_tool=(
+            native_identity.base_tool if native_identity is not None else tool
+        ),
         model=model,
         run_id=effective_run_id,
         app_slug=slug,
-        payload=payload,
-        workdir=workdir,
+        phase=phase,
+        files_in_flight=owns,
+        cwd=workdir,
+        task=message,
     )
-    after_revision = revision.read_revision(channel_dir) if verify else None
+    if presence_result.ok:
+        presence_written = True
+        if getattr(presence_result, "backend", None) == "build-loop-local":
+            errors.append(
+                "rally unavailable before enter; using Build Loop local coordination"
+            )
+            active_resolved_via = "build-loop-internal"
+            active_backend = "build-loop-local"
+            active_transport = "fact-v1"
+            channel_dir = context.local_channel_dir
+    elif presence_result.precommit_unavailable:
+        local_presence = write_local_presence(
+            context,
+            session_id=session_id,
+            tool=tool,
+            model=model,
+            run_id=effective_run_id,
+            app_slug=slug,
+            phase=phase,
+            files_in_flight=owns,
+            cwd=workdir,
+            task=message,
+        )
+        presence_written = local_presence.ok
+        errors.append("rally unavailable before enter; using Build Loop local coordination")
+        if not local_presence.ok:
+            errors.append(local_presence.reason or local_presence.status)
+        active_resolved_via = "build-loop-internal"
+        active_backend = "build-loop-local"
+        active_transport = "fact-v1"
+        channel_dir = context.local_channel_dir
+    else:
+        errors.append(
+            f"rally enter {presence_result.status}: {presence_result.reason or 'unknown'}"
+        )
+        return {
+            "schema_version": "1.0",
+            "action": "rally-point-not-posted",
+            "workdir": str(workdir),
+            "app_slug": slug,
+            "channel_dir": str(channel_dir),
+            "resolved_via": active_resolved_via,
+            "backend": active_backend,
+            "transport": active_transport,
+            "channel_revision": None,
+            "session_id": session_id,
+            "run_id": effective_run_id,
+            "phase": phase,
+            "presence_written": False,
+            "ownership": payload["ownership"],
+            "errors": errors,
+            "posted": False,
+        }
+    # One adapter owns both routes. It delegates to ``rally say`` when the
+    # standalone room is operational and spools a fact-v1 event when it is not.
+    fallback_channel_dir = context.local_channel_dir
+    fallback_before_revision = (
+        revision.read_revision(fallback_channel_dir)
+        if verify
+        else None
+    )
+    post_outcome: dict[str, Any] = {}
+    channel_rev = post(
+        channel_dir=channel_dir,
+        kind="handoff",
+        tool=coordination_tool,
+        model=model,
+        run_id=effective_run_id,
+        app_slug=slug,
+        payload=(
+            {
+                **payload,
+                "host_tool": native_identity.base_tool,
+                "session_id": native_identity.session_id,
+            }
+            if native_identity is not None
+            else payload
+        ),
+        workdir=workdir,
+        outcome=post_outcome,
+        local_tool=(
+            native_identity.base_tool if native_identity is not None else tool
+        ),
+        local_session_id=session_id,
+    )
+    active_backend = str(post_outcome.get("backend") or active_backend)
+    active_transport = str(post_outcome.get("transport") or active_transport)
+    if active_backend == "build-loop-local":
+        active_resolved_via = "build-loop-internal"
+        channel_dir = fallback_channel_dir
+        before_revision = fallback_before_revision
+    else:
+        before_revision = None
+    after_revision = (
+        revision.read_revision(channel_dir)
+        if verify and active_backend == "build-loop-local"
+        else None
+    )
 
     verify_result: dict[str, Any] | None = None
     if verify and active_transport == "rally-cli":
-        records, _offset = changes.read_changes_since(channel_dir, 0)
-        matching_records = [
-            r for r in records
-            if r.get("revision") == channel_rev
-            and r.get("kind") == "handoff"
-            and r.get("tool") == tool
-        ]
         verify_result = {
             "posted": bool(
                 channel_rev is not None
-                and before_revision is not None
-                and after_revision is not None
-                and after_revision > before_revision
-                and matching_records
+                and post_outcome.get("status") == "posted"
+                and post_outcome.get("backend") == "rally"
+                and post_outcome.get("revision") == channel_rev
             ),
             "protocol": "repo-local-rally-cli",
-            "before_revision": before_revision,
-            "after_revision": after_revision,
-            "matching_record_count": len(matching_records),
+            "event_id": post_outcome.get("event_id"),
+            "revision": channel_rev,
         }
     elif verify:
         records, _offset = changes.read_changes_since(channel_dir, 0)
@@ -224,9 +301,18 @@ def rally(
             "matching_record_count": len(matching_records),
         }
 
+    posted = bool(
+        channel_rev is not None and post_outcome.get("status") == "posted"
+    )
+    if verify_result is not None:
+        posted = bool(verify_result["posted"])
+    if not posted:
+        detail = post_outcome.get("reason") or post_outcome.get("status") or "post failed"
+        errors.append(str(detail))
+
     result = {
         "schema_version": "1.0",
-        "action": "rally-point-posted",
+        "action": "rally-point-posted" if posted else "rally-point-not-posted",
         "workdir": str(workdir),
         "app_slug": slug,
         "channel_dir": str(channel_dir),
@@ -235,57 +321,23 @@ def rally(
         "transport": active_transport,
         "channel_revision": channel_rev,
         "session_id": session_id,
+        "rally_session_id": coordination_session_id,
+        "tool": tool,
+        "rally_tool": coordination_tool,
         "run_id": effective_run_id,
         "phase": phase,
         "presence_written": presence_written,
         "ownership": payload["ownership"],
         "errors": errors,
+        "posted": posted,
+        "post_status": post_outcome.get("status"),
+        "post_reason": post_outcome.get("reason"),
+        "event_id": post_outcome.get("event_id"),
+        "remedy": post_outcome.get("remedy"),
     }
     if verify_result is not None:
         result["verify"] = verify_result
-        result["posted"] = verify_result["posted"]
     return result
-
-
-def _enter_repo_local_session(
-    *,
-    workdir: Path,
-    session_id: str,
-    tool: str,
-    message: str,
-    owns: list[str],
-) -> bool:
-    binary = repo_local_rally_binary(workdir)
-    if not binary:
-        return False
-    cmd = [
-        binary,
-        "enter",
-        "--json",
-        "--tool",
-        tool,
-        "--session-id",
-        session_id,
-    ]
-    for owned in owns:
-        cmd.extend(["--path", owned])
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return False
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return False
-    try:
-        payload = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return False
-    return bool(payload.get("ok") is True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -339,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         verify=args.verify,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
+    return 0 if result.get("posted") else 1
 
 
 if __name__ == "__main__":

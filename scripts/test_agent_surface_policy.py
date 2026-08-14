@@ -299,7 +299,17 @@ class OtherAgentSurfaceTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("rally codex --human", text, str(path))
             self.assertNotIn("rally start", text, str(path))
-            self.assertNotIn("--session-id", text, str(path))
+            # Native Rally routes presence, claims, handoffs, and reader
+            # cursors by ``--tool``.  A bare host family therefore merges two
+            # concurrent sessions into one actor.  The public instructions
+            # must derive one session-qualified actor and carry the raw
+            # session id separately for protocol receipts / local fallback.
+            self.assertIn("scripts/rally_point/actor_identity.py", text, str(path))
+            self.assertIn("--session-id", text, str(path))
+            self.assertIn('rally enter --tool "$RALLY_TOOL"', text, str(path))
+            self.assertNotIn("rally enter --tool claude_code", text, str(path))
+            self.assertNotIn("rally next --tool claude_code", text, str(path))
+            self.assertNotIn("rally stop claude_code", text, str(path))
             self.assertIn("Rally is coordination metadata", text, str(path))
 
         for path in [REPO_ROOT / "README.md", CODEX_ARTIFACT_DIR / "README.md"]:
@@ -310,6 +320,10 @@ class OtherAgentSurfaceTests(unittest.TestCase):
         readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         coordination_text = (REPO_ROOT / "references" / "coordination-rules.md").read_text(encoding="utf-8")
         skill_text = (REPO_ROOT / "skills" / "build-loop" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("scripts/rally_point/actor_identity.py", readme_text)
+        self.assertIn('rally enter --tool "$RALLY_TOOL"', readme_text)
+        self.assertNotIn("rally enter --tool claude_code", readme_text)
+        self.assertNotIn("rally next --tool claude_code", readme_text)
         # README documents the Rally evidence-boundary in plain-copy style (no
         # "X, not Y" antithesis in public-facing copy); internal docs below keep
         # the canonical phrase.

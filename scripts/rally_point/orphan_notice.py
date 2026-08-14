@@ -43,7 +43,7 @@ _MAX_IDS_SHOWN = 5
 
 def _channel_dir(workdir: Path):
     slug = channel_paths.app_slug(workdir)
-    return channel_paths.app_channel_dir(slug)
+    return channel_paths.fallback_channel_dir(workdir, slug)
 
 
 def warn_line_for(stale: list, threshold: int = DEFAULT_THRESHOLD) -> str:

@@ -83,6 +83,30 @@ def test_channel_dir_parity_worktree_vs_main(
     assert main_dir == wt_dir
 
 
+def test_default_fallback_is_build_loop_owned_and_repo_identity_keyed(
+    tmp_path: Path, monkeypatch
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("BUILD_LOOP_APPS_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_RALLY_APPS_ROOT", raising=False)
+    first = tmp_path / "one" / "same-name"
+    second = tmp_path / "two" / "same-name"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    _git(["init", "-q"], first)
+    _git(["init", "-q"], second)
+
+    first_dir = ap.fallback_channel_dir(first)
+    second_dir = ap.fallback_channel_dir(second)
+
+    assert first_dir.parent == (home / ".build-loop" / "apps").resolve()
+    assert second_dir.parent == first_dir.parent
+    assert first_dir.name.startswith("same-name-")
+    assert second_dir.name.startswith("same-name-")
+    assert first_dir != second_dir
+
+
 def test_canonical_workdir_worktree_collapses_to_main(
     temp_repo: Path, tmp_path: Path
 ):

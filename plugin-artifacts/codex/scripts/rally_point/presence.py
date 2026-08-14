@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -46,6 +47,8 @@ _UNKNOWN_BRANCH = {
     "branch_head_sha": "unknown",
     "branch_merge_status": "unknown",
 }
+_MAX_SESSION_ID_LENGTH = 160
+_SESSION_ID_RE = re.compile(r"\A[A-Za-z0-9_-][A-Za-z0-9._:-]{0,159}\Z")
 
 
 def _compute_branch_status(cwd: Path) -> dict:
@@ -112,8 +115,45 @@ def _sessions_dir(channel_dir: Path) -> Path:
     return Path(channel_dir) / _SESSIONS_DIR
 
 
+def validate_session_id(session_id: str) -> str:
+    """Return a bounded filesystem-safe session id or raise ``ValueError``."""
+    if (
+        not isinstance(session_id, str)
+        or not session_id
+        or len(session_id) > _MAX_SESSION_ID_LENGTH
+        or _SESSION_ID_RE.fullmatch(session_id) is None
+    ):
+        raise ValueError(
+            "session_id must be 1-160 characters using only letters, digits, "
+            "dot, colon, underscore, or hyphen"
+        )
+    return session_id
+
+
+def _resolved_local_channel_dir(channel_dir: Path) -> Path:
+    resolved = Path(channel_dir).expanduser().resolve(strict=False)
+    if ".rally" in resolved.parts:
+        raise ValueError("Build Loop presence sidecars cannot be stored under .rally")
+    return resolved
+
+
+def presence_path(channel_dir: Path, session_id: str) -> Path:
+    """Resolve one exact presence path contained by the local sessions dir."""
+    safe_id = validate_session_id(session_id)
+    channel = _resolved_local_channel_dir(channel_dir)
+    sessions = (channel / _SESSIONS_DIR).resolve(strict=False)
+    try:
+        sessions.relative_to(channel)
+    except ValueError as exc:
+        raise ValueError("sessions directory escapes the local channel") from exc
+    candidate = (sessions / f"{safe_id}.json").resolve(strict=False)
+    if candidate.parent != sessions:
+        raise ValueError("presence path escapes the local sessions directory")
+    return candidate
+
+
 def _presence_path(channel_dir: Path, session_id: str) -> Path:
-    return _sessions_dir(channel_dir) / f"{session_id}.json"
+    return presence_path(channel_dir, session_id)
 
 
 def heartbeat_minutes(channel_dir: Path) -> int:
@@ -127,10 +167,13 @@ def heartbeat_minutes(channel_dir: Path) -> int:
 
 
 def _atomic_write(path: Path, obj: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / f".{path.name}.tmp.{os.getpid()}"
+    resolved = Path(path).expanduser().resolve(strict=False)
+    if ".rally" in resolved.parts:
+        raise ValueError("Build Loop sidecars cannot be stored under .rally")
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    tmp = resolved.parent / f".{resolved.name}.tmp.{os.getpid()}"
     tmp.write_text(json.dumps(obj, separators=(",", ":")))
-    os.replace(str(tmp), str(path))
+    os.replace(str(tmp), str(resolved))
 
 
 def parse_spawned(value: str | dict | None) -> dict:
@@ -189,7 +232,7 @@ def write_presence(
     pid: int | None = None,
     host: str | None = None,
     planned_heartbeat_secs: int | None = None,
-) -> None:
+) -> bool:
     """Write/refresh presence (overwrite-in-place). Preserves the cursor.
 
     ``cwd`` (optional) — the working directory whose branch state should
@@ -205,7 +248,9 @@ def write_presence(
     or dict), ``pid``/``host`` (where it runs; default to this process).
     Every call writes ``last_seen`` (epoch) — presence is the heartbeat.
 
-    Fire-and-forget: never raises, never blocks the host action.
+    Never raises or blocks the host action. Returns ``True`` only after the
+    exact presence file is durably replaced; rejected paths and I/O failures
+    return ``False`` so adapters cannot emit a false acknowledgement.
     """
     try:
         p = _presence_path(channel_dir, session_id)
@@ -250,8 +295,9 @@ def write_presence(
         # Absent when no state.execution.build_loop_id — presence proceeds.
         rec.update(rally_fields_for(cwd if cwd is not None else Path.cwd()))
         _atomic_write(p, rec)
+        return True
     except Exception:  # noqa: BLE001 — fire-and-forget
-        return
+        return False
 
 
 def _iter_presence(channel_dir: Path):
@@ -281,6 +327,8 @@ def _read_sha_cache(channel_dir: Path) -> dict:
 
 def _write_sha_cache(channel_dir: Path, cache: dict) -> None:
     try:
+        if ".rally" in Path(channel_dir).expanduser().resolve(strict=False).parts:
+            return
         _atomic_write(_sha_cache_path(channel_dir), cache)
     except (OSError, ValueError, TypeError):
         return
@@ -531,6 +579,8 @@ def set_cursor(
     readers are thus first-class, not a special case.
     """
     try:
+        if ".rally" in Path(channel_dir).expanduser().resolve(strict=False).parts:
+            return
         p = _presence_path(channel_dir, session_id)
         try:
             rec = json.loads(p.read_text())

@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -42,16 +44,100 @@ import agent_rally  # noqa: E402
 # build-loop-memory/lessons/2026-05-31-coordination-process-leak.md.
 _DEFAULT_MAX_LIFETIME_SECONDS = 14400.0
 _ENV_MAX_LIFETIME = "BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS"
+_MAX_SNAPSHOT_BYTES = 64 * 1024
+
+
+def _bounded_snapshot_bytes(event: dict[str, Any]) -> bytes:
+    """Serialize one latest-event snapshot within a hard byte ceiling."""
+    encoded = (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(encoded) <= _MAX_SNAPSHOT_BYTES:
+        return encoded
+    summary = {
+        "event": str(event.get("event") or "watcher_event")[:128],
+        "status": str(event.get("status") or "")[:128],
+        "revision": event.get("revision")
+        if isinstance(event.get("revision"), int)
+        else None,
+        "snapshot_truncated": True,
+        "original_bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+    bounded = (json.dumps(summary, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(bounded) > _MAX_SNAPSHOT_BYTES:  # defensive invariant
+        raise ValueError("watcher snapshot summary exceeds byte ceiling")
+    return bounded
+
+
+def _write_latest_snapshot(path: Path, event: dict[str, Any]) -> None:
+    """Atomically replace a fixed-size latest-event snapshot.
+
+    Detached watchers can observe arbitrarily many transitions during their
+    lifetime. Replacing one bounded snapshot avoids an append-only per-session
+    log while retaining the latest state (or a digest when that state is huge).
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = _bounded_snapshot_bytes(event)
+    temp = target.with_name(f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            offset = 0
+            while offset < len(data):
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("zero-byte watcher snapshot write")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temp, target)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _emit_event(event: dict[str, Any], args: argparse.Namespace) -> None:
+    snapshot_file = getattr(args, "snapshot_file", None)
+    if snapshot_file:
+        try:
+            _write_latest_snapshot(Path(snapshot_file), event)
+        except OSError:
+            # Watchers are advisory. A snapshot failure must not turn one
+            # notification problem into a polling/process lifecycle problem.
+            pass
+        return
+    if args.jsonl:
+        print(json.dumps(event, separators=(",", ":")), flush=True)
+    else:
+        print(json.dumps(event, indent=2, sort_keys=True), flush=True)
+
+
+def _positive_finite_seconds(raw: str | float) -> float:
+    """Parse a finite duration greater than zero for argparse."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "max lifetime must be a finite number greater than zero"
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(
+            "max lifetime must be a finite number greater than zero"
+        )
+    return value
 
 
 def _env_max_lifetime() -> float:
-    """Read env-var default for max-lifetime; fall back on parse error."""
+    """Read env-var default; reject invalid or unsafe durations."""
     raw = os.environ.get(_ENV_MAX_LIFETIME)
     if raw is None:
         return _DEFAULT_MAX_LIFETIME_SECONDS
     try:
-        return float(raw)
-    except (TypeError, ValueError):
+        return _positive_finite_seconds(raw)
+    except argparse.ArgumentTypeError:
         return _DEFAULT_MAX_LIFETIME_SECONDS
 
 
@@ -164,6 +250,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--interval", type=float, default=3.0)
     p.add_argument("--iterations", type=int, default=0, help="0 = forever")
     p.add_argument("--jsonl", action="store_true")
+    p.add_argument(
+        "--snapshot-file",
+        default=None,
+        help=(
+            "Atomically replace one bounded latest-event snapshot instead of "
+            "writing an append-only stdout stream. Used by detached watchers."
+        ),
+    )
     p.add_argument("--workdir", default=".")
     p.add_argument("--session-id", required=True)
     p.add_argument("--tool", default="claude_code")
@@ -219,7 +313,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--max-lifetime-seconds",
-        type=float,
+        type=_positive_finite_seconds,
         default=None,
         help=(
             "Absolute lifetime backstop. The watcher self-exits after this "
@@ -260,10 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.exit_on_wake_due:
             wake_event = _wake_due_event(args)
             if wake_event:
-                if args.jsonl:
-                    print(json.dumps(wake_event, separators=(",", ":")), flush=True)
-                else:
-                    print(json.dumps(wake_event, indent=2, sort_keys=True), flush=True)
+                _emit_event(wake_event, args)
                 return 0
         status = coordination_status.build_status(args)
         sig = _signature(status)
@@ -288,10 +379,7 @@ def main(argv: list[str] | None = None) -> int:
                 "task_heartbeat": status.get("task_heartbeat", {}),
                 "new_change_revisions": _change_revisions(status),
             }
-            if args.jsonl:
-                print(json.dumps(event, separators=(",", ":")), flush=True)
-            else:
-                print(json.dumps(event, indent=2, sort_keys=True), flush=True)
+            _emit_event(event, args)
             last_sig = sig
             if args.exit_on_change:
                 return 0

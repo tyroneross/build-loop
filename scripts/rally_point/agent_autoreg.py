@@ -52,11 +52,25 @@ if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
 
 try:  # package import
-    from . import lifecycle, presence
-    from .discovery_bridge import resolve as _bridge_resolve
+    from . import actor_identity, lifecycle, presence
+    from .backend_adapter import (
+        NativeResult,
+        invoke_native,
+        recent,
+        resolve_context,
+        status_post,
+        write_presence as write_backend_presence,
+    )
 except ImportError:  # script import
-    from rally_point import lifecycle, presence  # type: ignore
-    from rally_point.discovery_bridge import resolve as _bridge_resolve  # type: ignore
+    from rally_point import actor_identity, lifecycle, presence  # type: ignore
+    from rally_point.backend_adapter import (  # type: ignore
+        NativeResult,
+        invoke_native,
+        recent,
+        resolve_context,
+        status_post,
+        write_presence as write_backend_presence,
+    )
 
 # Identity env vars the spawner sets so children self-register with no args.
 ENV_PARENT = "RALLY_PARENT_SESSION"
@@ -80,20 +94,39 @@ def child_session_id(agent_type: str) -> str:
     listing; the CSPRNG suffix (per SEC-007) avoids forgery/collision in
     the shared multi-peer channel.
     """
+    return f"{agent_tool_id(agent_type)}-{secrets.token_hex(6)}"
+
+
+def agent_tool_id(agent_type: str) -> str:
+    """Return the fallback/base tool label for an agent type."""
     safe = (agent_type or "subagent").replace("_", "-").replace(" ", "-").lower()
-    return f"agent:{safe}-{secrets.token_hex(6)}"
+    return f"agent:{safe}"
+
+
+def native_agent_tool_id(agent_type: str, session_id: str) -> str:
+    """Return one native Rally actor per spawned child session."""
+    agent_label = agent_tool_id(agent_type).split(":", 1)[1]
+    return actor_identity.native_tool_id("agent", f"{agent_label}-{session_id}")
 
 
 def _resolve_channel(workdir: Path):
-    """Return ``(app_slug, channel_dir)`` or ``None`` when unresolvable."""
+    """Return the authoritative backend context or ``None``."""
     try:
-        env = _bridge_resolve(workdir)
-        channel_dir = Path(env.channel_dir)
-        if env.resolved_via == "build-loop-internal":
-            channel_dir.mkdir(parents=True, exist_ok=True)
-        return env.app_slug, channel_dir
+        context = resolve_context(workdir)
+        if context.envelope.backend == "build-loop-local":
+            context.local_channel_dir.mkdir(parents=True, exist_ok=True)
+        return context
     except Exception:  # noqa: BLE001 — fire-and-forget
         return None
+
+
+def _surface_coordination_refusal(context, operation: str) -> None:
+    envelope = context.envelope
+    print(
+        f"rally: {operation} refused: {envelope.refusal_reason}; "
+        f"remedy: {envelope.refusal_remedy}",
+        file=sys.stderr,
+    )
 
 
 def register(
@@ -112,7 +145,9 @@ def register(
     spawner (``RALLY_PARENT_SESSION``, ``RALLY_POINT_RUN_ID`` /
     ``BUILD_LOOP_RUN_ID``, ``RALLY_POINT_MODEL``) then defaults. The child
     is written with ``parent`` linked so ``roster.build_roster`` nests it.
-    ``tool`` is recorded as ``agent:<agent_type>`` for at-a-glance origin.
+    Local fallback records the normalized ``agent:<agent-type>`` label. Native
+    Rally adds the child session to that label so concurrently-live children
+    have distinct routing actors.
 
     Fire-and-forget — never raises; returns "" on any failure so a
     registration problem can never break the subagent's actual task.
@@ -122,16 +157,24 @@ def register(
         resolved = _resolve_channel(wd)
         if resolved is None:
             return ""
-        slug, channel_dir = resolved
+        context = resolved
+        slug = context.envelope.app_slug
         sid = session_id or child_session_id(agent_type)
         parent = parent or _env(ENV_PARENT)
         run_id = run_id or _env(ENV_RUN_ID, "BUILD_LOOP_RUN_ID", default="unknown")
         model = model or _env(ENV_MODEL, default="unknown")
         task = task or agent_type
-        presence.write_presence(
-            channel_dir,
+        tool_id = (
+            native_agent_tool_id(agent_type, sid)
+            if context.native
+            else agent_tool_id(agent_type)
+        )
+        result = write_backend_presence(
+            context,
             session_id=sid,
-            tool=f"agent:{agent_type}",
+            tool=tool_id,
+            local_session_id=sid,
+            local_tool=agent_tool_id(agent_type),
             model=model or "unknown",
             run_id=run_id or "unknown",
             app_slug=slug,
@@ -139,27 +182,219 @@ def register(
             cwd=wd,
             task=task,
             parent=parent,
+            tier="executing",
         )
-        return sid
+        return sid if result.ok else ""
     except Exception:  # noqa: BLE001 — fire-and-forget
         return ""
 
 
 def deregister(session_id: str, *, workdir: str | Path | None = None) -> bool:
-    """Reap a child's presence file on completion. True if a file was removed.
+    """Close a child's presence on completion. True when it is now closed.
 
-    Fire-and-forget. Idempotent — reusing ``lifecycle.reap_my_sessions``,
-    which the orchestrator's Phase D closeout already calls.
+    Native Rally appends one exact-session ``state=done`` fact; the Build Loop
+    fallback reuses ``lifecycle.reap_my_sessions`` to remove its local file.
+    Both paths are fire-and-forget and idempotent.
     """
     try:
         wd = Path(workdir).expanduser().resolve() if workdir else Path.cwd()
         resolved = _resolve_channel(wd)
         if resolved is None:
             return False
-        _slug, channel_dir = resolved
-        return lifecycle.reap_my_sessions(channel_dir, session_id) > 0
+        context = resolved
+        if context.native:
+            state, tool, protocol_session_id = _native_session_presence_state(
+                context,
+                session_id=session_id,
+            )
+            if not tool:
+                return False
+            if state == "done":
+                return True
+            if state != "active":
+                return False
+            stopped = status_post(
+                context,
+                tool=tool,
+                session_id=session_id,
+                state="done",
+            )
+            stopped = _accept_exact_done_fact(
+                stopped,
+                tool=tool,
+                protocol_session_id=protocol_session_id,
+            )
+            return stopped.ok
+        if context.envelope.backend != "build-loop-local":
+            _surface_coordination_refusal(context, "subagent deregistration")
+            return False
+        return lifecycle.reap_my_sessions(context.local_channel_dir, session_id) > 0
     except Exception:  # noqa: BLE001 — fire-and-forget
         return False
+
+
+def _native_session_presence_state(
+    context,
+    *,
+    session_id: str,
+    limit: int = 500,
+) -> tuple[str, str | None, str | None]:
+    """Return ``active|done`` only when bounded native history proves it.
+
+    Rally's squad and status projections are tool-wide.  Deregistration needs
+    exact ``from_session_id`` state, and therefore refuses a saturated or
+    malformed recent window instead of converting an old presence into a new
+    ``done`` fact.
+    """
+    identity = invoke_native(
+        context,
+        ["whoami", "--json", "--tool", "agent-autoreg"],
+        expected_schema="agent-rally.command.whoami.v1",
+        tool="agent-autoreg",
+        session_id=session_id,
+    )
+    if not identity.ok or not isinstance(identity.payload, dict):
+        return "unproven", None, None
+    identity_data = identity.payload.get("data")
+    whoami_outer = identity_data.get("whoami") if isinstance(identity_data, dict) else None
+    whoami = (
+        whoami_outer.get("whoami")
+        if isinstance(whoami_outer, dict)
+        and isinstance(whoami_outer.get("whoami"), dict)
+        else whoami_outer
+    )
+    identity_fields = (
+        whoami.get("session_identity") if isinstance(whoami, dict) else None
+    )
+    protocol_session_id = (
+        identity_fields.get("session_id")
+        if isinstance(identity_fields, dict)
+        else None
+    )
+    if not isinstance(protocol_session_id, str) or not protocol_session_id.strip():
+        return "unproven", None, None
+
+    result = recent(context, limit=limit)
+    if not result.ok or not isinstance(result.payload, dict):
+        return "unproven", None, protocol_session_id
+    data = result.payload.get("data")
+    recent_data = data.get("recent") if isinstance(data, dict) else None
+    rows = recent_data.get("rows") if isinstance(recent_data, dict) else None
+    if not isinstance(rows, list) or len(rows) >= limit:
+        state = "visibility_incomplete" if isinstance(rows, list) else "unproven"
+        return state, None, protocol_session_id
+
+    matches: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("fact"), dict):
+            return "unproven", None, protocol_session_id
+        fact = row["fact"]
+        if (
+            fact.get("kind") == "presence"
+            and fact.get("from_session_id") == protocol_session_id
+        ):
+            matches.append(fact)
+    if not matches or any(type(fact.get("seq")) is not int for fact in matches):
+        return (
+            ("not_found", None, protocol_session_id)
+            if not matches
+            else ("unproven", None, protocol_session_id)
+        )
+    tools = {
+        str(fact.get("tool"))
+        for fact in matches
+        if str(fact.get("tool") or "").strip()
+    }
+    if len(tools) != 1:
+        return "unproven", None, protocol_session_id
+    tool = next(iter(tools))
+    latest_seq = max(int(fact["seq"]) for fact in matches)
+    latest = [fact for fact in matches if fact.get("seq") == latest_seq]
+    if len(latest) != 1:
+        return "unproven", None, protocol_session_id
+
+    markers: dict[str, str] = {}
+    for segment in str(latest[0].get("subject") or "").split("|"):
+        key, separator, value = segment.strip().partition("=")
+        if separator:
+            markers[key.strip()] = value.strip()
+    state = markers.get("state")
+    if state == "done":
+        return "done", tool, protocol_session_id
+    if state in {None, "working", "idle", "blocked"}:
+        return "active", tool, protocol_session_id
+    return "unproven", None, protocol_session_id
+
+
+def _accept_exact_done_fact(
+    result: NativeResult,
+    *,
+    tool: str,
+    protocol_session_id: str | None,
+) -> NativeResult:
+    """Recover an exact committed done fact after raw/canonical id mismatch."""
+    if result.ok or not protocol_session_id or not isinstance(result.payload, dict):
+        return result
+    payload = result.payload
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return result
+
+    candidates: list[dict] = []
+    if (
+        result.status == "invalid"
+        and result.returncode == 0
+        and payload.get("ok") is True
+        and payload.get("product") == "rally"
+        and payload.get("schema") == "agent-rally.command.status_post.v1"
+    ):
+        container = data.get("status_post")
+        fact = container.get("fact") if isinstance(container, dict) else None
+        if isinstance(fact, dict):
+            candidates.append(fact)
+    if (
+        result.status == "partial_commit"
+        and payload.get("product") == "rally"
+        and payload.get("command") == "partial_commit"
+        and data.get("committed") is True
+    ):
+        outcomes = data.get("append_outcomes")
+        for outcome in reversed(outcomes if isinstance(outcomes, list) else []):
+            fact = outcome.get("fact") if isinstance(outcome, dict) else None
+            if isinstance(fact, dict):
+                candidates.append(fact)
+
+    for fact in candidates:
+        if (
+            fact.get("kind") != "presence"
+            or fact.get("tool") != tool
+            or fact.get("from_session_id") != protocol_session_id
+            or type(fact.get("seq")) is not int
+            or int(fact["seq"]) <= 0
+            or not str(fact.get("event_id") or "").strip()
+        ):
+            continue
+        markers: dict[str, str] = {}
+        for segment in str(fact.get("subject") or "").split("|"):
+            key, separator, value = segment.strip().partition("=")
+            if separator:
+                markers[key.strip()] = value.strip()
+        if markers.get("state") != "done":
+            continue
+        return NativeResult(
+            "ok",
+            payload=payload,
+            returncode=result.returncode,
+            reason=(
+                "Rally committed the exact canonical session done fact; "
+                "the generic adapter compared it to the raw session id"
+            ),
+            revision=int(fact["seq"]),
+            event_id=str(fact["event_id"]),
+            backend="rally",
+            transport="rally-cli",
+        )
+    return result
 
 
 def spawn_env(

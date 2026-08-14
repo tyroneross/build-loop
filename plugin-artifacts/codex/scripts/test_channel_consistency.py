@@ -13,9 +13,11 @@ now take the resolved ``channel_dir`` directly. Every subcount in the
 envelope sources from the SAME ``channel_dir`` value the envelope
 advertises.
 
-These tests assert that invariant by writing presence + inbox +
-rejection records at distinct fake paths and confirming the status
-envelope reports them all from one root.
+These tests force Build Loop's private fallback authority, then assert the
+invariant by writing inbox + rejection records at the advertised path and
+confirming the status envelope reads every sidecar from that same root.  A
+healthy native Rally room has no Build Loop inbox/rejection sidecars, so using
+whichever Rally binary happens to be installed would test the wrong contract.
 """
 from __future__ import annotations
 
@@ -57,17 +59,20 @@ class ChannelConsistencyTests(unittest.TestCase):
 
     def _run_status(self) -> dict:
         """Run ``coordination_status.py --json`` in a stripped env so the
-        canonical-vs-legacy resolution is deterministic.
+        private-fallback resolution is deterministic.
 
-        We strip ``PYTHONPATH`` and ``AGENT_RALLY_DISCOVER`` so the
-        bridge falls back to PATH binary or internal — whichever the
-        real environment provides. The test asserts consistency
-        regardless of which source wins.
+        Native Rally intentionally exposes inbox/rejection state through its
+        CLI rather than Build Loop sidecars.  Force the private fallback so
+        this test can mutate those Build Loop-owned files without ever writing
+        inside ``.rally``.
         """
         env = {
             k: v for k, v in os.environ.items()
             if k not in {"PYTHONPATH", "AGENT_RALLY_DISCOVER"}
         }
+        env["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        env["BUILD_LOOP_DISABLE_BINARY_FETCH"] = "1"
+        env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         cmd = [
             "env", "-u", "PYTHONPATH", "-u", "AGENT_RALLY_DISCOVER",
             sys.executable, str(HERE / "coordination_status.py"),
@@ -140,10 +145,8 @@ class ChannelConsistencyTests(unittest.TestCase):
         tell whether they're on canonical or fallback."""
         envelope = self._run_status()
         self.assertIn("resolved_via", envelope)
-        self.assertIn(
-            envelope["resolved_via"],
-            {"agent-rally-point", "build-loop-internal"},
-        )
+        self.assertEqual(envelope["resolved_via"], "build-loop-internal")
+        self.assertNotIn(".rally", Path(envelope["channel_dir"]).parts)
 
 
 if __name__ == "__main__":

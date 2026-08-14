@@ -71,6 +71,8 @@ def detect_host(tool_id: str | None = None, env: dict[str, str] | None = None) -
         return "codex"
     if env.get("CLAUDE_CODE") or env.get("CLAUDECODE") or "CLAUDE_PLUGIN_ROOT" in env:
         return "claude_code"
+    if any(k.startswith("CURSOR") for k in env):
+        return "cursor"
     if any(k.startswith("GEMINI") for k in env):
         return "gemini"
     return "unknown"

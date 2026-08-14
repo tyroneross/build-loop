@@ -21,6 +21,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -28,6 +30,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import coordination_bootstrap as cb  # noqa: E402
+from rally_point import discovery_bridge as _bridge  # noqa: E402
 
 
 # Minimal template stand-in for tests that don't need the full canonical template.
@@ -63,7 +66,7 @@ class BootstrapHappyPathTests(unittest.TestCase):
         # channel_paths.app_slug(workdir) -> app_channel_dir(slug); to avoid
         # writing to the real ~/.build-loop/, monkey-patch app_channel_dir.
         from rally_point import channel_paths
-        from rally_point import discovery_bridge as _bridge
+        self._old_internal_only = os.environ.get("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
         os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
         _bridge.clear_cache()
         self._orig_app_channel_dir = channel_paths.app_channel_dir
@@ -74,6 +77,11 @@ class BootstrapHappyPathTests(unittest.TestCase):
 
     def tearDown(self):
         self._channel_paths.app_channel_dir = self._orig_app_channel_dir
+        if self._old_internal_only is None:
+            os.environ.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        else:
+            os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = self._old_internal_only
+        _bridge.clear_cache()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_happy_path_writes_coord_file_with_substitutions(self):
@@ -127,6 +135,61 @@ class BootstrapHappyPathTests(unittest.TestCase):
             Path(result["coord_file"]).resolve(),
             custom.resolve(),
         )
+
+    def test_native_bootstrap_uses_session_actor_and_base_host_payload(self):
+        native = SimpleNamespace(
+            app_slug="native-bootstrap",
+            channel_dir=str(self.workdir / ".rally"),
+            backend="rally",
+            transport="rally-cli",
+        )
+        context = SimpleNamespace(
+            envelope=native,
+            local_channel_dir=self.workdir / ".build-loop" / "local-rally",
+            native=True,
+        )
+        presence_result = SimpleNamespace(
+            ok=True,
+            status="ok",
+            reason=None,
+            backend="rally",
+            transport="rally-cli",
+        )
+
+        def native_post(**kwargs):
+            kwargs["outcome"].update(
+                status="posted", backend="rally", transport="rally-cli"
+            )
+            return 8
+
+        with mock.patch.object(cb, "resolve_context", return_value=context):
+            with mock.patch.object(
+                cb, "write_backend_presence", return_value=presence_result
+            ) as write_presence:
+                with mock.patch.object(cb, "post", side_effect=native_post) as write_post:
+                    result = cb.bootstrap(
+                        workdir=self.workdir,
+                        topic="native-identity",
+                        scope="prove stable session actor",
+                        session_id="claude-session-a",
+                        template_path=self.template_path,
+                        tool="claude_code",
+                    )
+
+        self.assertEqual(
+            write_presence.call_args.kwargs["tool"],
+            "claude_code:claude-session-a",
+        )
+        self.assertEqual(
+            write_presence.call_args.kwargs["session_id"], "claude-session-a"
+        )
+        posted = write_post.call_args.kwargs
+        self.assertEqual(posted["tool"], "claude_code:claude-session-a")
+        self.assertEqual(posted["payload"]["from"], "claude_code")
+        self.assertEqual(posted["payload"]["host_tool"], "claude_code")
+        self.assertEqual(posted["payload"]["session_id"], "claude-session-a")
+        self.assertEqual(result["tool"], "claude_code")
+        self.assertEqual(result["rally_tool"], "claude_code:claude-session-a")
 
 
 class BootstrapIdempotencyTests(unittest.TestCase):

@@ -161,7 +161,7 @@ their brief explicitly hands them a bounded implementation task.
 build-loop-memory via `python3 scripts/archive_project_plan.py <plan> --workdir
 "$PWD"`. Use `--remove-source` only after the archive write succeeds.
 
-**Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active rally-point peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Rally/coordination output is routing metadata only, not verification evidence; use it to decide who to coordinate with, then verify code/package/release facts against the authoritative source. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
+**Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active rally-point peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Rally/coordination output is routing metadata only, not verification evidence; use it to decide who to coordinate with, then verify code/package/release facts against the authoritative source. Set `TOOL_NAME` to the stable host family (`claude_code`, `codex`, `cursor`, etc.) and `SESSION_ID` to the stable host session. Build Loop qualifies that pair into an exact native Rally actor; Build Loop local fallback deliberately keeps the base tool plus session id. Run a one-shot status check first:
 
 ```bash
 python3 scripts/coordination_status.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --json
@@ -173,7 +173,7 @@ If the status has `active_peers`, `coordination_file`, `inbox_unread_count > 0`,
 python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
 ```
 
-Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, then run `python3 scripts/rally_point/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json` to read the resolved-channel inbox for `<tool>` plus the common broadcast inbox, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
+Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME" --session-id "$SESSION_ID"`, then run `python3 scripts/rally_point/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --session-id "$SESSION_ID" --json` to read the exact native actor's inbox (or the base-tool local inbox) plus the common broadcast inbox, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
 
 ## Intent Capability Pack
 
@@ -279,14 +279,36 @@ Append-only memory contract: (1) steering answers from `AskUserQuestion` append 
 
 **Parsing rule**: scan the argument string for the literal token `--resume`. The next whitespace-delimited token is the run-id (or `latest`). Anything else is part of the goal text.
 
-**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh"`. On `resume`:
+Before either path, resolve `RUNTIME_PLUGIN_ROOT` to the root of the currently
+loaded Build Loop package (the directory containing both `scripts/` and
+`skills/`). Use `BUILD_LOOP_ROOT` when the host exports it; otherwise derive the
+root from the already-resolved path of this `SKILL.md`. Do not assume a
+host-specific plugin-root environment variable, and do not use the target
+project's root unless Build Loop itself is the target.
+
+**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 "$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py" --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh" | "prompt_user"`. On `resume`:
 
 1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (already on disk — DO NOT re-derive).
 2. Dispatch build-orchestrator with prefix: `RESUME_MODE: run_id=<id>; remaining_chunks=<json>; iterate_attempt=<n>; concurrent_modifications=<json>`
 3. Agent §0 handles the rest — skips Phase 1+2, jumps to Phase 3 on `remaining_chunks` only.
 
-**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
+**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. When the host supplies a stable current session id, pass it explicitly as `--current-session-id "<id>"`; never infer ownership from heartbeat freshness. An exact session match proves continuity only, so a `decision: "resume"` result continues the existing run through the same Resume Mode path above—it never starts fresh. If the resolver returns `decision: "prompt_user"`, surface to the user verbatim:
 > "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+
+If it instead returns `decision: "abort"` with
+`required_action: "archive_legacy_crash"`, immediately rerun the resolver with
+`--archive-terminal-legacy-crash`. Proceed as a fresh run only when that second
+result returns `decision: "fresh"`, `archive_applied: true`, and
+`fresh_ready: true`. This path is limited to a schema-less crash whose terminal
+evidence the resolver revalidates under the state lock; every ambiguous or
+potentially active schema-less execution remains refused.
+
+Every other `abort` is a hard refusal: do not begin a fresh run. In particular,
+an existing nonterminal execution with a fresh, missing, timezone-less, or
+unparseable heartbeat is not fresh-run permission. An exact match between the
+explicit `--current-session-id` and `execution.current_session_id` proves only
+host/thread continuity and therefore resumes that run. It is not a unique
+invocation nonce and cannot authorize replacing the execution.
 
 This is the crash-resume staleness signal — heartbeat staleness on `state.json.execution`, no hook dependency, fires every fresh dispatch. (A crash-recovery concern, distinct from concurrent-presence collision, which is owned solely by Rally Point presence — see `KNOWN-ISSUES.md` §M4.)
 

@@ -12,6 +12,7 @@ Locks the bl-orchestrator-heartbeat-rally-presence contract:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -19,6 +20,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "orchestrator_heartbeat.py"
@@ -110,11 +113,72 @@ class TestPhaseBoundaryBeat(unittest.TestCase):
             if env["presence_beat"] == "ok":
                 channel_dir = Path(env["channel_dir"])
                 sessions = list((channel_dir / "sessions").glob("*.json")) if (channel_dir / "sessions").exists() else []
-                # The session id we wrote should be present somewhere under the channel.
-                self.assertTrue(
-                    sessions or any(channel_dir.rglob("*sess-1*")),
-                    "presence beat claimed ok but wrote no session record",
-                )
+                if env.get("backend") == "rally":
+                    self.assertFalse(
+                        sessions,
+                        "native Rally heartbeat must not create Build Loop session sidecars",
+                    )
+                else:
+                    self.assertTrue(
+                        sessions or any(channel_dir.rglob("*sess-1*")),
+                        "local presence beat claimed ok but wrote no session record",
+                    )
+
+    def test_native_beat_uses_host_session_identity_not_run_session(self) -> None:
+        import backend_adapter as adapter  # type: ignore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _project(tmp)
+            context = SimpleNamespace(
+                native=True,
+                workdir=root,
+                local_channel_dir=root / ".build-loop" / "local-rally",
+                envelope=SimpleNamespace(
+                    app_slug="native-heartbeat",
+                    channel_dir=str(root / ".rally"),
+                    backend="rally",
+                    transport="rally-cli",
+                ),
+            )
+            native_result = SimpleNamespace(
+                ok=True,
+                reason=None,
+                status="ok",
+                backend="rally",
+                transport="rally-cli",
+            )
+            execution = {"run_id": "run-one", "current_session_id": "run-session"}
+            env_update = {
+                "BUILD_LOOP_RALLY_TOOL": "cursor",
+                "CURSOR_SESSION_ID": "cursor-live-session",
+            }
+            with mock.patch.dict(os.environ, env_update, clear=False):
+                with mock.patch.object(adapter, "resolve_context", return_value=context):
+                    with mock.patch.object(
+                        adapter,
+                        "write_heartbeat_presence",
+                        return_value=native_result,
+                    ) as native_write:
+                        result = ohb._write_presence_beat(
+                            root,
+                            "execute",
+                            "chunk one",
+                            ["a.py"],
+                            execution=execution,
+                        )
+
+        self.assertEqual(
+            native_write.call_args.kwargs["tool"],
+            "cursor:cursor-live-session",
+        )
+        self.assertEqual(
+            native_write.call_args.kwargs["session_id"],
+            "cursor-live-session",
+        )
+        self.assertEqual(result["session_id"], "run-session")
+        self.assertEqual(result["rally_session_id"], "cursor-live-session")
+        self.assertEqual(result["tool"], "cursor")
+        self.assertEqual(result["rally_tool"], "cursor:cursor-live-session")
 
 
 class TestFailOpen(unittest.TestCase):
@@ -126,6 +190,20 @@ class TestFailOpen(unittest.TestCase):
             # No execution block → state heartbeat skipped, presence skipped, no raise.
             self.assertEqual(env["presence_beat"], "skipped")
             self.assertEqual(env["state_heartbeat"], "skipped")
+
+    def test_empty_execution_is_not_resurrected_or_announced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _project(tmp)
+            state_path = root / ".build-loop" / "state.json"
+            original = '{"execution": {}}\n'
+            state_path.write_text(original, encoding="utf-8")
+
+            env = ohb.beat(root, phase="assess")
+
+            self.assertEqual(env["state_heartbeat"], "skipped")
+            self.assertEqual(env["presence_beat"], "skipped")
+            self.assertEqual(env["reason"], "no active execution block")
+            self.assertEqual(state_path.read_text(encoding="utf-8"), original)
 
     def test_beat_on_missing_state_does_not_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

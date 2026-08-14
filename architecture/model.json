@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "5e00899c2804fd6c2fb7ad488cf768a9555e25d202f57bf3ee28f3ccbbe1fa5e"
+    "content_sha256": "777fb20a5776dff530f1e04cdcd2d6b94bac47f18edd5183104da12939d14989"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-11"
+          "date": "2026-08-14"
         }
       },
       "building-with-deepagents": {
@@ -1738,7 +1738,9 @@
       "scripts/question_timeout.py": "Resolve a pending operator question during an autonomous/long run.",
       "scripts/rally_merge_gate.py": "rally_merge_gate.py — pre-merge conflict gate (all agents).",
       "scripts/rally_point/__init__.py": "",
+      "scripts/rally_point/actor_identity.py": "Stable Build Loop identity for native Rally actors.",
       "scripts/rally_point/agent_autoreg.py": "Agent-tool auto-registration — make spawned subagents post rally presence.",
+      "scripts/rally_point/backend_adapter.py": "Single backend boundary for standalone Rally and Build Loop fallback state.",
       "scripts/rally_point/binary_fetch.py": "Fetch-on-install of the pinned canonical Rust ``rally`` binary.",
       "scripts/rally_point/boundary.py": "Validate the embedded agent-rally plugin boundary manifest.",
       "scripts/rally_point/build_loop_id.py": "Stable per-build-loop-run identity for Rally Point records.",
@@ -1760,6 +1762,7 @@
       "scripts/rally_point/liveness.py": "In-process ADAPTIVE, MULTI-SIGNAL session-liveness math helper.",
       "scripts/rally_point/mece_gate.py": "MECE ownership validator for handoff payloads.",
       "scripts/rally_point/orphan_notice.py": "Rally Point orphan-session NOTICE — advisory, read-only, fail-open.",
+      "scripts/rally_point/payload_codec.py": "Lossless Build Loop payloads carried through Rally's recognized evidence field.",
       "scripts/rally_point/peer_collision.py": "Peer-on-same-workdir commit-collision WARN (EC-03 rca).",
       "scripts/rally_point/post.py": "Canonical \"post a change\" helper — single operation that does the right thing.",
       "scripts/rally_point/presence.py": "Rally Point presence — live session liveness, reaper, and read cursor.",

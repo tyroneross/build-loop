@@ -19,6 +19,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import resume_resolver  # noqa: E402
 from resume_resolver import resolve  # noqa: E402
 from write_run_entry import update_execution_state  # noqa: E402
 from write_subagent_result import write_subagent_result  # noqa: E402
@@ -37,6 +38,36 @@ def _setup_started_run(tmp_path: Path, *, run_id="run_test_001", queued=("c1", "
     return state_path
 
 
+def _write_terminal_legacy_crash(tmp_path: Path) -> tuple[Path, dict]:
+    """Reproduce the schema-less July crash whose run worktree recorded pass."""
+    run_id = "bl-20260728T233835Z-codex-092307"
+    run_worktree = tmp_path / ".build-loop" / "worktrees" / "run-092307"
+    execution = {
+        "build_loop_id": run_id,
+        "crash_signal": "stop_hook",
+        "crashed_at": "2026-07-29T01:06:26Z",
+        "current_session_id": "019fab14-18dc-7ee2-b3a7-550e9f3d9934",
+        "run_label": "codex#092307 2026-07-28T23:38:35.091646Z",
+        "run_worktree_branch": "bl/run-092307",
+        "run_worktree_path": str(run_worktree),
+        "started_at": "2026-07-28T23:38:35.091646Z",
+        "started_by_tool": "codex",
+    }
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{"run_id": run_id, "outcome": "partial", "source": "append_run"}],
+    }))
+    child_state_path = run_worktree / ".build-loop" / "state.json"
+    child_state_path.parent.mkdir(parents=True, exist_ok=True)
+    child_state_path.write_text(json.dumps({
+        "execution": dict(execution),
+        "runs": [{"run_id": run_id, "outcome": "pass", "phases": {"6": {"status": "pass"}}}],
+    }))
+    return state_path, execution
+
+
 def test_no_state_json_no_resume_returns_fresh(tmp_path):
     env = resolve(tmp_path, "")
     assert env["decision"] == "fresh"
@@ -46,6 +77,61 @@ def test_no_state_json_no_resume_returns_fresh(tmp_path):
 def test_no_state_json_with_resume_aborts(tmp_path):
     env = resolve(tmp_path, "run_doesnotexist")
     assert env["decision"] == "abort"
+
+
+def test_malformed_state_json_aborts_instead_of_looking_absent(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text('{"execution":')
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "invalid JSON" in env["reason"]
+
+
+@pytest.mark.parametrize("payload", [[], None, "state"])
+def test_non_object_state_json_aborts(tmp_path, payload):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(payload))
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "must contain a JSON object" in env["reason"]
+
+
+def test_unreadable_state_path_aborts_instead_of_looking_absent(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.mkdir(parents=True)
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "cannot read existing" in env["reason"]
+
+
+def test_dangling_state_symlink_aborts_instead_of_looking_absent(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.symlink_to(tmp_path / "missing-state.json")
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "dangling symlink" in env["reason"]
+
+
+def test_non_object_execution_aborts(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"execution": ["not", "an", "object"]}))
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "must be a JSON object" in env["reason"]
 
 
 def test_empty_execution_without_resume_returns_fresh(tmp_path):
@@ -70,12 +156,229 @@ def test_empty_execution_with_resume_reports_no_execution_block(tmp_path):
     assert env["reason"] == "no execution block to resume from"
 
 
-def test_no_resume_no_stale_heartbeat_returns_fresh(tmp_path):
+def test_terminal_schema_less_crash_requires_archive_before_fresh(tmp_path):
+    state_path, execution = _write_terminal_legacy_crash(tmp_path)
+    before = state_path.read_bytes()
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert env["run_id"] == execution["build_loop_id"]
+    assert env["required_action"] == "archive_legacy_crash"
+    assert env["fresh_ready"] is False
+    assert env["archive_applied"] is False
+    assert env["legacy_crash"]["classification"] == "terminal_legacy_crash"
+    assert "run_worktree.state.runs records outcome=pass" in env["legacy_crash"]["evidence"]
+    assert state_path.read_bytes() == before  # classification is read-only
+
+
+def test_archive_terminal_schema_less_crash_clears_identity_atomically(tmp_path):
+    state_path, execution = _write_terminal_legacy_crash(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "resume_resolver.py"),
+            "--workdir", str(tmp_path),
+            "--resume-arg", "",
+            "--archive-terminal-legacy-crash",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    env = json.loads(result.stdout)
+    assert env["decision"] == "fresh"
+    assert env["archive_applied"] is True
+    assert env["fresh_ready"] is True
+    state = json.loads(state_path.read_text())
+    assert state["execution"] == {}
+    assert state["historicalExecutions"][-1] == execution
+    assert state["runs"][0]["outcome"] == "partial"
+
+
+def test_schema_less_crash_with_live_worktree_remains_refused(tmp_path):
+    run_worktree = tmp_path / ".build-loop" / "worktrees" / "run-live"
+    run_worktree.mkdir(parents=True)
+    _make_git_repo(run_worktree)
+    state_path = tmp_path / ".build-loop" / "state.json"
+    execution = {
+        "build_loop_id": "bl-live-legacy",
+        "crash_signal": "stop_hook",
+        "crashed_at": "2026-07-29T01:06:26Z",
+        "run_worktree_path": str(run_worktree),
+    }
+    state_path.write_text(json.dumps({"execution": execution}))
+
+    env = resolve(tmp_path, "")
+    apply_env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["classification"] == "ambiguous_or_potentially_active"
+    assert apply_env["decision"] == "abort"
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_absent_managed_worktree_is_archivable(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "execution": {
+            "build_loop_id": "bl-dead-legacy",
+            "crashed_at": "2026-07-29T01:06:26Z",
+            "run_worktree_path": str(tmp_path / ".build-loop" / "worktrees" / "gone"),
+        }
+    }))
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert env["required_action"] == "archive_legacy_crash"
+    assert "absent or dead" in " ".join(env["legacy_crash"]["evidence"])
+
+
+def test_no_resume_fresh_heartbeat_without_owner_aborts(tmp_path):
     _setup_started_run(tmp_path)
     # Heartbeat is fresh-ish — call resolve with a "now" only 30s after start
     now = datetime(2026, 5, 6, 10, 0, 30, tzinfo=timezone.utc)
     env = resolve(tmp_path, "", now=now)
-    assert env["decision"] == "fresh"
+    assert env["decision"] == "abort"
+    assert "ownership is unproven" in env["reason"]
+
+
+def test_no_resume_same_session_continues_existing_run_never_starts_fresh(tmp_path):
+    state_path = _setup_started_run(tmp_path, run_id="run_owned")
+    state = json.loads(state_path.read_text())
+    state["execution"]["current_session_id"] = "session-current"
+    state_path.write_text(json.dumps(state))
+
+    env = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 5, 6, 10, 0, 30, tzinfo=timezone.utc),
+        current_session_id="session-current",
+    )
+    wrong_owner = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 5, 6, 10, 0, 30, tzinfo=timezone.utc),
+        current_session_id="session-other",
+    )
+
+    assert env["decision"] == "resume"
+    assert env["session_continuity_verified"] is True
+    assert env["ownership_verified"] is False
+    assert env["run_id"] == "run_owned"
+    assert {row["chunk_id"] for row in env["remaining_chunks"]} == {"c1", "c2", "c3", "c4"}
+    assert wrong_owner["decision"] == "abort"
+    assert wrong_owner["ownership_verified"] is False
+
+
+@pytest.mark.parametrize(
+    ("host_marker", "host_value"),
+    [("CODEX_HOME", "/tmp/codex"), ("CURSOR_SESSION_ID", "cursor-test")],
+)
+def test_resume_cli_uses_host_neutral_runtime_root_without_claude_env(
+    tmp_path, host_marker, host_value
+):
+    env = os.environ.copy()
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env["BUILD_LOOP_ROOT"] = str(REPO_ROOT)
+    env[host_marker] = host_value
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(env["BUILD_LOOP_ROOT"]) / "scripts" / "resume_resolver.py"),
+            "--workdir",
+            str(tmp_path),
+            "--resume-arg",
+            "",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["decision"] == "fresh"
+
+
+def test_resume_docs_use_runtime_root_and_list_every_decision():
+    skill = (REPO_ROOT / "skills" / "build-loop" / "SKILL.md").read_text()
+    protocol = (REPO_ROOT / "references" / "resume-protocol.md").read_text()
+    for text in (skill, protocol):
+        assert "${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py" not in text
+        assert '$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py' in text
+    assert 'decision: "resume" | "abort" | "fresh" | "prompt_user"' in skill
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("iterate_attempt", "bad", "iterate_attempt"),
+        ("queued_chunks", None, "queued_chunks"),
+        ("in_flight_chunks", {"c1": True}, "in_flight_chunks"),
+        ("completed_chunks", None, "completed_chunks"),
+        ("file_ownership", [], "file_ownership"),
+        ("last_heartbeat_at", 123, "last_heartbeat_at"),
+    ],
+)
+def test_matching_session_malformed_schema_v1_aborts_without_traceback(
+    tmp_path, field, value, reason
+):
+    state_path = _setup_started_run(tmp_path, run_id="run_malformed")
+    state = json.loads(state_path.read_text())
+    state["execution"]["current_session_id"] = "session-current"
+    state["execution"][field] = value
+    state_path.write_text(json.dumps(state))
+
+    env = resolve(
+        tmp_path,
+        "",
+        current_session_id="session-current",
+        now=datetime(2026, 5, 6, 10, 0, 30, tzinfo=timezone.utc),
+    )
+
+    assert env["decision"] == "abort"
+    assert "invalid schema-v1 execution" in env["reason"]
+    assert reason in env["reason"]
+
+
+def test_explicit_resume_malformed_budget_counter_aborts(tmp_path):
+    state_path = _setup_started_run(tmp_path, run_id="run_bad_budget")
+    state = json.loads(state_path.read_text())
+    state["execution"]["budget"] = {
+        "started_at": "2026-05-06T10:00:00Z",
+        "deadline_at": "2026-05-06T12:00:00Z",
+        "commits_since_push": "many",
+    }
+    state_path.write_text(json.dumps(state))
+
+    env = resolve(tmp_path, "run_bad_budget")
+
+    assert env["decision"] == "abort"
+    assert "budget.commits_since_push" in env["reason"]
+
+
+@pytest.mark.parametrize("heartbeat", [None, "not-an-iso-timestamp", "2026-05-06T10:00:00"])
+def test_no_resume_missing_or_untrusted_heartbeat_aborts(tmp_path, heartbeat):
+    state_path = _setup_started_run(tmp_path, run_id="run_unknown_heartbeat")
+    state = json.loads(state_path.read_text())
+    if heartbeat is None:
+        state["execution"].pop("last_heartbeat_at")
+    else:
+        state["execution"]["last_heartbeat_at"] = heartbeat
+    state_path.write_text(json.dumps(state))
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert "missing or unparseable" in env["reason"]
+    assert env["ownership_verified"] is False
 
 
 def test_no_resume_stale_heartbeat_prompts_user(tmp_path):
@@ -175,6 +478,102 @@ def test_in_flight_with_failed_envelope_demotes(tmp_path):
     remaining = [r for r in env["remaining_chunks"] if r["chunk_id"] == "c1"]
     assert len(remaining) == 1
     assert remaining[0]["prior_status"] == "failed"
+
+
+def test_resume_ignores_malformed_subagent_result_shapes_with_warnings(tmp_path):
+    _setup_started_run(tmp_path, run_id="run_bad_results")
+    results = tmp_path / ".build-loop" / "subagent-results" / "run_bad_results"
+    results.mkdir(parents=True)
+    (results / "array.json").write_text("[]", encoding="utf-8")
+    (results / "null.json").write_text("null", encoding="utf-8")
+    (results / "broken.json").write_bytes(b"\xff\xfe")
+    (results / "mixed-attempt.json").write_text(
+        json.dumps({"chunk_id": "c1", "status": "failed", "attempt": ["bad"]}),
+        encoding="utf-8",
+    )
+
+    env = resolve(tmp_path, "run_bad_results")
+
+    assert env["decision"] == "resume"
+    assert env["envelopes"]["c1"][0]["status"] == "failed"
+    assert len(env["state_warnings"]) == 4
+    assert sum("ignored subagent result" in item for item in env["state_warnings"]) == 3
+    assert any("non-integer attempt" in item for item in env["state_warnings"])
+
+
+def test_resume_rejects_run_id_path_traversal_before_reading_results(tmp_path):
+    state_path = _setup_started_run(tmp_path, run_id="run_safe")
+    state = json.loads(state_path.read_text())
+    state["execution"]["run_id"] = "../../outside"
+    state_path.write_text(json.dumps(state))
+    outside = tmp_path.parent / "outside"
+    outside.mkdir(exist_ok=True)
+    (outside / "leak.json").write_text(
+        json.dumps({"chunk_id": "c1", "status": "fixed", "attempt": 1})
+    )
+
+    env = resolve(tmp_path, "../../outside")
+
+    assert env["decision"] == "abort"
+    assert "single safe path component" in env["reason"]
+    assert env["envelopes"] == {}
+
+
+def test_resume_bounds_subagent_result_file_size(tmp_path, monkeypatch):
+    _setup_started_run(tmp_path, run_id="run_bounded_file")
+    results = tmp_path / ".build-loop" / "subagent-results" / "run_bounded_file"
+    results.mkdir(parents=True)
+    monkeypatch.setattr(resume_resolver, "MAX_RESULT_FILE_BYTES", 128)
+    (results / "oversize.json").write_text(
+        json.dumps({"chunk_id": "c1", "status": "failed", "note": "x" * 256})
+    )
+    (results / "valid.json").write_text(
+        json.dumps({"chunk_id": "c1", "status": "failed", "attempt": 2})
+    )
+
+    env = resolve(tmp_path, "run_bounded_file")
+
+    assert len(env["envelopes"]["c1"]) == 1
+    assert any("exceeds 128 bytes" in item for item in env["state_warnings"])
+
+
+def test_resume_bounds_result_entries_and_attempts(tmp_path, monkeypatch):
+    _setup_started_run(tmp_path, run_id="run_bounded_entries")
+    results = tmp_path / ".build-loop" / "subagent-results" / "run_bounded_entries"
+    results.mkdir(parents=True)
+    monkeypatch.setattr(resume_resolver, "MAX_RESULT_FILES", 70)
+    monkeypatch.setattr(resume_resolver, "MAX_RESULT_ATTEMPTS_PER_CHUNK", 8)
+    for attempt in range(71):
+        (results / f"{attempt:03d}.json").write_text(
+            json.dumps({"chunk_id": "c1", "status": "failed", "attempt": attempt})
+        )
+
+    env = resolve(tmp_path, "run_bounded_entries")
+
+    assert len(env["envelopes"]["c1"]) == 8
+    retained_attempts = [row["attempt"] for row in env["envelopes"]["c1"]]
+    assert retained_attempts == sorted(retained_attempts)
+    assert all(0 <= attempt <= 70 for attempt in retained_attempts)
+    assert any("truncated at 70 directory entries" in item for item in env["state_warnings"])
+    assert any("retained the newest 8 attempts" in item for item in env["state_warnings"])
+
+
+def test_resume_refuses_symlinked_results_directory(tmp_path):
+    _setup_started_run(tmp_path, run_id="run_symlinked")
+    outside = tmp_path / "outside-results"
+    outside.mkdir()
+    (outside / "result.json").write_text(
+        json.dumps({"chunk_id": "c1", "status": "fixed", "attempt": 1})
+    )
+    results_root = tmp_path / ".build-loop" / "subagent-results"
+    results_root.mkdir(parents=True)
+    (results_root / "run_symlinked").symlink_to(outside, target_is_directory=True)
+
+    env = resolve(tmp_path, "run_symlinked")
+
+    assert env["decision"] == "resume"
+    assert env["envelopes"] == {}
+    assert any("symlinks are not trusted" in item for item in env["state_warnings"])
 
 
 def test_resume_latest_resolves_to_actual_run_id(tmp_path):

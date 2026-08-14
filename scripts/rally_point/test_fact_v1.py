@@ -24,6 +24,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import fact_v1 as fv  # noqa: E402
+import payload_codec as codec  # noqa: E402
 import post as _post  # noqa: E402
 
 
@@ -101,6 +102,71 @@ def test_event_id_deterministic_and_stable():
     assert c["event_id"] != a["event_id"]
 
 
+def test_event_id_separates_same_second_same_subject_payloads_and_revisions():
+    common = dict(
+        kind="artifact",
+        tool="cursor",
+        model="cursor-agent",
+        run_id="r",
+        app_slug="a",
+        created_at="2026-08-14T08:00:00Z",
+    )
+    first = fv.to_fact_v1(
+        **common, payload={"subject": "same", "value": 1}, revision=7
+    )
+    changed_payload = fv.to_fact_v1(
+        **common, payload={"subject": "same", "value": 2}, revision=7
+    )
+    changed_revision = fv.to_fact_v1(
+        **common, payload={"subject": "same", "value": 1}, revision=8
+    )
+    changed_source = fv.to_fact_v1(
+        **common,
+        payload={"subject": "same", "value": 1},
+        revision=7,
+        source_record={"producer_version": "0.25.1"},
+    )
+
+    assert len(
+        {
+            first["event_id"],
+            changed_payload["event_id"],
+            changed_revision["event_id"],
+            changed_source["event_id"],
+        }
+    ) == 4
+
+
+def test_authenticated_event_preserves_exact_legacy_source_record():
+    source = {
+        "ts": 1786694400.125,
+        "kind": "phase",
+        "tool": "claude_code",
+        "model": "opus",
+        "run_id": "legacy-run",
+        "app_slug": "build-loop",
+        "payload": {"phase": "review", "nullable": None, "unicode": "café"},
+        "revision": 9,
+        "producer_name": "build-loop",
+        "producer_commit_sha": None,
+    }
+    fact = fv.to_fact_v1(
+        kind=source["kind"],
+        tool=source["tool"],
+        model=source["model"],
+        run_id=source["run_id"],
+        app_slug=source["app_slug"],
+        payload=source["payload"],
+        revision=source["revision"],
+        source_record=source,
+        created_at="2026-08-14T08:00:00Z",
+    )
+
+    event = codec.decode_event(fact["evidence"])
+    assert event is not None
+    assert event["source_record"] == source
+
+
 def test_read_receipt_coerced_not_emitted_as_kind():
     # Build-loop fallback must never emit read/receipt; a stray call coerces to artifact.
     for kind in ("read", "receipt"):
@@ -126,7 +192,7 @@ def test_scope_and_evidence_always_lists():
 def test_write_and_json_roundtrip(chan: Path):
     f = fv.to_fact_v1(kind="handoff", tool="claude", model="opus", run_id="r1",
                       app_slug="app", payload={"subject": "hello", "to": "codex"}, revision=3)
-    fv.write_fact_v1_line(chan, f)
+    assert fv.write_fact_v1_line(chan, f) is True
     lines = (chan / "changes.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     parsed = json.loads(lines[0])
@@ -134,6 +200,188 @@ def test_write_and_json_roundtrip(chan: Path):
     assert parsed["kind"] == "handoff"
     assert parsed["target"] == "codex"
     assert parsed["bl_revision"] == 3
+
+
+def test_write_handles_partial_os_write(chan: Path, monkeypatch):
+    f = fv.to_fact_v1(
+        kind="artifact",
+        tool="cursor",
+        model="cursor-agent",
+        run_id="partial-write",
+        app_slug="app",
+        payload={"subject": "complete me"},
+        revision=1,
+    )
+    real_write = fv.os.write
+
+    def partial_write(fd: int, data: bytes) -> int:
+        return real_write(fd, data[:7])
+
+    monkeypatch.setattr(fv.os, "write", partial_write)
+    assert fv.write_fact_v1_line(chan, f) is True
+    parsed = json.loads((chan / "changes.jsonl").read_text(encoding="utf-8"))
+    assert parsed["event_id"] == f["event_id"]
+
+
+def test_write_quarantines_torn_tail_before_next_fact(chan: Path):
+    torn = b'{"schema":"agent-rally.fact.v1","event_id":'
+    (chan / "changes.jsonl").write_bytes(torn)
+    f = fv.to_fact_v1(
+        kind="artifact",
+        tool="codex",
+        model="gpt-5",
+        run_id="tail-recovery",
+        app_slug="app",
+        payload={"subject": "after crash"},
+        revision=1,
+    )
+
+    assert fv.write_fact_v1_line(chan, f) is True
+    lines = (chan / "changes.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["event_id"] == f["event_id"]
+    quarantined = list((chan / "corrupt-tails").glob("*.partial"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == torn
+
+
+def test_repeated_torn_tail_repairs_bound_quarantine_and_keep_newest(
+    chan: Path, monkeypatch
+):
+    monkeypatch.setattr(fv, "_CORRUPT_TAIL_MAX_FILES", 3)
+    monkeypatch.setattr(fv, "_CORRUPT_TAIL_MAX_BYTES", 50)
+
+    for revision in range(1, 9):
+        torn = (f"tail-{revision}-" + ("x" * 12)).encode("utf-8")
+        with (chan / "changes.jsonl").open("ab") as stream:
+            stream.write(torn)
+        fact = fv.to_fact_v1(
+            kind="artifact",
+            tool="codex",
+            model="gpt-5",
+            run_id="tail-retention",
+            app_slug="app",
+            payload={"subject": f"repair {revision}"},
+            revision=revision,
+        )
+        assert fv.write_fact_v1_line(chan, fact) is True
+
+    quarantined = list((chan / "corrupt-tails").glob("*.partial"))
+    assert len(quarantined) <= 3
+    assert sum(path.stat().st_size for path in quarantined) <= 50
+    assert any(path.read_bytes().startswith(b"tail-8-") for path in quarantined)
+
+
+def test_large_torn_tail_evidence_is_capped(chan: Path, monkeypatch):
+    monkeypatch.setattr(fv, "_CORRUPT_TAIL_MAX_FILES", 2)
+    monkeypatch.setattr(fv, "_CORRUPT_TAIL_MAX_BYTES", 64)
+    (chan / "changes.jsonl").write_bytes(b"x" * 4096)
+    fact = fv.to_fact_v1(
+        kind="artifact",
+        tool="codex",
+        model="gpt-5",
+        run_id="large-tail",
+        app_slug="app",
+        payload={"subject": "bounded evidence"},
+        revision=1,
+    )
+
+    assert fv.write_fact_v1_line(chan, fact) is True
+    quarantined = list((chan / "corrupt-tails").glob("*.partial"))
+    assert len(quarantined) == 1
+    assert quarantined[0].stat().st_size == 64
+
+
+def test_post_does_not_report_success_when_fallback_append_fails(
+    chan: Path, monkeypatch
+):
+    def disk_full(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(fv, "_append_line_locked", disk_full)
+    outcome: dict = {}
+    revision = _post.post(
+        channel_dir=chan,
+        kind="artifact",
+        tool="codex",
+        model="gpt-5",
+        run_id="disk-full",
+        app_slug="app",
+        payload={"subject": "must not acknowledge"},
+        outcome=outcome,
+    )
+
+    assert revision is None
+    assert outcome["status"] == "failed"
+    assert outcome["backend"] == "build-loop-local"
+    assert not (chan / "revision").exists()
+    assert not (chan / "changes.jsonl").exists()
+
+
+def test_transaction_treats_revision_file_failure_as_committed(
+    chan: Path, monkeypatch
+):
+    def fact_for(revision: int) -> dict:
+        return fv.to_fact_v1(
+            kind="artifact",
+            tool="codex",
+            model="gpt-5",
+            run_id="revision-publish-failure",
+            app_slug="app",
+            payload={"subject": "durable fact wins"},
+            revision=revision,
+        )
+
+    real_replace = fv.os.replace
+
+    def fail_revision_replace(source, target):
+        if Path(target).name == "revision":
+            raise OSError("read-only revision pointer")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(fv.os, "replace", fail_revision_replace)
+    transaction = fv.append_fact_v1_transaction(chan, fact_for)
+
+    assert transaction is not None
+    revision, fact = transaction
+    assert revision == 1
+    assert json.loads((chan / "changes.jsonl").read_text())["event_id"] == fact["event_id"]
+    assert not (chan / "revision").exists()
+    # Recovery derives the published revision from the durable fact itself.
+    from revision import read_revision
+
+    assert read_revision(chan) == 1
+
+
+def test_transaction_serializes_revisions_across_processes(chan: Path):
+    script = (
+        "import json, pathlib, sys; sys.path.insert(0, %r); "
+        "import fact_v1 as f; d=pathlib.Path(sys.argv[1]); "
+        "r=f.append_fact_v1_transaction(d, lambda n: {"
+        "'schema':f.FACT_SCHEMA,'seq':0,'event_id':'evt-'+sys.argv[2],"
+        "'kind':'artifact','tool':'codex','created_at':'2026-08-14T00:00:00Z',"
+        "'subject':'concurrent','scope':[],'evidence':[],'bl_revision':n}); "
+        "print(json.dumps(r[0] if r else None))"
+    ) % str(_HERE)
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(chan), str(index)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(8)
+    ]
+    results = [proc.communicate(timeout=10) for proc in procs]
+    assert all(proc.returncode == 0 for proc in procs), results
+    returned = sorted(json.loads(stdout) for stdout, _stderr in results)
+    rows = [
+        json.loads(line)
+        for line in (chan / "changes.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert returned == list(range(1, 9))
+    assert [row["bl_revision"] for row in rows] == list(range(1, 9))
+    assert (chan / "revision").read_text(encoding="utf-8") == "8"
 
 
 def test_independence_no_rally_binary():

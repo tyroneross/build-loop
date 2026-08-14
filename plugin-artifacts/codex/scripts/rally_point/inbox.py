@@ -20,10 +20,25 @@ from pathlib import Path
 from typing import Any
 
 try:  # package import
-    from . import channel_paths
+    from . import actor_identity, channel_paths
+    from .backend_adapter import (
+        acknowledge as native_acknowledge,
+        native_inbox_snapshot,
+        recent as native_recent,
+        resolve_context,
+        room_snapshot,
+    )
     from .build_loop_id import rally_fields_for
 except ImportError:  # script import
+    import actor_identity  # type: ignore
     import channel_paths  # type: ignore
+    from backend_adapter import (  # type: ignore
+        acknowledge as native_acknowledge,
+        native_inbox_snapshot,
+        recent as native_recent,
+        resolve_context,
+        room_snapshot,
+    )
     from build_loop_id import rally_fields_for  # type: ignore
 
 _INBOX_DIR = "inbox"
@@ -97,7 +112,10 @@ def write_message(
     legacy inbox. The mirror is fire-and-forget — any failure is
     swallowed and never raises.
     """
-    path = inbox_path(Path(channel_dir), recipient)
+    resolved_channel = Path(channel_dir).expanduser().resolve(strict=False)
+    if ".rally" in resolved_channel.parts:
+        raise ValueError("Build Loop inbox sidecars are forbidden inside .rally")
+    path = inbox_path(resolved_channel, recipient)
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = make_message(
         sender=sender,
@@ -175,6 +193,8 @@ def send_to_tool(
     app_slug: str | None = None,
     mirror_to_channel: bool = True,
     workdir: Path | None = None,
+    local_sender: str | None = None,
+    local_recipient: str | None = None,
 ) -> dict[str, Any]:
     """Write a targeted inbox message and optionally mirror it to changes.jsonl.
 
@@ -187,6 +207,111 @@ def send_to_tool(
     policy. Fire-and-forget; the dual-write never blocks the canonical
     operation.
     """
+    context = resolve_context(workdir) if workdir is not None else None
+    actual_backend = context.envelope.backend if context is not None else None
+    if context is not None and context.envelope.coordination_unavailable:
+        return {
+            "inbox": None,
+            "written": False,
+            "channel_revision": None,
+            "backend": "unavailable",
+            "reason": context.envelope.coordination_unavailable,
+        }
+    if context is not None and context.native:
+        try:
+            try:
+                from .post import post
+            except ImportError:
+                from post import post  # type: ignore
+            native_identity = actor_identity.resolve_identity(
+                sender,
+                (payload or {}).get("session_id"),
+            )
+            fallback_sender = local_sender or native_identity.base_tool
+            fallback_recipient = (
+                _BROADCAST_TOOL
+                if recipient == _BROADCAST_TOOL
+                else local_recipient or actor_identity.base_tool(recipient)
+            )
+            local_session_id = str(
+                (payload or {}).get("session_id") or native_identity.session_id
+            )
+            event_payload: dict[str, Any] = {
+                "subject": str((payload or {}).get("subject") or kind or "message"),
+                "from": native_identity.base_tool,
+                "to": recipient,
+                "host_tool": native_identity.base_tool,
+                "session_id": native_identity.session_id,
+                "requires_ack": bool(requires_ack),
+                "message_id": message_id,
+                "payload": payload or {},
+            }
+            native_kind = "handoff" if requires_ack else "message"
+            if requires_ack:
+                event_payload["ownership"] = {
+                    "owns": [],
+                    "does_not_own": ["message-only:no-file-ownership"],
+                    "allowed_tools": [],
+                    "denied_tools": [],
+                    "interface_contract": "acknowledge or respond to this targeted message",
+                    "integration_checkpoint": "sender observes the Rally read checkpoint or reply",
+                }
+            outcome: dict[str, Any] = {}
+            channel_revision = post(
+                channel_dir=Path(context.envelope.channel_dir),
+                kind=native_kind,
+                tool=native_identity.native_tool,
+                model=model,
+                run_id=run_id,
+                app_slug=context.envelope.app_slug,
+                payload=event_payload,
+                workdir=context.workdir,
+                outcome=outcome,
+                local_tool=fallback_sender,
+                local_session_id=local_session_id,
+            )
+            if channel_revision is not None and outcome.get("backend") == "rally":
+                return {
+                    "inbox": None,
+                    "written": True,
+                    "channel_revision": channel_revision,
+                    "backend": "rally",
+                }
+            if channel_revision is None or outcome.get("backend") != "build-loop-local":
+                return {
+                    "inbox": None,
+                    "written": False,
+                    "channel_revision": channel_revision,
+                    "backend": outcome.get("backend") or "rally",
+                    "status": outcome.get("status"),
+                    "reason": outcome.get("reason"),
+                    "event_id": outcome.get("event_id"),
+                    "remedy": outcome.get("remedy"),
+                }
+            # Proven pre-spawn failover: preserve the local inbox wake path;
+            # the post above already wrote the fallback audit fact.
+            channel_dir = context.local_channel_dir
+            actual_backend = "build-loop-local"
+            payload = {
+                **(payload or {}),
+                "rally_from_tool": native_identity.native_tool,
+                "rally_to_tool": recipient,
+            }
+            sender = fallback_sender
+            recipient = fallback_recipient
+            mirror_to_channel = False
+        except Exception as exc:
+            return {
+                "inbox": None,
+                "written": False,
+                "channel_revision": None,
+                "backend": "rally",
+                "reason": str(exc),
+            }
+    elif context is not None:
+        channel_dir = context.local_channel_dir
+        actual_backend = "build-loop-local"
+
     path = write_message(
         Path(channel_dir),
         sender=sender,
@@ -227,11 +352,14 @@ def send_to_tool(
             )
         except Exception:
             channel_revision = None
-    return {
+    result = {
         "inbox": str(path),
         "written": True,
         "channel_revision": channel_revision,
     }
+    if actual_backend is not None:
+        result["backend"] = actual_backend
+    return result
 
 
 def send_to_all(
@@ -247,6 +375,7 @@ def send_to_all(
     app_slug: str | None = None,
     mirror_to_channel: bool = True,
     workdir: Path | None = None,
+    local_sender: str | None = None,
 ) -> dict[str, Any]:
     """Write one common broadcast message to ``inbox/all.jsonl``."""
     return send_to_tool(
@@ -262,6 +391,7 @@ def send_to_all(
         app_slug=app_slug,
         mirror_to_channel=mirror_to_channel,
         workdir=workdir,
+        local_sender=local_sender,
     )
 
 
@@ -641,6 +771,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     write.add_argument("--workdir", default=".")
     write.add_argument("--from-tool", required=True)
     write.add_argument("--to-tool", required=True)
+    write.add_argument("--local-from-tool", default=None)
+    write.add_argument("--local-to-tool", default=None)
     write.add_argument("--payload-json", default="{}")
     write.add_argument("--kind", default="message")
     write.add_argument("--requires-ack", action="store_true")
@@ -653,12 +785,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    workdir = Path(args.workdir).expanduser().resolve()
+    context = resolve_context(workdir)
+    slug = context.envelope.app_slug
     if args.command == "write":
         try:
             payload = json.loads(args.payload_json)
         except json.JSONDecodeError:
             payload = {"message": args.payload_json}
-        slug, channel_dir = _channel_from_workdir(args.workdir, create=True)
+        channel_dir = (
+            Path(context.envelope.channel_dir)
+            if context.native else context.local_channel_dir
+        )
         result = send_to_tool(
             channel_dir,
             sender=args.from_tool,
@@ -670,45 +808,146 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id,
             app_slug=slug,
             mirror_to_channel=not args.no_channel,
-            workdir=Path(args.workdir).expanduser().resolve(),
+            workdir=workdir,
+            local_sender=args.local_from_tool,
+            local_recipient=args.local_to_tool,
         )
         out = {"app_slug": slug, **result}
     elif args.command == "read":
-        slug, channel_dir = _channel_from_workdir(args.workdir, create=False)
-        out = {
-            "app_slug": slug,
-            "tool": args.tool,
-            "messages": read_messages(channel_dir, tool=args.tool, limit=args.limit),
-        }
+        if context.native:
+            native_identity = actor_identity.resolve_identity(
+                args.tool, args.session_id
+            )
+            snapshot = room_snapshot(
+                context,
+                tool=native_identity.native_tool,
+                actor=native_identity.native_tool,
+                readers=True,
+            )
+            projected = native_inbox_snapshot(
+                snapshot,
+                tool=native_identity.native_tool,
+                recent_result=native_recent(context, limit=500),
+            )
+            out = {
+                "app_slug": slug,
+                "tool": args.tool,
+                "rally_tool": native_identity.native_tool,
+                "rally_session_id": native_identity.session_id,
+                "messages": projected["latest"][-args.limit:],
+                "backend": "rally",
+                "accepted": snapshot.ok,
+                "reason": snapshot.reason,
+                "coverage_incomplete": projected["coverage_incomplete"],
+                "coverage": projected["coverage"],
+            }
+        else:
+            out = {
+                "app_slug": slug,
+                "tool": args.tool,
+                "messages": read_messages(
+                    context.local_channel_dir,
+                    tool=args.tool,
+                    limit=args.limit,
+                ),
+            }
     elif args.command == "ack":
-        slug, channel_dir = _channel_from_workdir(args.workdir, create=True)
-        out = {"app_slug": slug, **mark_read(
-            channel_dir,
-            tool=args.tool,
-            session_id=args.session_id,
-            include_broadcast=not args.no_broadcast,
-        )}
-    else:
-        slug, channel_dir = _channel_from_workdir(args.workdir, create=False)
-        out = {
-            "app_slug": slug,
-            "tool": args.tool,
-            "direct_unread_count": direct_unread_count(
-                channel_dir,
-                args.tool,
+        if context.native:
+            if args.no_broadcast:
+                out = {
+                    "app_slug": slug,
+                    "action": "inbox-ack-refused",
+                    "accepted": False,
+                    "backend": "rally",
+                    "reason": (
+                        "native Rally checkpoints direct and broadcast messages together; "
+                        "selective --no-broadcast acknowledgement is unsupported"
+                    ),
+                }
+                print(json.dumps(out, sort_keys=True))
+                return 2
+            native_identity = actor_identity.resolve_identity(
+                args.tool, args.session_id
+            )
+            result = native_acknowledge(
+                context,
+                tool=native_identity.native_tool,
+                session_id=native_identity.session_id,
+            )
+            out = {
+                "app_slug": slug,
+                "action": "inbox-acknowledged" if result.ok else "inbox-ack-failed",
+                "accepted": result.ok,
+                "backend": "rally",
+                "tool": args.tool,
+                "rally_tool": native_identity.native_tool,
+                "rally_session_id": native_identity.session_id,
+                "channel_revision": result.revision,
+                "reason": result.reason,
+            }
+        else:
+            out = {"app_slug": slug, **mark_read(
+                context.local_channel_dir,
+                tool=args.tool,
                 session_id=args.session_id,
-            ),
-            "broadcast_unread_count": (
-                0
-                if _safe_tool(args.tool) == _BROADCAST_TOOL
-                else unread_counts(
+                include_broadcast=not args.no_broadcast,
+            )}
+    else:
+        if context.native:
+            native_identity = actor_identity.resolve_identity(
+                args.tool, args.session_id
+            )
+            snapshot = room_snapshot(
+                context,
+                tool=native_identity.native_tool,
+                actor=native_identity.native_tool,
+                readers=True,
+            )
+            projected = native_inbox_snapshot(
+                snapshot,
+                tool=native_identity.native_tool,
+                recent_result=native_recent(context, limit=500),
+            )
+            counts = projected["counts"]
+            out = {
+                "app_slug": slug,
+                "tool": args.tool,
+                "rally_tool": native_identity.native_tool,
+                "rally_session_id": native_identity.session_id,
+                "direct_unread_count": counts["direct"],
+                "broadcast_unread_count": counts["broadcast"],
+                "unread_count": counts["total"],
+                "backend": "rally",
+                "accepted": snapshot.ok,
+                "reason": snapshot.reason,
+                "coverage_incomplete": projected["coverage_incomplete"],
+                "coverage": projected["coverage"],
+            }
+        else:
+            channel_dir = context.local_channel_dir
+            out = {
+                "app_slug": slug,
+                "tool": args.tool,
+                "direct_unread_count": direct_unread_count(
                     channel_dir,
                     args.tool,
                     session_id=args.session_id,
-                )["broadcast"]
-            ),
-            "unread_count": unread_count(channel_dir, args.tool, session_id=args.session_id),
-        }
+                ),
+                "broadcast_unread_count": (
+                    0
+                    if _safe_tool(args.tool) == _BROADCAST_TOOL
+                    else unread_counts(
+                        channel_dir,
+                        args.tool,
+                        session_id=args.session_id,
+                    )["broadcast"]
+                ),
+                "unread_count": unread_count(
+                    channel_dir,
+                    args.tool,
+                    session_id=args.session_id,
+                ),
+            }
 
     if args.json:
         print(json.dumps(out, indent=2, sort_keys=True))

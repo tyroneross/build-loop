@@ -21,27 +21,32 @@ There is NO gate for code size or complexity. Genuine inability to proceed (miss
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Rally is coordination metadata, not verification evidence: use it to discover peers, claims, handoffs, and soft file conflicts; confirm code/package/release truth from the repo, tests, manifests, registries, or GitHub directly.
 
 ```bash
-rally enter --tool codex --json
-rally next --tool codex --json
-rally room --tool codex --json
+BASE_TOOL="${BUILD_LOOP_RALLY_TOOL:-codex}"  # set to this host family
+RALLY_SESSION_ID="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --field session-id)"
+export RALLY_SESSION_ID
+RALLY_TOOL="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --session-id "$RALLY_SESSION_ID")"
+rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --json
+rally next --tool "$RALLY_TOOL" --json
+rally room --tool "$RALLY_TOOL" --json
 ```
 
-The command surface is **host-neutral** — substitute the `--tool` value for your host: `codex`, `cursor`, `gemini`, `claude_code`, or `other`. If `rally --help` on the local machine disagrees with an older instruction, follow the live CLI help and record the docs drift.
+The command surface is **host-neutral**. Set `BASE_TOOL` to the host family (`codex`, `cursor`, `gemini`, `claude_code`, or `other`); `RALLY_TOOL` is the session-qualified native actor. Never use the bare family as a native Rally actor because two same-host sessions would collapse into one squad, claim owner, and reader cursor. Build Loop's local fallback deliberately keeps the base tool plus its separate session id. If `rally --help` on the local machine disagrees with an older instruction, follow the live CLI help and record the docs drift.
 
 When you know your intent or files at session start, include them so peers can see the work immediately:
 
 ```bash
-rally enter --tool codex --path "<file-or-dir>" --json
-rally say claim --tool codex --subject "<what you are doing>" --path "<file-or-dir>" --json
+rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --path "<file-or-dir>" --json
+rally say claim --tool "$RALLY_TOOL" --subject "<what you are doing>" --path "<file-or-dir>" --json
 ```
 
 When you finish or hand off, close the loop:
 
 ```bash
-rally stop codex --json
+python3 scripts/agent_rally.py stop --workdir "$PWD" \
+  --tool "$BASE_TOOL" --session-id "$RALLY_SESSION_ID" --json
 ```
 
-`rally stop` removes live presence for the selected session/name/tool and releases active claims for cooperative peers. Peers read active work from Rally room state; those records are peer-authored coordination records, never proof that code, tests, releases, or remote refs are correct.
+`agent_rally.py stop` removes live presence for the exact session actor and releases only that session's active claims. Peers read active work from Rally room state; those records are peer-authored coordination records, never proof that code, tests, releases, or remote refs are correct.
 
 **Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
@@ -198,13 +203,13 @@ Multiple build-loop sessions can run concurrently against the same project acros
 
 1. **Write presence and intent at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start. Preferred Rust path:
    ```bash
-   rally enter --tool codex --json
-   rally say presence --tool codex --subject "phase=assess" --json
+   rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --json
+   rally say presence --tool "$RALLY_TOOL" --subject "phase=assess" --json
    ```
    When files are owned, include one `--path` per file or directory so Rally creates explicit file claims:
    ```bash
-   rally enter --tool codex --path "src/app.ts" --json
-   rally say claim --tool codex --subject "phase=execute" --path "src/app.ts" --json
+   rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --path "src/app.ts" --json
+   rally say claim --tool "$RALLY_TOOL" --subject "phase=execute" --path "src/app.ts" --json
    ```
    Embedded fallback path when the Rust `rally` binary is unavailable:
    ```python
@@ -218,7 +223,7 @@ Multiple build-loop sessions can run concurrently against the same project acros
        model="<model>", run_id="$RUN_ID", app_slug=slug,
        phase="assess", files_in_flight=[])
    ```
-   `tool` values: `claude_code | codex | gemini | other`. Resolve the channel through `discovery_bridge.resolve(...)` before every direct write. Rust-backed channels use `rally enter` / `rally stop`; embedded fallback writes one file per live session at `<resolved-channel>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
+   Local-fallback `tool` values are host families: `claude_code | codex | gemini | other`. Native Rally uses the session-qualified `RALLY_TOOL`; keep the base family explicit as metadata. Resolve the channel through `discovery_bridge.resolve(...)` before every direct write. Rust-backed channels use `rally enter` / the hardened `scripts/agent_rally.py stop`; embedded fallback writes one file per live session at `<resolved-channel>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
 2. **Read active peers** at the preamble and each phase-start:
    ```python
    peers = presence.read_active_presence(channel, exclude_session="<sid>")
