@@ -29,19 +29,21 @@ One line per agent-action, fields (see `LEDGER_FIELDS`):
     trigger ("2 fails@opus" | "riskSurfaceChange" | "planning-miss") ·
     refs (input plan / output commit) · note (failure evidence, why retry justified)
 
-The module shells out to nothing — the orchestrator passes the already-resolved
-commit SHA / model id in. (If a future caller needs git, resolve the binary
-absolutely or `command -v`-guard it per the launchd-minimal-PATH discipline;
-this module deliberately stays data-only so that question never arises here.)
+The local ledger path shells out to nothing — the orchestrator passes the
+already-resolved commit SHA / model id in. Its downstream coordination
+projection delegates to ``rally_point.post.post`` so Rally availability and
+Build Loop fallback selection stay owned by the shared adapter.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 # The canonical action + status vocabularies (mirror the spec's ledger schema).
 ACTIONS = {"author", "execute", "re-plan", "take-over", "verify", "gate"}
@@ -66,6 +68,13 @@ LEDGER_FIELDS = (
 )
 
 LEDGER_RELPATH = (".build-loop", "agent-ledger.jsonl")
+
+# Projection is downstream telemetry, never the authority for build gates. The
+# guard prevents a future Rally/post hook that records its own agent action from
+# recursively projecting that nested append.
+_PROJECTION_ACTIVE: ContextVar[bool] = ContextVar(
+    "agent_ledger_projection_active", default=False
+)
 
 
 def default_ledger_path(workdir: Path) -> Path:
@@ -134,22 +143,138 @@ def build_row(
     }
 
 
-def append(path: Path, row: dict[str, Any]) -> dict[str, Any]:
+def _inferred_projection_workdir(path: Path) -> Path | None:
+    """Infer a repo only for its canonical ``.build-loop`` ledger path."""
+    resolved = path.expanduser().resolve()
+    if resolved.name != LEDGER_RELPATH[1] or resolved.parent.name != LEDGER_RELPATH[0]:
+        return None
+    candidate = resolved.parent.parent
+    return candidate if (candidate / ".git").exists() else None
+
+
+def _rally_adapter() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """Load Rally lazily so a missing adapter cannot break local ledger use."""
+    try:
+        from scripts.rally_point.discovery_bridge import resolve
+        from scripts.rally_point.post import post
+    except ImportError:
+        from rally_point.discovery_bridge import resolve  # type: ignore
+        from rally_point.post import post  # type: ignore
+    return resolve, post
+
+
+def _projection_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Return the lossless Rally payload for one exact local ledger row."""
+    evidence = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(evidence.encode("utf-8")).hexdigest()[:24]
+    return {
+        "subject": f"agent-ledger:{digest}",
+        "agent_ledger": row,
+        "evidence": [evidence],
+    }
+
+
+def _projection_result(
+    status: str,
+    *,
+    backend: str | None = None,
+    revision: int | None = None,
+    error: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "ok": {"projected": True, "failed": False}.get(status),
+        "backend": backend,
+        "revision": revision,
+        "error": error,
+        "reason": reason,
+    }
+
+
+def _project_to_rally(workdir: Path | None, row: dict[str, Any]) -> dict[str, Any]:
+    """Project a local row through Rally without affecting local append status."""
+    if workdir is None:
+        return _projection_result("skipped", reason="no-workdir")
+    if _PROJECTION_ACTIVE.get():
+        return _projection_result("skipped", reason="recursive-projection")
+
+    token = _PROJECTION_ACTIVE.set(True)
+    backend: str | None = None
+    try:
+        resolve, post = _rally_adapter()
+        envelope = resolve(workdir)
+        backend = str(
+            getattr(envelope, "backend", None)
+            or getattr(envelope, "resolved_via", "unknown")
+        )
+        revision = post(
+            channel_dir=Path(envelope.channel_dir),
+            kind="artifact",
+            tool=str(row.get("agent") or "build-loop"),
+            model=str(row.get("model") or ""),
+            run_id=str(row.get("run_id") or ""),
+            app_slug=str(envelope.app_slug),
+            payload=_projection_payload(row),
+            workdir=workdir,
+        )
+        if revision is None:
+            return _projection_result(
+                "failed",
+                backend=backend,
+                error="rally post returned no revision",
+            )
+        return _projection_result("projected", backend=backend, revision=revision)
+    except Exception as exc:  # projection is telemetry and must stay fail-open
+        return _projection_result("failed", backend=backend, error=str(exc))
+    finally:
+        _PROJECTION_ACTIVE.reset(token)
+
+
+def append(
+    path: Path,
+    row: dict[str, Any],
+    *,
+    workdir: Path | None = None,
+) -> dict[str, Any]:
     """Append one row as a JSON line. Fail-open: never raises on I/O error.
 
-    Returns an envelope `{"ok": bool, "path": str, "error": str|None}`. The
-    caller (orchestrator) can surface a write failure in its report, but a
-    ledger outage must never halt the build — the build is the product, the
-    ledger is the instrument.
+    The local JSONL remains authoritative for build gates. After a successful
+    local write, its exact row is projected through Rally. ``workdir`` is
+    inferred only for ``<repo>/.build-loop/agent-ledger.jsonl``; callers using
+    an arbitrary path must opt in by supplying it explicitly. Projection is
+    fail-open and reported in the additive ``projection`` envelope field.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(row, ensure_ascii=False, sort_keys=False)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-        return {"ok": True, "path": str(path), "error": None}
     except OSError as exc:  # fail-open: I/O problems don't wedge the build
-        return {"ok": False, "path": str(path), "error": str(exc)}
+        return {
+            "ok": False,
+            "path": str(path),
+            "error": str(exc),
+            "projection": _projection_result(
+                "skipped", reason="local-append-failed"
+            ),
+        }
+
+    try:
+        projection_workdir = (
+            Path(workdir).expanduser().resolve()
+            if workdir is not None
+            else _inferred_projection_workdir(path)
+        )
+        projection = _project_to_rally(projection_workdir, row)
+    except Exception as exc:  # local append already succeeded; projection stays fail-open
+        projection = _projection_result("failed", error=str(exc))
+    return {
+        "ok": True,
+        "path": str(path),
+        "error": None,
+        "projection": projection,
+    }
 
 
 def read(path: Path) -> list[dict[str, Any]]:
@@ -225,7 +350,7 @@ def summarize(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--workdir", default=".")
+    p.add_argument("--workdir", default=None)
     p.add_argument("--path", default=None, help="Override ledger path (default .build-loop/agent-ledger.jsonl).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -247,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("summarize", help="Print the aggregate summary as JSON.")
 
     args = p.parse_args(argv)
-    workdir = Path(args.workdir).expanduser().resolve()
+    workdir = Path(args.workdir or ".").expanduser().resolve()
     path = Path(args.path).expanduser() if args.path else default_ledger_path(workdir)
 
     if args.cmd == "append":
@@ -276,7 +401,11 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 1
-        envelope = append(path, row)
+        envelope = append(
+            path,
+            row,
+            workdir=workdir if args.workdir is not None else None,
+        )
         print(json.dumps(envelope, indent=2))
         # Fail-OPEN on I/O: a ledger (telemetry) outage must never wedge a build
         # whose only "failure" was that the instrument couldn't write. The build is

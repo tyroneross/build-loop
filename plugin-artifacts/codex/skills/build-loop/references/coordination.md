@@ -119,12 +119,28 @@ adapter in the boundary manifest.
 
 ## Discovery integration (current)
 
-Build-loop uses `scripts/rally_point/discovery_bridge.py` as the shared
-channel resolver. It prefers the standalone `agent-rally-point` discovery
-surface when installed and falls back to build-loop's embedded resolver only
-when needed. Both native discovery and the embedded fallback default to
-`~/.agent-rally-point/apps/...`; the fallback uses the local worktree-aware
-`<slug>` when no native `<repo-id>` is available.
+Build Loop uses `scripts/rally_point/discovery_bridge.py` as the single backend
+resolver. The contract has two writable backends:
+
+1. `backend=rally`, `transport=rally-cli`: an explicit binary override or the
+   standalone `rally` on `PATH` wins. Build Loop requires valid `version`,
+   `whoami`, and read-only `status read` envelopes before treating the room as
+   operational. All event writes go through `rally say`; Build Loop must never
+   create a private `changes.jsonl` inside `.rally`.
+2. `backend=build-loop-local`, `transport=fact-v1`: when Rally is absent or its
+   room is unhealthy, Build Loop writes its shared fallback spool. Only Build
+   Loop readers consume this backend; `codex`, `claude_code`, and `cursor` are
+   host identities within Build Loop, not independent fallback participants.
+
+The fetched Build Loop binary is a compatibility fallback after standalone
+Rally, not a version authority that may shadow it. When Rally becomes
+operational, `maybe_auto_migrate()` replays fact-v1 rows idempotently and stores
+a digest watermark only after Rally returns a complete migration receipt.
+
+`.build-loop/agent-ledger.jsonl` remains the local authority for judgment gates.
+Each successful canonical append also projects the exact row through the same
+backend adapter. Projection failure is reported but never changes the local
+append result.
 
 The discovery layer (see
 [`agent-rally-point/docs/DISCOVERY.md`](https://github.com/tyroneross/agent-rally-point/blob/main/docs/DISCOVERY.md))
@@ -146,6 +162,8 @@ Current build-loop callers route through the bridge:
    use the resolved channel for session-start and pre-edit hook behavior.
 4. `scripts/coordination_watch.py` remains a compatibility wrapper; watcher
    behavior lives under `scripts/agent_rally_watcher/`.
+5. `scripts/agent_ledger.py` preserves the local gate input and projects each
+   canonical row through `rally_point.post.post(...)`.
 
 ## Cross-references
 

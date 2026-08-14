@@ -4,7 +4,7 @@
 
 _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 
-Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
+Multiple Build Loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Cursor, and Gemini CLI). They MUST coordinate so they do not clobber each other's working trees or commit races. Standalone Rally is canonical when operational; otherwise only Build Loop sessions consume the local fallback.
 
 - **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/discovery_bridge.py`: the single concurrent-presence source of truth. One file per live session at `<resolved-channel>/sessions/<session-id>.json`; native `agent-rally-point` installs resolve under `~/.agent-rally-point/apps/<repo-id>/`, and the embedded build-loop fallback uses the same root with a local `<slug>`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
 - **Rally Point task heartbeat** — `scripts/rally_point/task_heartbeat.py`: append-only long-running task check-ins at `<resolved-channel>/task-heartbeats/<tool>.jsonl`. This is not process liveness; it records whether a session is still on the expected task, what changed since the prior check-in, and when the next check-in is due.
@@ -22,7 +22,7 @@ This section defines the Rally Point presence integration plus the M5 trigger fa
 
 ### Rally Point presence — channel resolution (D1, worktree-aware)
 
-Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` for the channel directory before every direct Rally Point write or read. It delegates to native `agent-rally-point` discovery when available, then falls back to `channel_paths.app_slug(cwd=<repo>)` + `channel_paths.app_channel_dir(...)`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Outside a git repo, fallback slug derivation delegates to memory's `derive_slug_from_cwd`. Use this resolver; never reimplement channel or slug derivation.
+Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` before every coordination write or read. A valid Rally binary is insufficient by itself: the resolver verifies identity and a read-only room projection before selecting `backend=rally`. Otherwise it selects `backend=build-loop-local`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one Build Loop channel**. Use this resolver; never reimplement backend, channel, or slug selection.
 
 ### Rally Point presence — On Phase 1 Assess preamble (before any Rally Point write, BEFORE any planning):
 

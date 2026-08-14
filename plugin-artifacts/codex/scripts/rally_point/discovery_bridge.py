@@ -12,12 +12,11 @@ Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
 2. Native ``rally enter/say/whoami`` CLI (rally's real surface) backed by
-   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, the fetched
-   pinned binary cache, ``rally`` on ``$PATH``, or (lowest priority) a
+   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, standalone
+   ``rally`` on ``$PATH``, the fetched pinned compatibility cache, or (lowest priority) a
    repo-associated sibling ``agent-rally-point/target/*/rally`` checkout. The
-   pinned cache is the source of truth for version currency, so a sibling dev
-   build is only used when nothing higher-priority resolves — it must never
-   shadow the pin with a stale version.
+   standalone binary is the default owner. The compatibility cache and sibling
+   build are used only when no higher-priority standalone binary resolves.
 3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
 4. ``agent_rally_point.discover`` Python import (sibling-repo install
@@ -30,9 +29,10 @@ Resolution order (highest → lowest priority):
 The internal fallback is a degraded-coordination path: it surfaces
 ``resolved_via: "build-loop-internal"`` and ``policy: "legacy-only"``
 so callers can distinguish embedded fallback from native package discovery.
-The fallback root is canonical, but the protocol source is still not silently
-treated as native agent-rally-point (the v0.12.16 defect class — see
-``protocol-of-record-audit`` memory note).
+Only Build Loop readers consume this backend. It preserves host identity
+(``codex``, ``claude_code``, ``cursor``) as data, but those hosts coordinate
+there only while running Build Loop. The fallback is never treated as native
+Rally (the v0.12.16 defect class — see ``protocol-of-record-audit`` memory note).
 
 Protocol-version compatibility: the bridge pins
 ``protocol_version >= 1.0, < 3.0``. When the discover envelope reports
@@ -46,6 +46,7 @@ so an env override never serves a stale binary-derived value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -149,6 +150,28 @@ class DiscoveryEnvelope:
             self.resolved_via, self.coordination_unavailable
         )
 
+    @property
+    def backend(self) -> str:
+        """Name the coordination authority selected for this run."""
+        if self.resolved_via in {"repo-local-rally-cli", "fetched-binary"}:
+            return "rally"
+        if self.resolved_via == "build-loop-internal":
+            return "build-loop-local"
+        if self.capability_level == "unavailable":
+            return "unavailable"
+        return "rally-legacy-discovery"
+
+    @property
+    def transport(self) -> str:
+        """Name the only supported write transport for the selected backend."""
+        if self.backend == "rally":
+            return "rally-cli"
+        if self.backend == "build-loop-local":
+            return "fact-v1"
+        if self.backend == "unavailable":
+            return "none"
+        return "legacy-discovery"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "channel_dir": self.channel_dir,
@@ -159,6 +182,8 @@ class DiscoveryEnvelope:
             "protocol_version": self.protocol_version,
             "last_resolved_at": self.last_resolved_at,
             "resolved_via": self.resolved_via,
+            "backend": self.backend,
+            "transport": self.transport,
             "capability_level": self.capability_level,
             "legacy_channel_dir": self.legacy_channel_dir,
             "merged_view": self.merged_view,
@@ -288,18 +313,14 @@ repo_local_rally_binary = rust_rally_binary
 def _rally_binary_candidates(workdir: Path | None) -> list[str]:
     """Return candidate ``rally`` paths in priority order.
 
-    Priority (highest → lowest): env override → fetch-on-install pinned cache
-    → ``rally`` on ``$PATH`` → repo-associated sibling ``target/{release,debug}``
+    Priority (highest → lowest): env override → standalone ``rally`` on
+    ``$PATH`` → fetch-on-install pinned compatibility cache → repo-associated
+    sibling ``target/{release,debug}``
     dev builds (checked last, across all resolved roots).
 
-    The pinned cache is the source of truth for version currency (see
-    ``binary_fetch.PINNED_VERSION``). A sibling ``target/release/rally`` /
-    ``target/debug/rally`` checkout is the LEAST trustworthy candidate for
-    version currency — it is whatever a prior local ``cargo build`` happened to
-    produce, with no guarantee it matches the pin — so it must never shadow a
-    live system binary or the pin. It is still probed (never removed): a
-    contributor actively developing ``agent-rally-point`` locally needs their
-    freshly-built binary reachable when nothing higher-priority resolves.
+    Standalone Rally owns its own version and ledger. The Build Loop pin is a
+    compatibility fallback, not an authority that may shadow a newer installed
+    Rally. A sibling development build is least trustworthy and remains last.
     """
     candidates: list[str] = []
     seen: set[str] = set()
@@ -314,11 +335,12 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
 
     add(os.environ.get("AGENT_RALLY_BINARY"))
 
+    add(shutil.which("rally"))
+
     # Fetch-on-install: a previously-fetched pinned binary in the build-loop
-    # runtime cache. Checked before PATH/sibling so the pin — the source of
-    # truth for version currency — is preferred over a live-but-possibly-stale
-    # system or dev-checkout binary. We do NOT trigger a fetch here (that is
-    # the discovery-tier's job); we only ADD an already-cached path.
+    # runtime cache. It follows standalone Rally on PATH and precedes only the
+    # unversioned sibling development builds. We do not trigger a fetch here;
+    # this tier only adds an already-cached compatibility binary.
     if not os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
         try:
             from . import binary_fetch as _fetch
@@ -331,8 +353,6 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
             cached = _fetch.cached_binary_path()
             if cached.is_file():
                 add(cached)
-
-    add(shutil.which("rally"))
 
     # Sibling dev-checkout builds — LAST priority (see docstring above).
     if (
@@ -389,13 +409,13 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
     return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
 
 
-def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
-    binary = repo_local_rally_binary(workdir)
-    if not binary:
-        return None
+def _run_rally_json(
+    binary: str, args: list[str], workdir: Path, *, expected_schema: str
+) -> dict[str, Any] | None:
+    """Run one read-only Rally command and validate its command envelope."""
     try:
         proc = subprocess.run(
-            [binary, "whoami", "--json"],
+            [binary, *args],
             cwd=str(workdir),
             capture_output=True,
             text=True,
@@ -409,9 +429,57 @@ def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
         raw = json.loads(proc.stdout)
     except (ValueError, TypeError):
         return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True:
+    if (
+        not isinstance(raw, dict)
+        or raw.get("ok") is not True
+        or raw.get("product") != "rally"
+        or raw.get("schema") != expected_schema
+    ):
         return None
-    whoami = ((raw.get("data") or {}).get("whoami") or {})
+    return raw
+
+
+def _resolve_native_rally_channel(
+    binary: str,
+    workdir: Path,
+    *,
+    resolved_via: str,
+    policy: str,
+) -> DiscoveryEnvelope | None:
+    """Resolve Rally only when identity and the room store are operational.
+
+    ``whoami`` intentionally remains readable when a room ledger is corrupt, so
+    binary presence is not availability. ``status read`` is the bounded,
+    read-only store probe that prevents Build Loop from routing writes into a
+    Rally room that cannot currently accept or project them.
+    """
+    version = _run_rally_json(
+        binary,
+        ["version", "--json"],
+        workdir,
+        expected_schema="agent-rally.command.version.v1",
+    )
+    whoami_raw = _run_rally_json(
+        binary,
+        ["whoami", "--json"],
+        workdir,
+        expected_schema="agent-rally.command.whoami.v1",
+    )
+    status_raw = _run_rally_json(
+        binary,
+        ["status", "--json", "read", "--tool", "build_loop:discovery"],
+        workdir,
+        expected_schema="agent-rally.command.status_read.v1",
+    )
+    if version is None or whoami_raw is None or status_raw is None:
+        return None
+    whoami = ((whoami_raw.get("data") or {}).get("whoami") or {})
+    required = ("repo_root", "repo_id", "room_id", "worktree", "build_id")
+    if not isinstance(whoami, dict) or any(not whoami.get(k) for k in required):
+        return None
+    host_runtime = whoami.get("host_runtime") or {}
+    if not isinstance(host_runtime, dict) or host_runtime.get("ambiguous") is True:
+        return None
     repo_root = whoami.get("repo_root") or str(workdir)
     channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
     repo_id = whoami.get("repo_id") or channel_dir.parent.name
@@ -421,15 +489,29 @@ def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
         "app_slug": str(repo_id),
         "repo_id": str(repo_id),
         "channel_layout": "repo-local-rally",
-        "policy": "repo-local",
+        "policy": policy,
         "protocol_version": "1.0",
         "last_resolved_at": _utc_iso(),
         "rally_binary": binary,
-        "whoami": raw,
+        "rally_version": version,
+        "whoami": whoami_raw,
+        "status_read": status_raw,
     }
     return _shape_envelope_from_discover(
         shaped,
+        resolved_via=resolved_via,
+    )
+
+
+def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return None
+    return _resolve_native_rally_channel(
+        binary,
+        workdir,
         resolved_via="repo-local-rally-cli",
+        policy="repo-local",
     )
 
 
@@ -502,41 +584,12 @@ def _resolve_fetched_binary_channel(
     stamps ``resolved_via: "fetched-binary"`` so the source is attributable to
     the fetch tier. Still a FULL-capability source.
     """
-    try:
-        proc = subprocess.run(
-            [binary, "whoami", "--json"],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        raw = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True:
-        return None
-    whoami = ((raw.get("data") or {}).get("whoami") or {})
-    repo_root = whoami.get("repo_root") or str(workdir)
-    channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
-    repo_id = whoami.get("repo_id") or channel_dir.parent.name
-    shaped = {
-        "installed": True,
-        "channel_dir": str(channel_dir),
-        "app_slug": str(repo_id),
-        "repo_id": str(repo_id),
-        "channel_layout": "repo-local-rally",
-        "policy": "fetched-binary",
-        "protocol_version": "1.0",
-        "last_resolved_at": _utc_iso(),
-        "rally_binary": binary,
-        "whoami": raw,
-    }
-    return _shape_envelope_from_discover(shaped, resolved_via="fetched-binary")
+    return _resolve_native_rally_channel(
+        binary,
+        workdir,
+        resolved_via="fetched-binary",
+        policy="fetched-binary",
+    )
 
 
 def _try_python_import(workdir: Path) -> DiscoveryEnvelope | None:
@@ -640,18 +693,14 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     binary → internal fallback. The first non-``None`` source wins.
     Each successful resolution is cached for ``CACHE_TTL_SECONDS``.
 
-    Channel-split fix (worktree canonicalization): ``workdir`` is collapsed
-    to the canonical repo root via ``channel_paths.canonical_workdir``
-    BEFORE any resolver runs. Two ``git worktree`` checkouts of one repo
-    pass different paths here; the native ``rally`` / ``agent-rally-discover``
-    binaries key the channel on that path verbatim, so without
-    canonicalization the worktrees split into separate (empty) channels.
-    Canonicalizing once at the entry makes every resolver — native binary
-    or embedded fallback — receive the identical main-checkout root. A
-    non-git ``workdir`` is returned unchanged, preserving the ``_unscoped``
-    behavior downstream.
+    Native Rally receives the original active worktree so its identity and
+    branch projection remain accurate; Rally itself resolves all linked
+    worktrees to one shared repo room. Legacy discovery and the Build Loop
+    fallback receive the canonical checkout root so their path-keyed stores do
+    not split across worktrees.
     """
-    workdir_path = channel_paths.canonical_workdir(workdir)
+    requested_workdir = Path(workdir).expanduser().resolve()
+    workdir_path = channel_paths.canonical_workdir(requested_workdir)
     workdir_key = str(workdir_path)
 
     # Test-isolation hook: ``BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1`` short-
@@ -668,10 +717,46 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         _cache_put(workdir_key, "build-loop-internal", envelope)
         return envelope
 
-    # Probe each source in priority order; cache hits short-circuit.
+    # Operator discovery override remains first.
+    for source_tag, probe in (("env-override", _try_env_override),):
+        cached = _cache_get(workdir_key, source_tag)
+        if cached is not None:
+            return cached
+        envelope = probe(workdir_path)
+        if envelope is not None:
+            _cache_put(workdir_key, source_tag, envelope)
+            return envelope
+
+    # Standalone Rally is the default only when its read path is operational.
+    # ``whoami`` can succeed against a corrupt room, so a failed status-read
+    # probe is a deliberate backend transition to Build Loop local storage;
+    # do not fall through to a second writer for the same broken Rally room.
+    native_key = str(requested_workdir)
+    cached = _cache_get(native_key, "repo-local-rally-cli")
+    if cached is not None:
+        return cached
+    native_binary = repo_local_rally_binary(requested_workdir)
+    if native_binary:
+        envelope = _resolve_native_rally_channel(
+            native_binary,
+            requested_workdir,
+            resolved_via="repo-local-rally-cli",
+            policy="repo-local",
+        )
+        if envelope is not None:
+            _cache_put(native_key, "repo-local-rally-cli", envelope)
+            return envelope
+        fallback = _internal_fallback(workdir_path)
+        fallback.raw = {
+            "fallback_reason": "rally_unhealthy",
+            "rally_binary": native_binary,
+        }
+        _cache_put(native_key, "repo-local-rally-cli", fallback)
+        return fallback
+
+    # Legacy discovery compatibility, then fetch-on-install when no standalone
+    # Rally binary exists at all.
     for source_tag, probe in (
-        ("env-override", _try_env_override),
-        ("repo-local-rally-cli", _try_repo_local_rally_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
         ("fetched-binary", _try_fetched_binary),
@@ -699,8 +784,9 @@ def clear_cache() -> None:
 
 
 # Once-per-process guard so the seam does not re-shell on every coordination
-# write. migrate-legacy is itself idempotent (event_id dedup), so this is an
-# efficiency layer, not a correctness one. Keyed by resolved channel dir.
+# write for the same exact fallback contents. migrate-legacy is itself
+# idempotent (event_id dedup), so this is an efficiency layer, not correctness.
+# Keys include the store digest; appending a fact creates a new sync attempt.
 _MIGRATED_THIS_PROCESS: set[str] = set()
 
 
@@ -724,8 +810,10 @@ def maybe_auto_migrate(
     ``None`` when not applicable / on any error. Fire-and-forget — never raises into
     the caller, never imports agent-rally-point.
 
-    A per-process marker (``<fallback_channel>/.migrated``) + an in-memory set skip
-    re-invocation; migrate-legacy's own event_id dedup is the correctness backstop.
+    ``<fallback_channel>/.migrated`` stores the successfully synchronized source
+    digest. It is never written for a non-zero exit, malformed response, or an
+    incomplete read count. Appended facts change the digest and trigger another
+    idempotent reconciliation.
     """
     try:
         env = envelope if envelope is not None else resolve(workdir)
@@ -740,8 +828,13 @@ def maybe_auto_migrate(
             return None
 
         marker = fallback_dir / ".migrated"
-        store_key = str(store.resolve())
-        if store_key in _MIGRATED_THIS_PROCESS or marker.exists():
+        fingerprint = _store_fingerprint(store)
+        if fingerprint is None:
+            return None
+        store_key = f"{store.resolve()}:{fingerprint['sha256']}"
+        if store_key in _MIGRATED_THIS_PROCESS or _marker_matches(
+            marker, fingerprint
+        ):
             return None
 
         # Require ≥1 fact.v1 line — otherwise migrate-legacy would migrate zero
@@ -764,32 +857,28 @@ def maybe_auto_migrate(
         except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
             return None
 
-        # Process guard suppresses per-session retries (efficiency, not correctness)
-        # and is set even on a non-zero/timeout result so a transient failure does
-        # not retry-loop within this session. The .migrated file is the CROSS-session
-        # durability marker; it is written below only after the subprocess returns,
-        # so a failed run leaves it absent and a future process re-attempts.
-        _MIGRATED_THIS_PROCESS.add(store_key)
-        try:
-            marker.write_text(_utc_iso(), encoding="utf-8")
-        except OSError:
-            pass
-
         if proc.returncode != 0 or not proc.stdout.strip():
             return None
         try:
             out = json.loads(proc.stdout)
         except (ValueError, TypeError):
             return None
-        if isinstance(out, dict) and isinstance(out.get("data"), dict):
-            data = out["data"]
-            # Live rally emits the result under the hyphenated command name.
-            return (
-                data.get("migrate-legacy")
-                or data.get("migrate_legacy")
-                or data
+        result = _migration_result(out)
+        if result is None:
+            return None
+        _MIGRATED_THIS_PROCESS.add(store_key)
+        try:
+            marker.write_text(
+                json.dumps(
+                    {**fingerprint, "synced_at": _utc_iso()},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
             )
-        return out if isinstance(out, dict) else None
+        except OSError:
+            pass
+        return result
     except Exception:  # noqa: BLE001 — fire-and-forget seam, never block a host action
         return None
 
@@ -811,6 +900,57 @@ def _has_fact_v1_line(store: Path) -> bool:
     except OSError:
         return False
     return False
+
+
+def _store_fingerprint(store: Path) -> dict[str, Any] | None:
+    """Return stable content identity for one fallback JSONL store."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with open(store, "rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+    except OSError:
+        return None
+    return {"sha256": digest.hexdigest(), "size": size}
+
+
+def _marker_matches(marker: Path, fingerprint: dict[str, Any]) -> bool:
+    """True only for a validated-success marker of these exact contents."""
+    try:
+        stored = json.loads(marker.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(stored, dict)
+        and stored.get("sha256") == fingerprint.get("sha256")
+        and stored.get("size") == fingerprint.get("size")
+    )
+
+
+def _migration_result(out: Any) -> dict[str, Any] | None:
+    """Validate Rally's migration receipt before persisting a watermark."""
+    if not isinstance(out, dict) or out.get("ok") is not True:
+        return None
+    data = out.get("data")
+    if not isinstance(data, dict):
+        return None
+    result = data.get("migrate-legacy") or data.get("migrate_legacy")
+    if not isinstance(result, dict):
+        return None
+    try:
+        facts_read = int(result["facts_read"])
+        migrated = int(result["facts_migrated"])
+        skipped = int(result["facts_skipped_existing"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if min(facts_read, migrated, skipped) < 0 or facts_read != migrated + skipped:
+        return None
+    return result
 
 
 # --------------------------------------------------------------------------

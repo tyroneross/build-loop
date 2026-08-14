@@ -388,12 +388,16 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         """
         whoami_payload = json.dumps({
             "ok": True,
+            "product": "rally",
+            "schema": "agent-rally.command.whoami.v1",
             "data": {"whoami": {
                 "repo_root": str(channel_dir.parent),
                 "repo_id": channel_dir.parent.name,
+                "room_id": f"{channel_dir.parent.name}-room",
                 "worktree": str(channel_dir.parent),
                 "cwd": str(channel_dir.parent),
                 "build_id": "test-fake",
+                "host_runtime": {"ambiguous": False},
             }},
         })
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,6 +410,16 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             "    print('       rally say <kind> --tool <tool> --subject <subject>')\n"
             "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(2)\n"
+            "if args == ['version', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.version.v1',\n"
+            "      'data': {'version': {'version': 'test', 'build_id': 'test-fake'}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['status', '--json', 'read', '--tool', 'build_loop:discovery']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.status_read.v1',\n"
+            "      'data': {'status_read': {'states': []}}}))\n"
+            "    raise SystemExit(0)\n"
             "if args == ['whoami', '--json']:\n"
             f"    print({whoami_payload!r})\n"
             "    raise SystemExit(0)\n"
@@ -426,11 +440,23 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(0)\n"
             "repo = pathlib.Path.cwd()\n"
+            "if args == ['version', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.version.v1',\n"
+            "      'data': {'version': {'version': 'test', 'build_id': 'test-local'}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['status', '--json', 'read', '--tool', 'build_loop:discovery']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.status_read.v1',\n"
+            "      'data': {'status_read': {'states': []}}}))\n"
+            "    raise SystemExit(0)\n"
             "if args == ['whoami', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'data': {'whoami': {\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.whoami.v1', 'data': {'whoami': {\n"
             "        'repo_root': str(repo), 'repo_id': repo.name,\n"
-            "        'worktree': str(repo), 'cwd': str(repo),\n"
-            "        'build_id': 'test-local'}}}))\n"
+            "        'room_id': repo.name + '-room', 'worktree': str(repo),\n"
+            "        'cwd': str(repo), 'build_id': 'test-local',\n"
+            "        'host_runtime': {'ambiguous': False}}}}))\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",
@@ -503,8 +529,18 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertIn(
             result["resolved_via"],
-            {"repo-local-rally-cli", "fetched-binary", "path-binary"},
+            {
+                "repo-local-rally-cli",
+                "fetched-binary",
+                "path-binary",
+                "build-loop-internal",
+            },
         )
+        if result["resolved_via"] == "build-loop-internal":
+            self.assertEqual(result["backend"], "build-loop-local")
+            self.assertEqual(
+                result["raw"].get("fallback_reason"), "rally_unhealthy"
+            )
         # Native rally owns a repo-local ``.rally`` ledger; the Python
         # ``agent-rally-discover`` path resolves the canonical apps root.
         self.assertTrue(

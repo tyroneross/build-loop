@@ -118,7 +118,9 @@ def test_marker_skips_reinvocation(monkeypatch, tmp_path):
     fv.write_fact_v1_line(fallback, fv.to_fact_v1(
         kind="handoff", tool="t", model="m", run_id="r", app_slug="s",
         payload={"subject": "x"}, revision=1))
-    (fallback / ".migrated").write_text("2026-06-17T00:00:00Z")
+    fingerprint = db._store_fingerprint(fallback / "changes.jsonl")
+    assert fingerprint is not None
+    (fallback / ".migrated").write_text(json.dumps(fingerprint))
     monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
     monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
     monkeypatch.setattr(db, "rust_rally_binary", lambda _w: "/fake/rally")
@@ -128,6 +130,92 @@ def test_marker_skips_reinvocation(monkeypatch, tmp_path):
 
     monkeypatch.setattr(db.subprocess, "run", _fail_run)
     assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
+
+
+def test_failed_migration_writes_no_marker_and_retries(monkeypatch, tmp_path):
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    fv.write_fact_v1_line(fallback, fv.to_fact_v1(
+        kind="artifact", tool="cursor", model="m", run_id="r", app_slug="s",
+        payload={"subject": "offline"}, revision=1))
+    monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
+    monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
+    monkeypatch.setattr(db, "rust_rally_binary", lambda _w: "/fake/rally")
+    calls = []
+
+    class _Proc:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    responses = [
+        _Proc(1, json.dumps({"ok": False})),
+        _Proc(0, json.dumps({"ok": True, "data": {"migrate-legacy": {
+            "facts_read": 1, "facts_migrated": 1, "facts_skipped_existing": 0,
+        }}})),
+    ]
+
+    def _fake_run(*_a, **_kw):
+        calls.append(1)
+        return responses.pop(0)
+
+    monkeypatch.setattr(db.subprocess, "run", _fake_run)
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
+    assert not (fallback / ".migrated").exists()
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is not None
+    assert len(calls) == 2
+    assert (fallback / ".migrated").exists()
+
+
+def test_appended_fact_changes_watermark_and_resyncs(monkeypatch, tmp_path):
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    fv.write_fact_v1_line(fallback, fv.to_fact_v1(
+        kind="artifact", tool="codex", model="m", run_id="r", app_slug="s",
+        payload={"subject": "first"}, revision=1))
+    monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
+    monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
+    monkeypatch.setattr(db, "rust_rally_binary", lambda _w: "/fake/rally")
+    calls = []
+
+    class _Proc:
+        returncode = 0
+        stdout = json.dumps({"ok": True, "data": {"migrate-legacy": {
+            "facts_read": 1, "facts_migrated": 1, "facts_skipped_existing": 0,
+        }}})
+
+    monkeypatch.setattr(
+        db.subprocess, "run", lambda *_a, **_kw: (calls.append(1) or _Proc())
+    )
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is not None
+    first_marker = (fallback / ".migrated").read_text()
+    fv.write_fact_v1_line(fallback, fv.to_fact_v1(
+        kind="artifact", tool="claude_code", model="m", run_id="r", app_slug="s",
+        payload={"subject": "second"}, revision=2))
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is not None
+    assert len(calls) == 2
+    assert (fallback / ".migrated").read_text() != first_marker
+
+
+def test_incomplete_receipt_writes_no_marker(monkeypatch, tmp_path):
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    fv.write_fact_v1_line(fallback, fv.to_fact_v1(
+        kind="artifact", tool="codex", model="m", run_id="r", app_slug="s",
+        payload={"subject": "x"}, revision=1))
+    monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
+    monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
+    monkeypatch.setattr(db, "rust_rally_binary", lambda _w: "/fake/rally")
+
+    class _Proc:
+        returncode = 0
+        stdout = json.dumps({"ok": True, "data": {"migrate-legacy": {
+            "facts_read": 2, "facts_migrated": 1, "facts_skipped_existing": 0,
+        }}})
+
+    monkeypatch.setattr(db.subprocess, "run", lambda *_a, **_kw: _Proc())
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
+    assert not (fallback / ".migrated").exists()
 
 
 def test_non_factv1_store_not_migrated(monkeypatch, tmp_path):

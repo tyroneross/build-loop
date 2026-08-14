@@ -10,8 +10,8 @@ the FIRST candidate that merely passes a help-text surface check (no version
 comparison), an old local ``cargo build`` output could silently win over the
 correct pinned release.
 
-These tests pin the corrected priority order — env override → pinned cache →
-PATH → sibling dev builds (last) — WITHOUT ever invoking a real ``rally``
+These tests pin the Rally-first priority order — env override → standalone
+PATH → pinned compatibility cache → sibling dev builds (last) — without invoking a real ``rally``
 binary: ``_rally_binary_supports_required_surface`` (the only function that
 shells out) is monkeypatched to a pure-Python predicate over candidate path
 strings, and ``_rally_binary_candidates`` itself never touches the filesystem
@@ -101,6 +101,13 @@ class DiscoveryOrderTests(unittest.TestCase):
             pinned_idx, sibling_idx,
             "pinned cache must be discovered before the sibling dev build",
         )
+
+    def test_path_rally_precedes_pinned_compatibility_cache(self) -> None:
+        """Installed standalone Rally owns the default ahead of Build Loop's pin."""
+        path_rally = str(self.tmp / "path-rally")
+        with mock.patch.object(shutil, "which", return_value=path_rally):
+            candidates = self._candidates()
+        self.assertLess(candidates.index(path_rally), candidates.index(str(self.pinned_cache)))
 
     def test_pinned_cache_selected_over_stale_sibling(self) -> None:
         """When both pass the surface check, rust_rally_binary() must pick the pin."""

@@ -79,6 +79,9 @@ def rally(
     envelope = _bridge_resolve(workdir)
     slug = envelope.app_slug
     channel_dir = Path(envelope.channel_dir)
+    active_resolved_via = envelope.resolved_via
+    active_backend = envelope.backend
+    active_transport = envelope.transport
     if envelope.resolved_via == "build-loop-internal":
         channel_dir.mkdir(parents=True, exist_ok=True)
     owns = list(owns or [])
@@ -95,7 +98,7 @@ def rally(
 
     presence_written = False
     errors: list[str] = []
-    if envelope.resolved_via == "repo-local-rally-cli":
+    if envelope.transport == "rally-cli":
         presence_written = _enter_repo_local_session(
             workdir=workdir,
             session_id=session_id,
@@ -104,7 +107,27 @@ def rally(
             owns=owns,
         )
         if not presence_written:
-            errors.append("rally enter failed")
+            errors.append("rally enter failed; using Build Loop local coordination")
+            active_resolved_via = "build-loop-internal"
+            active_backend = "build-loop-local"
+            active_transport = "fact-v1"
+            channel_dir = channel_paths.app_channel_dir(slug)
+            channel_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                presence.write_presence(
+                    channel_dir,
+                    session_id=session_id,
+                    tool=tool,
+                    model=model,
+                    run_id=effective_run_id,
+                    app_slug=slug,
+                    phase=phase,
+                    files_in_flight=owns,
+                    cwd=workdir,
+                )
+                presence_written = True
+            except Exception as exc:  # noqa: BLE001 - presence is fire-and-forget
+                errors.append(f"presence.write_presence failed: {exc}")
     else:
         try:
             presence.write_presence(
@@ -142,32 +165,23 @@ def rally(
             "denied_tools": [],
         },
     }
-    if envelope.resolved_via == "repo-local-rally-cli":
-        before_revision = revision.read_revision(channel_dir) if verify else None
-        channel_rev = _handoff_via_repo_local_rally(
-            workdir=workdir,
-            tool=tool,
-            run_id=effective_run_id,
-            payload=payload,
-            message=message,
-        )
-        after_revision = revision.read_revision(channel_dir) if verify else None
-    else:
-        before_revision = revision.read_revision(channel_dir) if verify else None
-        channel_rev = post(
-            channel_dir=channel_dir,
-            kind="handoff",
-            tool=tool,
-            model=model,
-            run_id=effective_run_id,
-            app_slug=slug,
-            payload=payload,
-            workdir=workdir,
-        )
-        after_revision = revision.read_revision(channel_dir) if verify else None
+    # One adapter owns both routes. It delegates to ``rally say`` when the
+    # standalone room is operational and spools a fact-v1 event when it is not.
+    before_revision = revision.read_revision(channel_dir) if verify else None
+    channel_rev = post(
+        channel_dir=channel_dir,
+        kind="handoff",
+        tool=tool,
+        model=model,
+        run_id=effective_run_id,
+        app_slug=slug,
+        payload=payload,
+        workdir=workdir,
+    )
+    after_revision = revision.read_revision(channel_dir) if verify else None
 
     verify_result: dict[str, Any] | None = None
-    if verify and envelope.resolved_via == "repo-local-rally-cli":
+    if verify and active_transport == "rally-cli":
         records, _offset = changes.read_changes_since(channel_dir, 0)
         matching_records = [
             r for r in records
@@ -216,7 +230,9 @@ def rally(
         "workdir": str(workdir),
         "app_slug": slug,
         "channel_dir": str(channel_dir),
-        "resolved_via": envelope.resolved_via,
+        "resolved_via": active_resolved_via,
+        "backend": active_backend,
+        "transport": active_transport,
         "channel_revision": channel_rev,
         "session_id": session_id,
         "run_id": effective_run_id,
@@ -270,73 +286,6 @@ def _enter_repo_local_session(
     except (ValueError, TypeError):
         return False
     return bool(payload.get("ok") is True)
-
-
-def _handoff_via_repo_local_rally(
-    *,
-    workdir: Path,
-    tool: str,
-    run_id: str,
-    payload: dict[str, Any],
-    message: str,
-) -> int | None:
-    binary = repo_local_rally_binary(workdir)
-    if not binary:
-        return None
-    ownership = payload.get("ownership") or {}
-    subject = message or ownership.get("interface_contract") or "build-loop handoff"
-    cmd = [
-        binary,
-        "say",
-        "handoff",
-        "--json",
-        "--tool",
-        tool,
-        "--subject",
-        str(subject),
-        "--to",
-        str(payload.get("to") or "peer"),
-        "--summary",
-        str(payload.get("summary") or message),
-        "--status",
-        "done",
-        "--run",
-        run_id,
-        "--evidence",
-        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
-    ]
-    owns = ownership.get("owns") if isinstance(ownership, dict) else None
-    if isinstance(owns, list):
-        for owned in owns:
-            if owned:
-                cmd.extend(["--path", str(owned)])
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        out = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(out, dict) or out.get("ok") is not True:
-        return None
-    try:
-        seq = (((out.get("data") or {}).get("say") or {}).get("fact") or {}).get("seq")
-        if seq:
-            return int(seq)
-        verified_seq = ((out.get("data") or {}).get("verified") or {}).get("seq")
-        return int(verified_seq) if verified_seq else 0
-    except (TypeError, ValueError):
-        return 0
-
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

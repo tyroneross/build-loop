@@ -15,6 +15,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 LEDGER = HERE / "agent_ledger.py"
@@ -114,6 +116,160 @@ class AppendReadTests(unittest.TestCase):
             env = agent_ledger.append(path, agent_ledger.build_row(run_id="r1", agent="x", action="author"))
             self.assertFalse(env["ok"])
             self.assertIsNotNone(env["error"])
+
+    def test_canonical_repo_ledger_projects_exact_row_through_post(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            channel = Path(td) / "channel"
+            row = agent_ledger.build_row(
+                run_id="r1",
+                agent="advisor",
+                action="author",
+                model="fable",
+                ts="2026-08-14T00:00:00Z",
+            )
+            resolved = SimpleNamespace(
+                channel_dir=str(channel),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+            )
+            resolve = mock.Mock(return_value=resolved)
+            post = mock.Mock(return_value=41)
+
+            with mock.patch.object(agent_ledger, "_rally_adapter", return_value=(resolve, post)):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "projected")
+            self.assertEqual(env["projection"]["backend"], "rally")
+            resolve.assert_called_once_with(repo.resolve())
+            post.assert_called_once()
+            call = post.call_args.kwargs
+            self.assertEqual(call["channel_dir"], channel)
+            self.assertEqual(call["kind"], "artifact")
+            self.assertEqual(call["tool"], row["agent"])
+            self.assertEqual(call["model"], row["model"])
+            self.assertEqual(call["run_id"], row["run_id"])
+            self.assertEqual(call["workdir"], repo.resolve())
+            self.assertEqual(call["payload"]["agent_ledger"], row)
+            evidence = json.dumps(row, sort_keys=True, separators=(",", ":"))
+            self.assertEqual(call["payload"]["evidence"], [evidence])
+            self.assertEqual(
+                call["payload"]["subject"],
+                agent_ledger._projection_payload(row)["subject"],
+            )
+            self.assertEqual(agent_ledger.read(path), [row])
+
+    def test_arbitrary_ledger_path_stays_local_without_explicit_workdir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "custom-ledger.jsonl"
+            row = agent_ledger.build_row(run_id="r1", agent="x", action="author")
+            adapter = mock.Mock()
+
+            with mock.patch.object(agent_ledger, "_rally_adapter", adapter):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "skipped")
+            self.assertEqual(env["projection"]["reason"], "no-workdir")
+            adapter.assert_not_called()
+
+    def test_explicit_workdir_projects_an_arbitrary_ledger_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            path = Path(td) / "custom-ledger.jsonl"
+            row = agent_ledger.build_row(run_id="r1", agent="cursor", action="verify")
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "channel"),
+                app_slug="repo",
+                resolved_via="build-loop-internal",
+                backend="build-loop-local",
+            )
+            resolve = mock.Mock(return_value=resolved)
+            post = mock.Mock(return_value=7)
+
+            with mock.patch.object(agent_ledger, "_rally_adapter", return_value=(resolve, post)):
+                env = agent_ledger.append(path, row, workdir=repo)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["backend"], "build-loop-local")
+            resolve.assert_called_once_with(repo.resolve())
+            post.assert_called_once()
+
+    def test_projection_subject_is_stable_for_the_exact_row(self) -> None:
+        row = agent_ledger.build_row(
+            run_id="r1",
+            agent="cursor",
+            action="verify",
+            ts="2026-08-14T00:00:00Z",
+        )
+        first = agent_ledger._projection_payload(row)["subject"]
+        second = agent_ledger._projection_payload(dict(row))["subject"]
+        changed = agent_ledger._projection_payload({**row, "note": "different"})[
+            "subject"
+        ]
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, changed)
+
+    def test_projection_failure_does_not_change_local_append_success(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(run_id="r1", agent="x", action="author")
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "channel"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+            )
+            post = mock.Mock(side_effect=RuntimeError("rally unavailable"))
+
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), post),
+            ):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "failed")
+            self.assertEqual(env["projection"]["backend"], "rally")
+            self.assertIn("rally unavailable", env["projection"]["error"])
+            self.assertEqual(agent_ledger.read(path), [row])
+
+    def test_projection_guard_prevents_recursive_posting(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            (repo / ".git").mkdir(parents=True)
+            path = agent_ledger.default_ledger_path(repo)
+            row = agent_ledger.build_row(run_id="r1", agent="x", action="author")
+            resolved = SimpleNamespace(
+                channel_dir=str(Path(td) / "channel"),
+                app_slug="repo",
+                resolved_via="repo-local-rally-cli",
+                backend="rally",
+            )
+
+            def recursive_post(**_kwargs: object) -> int:
+                nested = agent_ledger.append(path, row, workdir=repo)
+                self.assertEqual(nested["projection"]["reason"], "recursive-projection")
+                return 5
+
+            with mock.patch.object(
+                agent_ledger,
+                "_rally_adapter",
+                return_value=(mock.Mock(return_value=resolved), recursive_post),
+            ):
+                env = agent_ledger.append(path, row)
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "projected")
+            self.assertEqual(len(agent_ledger.read(path)), 2)
 
 
 class SummarizeTests(unittest.TestCase):

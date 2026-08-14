@@ -27,10 +27,12 @@ Usage:
     )
 
 Behavior:
-    1. Compute the next revision (read current + 1) via existing
-       ``bump_revision`` (locked write).
-    2. Build a record with that revision number via ``make_record``.
-    3. Atomically append the record to ``changes.jsonl``.
+    1. With an operational standalone Rally room, delegate to ``rally say``;
+       Build Loop never creates a shadow ``changes.jsonl`` inside ``.rally``.
+    2. Otherwise, compute the next Build Loop revision and append one
+       ``agent-rally.fact.v1`` record to the shared Build-Loop-only spool.
+    3. When Rally returns, discovery replays that spool idempotently before
+       the next native write.
 
 This ordering matches the protocol: bump revision BEFORE writing the
 record. That way readers who see the new revision can always find the
@@ -103,7 +105,6 @@ def post(
             if not _terminal_closeout_ready(workdir, run_id):
                 return None
         d = Path(channel_dir)
-        d.mkdir(parents=True, exist_ok=True)
 
         if workdir is not None:
             try:
@@ -120,7 +121,7 @@ def post(
 
                 envelope = _bridge_resolve(workdir)
                 if (
-                    envelope.resolved_via == "repo-local-rally-cli"
+                    envelope.transport == "rally-cli"
                     and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
                 ):
                     # Zero-seam transition: on the first coordination write after a
@@ -135,7 +136,7 @@ def post(
                         maybe_auto_migrate(workdir, envelope)
                     except Exception:
                         pass
-                    return _post_via_repo_local_rally(
+                    native_revision = _post_via_repo_local_rally(
                         binary=repo_local_rally_binary(workdir),
                         workdir=workdir,
                         kind=kind,
@@ -143,8 +144,22 @@ def post(
                         run_id=run_id,
                         payload=payload,
                     )
+                    if native_revision is not None:
+                        return native_revision
+                    # Rally became unavailable after discovery. Preserve the
+                    # event in Build Loop's own fact-v1 spool; never create a
+                    # private ``changes.jsonl`` inside Rally's ``.rally``.
+                    d = _build_loop_fallback_channel(workdir)
+                elif envelope.backend == "build-loop-local":
+                    d = Path(envelope.channel_dir)
+                elif d.name == ".rally" or _looks_like_rust_channel(d):
+                    # A non-CLI discovery source must never authorize direct
+                    # writes into Rally's standalone ledger.
+                    d = _build_loop_fallback_channel(workdir)
             except Exception:
-                return None
+                d = _build_loop_fallback_channel(workdir)
+
+        d.mkdir(parents=True, exist_ok=True)
 
         if workdir is None and _looks_like_rust_channel(d):
             return None
@@ -271,6 +286,15 @@ def _looks_like_rust_channel(channel_dir: Path) -> bool:
         or (channel_dir / "rally.checkpoint.json").exists()
         or (channel_dir / "rally.lock").exists()
     )
+
+
+def _build_loop_fallback_channel(workdir: Path) -> Path:
+    """Return the shared Build-Loop-only coordination spool for this repo."""
+    try:  # package import
+        from . import channel_paths
+    except ImportError:  # script import
+        import channel_paths  # type: ignore
+    return channel_paths.app_channel_dir(channel_paths.app_slug(workdir))
 
 
 def _post_via_repo_local_rally(
