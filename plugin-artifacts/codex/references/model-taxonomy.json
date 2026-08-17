@@ -660,6 +660,131 @@
       "aliases": [
         "omni-moderation-latest"
       ]
+    },
+    "glm-5.2": {
+      "provider": "zai",
+      "label": "GLM-5.2",
+      "segment": "generative_reasoning",
+      "tier": "T3",
+      "tags": [
+        "open-weight",
+        "agentic",
+        "coding",
+        "moe",
+        "server-only"
+      ],
+      "released": "2026-07-15",
+      "status": "candidate-unverified",
+      "aliases": [
+        "zai-org/GLM-5.2"
+      ],
+      "evidence": "Terminal-Bench 2.1: 81.0 vendor-self-reported (z.ai) vs 67.8-78 independent — up to a 13pt spread on the benchmark most predictive of agentic terminal work. Context window disputed: z.ai says 1M, Together says 256K. 744-753B MoE, ~750GB FP8; server-only, no local option.",
+      "evidence_tier": "T1 vendor + T3 independent, unreconciled"
+    },
+    "grok-4.6": {
+      "provider": "xai",
+      "label": "Grok 4.6",
+      "segment": "generative_reasoning",
+      "tier": "T2",
+      "tags": [
+        "long-context",
+        "agentic",
+        "api-only"
+      ],
+      "released": "2026-07-01",
+      "status": "candidate-unverified",
+      "aliases": [
+        "grok-4.6-latest"
+      ],
+      "evidence": "Terminal-Bench 2.1: 88.4 independent, BUT Terminal-Bench v3.0: 26%, ~8.6pt behind GPT-5.6 Sol. Same model, incomparable benchmark versions — reading 88.4 as frontier-agentic reads the wrong version. Real argument is efficiency: ~53 turns / 0.5B input tokens where Opus 5 took ~103 turns / 2.0B. That is a coordination argument, not a gating-verdict one.",
+      "evidence_tier": "T3 leaderboard + T1 vendor"
+    },
+    "gemini-3.7-flash": {
+      "provider": "google",
+      "label": "Gemini 3.7 Flash",
+      "segment": "generative_reasoning",
+      "tier": "T3",
+      "tags": [
+        "long-context",
+        "agentic",
+        "cheap",
+        "api-only"
+      ],
+      "released": "2026-08-13",
+      "status": "candidate-unverified",
+      "aliases": [],
+      "evidence": "Terminal-Bench 2.1: 85.8 (DeepMind, corroborated by an independent leaderboard at the same value). Best price-per-agentic-point in this set at $0.75/$3.75. NOTE: intro pricing doubles to $1.50/$7.50 on 2027-01-01.",
+      "evidence_tier": "T1 vendor + T3 independent, agreeing"
+    },
+    "gemini-3.1-pro": {
+      "provider": "google",
+      "label": "Gemini 3.1 Pro",
+      "segment": "generative_reasoning",
+      "tier": "T2",
+      "tags": [
+        "long-context",
+        "api-only"
+      ],
+      "released": "2026-06-01",
+      "status": "candidate-unverified",
+      "aliases": [
+        "gemini-3.1-pro-preview"
+      ],
+      "evidence": "SWE-bench Verified 80.6 only — a static patch benchmark, weak evidence for multi-turn agentic work. 2.7x the input price of 3.7 Flash for weaker agentic evidence.",
+      "evidence_tier": "T3, vendor-origin"
+    },
+    "deepseek-v4-pro": {
+      "provider": "deepseek",
+      "label": "DeepSeek V4-Pro",
+      "segment": "generative_reasoning",
+      "tier": "T3",
+      "tags": [
+        "open-weight",
+        "moe",
+        "server-only"
+      ],
+      "released": "2026-06-20",
+      "status": "candidate-unverified",
+      "aliases": [
+        "deepseek-ai/DeepSeek-V4-Pro"
+      ],
+      "evidence": "SWE-bench Verified 80.6 next to Terminal-Bench 2.1 50.19 — strong at patch generation, materially weaker at running an agent loop. Same trap as GLM. 1.6T MoE / 49B active; server-only.",
+      "evidence_tier": "T3"
+    },
+    "qwen3.6-27b": {
+      "provider": "local",
+      "label": "Qwen3.6-27B",
+      "segment": "generative_reasoning",
+      "tier": "T3",
+      "tags": [
+        "open-weight",
+        "coding",
+        "apache-2.0"
+      ],
+      "released": "2026-07-01",
+      "status": "candidate-unverified",
+      "aliases": [
+        "Qwen/Qwen3.6-27B"
+      ],
+      "evidence": "SWE-bench Verified 77.2, Terminal-Bench 2.0 59.3, LiveCodeBench v6 83.9 (all self-reported on the model card). Does NOT fit 16GB: ~16.8GB at Q4_K_M for weights alone before any KV cache.",
+      "evidence_tier": "T1 model card, self-reported"
+    },
+    "kimi-k2.7-code": {
+      "provider": "moonshot",
+      "label": "Kimi K2.7 Code",
+      "segment": "generative_reasoning",
+      "tier": "T3",
+      "tags": [
+        "open-weight",
+        "tool-calling",
+        "moe",
+        "server-only"
+      ],
+      "released": "2026-07-10",
+      "status": "candidate-unverified",
+      "aliases": [],
+      "evidence": "Best open-weight tool-calling candidate here IF the vendor number replicates: MCPMark Verified 81.1 (vendor, ahead of Opus 4.8's 76.4), hallucination rate 65%->39%. Independent Terminal-Bench 2.1 is 67.04. 1T MoE / 32B active; server-only.",
+      "evidence_tier": "T1 vendor + T3 independent"
     }
   },
   "legacy_registry": {
