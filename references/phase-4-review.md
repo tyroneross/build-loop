@@ -23,6 +23,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/owed_verification.py" write \
 
 This writes `.build-loop/owed-verification.json` — the owed verifier list plus the exact `Agent(...)` dispatch command the parent must issue per verifier — and flips `state.json.review_incomplete = true`. The manifest is the machine-checkable substitute for the parent remembering. The dispatching parent (which HAS the Agent tool) reads the manifest, dispatches each owed verifier, appends its verdict to `.build-loop/judge-decisions.json`, then `owed_verification.py clear --verifier <name>` (or `--all`); clearing the last owed verifier removes the manifest and flips `review_incomplete` back to `false`. Colocated helper + tests: `scripts/owed_verification.py` / `scripts/test_owed_verification.py`.
 
+## Documentation publication boundary
+
+When documentation changed or the run prepares a repository for publication, the
+fact-checker loads `references/public-repository-documentation-boundary.md`, verifies
+repository visibility, and returns the four-way classification. For a public repo,
+`blocked[]` is a Review failure. The orchestrator routes internal artifacts through
+the canonical memory writer, verifies each receipt, removes the public-tree copy,
+adds the appropriate ignore rule, and re-runs the check. Private repositories retain
+their internal documentation. This check is semantic: filename patterns seed the
+review but never replace reading the document's audience and current-vs-future state.
+
 ## Sub-step B — Validate (routing detail)
 
 UI-validator-first when `uiTarget != null` (see `agents/ui-validator.md`); UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE-specific contract gate when server module touched); **pytest-collection gate (`scripts/pytest_collect_gate.py` — full-suite-load check, every run on Python-bearing repos; `fail` routes to Iterate with the broken import as the rubric; closes the changed-area-only blindspot)**; LLM-as-judge; plugin-tests advisory; memory-first gate on every failure. Full procedural detail in `references/phase-gate-checklist.md` §"Sub-step B — Validate".

@@ -241,7 +241,16 @@ Seven sub-steps run in order (A–G): Critic → Validate → Optimize (opt-in) 
 
 Groundwork return: when Phase 1 accepted a request, Review-G emits `.designdoc/implementation-map.json` through `scripts/groundwork_exchange.py emit-map`; failures route to Iterate and Groundwork alone calculates convergence.
 
-Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry → **non-gating post-push retrospective dispatch** (`build-loop:retrospective-synthesizer` writes the 9-section `.build-loop/retrospectives/<date>/<run-id>.md` + ≤5-line summary surfaced inline; enforce-candidates land at `.build-loop/proposals/enforce-from-retro/` for human review — never auto-promoted; fire-and-continue, run-close is NOT delayed). On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
+Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → public/private documentation boundary check when docs changed or publication is in scope → simplify → autonomy gate queue → final scorecard + run entry → **non-gating post-push retrospective dispatch** (`build-loop:retrospective-synthesizer` writes the 9-section `.build-loop/retrospectives/<date>/<run-id>.md` + ≤5-line summary surfaced inline; enforce-candidates land at `.build-loop/proposals/enforce-from-retro/` for human review — never auto-promoted; fire-and-continue, run-close is NOT delayed). On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
+
+**Documentation publication boundary.** When documentation changed, a repository is
+being prepared for publication, or Review finds plan/RCA/audit/retrospective material,
+load `references/public-repository-documentation-boundary.md`. Verify repository
+visibility. Private repositories retain internal records. Public repositories retain
+only current user-, contributor-, and agent-facing product material; archive internal
+plans, RCAs, future architecture, review artifacts, and maintainer operations to the
+private `build-loop-memory` project lane before removing and ignoring them. A missing
+private-memory receipt blocks the documentation review from passing.
 
 **Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 

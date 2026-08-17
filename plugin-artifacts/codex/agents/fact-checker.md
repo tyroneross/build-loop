@@ -35,6 +35,7 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 2. Flag unverifiable claims
 3. Catch extreme language that overpromises
 4. Verify assessment logic produces displayed values
+5. Enforce the public/private documentation boundary when docs or publication surfaces changed
 
 ## Checks
 
@@ -45,6 +46,7 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 | **Extreme language** | Flag "always", "never", "100%", "guaranteed", "impossible", "all", "none" in code, UI copy, error messages, docs. Recommend qualified language unless genuinely absolute |
 | **Assessment integrity** | App displays quality scores, risk levels, health indicators? Verify the scoring logic exists and produces the displayed value. No hardcoded "95%" without backing computation |
 | **Source traceability** | Every rendered metric must have a complete path. Missing link = flag it |
+| **Documentation audience** | Resolve repository visibility. In a public repository, retain current user/contributor/agent product docs; flag plans, RCAs, retrospectives, future architecture, maintainer operations, and internal performance/release artifacts. Require a `build-loop-memory` receipt before removal. Load `references/public-repository-documentation-boundary.md` for the full rule. |
 
 ## Process
 
@@ -53,6 +55,7 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 3. For each rendered metric, trace backward: display component → data prop → API/computation → source
 4. For each claim in comments or docs, check if evidence exists in the codebase
 5. Grep for extreme language patterns in user-facing strings
+6. When docs changed or publication is in scope, classify every affected document as `public_current`, `private_archived`, `public_removed`, or `blocked`; a public review blocks on internal staged content or a missing private-memory receipt
 
 ## Output Format
 
@@ -64,8 +67,15 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
   "flagged": [
     { "claim": "...", "location": "file:line", "issue": "no data source | extreme language | hardcoded value", "recommendation": "..." }
   ],
+  "publication_boundary": {
+    "visibility": "public | private | unresolved",
+    "public_current": [],
+    "private_archived": [],
+    "public_removed": [],
+    "blocked": []
+  },
   "blocking": true | false
 }
 ```
 
-`blocking: true` if any flagged item involves false data rendered to users. `blocking: false` if only warnings (comments, internal docs).
+`blocking: true` if any flagged item involves false data rendered to users, or if a public repository still stages internal documentation or removes it without a private-memory receipt. `blocking: false` if only warnings remain.
