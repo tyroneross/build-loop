@@ -13,6 +13,9 @@ import textwrap
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import model_taxonomy  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 DISPATCH_ID = HERE / "dispatch_identity.py"
 MODEL_OVERRIDES = HERE / "model_overrides.py"
@@ -190,9 +193,11 @@ class TierFallbackTests(unittest.TestCase):
         # downing the whole code registry, not just its default (sonnet). Downing
         # sonnet alone now stops at code's next registered model — asserted below.
         with tempfile.TemporaryDirectory() as td:
-            whole_code_tier = (
-                "sonnet,gpt-5.6-terra,gpt-5.4-mini,gemini-2.5-flash,qwen2.5-coder-32b"
-            )
+            # Derived, not hardcoded. This WAS a literal roster string, so it went
+            # stale the moment the code registry changed (gemini-2.5-flash retired,
+            # qwen3-coder-30b added) and the test then failed for a reason that had
+            # nothing to do with the invariant it guards.
+            whole_code_tier = ",".join(model_taxonomy.legacy_registry("code"))
             payload = self._resolve(td, "thinking", f"opus,{whole_code_tier}")
             self.assertEqual(payload["model"], "haiku")  # pattern default
             self.assertEqual(payload["source"], "tier-fallback")

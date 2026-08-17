@@ -235,8 +235,7 @@
       "T3": [
         "sonnet",
         "gpt-5.6-terra",
-        "gpt-5.4",
-        "gemini-2.5-pro"
+        "gpt-5.4"
       ],
       "T4": [
         "haiku",
@@ -244,8 +243,7 @@
         "gpt-5.4-mini"
       ],
       "T5": [
-        "gpt-5.4-nano",
-        "gemini-flash-lite"
+        "gpt-5.4-nano"
       ]
     },
     "agentic_execution": {
@@ -258,6 +256,7 @@
         "sonnet",
         "gpt-5.6-terra",
         "gpt-5.4",
+        "qwen3-coder-30b",
         "qwen2.5-coder-32b"
       ]
     },
@@ -478,8 +477,9 @@
         "long-context"
       ],
       "released": "2025-06-01",
-      "status": "verified",
-      "aliases": []
+      "status": "superseded",
+      "aliases": [],
+      "evidence": "Superseded 2026-08-17 by the Gemini 3.x line; removed from all routing chains."
     },
     "haiku": {
       "provider": "anthropic",
@@ -533,8 +533,9 @@
         "cost-sensitive"
       ],
       "released": "2025-06-01",
-      "status": "verified",
-      "aliases": []
+      "status": "superseded",
+      "aliases": [],
+      "evidence": "Superseded 2026-08-17 by the Gemini 3.x line; removed from all routing chains."
     },
     "gemini-2.5-flash": {
       "provider": "google",
@@ -546,8 +547,9 @@
         "fast"
       ],
       "released": "2025-06-01",
-      "status": "verified",
-      "aliases": []
+      "status": "superseded",
+      "aliases": [],
+      "evidence": "Superseded 2026-08-17 by the Gemini 3.x line; removed from all routing chains."
     },
     "gpt-5-nano": {
       "provider": "openai",
@@ -574,7 +576,8 @@
       ],
       "released": "2024-09-25",
       "status": "local",
-      "aliases": []
+      "aliases": [],
+      "evidence": "Confirmed installed via `ollama list`. Retained. The vault-ingest bakeoff (3-4B sweet spot, <3B unusable) is DOCUMENT-SYNTHESIS evidence and deliberately not applied here — different task class from coding/pattern work."
     },
     "qwen2.5-coder-32b": {
       "provider": "local",
@@ -587,7 +590,8 @@
       ],
       "released": "2024-11-01",
       "status": "local",
-      "aliases": []
+      "aliases": [],
+      "evidence": "Installed (19GB), still valid as fallback. Superseded in chain order by qwen3-coder-30b. NOTE: the earlier 'does not fit local' framing was wrong — this host has 128GB, not 16GB."
     },
     "openai-text-embedding-3-large": {
       "provider": "openai",
@@ -685,7 +689,7 @@
       "provider": "xai",
       "label": "Grok 4.6",
       "segment": "generative_reasoning",
-      "tier": "T2",
+      "tier": "T3",
       "tags": [
         "long-context",
         "agentic",
@@ -696,7 +700,7 @@
       "aliases": [
         "grok-4.6-latest"
       ],
-      "evidence": "Terminal-Bench 2.1: 88.4 independent, BUT Terminal-Bench v3.0: 26%, ~8.6pt behind GPT-5.6 Sol. Same model, incomparable benchmark versions — reading 88.4 as frontier-agentic reads the wrong version. Real argument is efficiency: ~53 turns / 0.5B input tokens where Opus 5 took ~103 turns / 2.0B. That is a coordination argument, not a gating-verdict one.",
+      "evidence": "Demoted from T2 2026-08-17: no SWE-bench Verified number found, so the Thinking contract is unevidenced. Terminal-Bench 2.1 88.4 independent, but v3.0 26% trailing GPT-5.6 Sol by ~8.6pt — same model, incomparable versions. Turn efficiency (~53 vs Opus ~103) is a real orchestration property but is not the contract.",
       "evidence_tier": "T3 leaderboard + T1 vendor"
     },
     "gemini-3.7-flash": {
@@ -713,14 +717,14 @@
       "released": "2026-08-13",
       "status": "candidate-unverified",
       "aliases": [],
-      "evidence": "Terminal-Bench 2.1: 85.8 (DeepMind, corroborated by an independent leaderboard at the same value). Best price-per-agentic-point in this set at $0.75/$3.75. NOTE: intro pricing doubles to $1.50/$7.50 on 2027-01-01.",
+      "evidence": "Terminal-Bench 2.1 85.8, vendor and independent AGREEING — the strongest evidence in the candidate set, at $0.75/$3.75 (intro; doubles 2027-01-01). NOT placed in a preferred chain: resolution breaks ties by release recency across the whole cell, so a 2026-08-13 model would outrank sonnet (2026-06-01) from any position and take over host-neutral routing. Promoting it is a routing decision that needs a bakeoff, not a metadata refresh.",
       "evidence_tier": "T1 vendor + T3 independent, agreeing"
     },
     "gemini-3.1-pro": {
       "provider": "google",
       "label": "Gemini 3.1 Pro",
       "segment": "generative_reasoning",
-      "tier": "T2",
+      "tier": "T3",
       "tags": [
         "long-context",
         "api-only"
@@ -730,7 +734,7 @@
       "aliases": [
         "gemini-3.1-pro-preview"
       ],
-      "evidence": "SWE-bench Verified 80.6 only — a static patch benchmark, weak evidence for multi-turn agentic work. 2.7x the input price of 3.7 Flash for weaker agentic evidence.",
+      "evidence": "Demoted from T2 2026-08-17: the Thinking contract needs SWE-bench Verified >=78 AND frontier-class ARC-AGI/GPQA. It has 80.6 SWE-bench (vendor-origin, a static patch benchmark) and no ARC-AGI/GPQA figure found, so it clears half the contract. It is also inverted against gemini-3.7-flash, which has stronger AGENTIC evidence at a third the price.",
       "evidence_tier": "T3, vendor-origin"
     },
     "deepseek-v4-pro": {
@@ -785,6 +789,40 @@
       "aliases": [],
       "evidence": "Best open-weight tool-calling candidate here IF the vendor number replicates: MCPMark Verified 81.1 (vendor, ahead of Opus 4.8's 76.4), hallucination rate 65%->39%. Independent Terminal-Bench 2.1 is 67.04. 1T MoE / 32B active; server-only.",
       "evidence_tier": "T1 vendor + T3 independent"
+    },
+    "gemini-3.5-flash-lite": {
+      "provider": "google",
+      "label": "Gemini 3.5 Flash-Lite",
+      "segment": "generative_reasoning",
+      "tier": "T5",
+      "tags": [
+        "cheap",
+        "utility",
+        "api-only"
+      ],
+      "released": "2026-06-01",
+      "status": "candidate-unverified",
+      "aliases": [],
+      "evidence": "Current-generation replacement for the retired gemini-flash-lite T5 slot, held as a candidate rather than promoted for the same recency reason.",
+      "evidence_tier": "T1 pricing only"
+    },
+    "qwen3-coder-30b": {
+      "provider": "local",
+      "label": "Qwen3-Coder 30B",
+      "segment": "agentic_execution",
+      "tier": "T3",
+      "tags": [
+        "open-weight",
+        "coding",
+        "installed"
+      ],
+      "released": "2026-01-15",
+      "status": "local",
+      "aliases": [
+        "qwen3-coder:30b"
+      ],
+      "evidence": "Installed and verified present via `ollama list` (18GB) on a 128GB host. Generation successor to qwen2.5-coder-32b (2024-11). Ordered ahead of it on recency, NOT on a local bakeoff — no coding-task head-to-head between the two exists yet.",
+      "evidence_tier": "install verified; perf unbenchmarked"
     }
   },
   "legacy_registry": {
@@ -799,21 +837,19 @@
     "thinking": [
       "opus",
       "gpt-5.6-terra",
-      "gpt-5.4",
-      "gemini-2.5-pro"
+      "gpt-5.4"
     ],
     "code": [
       "sonnet",
       "gpt-5.6-terra",
       "gpt-5.4-mini",
-      "gemini-2.5-flash",
+      "qwen3-coder-30b",
       "qwen2.5-coder-32b"
     ],
     "pattern": [
       "haiku",
       "gpt-5.6-luna",
       "gpt-5-nano",
-      "gemini-flash-lite",
       "llama3.2-3b"
     ]
   },
