@@ -579,7 +579,8 @@
       "aliases": [],
       "evidence": "Confirmed installed via `ollama list`. Retained. The vault-ingest bakeoff (3-4B sweet spot, <3B unusable) is DOCUMENT-SYNTHESIS evidence and deliberately not applied here — different task class from coding/pattern work.",
       "size_gb": 2,
-      "min_ram_gb": 8
+      "min_ram_gb": 4,
+      "min_ram_basis": "size_gb / 0.60 — the 60-70% file-to-RAM rule, conservative end (build-loop-memory: local-llm-mac-ram-tier-guide-2026)"
     },
     "qwen2.5-coder-32b": {
       "provider": "local",
@@ -595,7 +596,8 @@
       "aliases": [],
       "evidence": "Installed (19GB), still valid as fallback. Superseded in chain order by qwen3-coder-30b. NOTE: the earlier 'does not fit local' framing was wrong — this host has 128GB, not 16GB.",
       "size_gb": 19,
-      "min_ram_gb": 26
+      "min_ram_gb": 32,
+      "min_ram_basis": "size_gb / 0.60 — the 60-70% file-to-RAM rule, conservative end (build-loop-memory: local-llm-mac-ram-tier-guide-2026)"
     },
     "openai-text-embedding-3-large": {
       "provider": "openai",
@@ -777,7 +779,8 @@
       "evidence": "SWE-bench Verified 77.2, Terminal-Bench 2.0 59.3, LiveCodeBench v6 83.9 (all self-reported on the model card). Does NOT fit 16GB: ~16.8GB at Q4_K_M for weights alone before any KV cache.",
       "evidence_tier": "T1 model card, self-reported",
       "size_gb": 17,
-      "min_ram_gb": 24
+      "min_ram_gb": 29,
+      "min_ram_basis": "size_gb / 0.60 — the 60-70% file-to-RAM rule, conservative end (build-loop-memory: local-llm-mac-ram-tier-guide-2026)"
     },
     "kimi-k2.7-code": {
       "provider": "moonshot",
@@ -830,7 +833,8 @@
       "evidence": "Installed and verified present via `ollama list` (18GB) on a 128GB host. Generation successor to qwen2.5-coder-32b (2024-11). Ordered ahead of it on recency, NOT on a local bakeoff — no coding-task head-to-head between the two exists yet.",
       "evidence_tier": "install verified; perf unbenchmarked",
       "size_gb": 18,
-      "min_ram_gb": 24
+      "min_ram_gb": 30,
+      "min_ram_basis": "size_gb / 0.60 — the 60-70% file-to-RAM rule, conservative end (build-loop-memory: local-llm-mac-ram-tier-guide-2026)"
     }
   },
   "legacy_registry": {
