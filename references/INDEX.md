@@ -38,6 +38,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [halt-and-ask-protocol.md](halt-and-ask-protocol.md) | Mode-aware decision handler (auto-pick in long-mode, surface trade-offs in normal-mode); C5 architectural-decision backstop; UI spot-check routing | `agents/build-orchestrator.md`, `agents/design-contract-specialist.md` |
 | [agent-role-taxonomy.md](agent-role-taxonomy.md) | Lead vs peer vs coder/implementer vs assessor/reviewer vs skill responsibilities; when to add a new agent | `agents/build-orchestrator.md`, `SKILL.md` |
 | [model-tier-mapping.md](model-tier-mapping.md) | Multi-provider tier substitution table + swap recipes; dual-mode A/B test design. Tier defaults live in the repo `CLAUDE.md` Model Tiering table; this file is the substitution detail | `CLAUDE.md` |
+| [model-index-contract.md](model-index-contract.md) | Host-neutral CLI contract over the model index (`scripts/model_index.py`): subcommands, JSON shape, fingerprint/staleness rule, worked Codex/shell/local-agent examples | non-Claude hosts (Codex, shells, local runners), `scripts/model_index.py` |
 | [m-series-protocol.md](m-series-protocol.md) | M1 envelope persist, M2 heartbeat, M3 cost-ledger; crash-recovery snapshots | `agents/build-orchestrator.md` |
 | [resume-protocol.md](resume-protocol.md) | §0 crash-recovery flow when a build is re-dispatched mid-Execute | `agents/build-orchestrator.md` |
 

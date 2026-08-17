@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7a25a95fd1f054ee1b0195c5d464f6f844e243e16241e8a83e06d3fb6341ffe5"
+    "content_sha256": "20bad97c522a808f97ec98d8754100d38175bf51274d50de56ec41986b1b13d8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1152,7 +1152,7 @@
         "file": "agents/fact-checker.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-22"
+          "date": "2026-08-16"
         }
       },
       "fix-critique": {
@@ -1446,7 +1446,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-11"
+          "date": "2026-08-16"
         }
       },
       "building-with-deepagents": {
@@ -1935,6 +1935,7 @@
       "scripts/migrate_reembed_to_bgem3.py": "Re-embed semantic_facts rows whose vector was produced by a non-bge-m3 model.",
       "scripts/migrate_state_schema.py": "migrate_state_schema.py — normalize .build-loop/state.json files to canonical schema.",
       "scripts/model_availability_store.py": "Single source of truth for the model-outage availability store schema + TTL.",
+      "scripts/model_index.py": "Host-neutral read surface over the model-routing index.",
       "scripts/model_overrides.py": "Resolve build-loop model tier overrides.",
       "scripts/model_resolver.py": "Host-neutral model-tier resolver with availability fallback.",
       "scripts/model_taxonomy.py": "Two-axis model taxonomy loader — the SINGLE source of truth.",

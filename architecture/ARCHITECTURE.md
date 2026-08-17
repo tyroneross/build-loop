@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 395 scripts · 25 hooks** (auto-discovered 7a25a95f)
+**29 agents · 50 skills · 396 scripts · 25 hooks** (auto-discovered 20bad97c)
 
 <details><summary>agents</summary>
 
@@ -28,7 +28,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `build-orchestrator` — opus · _updated 2026-08-11 by Tyrone Ross_ — Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
 - `database-assessor` — opus · _updated 2026-07-28 by Tyrone Ross_ — Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout", "vector search is stale".
 - `design-contract-specialist` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing…
-- `fact-checker` — opus · _updated 2026-07-22 by Tyrone Ross_ — Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
+- `fact-checker` — opus · _updated 2026-08-16 by Tyrone Ross_ — Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
 - `fix-critique` — opus · _updated 2026-07-22 by Tyrone Ross_ — Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.
 - `frontend-assessor` — sonnet · _updated 2026-07-02 by Tyrone Ross_ — Use this agent when the debugging symptom involves React, hooks, rendering, UI components, state management, hydration errors, or client-side performance. Examples - "useEffect infinite loop", "component not rendering", "hydration mismatch", "state not updating".
 - `implementer` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Apply a single ux-fix-plan.md (or per-criterion targeted fix plan) from the build-loop Phase 5 work list. One queue entry per invocation. Returns changed files + status. Designed for parallel fan-out (≤4 in flight per orchestrator pass).
@@ -301,6 +301,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/migrate_reembed_to_bgem3.py`
 - `scripts/migrate_state_schema.py`
 - `scripts/model_availability_store.py`
+- `scripts/model_index.py`
 - `scripts/model_overrides.py`
 - `scripts/model_resolver.py`
 - `scripts/model_taxonomy.py`
