@@ -11,13 +11,26 @@ config there.
 Tier defaults (Anthropic mapping, used as the fallback when no override
 is configured and no `--fallback` is supplied):
 
-    frontier  -> fable    (planning + verification verdicts)
+    frontier  -> opus     (planning synthesis + every verification verdict)
     thinking  -> opus     (coordination + escalation)
     code      -> sonnet   (execution default)
     pattern   -> haiku    (recognition / mock-scan)
 
-Configs that predate the `frontier` tier resolve `frontier` -> `fable` so older
-repos keep working without edits.
+`opus` deliberately serves BOTH frontier and thinking: the Anthropic lineup
+collapsed to four harness tokens, and Opus 5 took the T1 default on 2026-07-28
+(commit 5e0122a) after a bakeoff in which it was a strict superset of Fable
+across 3/3 adversarial-audit rounds.
+
+Fable is retained as the SECOND T1 entry and is reachable ONLY through
+`scripts/frontier_gate.py`, which routes PLANNING roles back to it on
+tightly-coupled repos. That carve-out exists because the bakeoff evidence is
+verification-shaped: no Fable-vs-Opus-5 head-to-head exists on plan or spec
+authoring, and authoring is a different task shape from auditing.
+
+This docstring previously asserted `frontier -> fable`, which every live
+resolver had already stopped doing — restating a decision the taxonomy index
+owns is how that drift happens. `references/model-taxonomy.json` is the source
+of truth; query it with `scripts/model_index.py resolve --tier <t>`.
 
 `MODEL_REGISTRY` lists the cross-vendor models known to fit each tier (e.g.
 GPT-5.5 for frontier, GPT-5 Nano for pattern). It is advisory: override
