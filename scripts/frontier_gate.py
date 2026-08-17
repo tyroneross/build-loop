@@ -432,7 +432,14 @@ def coupling_density(
     for edge in edges:
         if not isinstance(edge, dict):
             continue
-        src_id, dst_id = edge.get("from"), edge.get("to")
+        # Two graph producers, two edge vocabularies: build-loop emits from/to,
+        # NavGator emits source/target. Reading only from/to silently dropped
+        # EVERY edge in a .navgator graph — agent-rally-point reported "mean
+        # degree 0.00" over 671 components while its graph held 490 edges. The
+        # signal then read `false` (loosely coupled) rather than `unknown`, so a
+        # dead sensor was indistinguishable from a real measurement.
+        src_id = edge.get("from", edge.get("source"))
+        dst_id = edge.get("to", edge.get("target"))
         # Internal edge only: BOTH endpoints must be components in this graph.
         if src_id in internal and dst_id in internal:
             degree[src_id] += 1   # fan-out

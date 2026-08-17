@@ -288,6 +288,36 @@ class TestCouplingDensity(GateTestCase):
             evaluate(self.workdir, role="advisor", repo="loose-repo")["verdict"], TIER_DEFAULT_MODEL
         )
 
+    def test_navgator_source_target_edges_are_counted(self) -> None:
+        """NavGator emits source/target where build-loop emits from/to.
+
+        Reading only from/to dropped every edge in a .navgator graph, so
+        agent-rally-point reported mean degree 0.00 across 671 components while
+        its graph held 490 edges — and the signal then read `false` (loosely
+        coupled) rather than `unknown`, making a dead sensor look like a real
+        measurement.
+        """
+        d = self.workdir / ".navgator" / "architecture"
+        d.mkdir(parents=True)
+        nodes = [{"id": "COMP_component_a", "layer": "backend"},
+                 {"id": "COMP_component_b", "layer": "backend"}]
+        edges = [{"source": "COMP_component_a", "target": "COMP_component_b", "type": "imports"}]
+        (d / "graph.json").write_text(json.dumps({"nodes": nodes, "edges": edges}), encoding="utf-8")
+
+        density, _ = coupling_density(self.workdir)
+        self.assertAlmostEqual(density, 1.0, msg="source/target edges must count")
+
+    def test_both_edge_vocabularies_counted_in_one_graph(self) -> None:
+        d = self.workdir / ".build-loop" / "architecture"
+        d.mkdir(parents=True)
+        nodes = [{"id": f"COMP_component_{n}", "layer": "backend"} for n in "abc"]
+        edges = [{"from": "COMP_component_a", "to": "COMP_component_b"},
+                 {"source": "COMP_component_b", "target": "COMP_component_c"}]
+        (d / "graph.json").write_text(json.dumps({"nodes": nodes, "edges": edges}), encoding="utf-8")
+
+        density, _ = coupling_density(self.workdir)
+        self.assertAlmostEqual(density, 4 / 3, msg="both vocabularies count in one pass")
+
     def test_external_id_markers_excluded_when_layer_is_missing(self) -> None:
         """Graph producers that omit `layer` still get package nodes filtered."""
         d = self.workdir / ".build-loop" / "architecture"
