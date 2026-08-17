@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -155,7 +156,18 @@ def load_tier_cache(workdir: Path) -> dict[str, dict[str, Any]]:
 # present, else None (no filter) so an unknown host is never wrongly constrained.
 _HOST_PROVIDER_SIGNALS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "ANTHROPIC_API_KEY"), "anthropic"),
-    (("CODEX_SANDBOX", "CODEX_HOME", "OPENAI_API_KEY"), "openai"),
+    # Codex Desktop/CLI commonly authenticates outside the child process, so a
+    # Codex run may have no OPENAI_API_KEY. Prefer its host markers and retain
+    # the key as a fallback for direct OpenAI-hosted runners.
+    ((
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_THREAD_ID",
+        "CODEX_SHELL",
+        "CODEX_CI",
+        "CODEX_SANDBOX",
+        "CODEX_HOME",
+        "OPENAI_API_KEY",
+    ), "openai"),
     (("GEMINI_CLI", "GEMINI_API_KEY", "GOOGLE_API_KEY"), "google"),
 )
 
@@ -379,6 +391,51 @@ def resolve(
     return base
 
 
+def host_ram_gb() -> float | None:
+    """Physical RAM in GB, or None when it cannot be determined.
+
+    None means "unknown", and an unknown host never filters anything — a
+    resolver that guesses low would silently strip every local model on a
+    platform we simply failed to read.
+    """
+    override = os.environ.get("BUILD_LOOP_HOST_RAM_GB")
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            return None
+    try:  # macOS
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True,
+                             text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip().isdigit():
+            return int(out.stdout.strip()) / (1024 ** 3)
+    except Exception:
+        pass
+    try:  # Linux
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return None
+
+
+def _too_large_for_host() -> set[str]:
+    """Taxonomy ids whose declared min_ram_gb exceeds this machine's RAM."""
+    ram = host_ram_gb()
+    if ram is None:
+        return set()
+    import model_taxonomy
+    out: set[str] = set()
+    for mid in (model_taxonomy.taxonomy().get("models") or {}):
+        if mid.startswith("_"):
+            continue
+        need = (model_taxonomy.model_meta(mid) or {}).get("min_ram_gb")
+        if isinstance(need, (int, float)) and need > ram:
+            out.add(mid)
+    return out
+
+
 def resolve_role(
     *,
     segment: str,
@@ -422,6 +479,15 @@ def resolve_role(
             provider = (meta.get("provider") or "").strip().lower()
             if provider and provider not in host_providers:
                 unavailable.add(mid)
+
+    # Fold local models this MACHINE cannot run into unavailable. Provider
+    # reachability is not the same question as fit: `local` being reachable only
+    # says an inference runtime exists, not that 24GB of weights will load. The
+    # taxonomy ships to other people's laptops, so a chain containing an 18-19GB
+    # coding model would route a 16GB machine at a model it cannot hold.
+    # Rows without min_ram_gb are kept (fail-open) — absence of a requirement is
+    # not evidence that a model is too big.
+    unavailable |= _too_large_for_host()
 
     return model_overrides.resolve_role(
         segment=segment, tier=tier, workdir=wd, unavailable=unavailable,

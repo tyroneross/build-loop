@@ -5,10 +5,15 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+import model_resolver  # noqa: E402
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -302,7 +307,9 @@ class HostProvidersFilterTests(unittest.TestCase):
             "--workdir", td, "--tier", "frontier", "--json",
             env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
                  "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
-                 "ANTHROPIC_API_KEY": ""},
+                 "ANTHROPIC_API_KEY": "", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "",
+                 "CODEX_THREAD_ID": "", "CODEX_SHELL": "", "CODEX_CI": "",
+                 "CODEX_SANDBOX": "", "CODEX_HOME": "", "OPENAI_API_KEY": ""},
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -334,7 +341,9 @@ class HostProvidersFilterTests(unittest.TestCase):
                 "--workdir", td, "--tier", "frontier", "--json",
                 env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
                      "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
-                     "ANTHROPIC_API_KEY": ""},
+                     "ANTHROPIC_API_KEY": "", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "",
+                     "CODEX_THREAD_ID": "", "CODEX_SHELL": "", "CODEX_CI": "",
+                     "CODEX_SANDBOX": "", "CODEX_HOME": "", "OPENAI_API_KEY": ""},
             )
             payload = json.loads(result.stdout)
             self.assertEqual(payload["model"], "gpt-5.6-sol")
@@ -565,6 +574,27 @@ class HostDetectionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "opus")
 
+    def test_detected_codex_host_via_env_default(self) -> None:
+        # Codex Desktop supplies host markers but commonly no OPENAI_API_KEY.
+        # With Anthropic frontier entries unavailable, the default dispatch path
+        # must stay on the OpenAI provider and select Sol.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_resolver(
+                "--workdir", td, "--tier", "frontier",
+                "--unavailable", "opus,fable", "--plain",
+                env={
+                    "BUILD_LOOP_HOST_PROVIDERS": "",
+                    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+                    "CODEX_THREAD_ID": "thread-test",
+                    "CODEX_SHELL": "1",
+                    "CODEX_CI": "1",
+                    "CLAUDECODE": "", "CLAUDE_CODE": "",
+                    "CLAUDE_CODE_SESSION_ID": "", "ANTHROPIC_API_KEY": "",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "gpt-5.6-sol")
+
     def test_host_filter_any_disables_filtering(self) -> None:
         # --host-providers any opts out: cross-vendor frontier alternate allowed
         # once both Anthropic frontier entries are down.
@@ -742,3 +772,71 @@ class ImportShimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class HostRamFitTests(unittest.TestCase):
+    """A local model the machine cannot hold must never be routed to.
+
+    build-loop ships to other people's laptops. Provider reachability answers
+    "is there an inference runtime", not "will 19GB of weights load", and the
+    taxonomy carried no resource metadata at all — so a 16GB host was being
+    offered an 18-19GB coding model from the agentic_execution chain.
+    """
+
+    def test_heavy_local_models_filtered_on_a_small_host(self) -> None:
+        with mock.patch.dict(os.environ, {"BUILD_LOOP_HOST_RAM_GB": "16"}):
+            too_big = model_resolver._too_large_for_host()
+        self.assertIn("qwen2.5-coder-32b", too_big)
+        self.assertIn("qwen3-coder-30b", too_big)
+
+    def test_nothing_filtered_on_a_large_host(self) -> None:
+        with mock.patch.dict(os.environ, {"BUILD_LOOP_HOST_RAM_GB": "512"}):
+            self.assertEqual(model_resolver._too_large_for_host(), set())
+
+    def test_unknown_ram_never_filters(self) -> None:
+        """Guessing low would silently strip every local model on a platform we
+        merely failed to read. Absence of a reading is not evidence of a small host."""
+        with mock.patch.object(model_resolver, "host_ram_gb", lambda: None):
+            self.assertEqual(model_resolver._too_large_for_host(), set())
+
+    def _resolve_agentic_t3(self, ram_gb: str) -> dict:
+        env = dict(os.environ, BUILD_LOOP_HOST_RAM_GB=ram_gb)
+        with tempfile.TemporaryDirectory() as td:
+            out = subprocess.run(
+                [sys.executable, str(HERE / "model_resolver.py"),
+                 "--workdir", td, "--segment", "agentic_execution", "--tier", "T3",
+                 # A local model is only ever REACHABLE on a host that dispatches
+                 # local inference; on a Claude host the provider filter already
+                 # excludes it. Declaring local reachable is what isolates the
+                 # RAM-fit question this test is about.
+                 "--host-providers", "anthropic,openai,local",
+                 "--unavailable", "sonnet,gpt-5.6-terra,gpt-5.4", "--json"],
+                capture_output=True, text=True, env=env, check=False,
+            )
+            self.assertEqual(out.returncode, 0, out.stderr)
+            return json.loads(out.stdout)
+
+    def test_host_ram_changes_the_resolution_differentially(self) -> None:
+        """DIFFERENTIAL, and wired-in by construction.
+
+        An earlier version of this test asserted only that a small host does not
+        resolve TO the heavy model — which passed even with the filter unwired,
+        because the chain exhausted to null and null satisfies "not the heavy
+        model". Comparing the two hosts is what makes the assertion convict:
+        the same query must skip qwen3-coder-30b at 16GB and reach it at 512GB.
+        """
+        def skipped(payload: dict) -> set[str]:
+            return {p["model"] for p in payload["resolution_path"] if p.get("skipped")}
+
+        small, large = self._resolve_agentic_t3("16"), self._resolve_agentic_t3("512")
+        self.assertIn("qwen3-coder-30b", skipped(small),
+                      f"16GB host must skip an 18GB model: {small}")
+        self.assertNotIn("qwen3-coder-30b", skipped(large),
+                         f"512GB host must reach it: {large}")
+        self.assertEqual(large["model"], "qwen3-coder-30b")
+
+    def test_rows_without_a_requirement_are_kept(self) -> None:
+        with mock.patch.dict(os.environ, {"BUILD_LOOP_HOST_RAM_GB": "1"}):
+            too_big = model_resolver._too_large_for_host()
+        self.assertNotIn("sonnet", too_big, "a hosted model declares no min_ram_gb")
+        self.assertNotIn("opus", too_big)
