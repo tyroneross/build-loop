@@ -42,6 +42,11 @@ because some pieces have landed.
 - Performance captures, release rehearsals, deployment diagnostics, and test
   harness artifacts that are not required to use, build, or contribute to the
   product.
+- A/B test records and experiment ledgers: per-run tracking logs, discarded-draft
+  logs, bake-off scorecards, and the raw captures behind a comparison. Build Loop's
+  own `.build-loop/experiments/*.jsonl` A/B tracking is this class. The method, the
+  result template, and a conclusion that changed the shipped product stay public;
+  the run-by-run record does not.
 - Build Loop working state and review artifacts under `.build-loop/`.
 
 Naming is evidence, not the decision. Review the content and audience. A file named
@@ -86,3 +91,9 @@ Every documentation review for a public repository reports:
 
 A public-repository review cannot pass while an internal artifact remains staged or
 while a removed artifact lacks a private-memory receipt.
+
+`python3 scripts/doc_boundary.py --repo <path> [--json]` grades a tracked
+documentation tree into these four buckets. It seeds a verdict from path patterns
+and decides it from content, so it returns `needs_review` — never a guess — where
+only reading the document resolves the audience. Exit 0 clean, 1 findings, 2 hard
+error; a private or unresolved-visibility repository is reported, never failed.

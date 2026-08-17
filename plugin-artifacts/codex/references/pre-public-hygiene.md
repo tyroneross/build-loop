@@ -34,7 +34,37 @@ Code defaults carrying a home path (e.g. a serialized source-pin URL) may be
 **behavior-safe to change** — trace whether the value is dereferenced or is pure
 metadata, and re-run the test that asserts it. Fix, then re-run the owning test.
 
-## 2. De-track internal artifacts (SAFE — files stay on disk)
+## 2. Documentation audience — what may be public at all (SAFE)
+
+De-tracking tool state is mechanical; deciding whether a *document* may ship is a
+policy call. The policy is
+[public-repository-documentation-boundary.md](../../../references/public-repository-documentation-boundary.md)
+at the plugin root — §2 is the allow-list, §3 the deny-list, §4 the
+archive-before-removal rule. Read it before keeping or removing any doc. It binds
+public repositories only: a private repo may retain both product documentation and
+internal development records.
+
+Grade the tree before arguing about it:
+
+```bash
+python3 <build-loop>/scripts/doc_boundary.py --repo . --json
+```
+
+The classifier reports the policy's own four buckets — `public_current`,
+`private_archived`, `public_removed`, `blocked` — with a `confidence` and the
+matched signal per file. A filename only *seeds* a verdict (policy §3: "Naming is
+evidence, not the decision"); where only the content resolves the audience it
+returns `needs_review` rather than guessing, and those are the ones you read. Exit
+1 means decided findings; a private or unresolved-visibility repo is reported,
+never failed.
+
+Nothing leaves public tracking until the private copy carries a `build-loop-memory`
+receipt (policy §4). Then ignore the artifact **class**, not the file — the
+agent-rally-point `.gitignore` block (`docs/plans/`, `docs/*RCA*.md`,
+`docs/*ASSESSMENT*.md`, `/BACKLOG.md`, `/LESSONS.md`, …) is the worked example — so
+the next agent cannot reintroduce it.
+
+## 3. De-track internal artifacts (SAFE — files stay on disk)
 
 `git rm -r --cached` (never delete from disk) + gitignore, for content that
 should not ship publicly:
@@ -49,7 +79,7 @@ should not ship publicly:
   (see stack-profiles.md); a committed binary can drift from or be tampered
   against its source.
 
-## 3. `.git` size: gc BEFORE deciding on a rewrite (SAFE gc / GATED rewrite)
+## 4. `.git` size: gc BEFORE deciding on a rewrite (SAFE gc / GATED rewrite)
 
 Loose-object bloat is usually reclaimable with **no history change**:
 
@@ -73,7 +103,7 @@ every personal path/secret ever committed), not size.
    rewrite with no pushed backup loses unpushed work); every SHA changes and all
    clones/cross-references break. Requires explicit user confirmation.
 
-## 4. Distribution signing / notarization (GATED — needs a credential)
+## 5. Distribution signing / notarization (GATED — needs a credential)
 
 Dev builds commonly ship ad-hoc (`CODE_SIGN_IDENTITY="-"`). A distributed build
 needs a real signing identity the maintainer holds — document the runbook, do not
@@ -88,7 +118,9 @@ automate cert install (never touch the login keychain automatically):
 
 ## Execution order & tiers
 
-1. **SAFE, now:** gc → de-track internal artifacts → de-personalize tracked files
+1. **SAFE, now:** gc → grade the docs tree against the boundary policy
+   (`doc_boundary.py`) and read every `needs_review` → archive-with-receipt, then
+   de-track internal artifacts → de-personalize tracked files
    (fixtures/comments/docs/code-default URLs), each code change re-verified by its
    owning test.
 2. **GATED:** history-rewrite decision (recommend fresh-cut) — decide only after
@@ -96,5 +128,7 @@ automate cert install (never touch the login keychain automatically):
 3. **DEFER to credential:** write the signing/notarization runbook now; execute
    when the maintainer has the cert in hand.
 
-Report what was de-tracked (counts), reclaimed size, residual identity strings
-intentionally kept, and the gated items awaiting a decision.
+Report the boundary review in the policy's own vocabulary (`public_current` /
+`private_archived` / `public_removed` / `blocked`), then what was de-tracked
+(counts), reclaimed size, residual identity strings intentionally kept, and the
+gated items awaiting a decision.
