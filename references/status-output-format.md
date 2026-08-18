@@ -23,6 +23,42 @@ Why this matters: what breaks, for whom, and when — in one sentence.
                 OR "I need your approval to do this" — never leave it implicit]
 ```
 
+## The governing rule: write for a cold reader
+
+**Test every sentence: if a new agent with zero context read only this line, would
+it know what to do?** Not "is it short," not "is it plain" — is it *actionable by
+someone who was not in the room*.
+
+A sentence fails the cold-read test when the reader cannot tell whether to remember
+it, decide something, act, or ignore it.
+
+  FAILS:  "Two lookups pick different models."
+          Who is "two lookups"? What should happen instead? Is this a fact to file,
+          a bug to fix, or a decision waiting on me? A new agent reading this line
+          has nothing to do next.
+
+  PASSES: "We need one code path per model tier.
+           Today we have 2+ paths, with inconsistent results."
+
+Every sentence carries three things:
+
+1. **The actor — who.** `We`, `you`, `the guard`, `an installed user`. Never an
+   abstract subject standing in for a person or system: "two lookups", "the
+   resolvers", "it". If you cannot name who, you do not yet know the finding.
+2. **The specific object — what.** `one code path per model tier`, not `different
+   models`. The noun must be concrete enough to build or verify.
+3. **The modality — what kind of statement this is.** `We need X` = requirement.
+   `Today we have Y` = current fact. `I've done Z` = completed. `Should we A or B?`
+   = decision owed. The reader must never have to infer which.
+
+**Shape: target state first, then the gap.** State what should be true, then what
+is true today. Diagnosis-first framing — explaining how the defect works — reads as
+precision and transfers no decision. Mechanism belongs in the fix or the spec; it
+goes up top ONLY when it changes which option the reader picks.
+
+Rule of thumb: your finding is a specification, not an observation. Write the line
+you would want to receive as a work order.
+
 ## Rules
 
 **Heading is a phrase, not a sentence.**
@@ -68,27 +104,8 @@ nothing, because its meaning lives only in this codebase:
   `the ratchet baseline` -> the list of already-known problems the check ignores
   `public-boundary issue`-> published in your public repo
 
-**STATE THE TARGET STATE, THEN THE GAP.** This is what replaces the jargon — not a
-plainer description of the same confusion. Say what should be true, then what is
-true today. The reader gets the decision without reconstructing it.
-
-  jargon:  "The resolvers disagree on T3/T4."
-
-  BAD:     "Two lookups pick different models."
-           Shorter, not clearer. The reader asks "why would they?"
-
-  ALSO BAD: "Ask for the same tier two different ways and you get two different
-           models back — one code path sorts by release date, the other by
-           capability rank, and nobody decided which is right."
-           Explains the INTERNALS. The reader now understands the bug and still
-           has to work out what to do about it. Mechanism is debugging detail.
-
-  GOOD:    - We need one code path per model tier
-           - Today we have 2+ paths, with inconsistent results
-
-Two lines, each one idea, target first. Mechanism (release date vs capability
-rank) belongs in the fix or the spec — include it up top ONLY when it changes
-which option the reader picks.
+Plain words alone are not enough — a plainer sentence that still fails the
+cold-read test above is not an improvement. See the worked progression there.
 
 **Name every specific individually.**
 "2 models affected" is a headline, not information. List each one with its own
