@@ -577,7 +577,7 @@ When the checklist surfaces an unknown that cannot be answered from the plan con
 
 Search each of these locations for keywords related to the unknown. Use `grep -ri <keyword>` against each path.
 
-1. `~/.claude/projects/-Users-tyroneross/memory/` — user-global feedback, reference, pattern files
+1. `~/.claude/projects/<slug-for-$HOME>/memory/` — user-global feedback, reference, pattern files, if present. Claude Code derives the slug from an absolute path by replacing every `/` with `-` (e.g. `$HOME` of `/Users/yourname` → `-Users-yourname`); if unsure, glob `~/.claude/projects/*/memory/` and grep across matches
 2. `~/dev/git-folder/build-loop-memory/` — build-loop global memory (if it exists)
 3. `~/dev/git-folder/build-loop-memory/projects/<slug>/` — project-local memory (slug from `derive_slug_from_cwd`)
 

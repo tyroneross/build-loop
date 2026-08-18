@@ -6,7 +6,7 @@
 
 ## Memory — Global and Project-Scoped
 
-Build-loop maintains one canonical long-term memory store at `~/dev/git-folder/build-loop-memory/`. Every build reads canonical indexes/folders; writes go to exactly one lane based on scope.
+Build-loop maintains one canonical long-term memory store at the memory store root (resolved by `scripts/_paths.py:memory_store_root()`). Every build reads canonical indexes/folders; writes go to exactly one lane based on scope.
 
 ### Recall-optimized memory discipline
 
@@ -295,7 +295,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/append_milestone.py \
   --json
 ```
 
-`--commit` and `--project` override the defaults (git HEAD and slug derived from `--workdir`). `--memory-root` overrides the default `~/dev/git-folder/build-loop-memory`.
+`--commit` and `--project` override the defaults (git HEAD and slug derived from `--workdir`). `--memory-root` overrides the resolved memory store root (see `scripts/_paths.py:memory_store_root()` for the resolution order — env override, else an existing legacy checkout, else the neutral per-user default).
 
 Output: `{"appended": true, "path": "...", "line": "..."}` on success; `{"appended": false, "reason": "..."}` on fail-soft (non-git workdir, unwritable root). Exit 0 in both cases.
 

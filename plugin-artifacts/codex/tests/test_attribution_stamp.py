@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-FileCopyrightText: 2025-2026 Example Maintainer <maint@example.com>
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ``scripts/attribution_stamp.py``.
 
@@ -16,6 +16,7 @@ Covers:
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -96,10 +97,16 @@ def scratch_repo(tmp_path: Path) -> Path:
     return root
 
 
+TEST_NAME = "Example Maintainer"
+TEST_EMAIL = "maint@example.com"
+TEST_NAME_OLD = "Example Maint"
+TEST_EMAIL_OLD = "old@example.com"
+
+
 def _default_params(stamp_module, repo: Path, restamp: bool = False, canary=None):
     return stamp_module.StampParams(
-        name=stamp_module.DEFAULT_NAME,
-        email=stamp_module.DEFAULT_EMAIL,
+        name=TEST_NAME,
+        email=TEST_EMAIL,
         years=stamp_module.DEFAULT_YEARS,
         repo_root=repo,
         paths=list(stamp_module.DEFAULT_PATHS),
@@ -126,13 +133,13 @@ def test_first_run_adds_headers_everywhere(stamp_module, scratch_repo):
 
     # Spot-check actual content
     ts = (scratch_repo / "src" / "core.ts").read_text()
-    assert "// SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>" in ts
+    assert "// SPDX-FileCopyrightText: 2025-2026 Example Maintainer <maint@example.com>" in ts
     assert "// SPDX-License-Identifier: Apache-2.0" in ts
 
     # Shebang preserved at line 0 for Python script
     tool_py = (scratch_repo / "scripts" / "tool.py").read_text()
     assert tool_py.startswith("#!/usr/bin/env python3\n")
-    assert "# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>" in tool_py
+    assert "# SPDX-FileCopyrightText: 2025-2026 Example Maintainer <maint@example.com>" in tool_py
     assert "# SPDX-License-Identifier: Apache-2.0" in tool_py
 
     # Markdown frontmatter preserved at top; SPDX inserted after closing ---
@@ -142,8 +149,8 @@ def test_first_run_adds_headers_everywhere(stamp_module, scratch_repo):
     closing_idx = lines.index("---", 1)
     spdx_after_idx = closing_idx + 1
     assert lines[spdx_after_idx].startswith("<!-- SPDX-FileCopyrightText:")
-    assert "Tyrone Ross, Jr" in lines[spdx_after_idx]
-    assert "46267523+tyroneross@users.noreply.github.com" in lines[spdx_after_idx]
+    assert "Example Maintainer" in lines[spdx_after_idx]
+    assert "maint@example.com" in lines[spdx_after_idx]
 
 
 def test_idempotency(stamp_module, scratch_repo):
@@ -162,8 +169,8 @@ def test_idempotency(stamp_module, scratch_repo):
 def test_restamp_replaces_outdated_strings(stamp_module, scratch_repo):
     # Stamp first with old-style strings (simulate the build-loop pre-fix state)
     old_params = stamp_module.StampParams(
-        name="Tyrone Ross",  # missing ", Jr"
-        email="noreply@github.com",  # missing canonical numeric prefix
+        name=TEST_NAME_OLD,  # outdated form
+        email=TEST_EMAIL_OLD,  # missing canonical numeric prefix
         years="2025-2026",
         repo_root=scratch_repo,
         paths=list(stamp_module.DEFAULT_PATHS),
@@ -174,18 +181,18 @@ def test_restamp_replaces_outdated_strings(stamp_module, scratch_repo):
     )
     stamp_module.run(old_params)
     ts = (scratch_repo / "src" / "core.ts").read_text()
-    assert "Tyrone Ross <noreply@github.com>" in ts
-    assert "Tyrone Ross, Jr" not in ts
+    assert "Example Maint <old@example.com>" in ts
+    assert "Example Maintainer" not in ts
 
     # Now re-stamp with canonical params
     new_params = _default_params(stamp_module, scratch_repo, restamp=True)
     counts = stamp_module.run(new_params)
     assert counts["files_restamped"] >= 6
     ts2 = (scratch_repo / "src" / "core.ts").read_text()
-    assert "Tyrone Ross, Jr" in ts2
-    assert "46267523+tyroneross@users.noreply.github.com" in ts2
+    assert "Example Maintainer" in ts2
+    assert "maint@example.com" in ts2
     # Old form must be gone
-    assert "Tyrone Ross <noreply@github.com>" not in ts2
+    assert "Example Maint <old@example.com>" not in ts2
 
 
 def test_no_duplicate_headers_on_restamp(stamp_module, scratch_repo):
@@ -200,7 +207,7 @@ def test_reuse_toml_contents(stamp_module, scratch_repo):
     stamp_module.run(_default_params(stamp_module, scratch_repo))
     reuse = (scratch_repo / "REUSE.toml").read_text()
     assert "version = 1" in reuse
-    assert "Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>" in reuse
+    assert "Example Maintainer <maint@example.com>" in reuse
     assert "Apache-2.0" in reuse
     assert "**/*.json" in reuse
     assert "NOTICE" in reuse
@@ -209,7 +216,7 @@ def test_reuse_toml_contents(stamp_module, scratch_repo):
 def test_notice_mentions_both_ai_assistants(stamp_module, scratch_repo):
     stamp_module.run(_default_params(stamp_module, scratch_repo))
     notice = (scratch_repo / "NOTICE").read_text()
-    assert "Tyrone Ross, Jr" in notice
+    assert "Example Maintainer" in notice
     assert "Anthropic's Claude" in notice
     assert "Codex" in notice
     assert "Claude Code" in notice
@@ -249,7 +256,7 @@ def test_readme_section_added_when_missing_and_kept_when_present(stamp_module, s
 def test_license_appendix_updated(stamp_module, scratch_repo):
     stamp_module.run(_default_params(stamp_module, scratch_repo))
     license_text = (scratch_repo / "LICENSE").read_text()
-    assert "Copyright 2025-2026 Tyrone Ross, Jr" in license_text
+    assert "Copyright 2025-2026 Example Maintainer" in license_text
     # Old "Copyright 2024 Old Name" line should be replaced
     assert "Copyright 2024 Old Name" not in license_text
 
@@ -292,7 +299,7 @@ def test_restamp_through_long_frontmatter(stamp_module, scratch_repo):
     stamp_module.run(_default_params(stamp_module, scratch_repo, restamp=True))
     text = agent.read_text()
     # Canonical form present
-    assert "Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>" in text
+    assert "Example Maintainer <maint@example.com>" in text
     # Old bare form absent
     assert "SPDX-FileCopyrightText: 2025-2026 Tyrone Ross |" not in text
     # Exactly ONE SPDX line in the head of the file
@@ -304,8 +311,8 @@ def test_custom_paths(stamp_module, scratch_repo):
     (scratch_repo / "my_package").mkdir()
     (scratch_repo / "my_package" / "__init__.py").write_text('"""init."""\n')
     params = stamp_module.StampParams(
-        name=stamp_module.DEFAULT_NAME,
-        email=stamp_module.DEFAULT_EMAIL,
+        name=TEST_NAME,
+        email=TEST_EMAIL,
         years=stamp_module.DEFAULT_YEARS,
         repo_root=scratch_repo,
         paths=["my_package"],
@@ -316,7 +323,44 @@ def test_custom_paths(stamp_module, scratch_repo):
     )
     stamp_module.run(params)
     init = (scratch_repo / "my_package" / "__init__.py").read_text()
-    assert "SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr" in init
+    assert "SPDX-FileCopyrightText: 2025-2026 Example Maintainer" in init
     # Did NOT touch src/ because we overrode --paths
     src_ts = (scratch_repo / "src" / "core.ts").read_text()
     assert "SPDX-FileCopyrightText" not in src_ts
+
+
+# ---------------------------------------------------------------------------
+# Identity resolution — build-loop is a public plugin, so a missing --name must
+# never silently fall back to the maintainer's identity and stamp a stranger's
+# repo. These cover the refusal branch, not just the happy path.
+# ---------------------------------------------------------------------------
+def test_identity_derives_from_target_repo_git_config(stamp_module, scratch_repo):
+    subprocess.run(["git", "-C", str(scratch_repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(scratch_repo), "config", "user.name", "Alice Example"], check=True)
+    subprocess.run(["git", "-C", str(scratch_repo), "config", "user.email", "alice@example.com"], check=True)
+    params = stamp_module.StampParams(
+        name=None, email=None, years=stamp_module.DEFAULT_YEARS,
+        repo_root=scratch_repo, paths=list(stamp_module.DEFAULT_PATHS),
+        excludes=set(stamp_module.DEFAULT_EXCLUDES), restamp=False,
+        canary_files=[], repo_name="scratch-repo",
+    )
+    assert params.name == "Alice Example"
+    assert params.email == "alice@example.com"
+
+
+def test_identity_refuses_rather_than_guessing(stamp_module, tmp_path):
+    bare = tmp_path / "no-config-repo"
+    bare.mkdir()
+    subprocess.run(["git", "-C", str(bare), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(bare), "config", "--local", "--unset-all", "user.name"], check=False)
+    with pytest.raises(SystemExit) as exc:
+        stamp_module._resolve_identity("user.nonexistent-key", bare)
+    assert "cannot resolve" in str(exc.value)
+
+
+def test_no_maintainer_identity_default_in_source(stamp_module):
+    """The literal defaults must stay deleted — this is the regression guard."""
+    src = Path(stamp_module.__file__).read_text()
+    assert 'DEFAULT_NAME = "Tyrone' not in src
+    assert 'DEFAULT_EMAIL = "46267523' not in src
+    assert "github.com/tyroneross/{repo_name}" not in src

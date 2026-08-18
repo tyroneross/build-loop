@@ -47,12 +47,16 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _paths import derive_slug_from_cwd, project_root, _safe_project_tag  # type: ignore  # noqa: E402
+from _paths import (  # type: ignore  # noqa: E402
+    derive_slug_from_cwd,
+    memory_store_root,
+    project_root,
+    _safe_project_tag,
+)
 from atomic_io import LockedFile  # type: ignore  # noqa: E402
 import memory_update_ledger as mul  # type: ignore  # noqa: E402
 import promotion_queue  # type: ignore  # noqa: E402
 
-DEFAULT_MEMORY_ROOT = "~/dev/git-folder/build-loop-memory"
 MILESTONES_FILENAME = "milestones.jsonl"
 
 
@@ -132,7 +136,12 @@ def append_milestone(
         re-queue into the queue it is draining).
     """
     workdir = os.path.expanduser(workdir)
-    memory_root_path = Path(os.path.expanduser(memory_root or DEFAULT_MEMORY_ROOT))
+    # No literal default here: `_paths.memory_store_root()` is the single
+    # resolver (env override -> existing legacy root -> neutral
+    # `~/.build-loop-memory`). An explicit `memory_root` still wins.
+    memory_root_path = (
+        Path(os.path.expanduser(memory_root)) if memory_root else memory_store_root()
+    )
 
     # Resolve slug — fail-soft on bad slug
     try:
@@ -247,8 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", default=None, help="Slug override (default: derive from --workdir)")
     parser.add_argument("--commit", default=None, help="Commit sha override (default: git rev-parse HEAD)")
     parser.add_argument("--run-id", default=None, dest="run_id", help="build-loop run ID")
-    parser.add_argument("--memory-root", default=DEFAULT_MEMORY_ROOT, dest="memory_root",
-                        help="Override build-loop-memory root path")
+    parser.add_argument("--memory-root", default=None, dest="memory_root",
+                        help="Override build-loop-memory root path "
+                             "(default: resolved by _paths.memory_store_root())")
     parser.add_argument("--on-busy", choices=("queue", "skip"), default="queue",
                         help="Peer-held store behavior: queue (default) or skip.")
     parser.add_argument("--json", action="store_true", help="(no-op; output is always JSON)")

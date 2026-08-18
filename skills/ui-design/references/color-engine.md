@@ -6,8 +6,18 @@ role's contrast mathematically. Build-loop routes colour decisions there instead
 duplicating the theory. This file is the pointer plus the handful of rules that matter
 when you are mid-build and don't want to leave the loop.
 
-Canonical docs: `~/dev/git-folder/groundwork/designer/color/README.md`
+Canonical docs (if you have the checkout): `$GROUNDWORK_ROOT/designer/color/README.md`
 Engine: `designer/color/relationships.py` · Elicitation: `designer/decide/color_dimensions.py`
+
+## Checkout detection
+
+The engine lives in a separate Groundwork checkout, not inside build-loop. Resolve it before running anything below, in order:
+
+1. `$GROUNDWORK_ROOT` env var, if set — use it directly.
+2. Else, a sibling checkout next to your other repos (commonly `groundwork` alongside build-loop) — use it only if `designer/color/relationships.py` actually exists under it.
+3. Else, no checkout is available — skip "The 60-second path" below and go straight to "No Groundwork checkout" further down. Do not fall through to hand-picked hex values; that is exactly the mistake this file exists to prevent.
+
+Whichever branch resolves, declare it in `.build-loop/app-contract/ui.md` (`palette_source: engine` or `palette_source: fallback (no groundwork checkout)`).
 
 ## The one idea
 
@@ -29,7 +39,7 @@ If a build is stuck arguing indigo vs teal, that argument is not the blocker.
 ## The 60-second path
 
 ```bash
-GW=~/dev/git-folder/groundwork
+GW="$GROUNDWORK_ROOT"   # resolved above — only reached when the checkout was found
 
 # Verify a palette you already have — returns solved replacements, same hue + chroma
 PYTHONPATH=$GW python3 -m designer.color.combos ingest \
@@ -69,6 +79,33 @@ Use the returned `surface / on_surface / muted / accent / on_accent` roles verba
    white-on-indigo and black-on-indigo identically, so `all_contrast_targets_met: true` is
    a floor, not a verdict. Measure every ratio you show with `contrast_hex()` against the
    hexes actually rendered — never copy a row between options, never round from memory.
+
+## No Groundwork checkout
+
+Reached only when "Checkout detection" above found neither `$GROUNDWORK_ROOT` nor a sibling checkout. Do not hand-pick hex values — apply the same relationship-vector rules manually instead, and declare the fallback in the app contract (`palette_source: fallback (no groundwork checkout)`), not just the resulting hexes:
+
+1. **One accent, status hues reserved.** Same as rule 1 above: pick a single accent hue; never let it collide with success/warning/error.
+2. **Two stops, always.** Same as rule 2 above: solve a light surface and a dark surface from the same accent; don't invert one and assume the other passes.
+3. **Verify contrast per role with a script, not by eye or memory.** Without the engine's `contrast_hex()` you still owe every foreground/background pairing a real number: WCAG relative luminance and contrast ratio, text ≥4.5:1, large text/non-text UI components ≥3:1 (WCAG 1.4.11). Compute it, don't estimate it:
+
+   ```python
+   def _lin(c):
+       c /= 255
+       return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+   def luminance(hex_color):
+       r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+       return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+   def contrast(hex_a, hex_b):
+       l1, l2 = sorted((luminance(hex_a), luminance(hex_b)), reverse=True)
+       return (l1 + 0.05) / (l2 + 0.05)
+   ```
+
+4. **Colour encodes state, not decoration.** Same as rule 5 above — no accent-coloured kickers or eyebrows without a status meaning.
+5. **Never claim an unelicited preference.** If there's no recorded colour taste for this project (no mode brief, no existing tokens), pick one sensible neutral+accent pair, verify it with the script above, and say plainly it's a fallback default, not a recorded preference.
+
+This produces a *valid* palette, not an *equivalent* one — it skips the OKLCH relationship-vector math, the sweep-hue family, and taste-profile accumulation the real engine gives you. Record that gap in the app contract rather than treating the fallback as parity with the engine.
 
 ## Feeding what you learn back
 

@@ -8,7 +8,7 @@ user-invocable: false
 
 # Attribution Standard
 
-Four overlapping mechanisms make stripping attribution either illegal, mechanically tedious, or detectable. Each survives a different removal pattern. The research backing this skill is at `~/dev/research/apache-2.0-attribution-watermarking-2026-05-22.md`.
+Four overlapping mechanisms make stripping attribution either illegal, mechanically tedious, or detectable. Each survives a different removal pattern. The research backing this skill is "Apache-2.0 Attribution & Watermarking" (private research note, 2026-05-22 — substance summarized here).
 
 ## The four layers
 
@@ -21,9 +21,9 @@ Four overlapping mechanisms make stripping attribution either illegal, mechanica
 
 ## Canonical strings
 
-Apply identically wherever they appear. Memorise these — do not paraphrase.
+**These are build-loop's own values** (this repo's actual copyright holder) — use them verbatim only when stamping attribution onto build-loop itself. **Applying this skill to any OTHER repo requires the target repo's own name/email/years**, not these: derive from `git config user.name` / `user.email` in that repo, an existing LICENSE/NOTICE holder if one is already present, or ask the user. The `attribution_stamp.py` script's `--name`/`--email`/`--years` flags default to the build-loop values below if omitted — **always pass all three explicitly for a non-build-loop repo**; never invoke the script bare against someone else's repo.
 
-| Field | Value |
+| Field | Value (build-loop's own) |
 |---|---|
 | Copyright holder | `Tyrone Ross, Jr` |
 | SPDX email tail | `<46267523+tyroneross@users.noreply.github.com>` |
@@ -57,9 +57,9 @@ For Python-heavy repos with no `src/` directory (like agent-rally-point), pass t
 ```bash
 python scripts/attribution_stamp.py \
   --repo <path-to-repo> \
-  --name "Tyrone Ross, Jr" \
-  --email "46267523+tyroneross@users.noreply.github.com" \
-  --years 2025-2026 \
+  --name "<target repo's copyright holder — NOT build-loop's, unless stamping build-loop itself>" \
+  --email "<target repo owner's email/SPDX tail>" \
+  --years <target repo's applicable year range> \
   --canary-files <path1> <path2> \
   [--paths <override-paths...>] \
   [--restamp]

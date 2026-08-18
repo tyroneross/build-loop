@@ -1,6 +1,6 @@
 ---
 name: knowledge
-description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". ALSO the read-only review surface (review mode): "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or `/knowledge:review`. Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only.
+description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". ALSO the read-only review surface (review mode): "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or `/knowledge:review`. Active durable writes go to the resolved build-loop-memory root (override via `$BUILD_LOOP_MEMORY_ROOT`; per-user default otherwise — see `scripts/_paths.py:memory_store_root()`); legacy `.episodic/` paths are migration/archive inputs only.
 user-invocable: false
 when_to_use: |
   - User wants to record a substantive choice with rationale
@@ -12,7 +12,7 @@ when_to_use: |
   - Auto-capture (Phase 3) and consolidation (Phase 4) are NOT yet
     implemented; this skill covers Phase 1 (manual + scripted) and
     Phase 2 (Postgres + pgvector retrieval) only.
-namespace: ~/dev/git-folder/build-loop-memory/ (canonical), .build-loop/events.jsonl (repo-local runtime), legacy .episodic/ (migration/archive only)
+namespace: resolved build-loop-memory root ($BUILD_LOOP_MEMORY_ROOT override, else per-user default — canonical), .build-loop/events.jsonl (repo-local runtime), legacy .episodic/ (migration/archive only)
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -20,15 +20,16 @@ namespace: ~/dev/git-folder/build-loop-memory/ (canonical), .build-loop/events.j
 # Knowledge — Canonical Build-Loop Memory (Phases 1 + 2)
 
 This skill is the entrypoint for the four-memory-types framework. The
-full design lives at
-`~/dev/research/topics/repo-episodic-memory-framework/repo-episodic-memory-framework.md`
-(see §11–§14 for the four-memory-type taxonomy, extraction pipeline,
-and Postgres schema). Read it before making structural changes.
+full design lives in "Repo Episodic Memory Framework" (private research
+note — substance summarized here; see §11–§14 for the four-memory-type
+taxonomy, extraction pipeline, and Postgres schema). This skill's
+`scripts/` are the executable source of truth for structural changes;
+the research note is background reading, not a required dependency.
 
 ## What lives where
 
 ```
-~/dev/git-folder/build-loop-memory/
+<build-loop-memory root>/           # resolved by scripts/_paths.py:memory_store_root()
 ├── projects/<project>/decisions/   # canonical MADR decisions + INDEX.md
 ├── projects/<project>/lessons/     # project-specific lessons
 ├── lessons/                        # cross-project lessons
@@ -72,7 +73,7 @@ relevant prior memory rather than reading INDEX.md wholesale. See
 2. Run `write_decision.py` with the required flags. The script:
    - Allocates the next sequential ID (zero-padded 4-digit).
    - Writes the MADR to
-     `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/<canonical-id>.md` using
+     `<build-loop-memory root>/projects/<project>/decisions/<canonical-id>.md` (root resolved per `scripts/_paths.py:memory_store_root()`) using
      `skills/knowledge/templates/madr-minimal.md` as the body
      scaffold (filled from CLI flags).
    - Regenerates the canonical decisions `INDEX.md`.
@@ -106,12 +107,23 @@ the current version.
 `write_decision.py` calls the validator as a pre-write gate; you can
 also run it standalone over the whole tree.
 
-## Postgres connection
+## Postgres connection (optional — Phase 2 only)
 
-DB-side scripts read connection from
-`~/.config/agent-memory/connection.env` (DATABASE_URL=
-postgresql://tyroneross@localhost:5432/agent_memory). Per-project schema:
-this repo uses `build_loop_memory`. The schema name is configurable via
+The entire Postgres/pgvector/Ollama-embedding stack is **optional**. Phase 1
+(file-only decisions) works with zero DB configuration; `write_decision.py`'s
+DB write is best-effort and never fails the file write (see "DB errors do NOT
+fail the file write" above). Skip this section entirely if you only want
+Phase 1.
+
+When you do want Phase 2 retrieval, DB-side scripts resolve a connection
+string via `scripts/_db_url.py:resolve_db_url()`, in order:
+
+1. `$BUILD_LOOP_DATABASE_URL`
+2. `$DATABASE_URL`
+3. `~/.config/agent-memory/connection.env` (`DATABASE_URL=postgresql://$USER@localhost:5432/agent_memory` is a reasonable local default to put there)
+
+Per-project schema defaults to `$AGENT_MEMORY_SCHEMA` or `personal_memory`;
+this repo uses `build_loop_memory`. The schema name is also configurable via
 the `--schema` flag on each DB-aware script.
 
 ## Review mode (read-only)

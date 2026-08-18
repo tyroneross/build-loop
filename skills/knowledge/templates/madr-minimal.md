@@ -15,7 +15,7 @@ project: project-name
 tool: claude-code
 model: claude-opus-4-7
 task_category: feature
-author: tyroneross
+author: your-username
 source: manual
 related_runs: []
 related_decisions: []

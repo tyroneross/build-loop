@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c0ee06c7115b9db09205fef78f296c2556e1caa5fa790c0548ad327946396622"
+    "content_sha256": "12a08eb7810e42afe156741fcf8f1a6e4fb503375711f1f5b3ff201514712b70"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1040,7 +1040,7 @@
         "file": "agents/retrospective-synthesizer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-21"
+          "date": "2026-08-18"
         }
       },
       "root-cause-investigator": {
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-16"
+          "date": "2026-08-18"
         }
       },
       "building-with-deepagents": {

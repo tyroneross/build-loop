@@ -6,7 +6,7 @@ Single decision table mapping each risk class to its OWASP LLM ID, OWASP Agentic
 
 **Use.** This is the load-bearing artifact of the security-methodology skill. The `security-reviewer` agent cites a row from this matrix in every finding. The `defenseclaw-bridge` skill maps from this matrix to DefenseClaw config rows.
 
-**Source.** Adapted from `~/dev/research/topics/product-dev/product-dev.agentic-systems-security-references.md` §"Cross-source map: where each risk lives". The research file is the canonical citation trail; this file is the build-loop-internal copy.
+**Source.** Adapted from "Agentic Systems — Security References" (private research note — substance summarized here), §"Cross-source map: where each risk lives". This file is the build-loop-internal copy; it does not depend on the research note being present.
 
 ## Reading conventions
 

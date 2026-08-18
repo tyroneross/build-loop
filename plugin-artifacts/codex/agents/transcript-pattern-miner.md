@@ -46,7 +46,7 @@ You are a deterministic pipeline that runs the local pattern-mining script, dedu
 ## Step 1 — Run the miner
 
 ```bash
-python3 ~/dev/git-folder/build-loop/scripts/transcript-pattern-miner.py --days <N>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transcript-pattern-miner.py" --days <N>
 ```
 
 Default window: 7 days. Use `--days 30` for monthly review, `--all` for full history, `--force` to bypass the `.processed.json` cache. Stdout summarizes counts; non-zero exit only on a missing sessions directory.
@@ -54,7 +54,7 @@ Default window: 7 days. Use `--days 30` for monthly review, `--all` for full his
 ## Step 2 — Build the memory map
 
 ```bash
-ls ~/.claude/projects/-Users-tyroneross/memory/feedback_*.md
+ls ~/.claude/projects/*/memory/feedback_*.md
 ```
 
 For each file, read ONLY lines 1–10 (frontmatter window). Extract `name:` and `description:` fields. If frontmatter is malformed (no `---` open/close, missing fields), record the filename with `name=<filename>` and `description=(unparseable)` and continue — never abort.
@@ -142,14 +142,14 @@ Output exactly this schema in markdown. Sections you don't have signal for: writ
 # Edge cases
 
 - **No clusters at all** → emit the schema with `(none in this window)` under each section. Don't fabricate.
-- **Memory dir missing or empty** → mark every cluster as `novel` and add a top-of-output note: `⚠️ no feedback memory found at ~/.claude/projects/-Users-tyroneross/memory/`.
+- **Memory dir missing or empty** → mark every cluster as `novel` and add a top-of-output note: `⚠️ no feedback memory found at ~/.claude/projects/*/memory/`.
 - **Frontmatter malformed for some files** → still classify against the parseable ones. List unparseable files at the end of the summary under `Memory files skipped (malformed): <list>`.
 - **Miner script missing or errors** → report the error verbatim and stop. Do not run extraction yourself.
 
 # Data layout reference
 
-- Sessions: `~/.claude/projects/-Users-tyroneross/<session-uuid>.jsonl` (one file per Claude Code session, not in a `sessions/` subdir).
-- Memory: `~/.claude/projects/-Users-tyroneross/memory/feedback_*.md` (frontmatter only).
+- Sessions: `~/.claude/projects/<home-slug>/<session-uuid>.jsonl`, where `<home-slug>` is `$HOME` with every `/` replaced by `-` (see `default_sessions_dir()` in `scripts/transcript_pattern_miner/__main__.py`). One file per Claude Code session, not in a `sessions/` subdir.
+- Memory: `~/.claude/projects/<home-slug>/memory/feedback_*.md` (frontmatter only).
 - Miner output: `~/.build-loop/transcript-patterns/<YYYY-MM-DD>.md` + `.candidates.json`.
 - Idempotency cache: `~/.build-loop/transcript-patterns/.processed.json`.
 

@@ -73,7 +73,31 @@ from .report import append_outcomes_jsonl, build_candidates, render_report
 # ---------------------------------------------------------------------------
 
 HOME = Path.home()
-SESSIONS_DIR = HOME / ".claude" / "projects" / "-Users-tyroneross"
+
+
+def project_slug(path: Path) -> str:
+    """Encode ``path`` the way Claude Code names a project directory.
+
+    Claude Code stores sessions at ``~/.claude/projects/<slug>/<uuid>.jsonl``
+    where ``<slug>`` is the session cwd with every ``/`` replaced by ``-``
+    (an absolute path therefore keeps a leading ``-``). Verified against the
+    on-disk layout: ``.`` and ``_`` are preserved, only separators change.
+    """
+    return str(path).replace("/", "-")
+
+
+def default_sessions_dir(home: Path | None = None) -> Path:
+    """Sessions root for the CURRENT user's home-directory project.
+
+    Derived from the live ``$HOME`` so the miner works on any machine — the
+    slug is never hardcoded. Resolved per call (not frozen at import) so a
+    relocated ``$HOME`` is honoured.
+    """
+    base = Path(home) if home is not None else Path.home()
+    return base / ".claude" / "projects" / project_slug(base)
+
+
+SESSIONS_DIR = default_sessions_dir()
 OUT_DIR = HOME / ".build-loop" / "transcript-patterns"
 
 
@@ -91,8 +115,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="Reprocess files in cache")
     p.add_argument(
         "--sessions-dir",
-        default=str(SESSIONS_DIR),
-        help="Override sessions root (for testing)",
+        default=None,
+        help="Override sessions root (default: derived from $HOME)",
     )
     p.add_argument(
         "--out-dir",
@@ -108,7 +132,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    sessions_dir = Path(args.sessions_dir).expanduser()
+    sessions_dir = (
+        Path(args.sessions_dir).expanduser()
+        if args.sessions_dir
+        else default_sessions_dir()
+    )
     out_dir = Path(args.out_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     processed_path = out_dir / ".processed.json"

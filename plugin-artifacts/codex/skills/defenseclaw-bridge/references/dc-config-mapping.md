@@ -4,16 +4,9 @@
 
 Field-by-field mapping from each agent-builder template to the DefenseClaw config row(s) it produces. The bridge skill (`SKILL.md`) walks this mapping when generating `<project>/.defenseclaw/generated/`.
 
-**Canonical agent-builder template paths** (when the plugin is installed locally):
+**Canonical agent-builder templates** (when the `agent-builder` plugin is installed locally): six files under that plugin's `plugin/references/templates/agentic-handoff/` directory — `tool-contract.md`, `agent-manifest.md`, `guardrail.md`, `system-boundary.md`, `flow-topology.md`, `role-card.md`. Locate the plugin's install root the same way any installed plugin is located (`${CLAUDE_PLUGIN_ROOT}` when this bridge is invoked from within it, or the plugin cache/marketplace path otherwise) rather than assuming a fixed absolute path — the plugin is private and not shipped with build-loop.
 
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/tool-contract.md`
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/agent-manifest.md`
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/guardrail.md`
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/system-boundary.md`
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/flow-topology.md`
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/role-card.md`
-
-When the plugin is not installed locally, the project's own copies of these templates (filled in for the build) are the input. Filename match drives the bridge; plugin presence is not required.
+When the plugin is not installed locally, the project's own copies of these templates (filled in for the build) are the input. Filename match drives the bridge; plugin presence is not required. `skills/security-methodology/references/agentic-handoff-templates.md` also carries the vendored substance of `role-card`, `tool-contract`, `guardrail`, `system-boundary`, and `flow-topology` (schemas + the T0–T5 / A0–A4 tables) for repos that don't have `agent-builder` installed at all.
 
 ## Mapping reference (DefenseClaw schema)
 

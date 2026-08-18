@@ -338,8 +338,34 @@ python3 scripts/detect_plugin_distribution.py <repo> --hub <fleet marketplace.js
 
 The install SOURCE decides the policy (auto-SHA vs semver) — a blanket rule gets it wrong.
 What is NOT negotiable is *consistency*: the version state must agree across `plugin.json`,
-the codex manifest, and the marketplace entry, or one silently masks the others. Every plugin
-repo should call the shared CI workflow, which enforces that invariant for all shapes:
+the codex manifest, and the marketplace entry, or one silently masks the others. Enforce that
+invariant in CI with either of two equivalent options:
+
+**Option A — local check (default; no external dependency).** `detect_plugin_distribution.py`
+itself is advisory-only (always exits 0, prints a recommendation) — it is not a gate as
+shipped. Vendor the script into the generated repo and wrap its `--json` output in a CI step
+that fails on the `consistent` field:
+
+```yaml
+jobs:
+  verify-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 scripts/detect_plugin_distribution.py . --json > /tmp/dist.json
+          python3 -c "import json,sys; d=json.load(open('/tmp/dist.json')); sys.exit(0 if d['consistent'] else 1)"
+```
+
+(Adjust the script path to wherever `detect_plugin_distribution.py` lands in the generated
+repo — vendor the script itself, not just the CI call.)
+
+**Option B — reuse the maintainer's shared workflow (opt-in, explicit dependency).** build-loop's
+own CI calls a reusable workflow hosted in the maintainer's `tyroneross/RossLabs-AI-Toolkit` repo
+at the `plugin-ci-v1` tag. This is convenient but puts the generated repo's CI at the mercy of a
+third-party org: if that repo goes private, is renamed, or the tag is force-moved/deleted, the
+generated repo's CI breaks with no local fallback. Only wire this in if the user explicitly wants
+to track the maintainer's shared workflow and understands that risk:
 
 ```yaml
 jobs:

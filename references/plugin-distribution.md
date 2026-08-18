@@ -24,8 +24,12 @@ in the fleet run auto-SHA plugins *and* semver npm artifacts.
 
 ```bash
 python3 scripts/detect_plugin_distribution.py <repo> \
-  --hub ~/dev/git-folder/RossLabs-AI-Toolkit/.claude-plugin/marketplace.json
+  --hub <path-to-your-marketplace-hub>/.claude-plugin/marketplace.json
 ```
+
+`--hub` points at whichever marketplace repo you publish plugins through — supply your own
+hub's `.claude-plugin/marketplace.json` path (the build-loop maintainer's hub,
+`RossLabs-AI-Toolkit`, is just one example and won't exist on your machine).
 
 Advisory only — it never edits. Run it BEFORE changing any version field.
 
@@ -53,11 +57,15 @@ The detector now reports **every** source and refuses to silently pick one.
   exists. Default to auto-SHA (omit `version`), and call the shared verification workflow.
 - **Existing plugin:** run the detector before touching a version field. If it says
   `dual-sourced`, that is a decision to make out loud, not a default to apply.
-- **CI (all shapes):** call the shared workflow — it enforces the consistency invariant
-  regardless of which policy the repo runs:
+- **CI (all shapes):** enforce the consistency invariant regardless of which policy the repo
+  runs. The example below reuses the build-loop maintainer's reusable workflow — an
+  **explicit opt-in**, since it makes your CI depend on `tyroneross/RossLabs-AI-Toolkit`'s
+  repo and `plugin-ci-v1` tag continuing to exist; most readers should instead write an
+  equivalent manifest-consistency check directly into their own repo's workflow:
   ```yaml
   jobs:
     verify-manifests:
+      # opt-in: pins this job to the build-loop maintainer's repo + tag (see prose above)
       uses: tyroneross/RossLabs-AI-Toolkit/.github/workflows/verify-plugin-manifests.yml@plugin-ci-v1
     publish:
       needs: verify-manifests   # keeps the release gated

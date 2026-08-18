@@ -154,4 +154,4 @@ Three of the top four risks — **ASI02** (Tool Misuse), **ASI03** (Privilege Ab
 ## Verification status
 
 - ✅ ASI01–ASI10 verified (T1, OWASP GenAI Security Project release page; secondary confirmation via Aikido enumeration of the 2026 list).
-- The agent system that drove this skill's creation flipped ASI02–ASI06 from `[INFERRED]` to verified during this build — see `~/dev/research/topics/product-dev/product-dev.agentic-systems-security-references.md` §Verification status for the trail.
+- The agent system that drove this skill's creation flipped ASI02–ASI06 from `[INFERRED]` to verified during this build — see "Agentic Systems — Security References" (private research note — substance summarized here), §Verification status, for the trail.

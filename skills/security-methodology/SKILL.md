@@ -56,24 +56,21 @@ If you're grading a diff (as `security-reviewer` does):
 - Model theft (LLM10) at the deployment level. Agent-builder-style apps don't host weights.
 - CBRN, environmental, IP, obscene, and violent content from NIST 600-1 — those are policy/legal concerns, not engineering. They're referenced for completeness in `nist-600-1-mapping.md` but not deeply mapped.
 - The full MITRE ATLAS taxonomy. ATLAS has 16 tactics and 84 techniques as of v5.1.0 (Nov 2025) plus 14 agentic additions (Feb 2026). Re-authoring it would duplicate the project; the starter file points at the source.
-- Adversarial test corpora. Red-team corpora are out of build-loop's scope per `~/dev/research/topics/product-dev/product-dev.agentic-systems-original-synthesis.md` recommendation #4.
+- Adversarial test corpora. Red-team corpora are out of build-loop's scope per "Agentic Systems — Original Synthesis" (private research note — substance summarized here) recommendation #4.
 
 ## Where these references come from
 
 This skill packages and cross-maps four authoritative sources. Each reference file inside `references/` cites its own source. The canonical research file with full citation, retrieval dates, source tier, and the original cross-source matrix lives at:
 
-- `~/dev/research/topics/product-dev/product-dev.agentic-systems-security-references.md` — the verified canon. T1 sources throughout (OWASP project pages, NIST publication, MITRE ATLAS, Cisco DefenseClaw repo).
+- "Agentic Systems — Security References" (private research note — substance summarized here) — the verified canon. T1 sources throughout (OWASP project pages, NIST publication, MITRE ATLAS, Cisco DefenseClaw repo).
 
 The companion **gap analysis** that motivated shipping these artifacts inside build-loop:
 
-- `~/dev/research/topics/product-dev/product-dev.agentic-systems-original-synthesis.md` — recommendations table (security-related: #4 red-team playbook, #10 cost-budget enforcement, plus the new "govern/inspect/prove" recommendation).
+- "Agentic Systems — Original Synthesis" (private research note — substance summarized here) — recommendations table (security-related: #4 red-team playbook, #10 cost-budget enforcement, plus the new "govern/inspect/prove" recommendation).
 
-The agent-builder methodology that this skill cross-references when classifying agentic risks (autonomy ladder A0–A4, permission tiers T0–T5, role decomposition):
+The agent-builder methodology that this skill cross-references when classifying agentic risks (autonomy ladder A0–A4, permission tiers T0–T5, role decomposition) — "Agentic Product Development — Synthesis" (agent-builder plugin methodology, file 13; private research note — substance summarized here) and its companion "15 template files" set (`tool-contract.md`, `agent-manifest.md`, `guardrail.md`, `system-boundary.md`, `flow-topology.md`, `role-card.md` are the security-relevant subset; private, not shipped in this repo).
 
-- `~/dev/git-folder/agent-builder/plugin/references/methodology/13-agentic-product-dev-synthesis.md` — single canonical synthesis, A0–A4 autonomy ladder.
-- `~/dev/git-folder/agent-builder/plugin/references/templates/agentic-handoff/` — 15 template files; the security-relevant subset is `tool-contract.md`, `agent-manifest.md`, `guardrail.md`, `system-boundary.md`, `flow-topology.md`, `role-card.md`.
-
-If the agent-builder plugin is not installed locally, the research-folder pointer above is sufficient — file 13's substance is reproduced in the addendum-v2 research file (`~/dev/research/topics/product-dev/product-dev.agentic-systems-template-pack-addendum-v2.md`).
+**Working fallback (always available, no external plugin required):** `references/agentic-handoff-templates.md` — vendored into this repo so the skill has a real fallback on a fresh install. It reproduces the permission-tier table, the A0–A4 ladder, the default role-decomposition table, and the machine-readable YAML templates (role-card, tool-contract, guardrail, system-boundary, flow-topology, agent-output-contract) directly, with provenance notes. If the agent-builder plugin is installed locally, prefer its live templates; otherwise this file is the canon.
 
 ## Relationship to other build-loop skills
 

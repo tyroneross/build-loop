@@ -53,7 +53,9 @@ RETRO_ENFORCE_DIRNAME = "proposals/enforce-from-retro"
 RETROSPECTIVES_DIRNAME = "retrospectives"
 MILESTONE_OWED_PREFIX = "milestone-owed-"
 CLOSEOUT_PENDING_DIRNAME = "closeout-pending"
-DEFAULT_MEMORY_ROOT = "~/dev/git-folder/build-loop-memory"
+# Memory root is resolved by _paths.memory_store_root() (env override, else an
+# existing legacy checkout, else the neutral per-user default). Never hardcode
+# an address here: a literal default writes the maintainer's tree onto a user's disk.
 # Sources for which milestone enforcement + queue drain fire (a real shipped run).
 ENFORCE_SOURCES = ("post-push", "post-push-armed", "phase-6-learn")
 
@@ -397,7 +399,11 @@ def ensure_milestone(
     Deterministic + fail-soft. Returns a status block for the envelope.
     """
     workdir = Path(workdir).resolve()
-    mem_root = Path(os.path.expanduser(str(memory_root or DEFAULT_MEMORY_ROOT)))
+    if memory_root:
+        mem_root = Path(os.path.expanduser(str(memory_root)))
+    else:
+        from _paths import memory_store_root  # noqa: PLC0415
+        mem_root = memory_store_root()
     drain_result = _drain_promotions(workdir, mem_root)
 
     resolved = _resolve_shipped_run(workdir, run_id)

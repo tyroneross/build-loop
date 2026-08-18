@@ -151,6 +151,6 @@ defenseclaw-bridge: missing reference file <path>. Cannot generate DefenseClaw s
 
 ## Related references
 
-- `~/dev/research/topics/product-dev/product-dev.agentic-systems-security-references.md` — the security canon citing DefenseClaw as a T1 reference implementation, plus the three-pillar Govern / Inspect / Prove model.
-- `~/dev/research/topics/product-dev/product-dev.agentic-systems-original-synthesis.md` — recommends adding DefenseClaw to the agent-builder catalog as the security-governance reference architecture.
+- "Agentic Systems — Security References" (private research note — substance summarized here) — the security canon citing DefenseClaw as a T1 reference implementation, plus the three-pillar Govern / Inspect / Prove model.
+- "Agentic Systems — Original Synthesis" (private research note — substance summarized here) — recommends adding DefenseClaw to the agent-builder catalog as the security-governance reference architecture.
 - `https://github.com/cisco-ai-defense/defenseclaw` — DefenseClaw repo. Apache 2.0. Cisco-backed.

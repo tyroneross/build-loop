@@ -48,13 +48,13 @@ Better: use `EnterWorktree` or a separate test project directory for plugin deve
 
 **What happened.** Editing hook files under `~/.claude/plugins/cache/rosslabs-ai-toolkit/showcase/0.1.1/hooks/hooks.json` took effect immediately, but the next marketplace sync (pulling the GitHub repo) overwrote the edit with the repo's original file. Hours of debugging lost to the illusion of a persistent fix.
 
-**Rule.** Cache is regenerated from the marketplace's upstream repo. Always edit the source (`~/Desktop/git-folder/RossLabs-AI-Toolkit/plugins/<plugin>/…`), commit, push. If you need an immediate fix in the current session, edit both the source and the cache — the cache copy keeps the session alive until you push, then the next sync reconciles.
+**Rule.** Cache is regenerated from the marketplace's upstream repo. Always edit the source (your local checkout of the marketplace repo, e.g. `<your-checkouts-root>/RossLabs-AI-Toolkit/plugins/<plugin>/…`), commit, push. If you need an immediate fix in the current session, edit both the source and the cache — the cache copy keeps the session alive until you push, then the next sync reconciles.
 
 The marketplace repo is the source of truth. Nothing under `~/.claude/plugins/cache/` is authored — it's all generated.
 
 ## 5a. The reverse trap: source-only edits don't take effect at runtime
 
-**What happened (2026-04-22, build-loop).** Edited `~/Desktop/git-folder/build-loop/scripts/write_run_entry.py` in the source repo and updated the orchestrator prose to invoke `${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py`. Tests passed. Claimed success. The orchestrator never saw the new script because `${CLAUDE_PLUGIN_ROOT}` resolves to `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` — a frozen snapshot that only updates on marketplace sync. Source-only edit = runtime silently runs the old version (or in this case, returns "file not found" and the orchestrator falls back to hand-writing JSON, if it remembers to).
+**What happened (2026-04-22, build-loop).** Edited `<local checkout>/build-loop/scripts/write_run_entry.py` in the source repo and updated the orchestrator prose to invoke `${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py`. Tests passed. Claimed success. The orchestrator never saw the new script because `${CLAUDE_PLUGIN_ROOT}` resolves to `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` — a frozen snapshot that only updates on marketplace sync. Source-only edit = runtime silently runs the old version (or in this case, returns "file not found" and the orchestrator falls back to hand-writing JSON, if it remembers to).
 
 **Rule.** The full sync cycle is **source → commit → push → marketplace sync → cache**. Any link that breaks leaves the cache stale.
 

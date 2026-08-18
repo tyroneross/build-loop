@@ -171,7 +171,7 @@ Two high-frequency advisory agents stay on Sonnet. Every verification agent — 
 - **Execution:** any Phase 2 plan chunk whose owned files include migrations, `schema.prisma`/`schema.sql`, or DDL scripts is assigned Frontier in plan model-assignment, not the Sonnet implementer default. Label the assignment in the plan.
 - **DB skills:** `data-plane-worktrees` and any database skill dispatch their executing subagent at Frontier tier (Agent `model` override / workflow `opts.model`).
 
-This is a provider-portable *tier* pin (Frontier), not a hardcoded id; on hosts where a higher-ranked Frontier id is available the resolver may pick it, honoring Accuracy > Speed > Cost. Source: user standing rule, atomize-ai migration rehearsal (run-593729).
+This is a provider-portable *tier* pin (Frontier), not a hardcoded id; on hosts where a higher-ranked Frontier id is available the resolver may pick it, honoring Accuracy > Speed > Cost. Source: user standing rule, example-app-ai migration rehearsal (run-593729).
 
 ## Round 2 evidence (2026-05-07, example-app news-podcast iteration 2)
 
@@ -332,4 +332,4 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_overrides.py \
 
 Accepted tiers: `frontier` (default `fable`), `thinking` (default `opus`), `code` (default `sonnet`), `pattern` (default `haiku`). Configs without `frontier` resolve frontier → `fable` so older repos keep working without edits.
 
-Full contract and routing matrix: `~/dev/research/topics/llm/llm.build-loop-router-integration-2026-04.md`
+Full contract and routing matrix: "LLM Build-Loop Router Integration" (private research note, 2026-04 — substance summarized here; the live routing matrix ships in-repo at `references/model-taxonomy.json`).

@@ -170,13 +170,18 @@ optimistically.
 
 ## Worked examples
 
+Each example below sets `BL` to the build-loop install path. Replace
+`/Users/you/dev/git-folder/build-loop` with wherever you actually installed build-loop —
+these examples target Codex shell profiles and CI steps, which have no Claude-Code-specific
+path variable to fall back on.
+
 ### 1. Codex — a shell profile that pins the tier map
 
 Codex reads env vars, not Python. Materialize the map once per session and let the profile
 source it verbatim:
 
 ```sh
-BL=~/dev/git-folder/build-loop
+BL=/Users/you/dev/git-folder/build-loop  # set to your build-loop install path
 python3 "$BL/scripts/model_index.py" export --format env --host codex > ~/.config/codex/models.env
 . ~/.config/codex/models.env
 
@@ -215,7 +220,7 @@ CURRENT=$(python3 "$BL/scripts/model_index.py" tiers --json | python3 -c 'import
 ### 2. A shell — one-shot lookup in a script or CI step
 
 ```sh
-BL=~/dev/git-folder/build-loop
+BL=/Users/you/dev/git-folder/build-loop  # set to your build-loop install path
 MODEL=$(python3 "$BL/scripts/model_index.py" resolve --tier code --host any --json \
         | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"] or "")')
 
@@ -243,7 +248,8 @@ A local-model runner with no network and no build-loop import can get both the m
 the prompting posture in one call:
 
 ```sh
-python3 ~/dev/git-folder/build-loop/scripts/model_index.py \
+BL=/Users/you/dev/git-folder/build-loop  # set to your build-loop install path
+python3 "$BL/scripts/model_index.py" \
         resolve --tier T3 --segment agentic_execution --host any --json > /tmp/route.json
 ```
 

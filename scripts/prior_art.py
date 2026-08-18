@@ -98,14 +98,13 @@ def _safe_recall(query: str, limit: int) -> tuple[list[dict[str, Any]], list[str
 def _memory_root(override: Path | None = None) -> Path:
     if override is not None:
         return Path(override)
-    # Honour env vars used by other build-loop memory helpers.
-    raw = (
-        os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
-        or os.environ.get("BUILD_LOOP_MEMORY_ROOT")
-        or os.environ.get("AGENT_MEMORY_ROOT")
-        or "~/dev/git-folder/build-loop-memory"
-    )
-    return Path(os.path.expanduser(raw))
+    # `_paths.memory_store_root()` owns the whole resolution order (env
+    # override -> existing legacy root -> neutral `~/.build-loop-memory`).
+    # Imported lazily so a missing sibling module degrades like every other
+    # optional dependency in this file.
+    from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+
+    return memory_store_root()
 
 
 # --------------------------------------------------------------------------

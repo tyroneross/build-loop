@@ -48,7 +48,7 @@ When Assess detects a newly added third-party package:
 2. If `cooldown.install_blocked: true` (latest version released < 7 days ago, service not `author_owned`):
    - Surface the `cooldown.reason` to the user.
    - The `pre_bash_dependency_cooldown.sh` PreToolUse hook is the enforcement point — it already rewrites/denies fresh installs at the Bash boundary. The registry verdict is the *advisory* signal that explains *why* a hook rewrite happened; it does not replace the hook.
-   - `author_owned: true` services (`@tyroneross/*` scope + the user's own projects) are exempt — `cooldown.install_blocked` is always `false` for them, matching the hook's allowlist.
+   - `author_owned: true` services (the scope(s)/repos configured in `dependencyCooldown.allowlist`, plus the user's own projects) are exempt — `cooldown.install_blocked` is always `false` for them, matching the hook's allowlist. The default allowlist ships pinned to the maintainer's own npm scope; set `dependencyCooldown.allowlist` to your own scope(s) so this exemption applies to packages you own rather than the maintainer's.
 3. The 7-day registry cooldown window and the hook's 7-day install cooldown are deliberately the same number (supply-chain dwell time). If they ever diverge, the hook is authoritative for *enforcement*; the registry is authoritative for *explanation*.
 
 ## What this does NOT do

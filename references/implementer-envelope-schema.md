@@ -285,7 +285,7 @@ OpenAI Agents SDK ships an `input_filter` primitive on its `handoff(...)` call: 
 
 **Why this matters for the envelope schema**: `capabilities_used[]` / `capabilities_rejected[]` are the implementer's view of brief utility. `applied_filter` is the orchestrator's view. Together they let Phase 6 Learn answer "did we send the right context?" without the implementer having to enumerate everything it ignored.
 
-**Sources** (full citations in `~/dev/research/topics/agentic-systems/agentic-systems.build-loop-agent-audit-2026-05-20.md` §5):
+**Sources** (full citations in "agentic-systems: build-loop agent audit, 2026-05-20" §5 — private research note, substance summarized here):
 - OpenAI Agents SDK — `handoff(input_type, on_handoff, input_filter)` primitive (Bucket 1 §5.A core)
 - Microsoft Agent Framework — handoff vs agent-as-tools distinction (§5.C)
 

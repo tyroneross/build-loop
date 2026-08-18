@@ -231,7 +231,9 @@ python3 scripts/recall.py --query "test framework"
 ## Extraction prompts (inline reference)
 
 These three prompts are the canonical extraction templates from
-`~/dev/research/topics/repo-episodic-memory-framework/repo-episodic-memory-framework.md` §12.
+"Repo Episodic Memory Framework" (private research note — substance
+summarized here; see §12), reproduced in full below so this skill has
+no dependency on the note being present.
 Use them whenever you need to extract structured decisions from
 unstructured conversation. Keep temperature low (0.1–0.3).
 

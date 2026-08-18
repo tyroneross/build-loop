@@ -7,9 +7,8 @@
 framework (Working / Episodic / Semantic / Procedural). It does NOT modify
 any data; it lists what humans need to decide on.
 
-The full design lives at
-`~/dev/research/topics/repo-episodic-memory-framework/repo-episodic-memory-framework.md`
-(see §11–§14).
+The full design lives in "Repo Episodic Memory Framework" (private
+research note — substance summarized here; see §11–§14).
 
 Companion scripts: `scripts/knowledge_review.py` (aggregates all four sections into a
 markdown report), `scripts/detect_decision_rot.py` (rot section),

@@ -39,7 +39,7 @@ The orchestrator brief contains:
 
 Eager:
 - The candidate artifact file
-- `~/dev/git-folder/build-loop-memory/constitution.md` — durable invariants
+- Global constitution — `constitution.md` under the memory store root, via `scripts/memory_facade.py recall()` or `_paths.memory_store_root()` — durable invariants. Missing is `(none found)`, not an error; state explicitly if it was missing.
 - Project constitution if present at `~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
 - The experiment_log JSONL (sample outcomes, confound flags)
 

@@ -50,8 +50,12 @@ from pathlib import Path
 
 # --- Canonical default strings -----------------------------------------------
 # These mirror the values documented in skills/attribution-standard/SKILL.md.
-DEFAULT_NAME = "Tyrone Ross, Jr"
-DEFAULT_EMAIL = "46267523+tyroneross@users.noreply.github.com"
+# NO literal identity defaults. This script stamps COPYRIGHT into a repo; a
+# maintainer-shaped default would stamp build-loop's author into a stranger's
+# code whenever an agent ran it without flags. Identity is resolved from the
+# TARGET repo's own git config, and we hard-fail if it cannot be determined.
+DEFAULT_NAME = None
+DEFAULT_EMAIL = None
 DEFAULT_YEARS = "2025-2026"
 DEFAULT_PATHS = ["src", "scripts", "hooks", "skills", "agents", "commands", "references"]
 DEFAULT_EXCLUDES = {
@@ -82,6 +86,25 @@ CANARY_OPEN = "build-loop@tyroneross:canary"  # generic across repos; we ship a 
 CANARY_CLOSE = "canary-end"
 
 
+def _resolve_identity(git_key: str, repo: Path | str | None) -> str:
+    """Read `git config <key>` from the TARGET repo, or fail loudly."""
+    import subprocess  # noqa: PLC0415
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo or "."), "config", "--get", git_key],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+    except OSError:
+        out = ""
+    if out:
+        return out
+    raise SystemExit(
+        f"attribution_stamp: cannot resolve {git_key} for the target repo. "
+        f"Pass --name/--email explicitly. Refusing to stamp an unverified "
+        f"copyright holder."
+    )
+
+
 @dataclasses.dataclass
 class StampParams:
     """Materialised attribution parameters."""
@@ -95,6 +118,19 @@ class StampParams:
     restamp: bool
     canary_files: list[Path]
     repo_name: str
+
+    def __post_init__(self) -> None:
+        """Resolve identity from the TARGET repo when not given explicitly.
+
+        Runs here rather than in main() so library callers get the same
+        protection as the CLI. There is no literal fallback: stamping an
+        unverified copyright holder into someone else's source is worse
+        than refusing to stamp.
+        """
+        if not self.name:
+            self.name = _resolve_identity("user.name", self.repo_root)
+        if not self.email:
+            self.email = _resolve_identity("user.email", self.repo_root)
 
     @property
     def copyright_text_with_email(self) -> str:
@@ -244,7 +280,7 @@ def _find_insert_index(lines: list[str], style: str) -> int:
 NOTICE_TEMPLATE = """{repo_name}
 Copyright {copyright_text_no_email}
 
-This product was authored by {name} (https://github.com/tyroneross/{repo_name}).
+This product was authored by {name}.
 Portions of this software were developed with the assistance of Anthropic's Claude
 (via Claude Code) and OpenAI's Codex (via Codex CLI); AI-pair-programming
 contributions are attributed via Co-Authored-By trailers in the git history.
@@ -549,8 +585,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Idempotent attribution stamper for Apache-2.0 repos (four-layer model).",
     )
     parser.add_argument("--repo", required=True, help="Path to repo root.")
-    parser.add_argument("--name", default=DEFAULT_NAME, help=f"Copyright holder (default: {DEFAULT_NAME!r}).")
-    parser.add_argument("--email", default=DEFAULT_EMAIL, help=f"Email tail for SPDX (default: {DEFAULT_EMAIL!r}).")
+    parser.add_argument("--name", default=DEFAULT_NAME,
+                        help="Copyright holder (default: the target repo's git config user.name).")
+    parser.add_argument("--email", default=DEFAULT_EMAIL,
+                        help="Email for SPDX (default: the target repo's git config user.email).")
     parser.add_argument("--years", default=DEFAULT_YEARS, help=f"Year range (default: {DEFAULT_YEARS!r}).")
     parser.add_argument("--paths", nargs="*", default=None, help="Shipped paths to walk. Defaults to standard set.")
     parser.add_argument(

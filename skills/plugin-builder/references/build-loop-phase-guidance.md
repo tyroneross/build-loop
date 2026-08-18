@@ -73,10 +73,10 @@ The rename is a full migration, not a metadata change. Partial renames produce p
 ## Source-of-truth flow
 
 ```
-~/Desktop/git-folder/<plugin-repo>/            ← author-owned, edit here, commit
+<your-local-checkout>/<plugin-repo>/           ← author-owned, edit here, commit
        │
        ▼ (git push)
-GitHub: tyroneross/<marketplace>/              ← marketplace pulls from here
+GitHub: <your-github-org>/<marketplace>/       ← marketplace pulls from here
        │
        ▼ (plugin sync)
 ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/   ← generated, never edit long-term
@@ -90,5 +90,4 @@ Build-loop must edit the source repo, not the cache. Cache edits survive until t
 ## References
 
 - `~/.claude/skills/plugin-builder/references/plugin-hygiene-lessons.md` — full incident log
-- `~/.claude/projects/-Users-tyroneross/memory/feedback_hook_design.md` — hook design rules
-- `~/.claude/projects/-Users-tyroneross/memory/feedback_rosslabs_toolkit_sync.md` — marketplace rename sync
+- Per-project Claude Code memory (`feedback_hook_design.md`, `feedback_rosslabs_toolkit_sync.md`) — hook design rules and marketplace-rename-sync notes, when present. These live under a project-slug directory in `~/.claude/projects/` derived from your home path (glob `~/.claude/projects/-Users-*/memory/` to find yours); they are optional, personal notes, not part of this plugin.

@@ -8,7 +8,7 @@ A run is **self-recursive** when the build-loop working tree IS the loaded runti
 Recommended: pass the working tree directly to Claude Code at session start.
 
 ```sh
-claude --plugin-dir ~/dev/git-folder/build-loop
+claude --plugin-dir <path-to-your-local-checkout>
 ```
 
 `--plugin-dir` takes session precedence over any cached marketplace copy, and Claude Code sets `CLAUDE_PLUGIN_ROOT` to that directory. The detector reads it. No symlink, no `~/.claude/` mutation.
@@ -16,7 +16,7 @@ claude --plugin-dir ~/dev/git-folder/build-loop
 Convenience alias (optional, in `~/.zshrc` or `~/.bashrc`):
 
 ```sh
-alias claude-bl='claude --plugin-dir ~/dev/git-folder/build-loop'
+alias claude-bl='claude --plugin-dir <path-to-your-local-checkout>'
 ```
 
 Use the alias when you intend to dogfood build-loop changes; use plain `claude` for normal work that should run against the released cache version.

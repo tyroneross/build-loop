@@ -4,7 +4,7 @@
 """Markdown link/mention parser for the Phase B knowledge-graph leg.
 
 Walks `.episodic/decisions/*.md`, `.build-loop/feedback.md`, and
-`~/.claude/projects/-Users-tyroneross/memory/*.md` (when present) and
+`~/.claude/projects/<home-slug>/memory/*.md` (when present) and
 extracts cross-decision references as graph edges.
 
 Three edge types:
@@ -40,7 +40,6 @@ Used by `scripts/recall_graph.py`.
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -294,9 +293,10 @@ def main(argv: list[str] | None = None) -> int:
     # leaking cross-project content into the per-repo graph. Pass
     # --include-user-memory to opt in.
     if "--include-user-memory" in (argv or sys.argv[1:]):
-        user_memory = Path(os.path.expanduser(
-            "~/.claude/projects/-Users-tyroneross/memory"
-        ))
+        # Claude Code names a project dir after its cwd with `/` -> `-`;
+        # derive it from the live $HOME so this works on any machine.
+        home = Path.home()
+        user_memory = home / ".claude" / "projects" / str(home).replace("/", "-") / "memory"
         if user_memory.exists():
             extra.append(user_memory)
 

@@ -43,7 +43,7 @@ Read the spec FIRST, then the item. Same anti-position-bias rationale as indepen
 
 1. `Read(workdir + "/.build-loop/intent.md")` — north star, update intent, user value, **non-goals**.
 2. `Read(workdir + "/.build-loop/goal.md")` — the current goal text.
-3. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` — global/project rules (must-not-violate). Phase 1 already eager-loaded; you re-read for current state.
+3. Recall the global and project constitution from the memory store root (`scripts/memory_facade.py recall()`, or `_paths.memory_store_root()` for direct file paths) — `constitution.md` and `projects/<slug>/constitution.md` — global/project rules (must-not-violate). Any missing artifact is `(none found)` — not an error; state explicitly which ones were missing. Phase 1 already eager-loaded; you re-read for current state.
 3a. `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/charter.md")` (or the repo mirror `.build-loop/charter.md`) — OPTIONAL (absent for low-stakes projects). Read its **Posture → priority_order** when present: the ranked tie-breaker (security/reliability/speed/cost/simplicity/polish + notes).
 4. `Read(workdir + "/.build-loop/prd.md")` — optional. Repo-level PRD if user dropped one. Skip silently if absent.
 5. `Read(workdir + "/prd.md")` — optional repo-root PRD. Same fallthrough.

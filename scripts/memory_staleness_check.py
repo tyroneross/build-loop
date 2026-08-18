@@ -33,7 +33,8 @@ if str(HERE) not in sys.path:
 import memory_update_ledger as mul  # type: ignore  # noqa: E402
 
 DEFAULT_COMMITS_THRESHOLD = 5
-DEFAULT_MEMORY_ROOT = Path.home() / "dev" / "git-folder" / "build-loop-memory"
+# Resolved lazily via _paths.memory_store_root(); no literal default (see
+# scripts/test_portable_paths.py for the guard that keeps it that way).
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--memory-root",
         default=None,
-        help=f"Root of the build-loop-memory tree (default: {DEFAULT_MEMORY_ROOT}).",
+        help="Root of the build-loop-memory tree (default: resolved memory store root).",
     )
     parser.add_argument(
         "--commits-threshold",
@@ -242,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
 
     workdir = Path(args.workdir).resolve()
     slug = args.project or workdir.name
-    memory_root = Path(args.memory_root).resolve() if args.memory_root else DEFAULT_MEMORY_ROOT
+    if args.memory_root:
+        memory_root = Path(args.memory_root).resolve()
+    else:
+        from _paths import memory_store_root  # noqa: PLC0415
+        memory_root = memory_store_root()
 
     result = check(
         workdir=workdir,
