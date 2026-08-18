@@ -31,7 +31,8 @@ You run **non-gating in the background**: the orchestrator dispatches you after 
 
 1. **Non-gating.** Fire-and-continue. On any failure, return `status="degraded"` with a one-line reason and stop — never raise.
 2. **Local read-only inputs.** Read only: the session transcript (`~/.claude/projects/<cwd-slug>/*.jsonl`), `.build-loop/state.json`, `.build-loop/intent.md`, `.build-loop/plan.md`. No network, no external services.
-3. **Local deterministic writes only.** Write only to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` + `<run-id>.summary.md`, `.build-loop/proposals/enforce-from-retro/<run-id>-<NN>.md`, and best-effort `build-loop-memory/projects/<slug>/retrospectives/`. Atomic writes via `os.replace`.
+3. **Local deterministic writes, plus a REQUIRED durable copy.** Write to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` + `<run-id>.summary.md` and `.build-loop/proposals/enforce-from-retro/<run-id>-<NN>.md`. Atomic writes via `os.replace`.
+   **Every retrospective ALSO lands in `build-loop-memory/projects/<slug>/retrospectives/` via `scripts/memory_writer.py`** — this is required, not best-effort. `.build-loop/` is gitignored, so a retrospective written only there does not survive a fresh clone and the next session cannot find it; the whole point of the artifact is that a later session reads it. If the durable write fails, say so in the summary line rather than reporting the retrospective as complete.
 4. **No silent promotion.** Enforce-candidates are proposal files for human review. Never modify orchestrator behavior or skill defaults.
 5. **Reuse, never re-implement.** Transcript locator, prompted-≥2× clustering, and section assembly live in `scripts/retrospective/`. Call the CLI; do not re-derive its output.
 
