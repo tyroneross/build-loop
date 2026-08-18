@@ -46,7 +46,7 @@ Read in this order (this is the same order the hook script uses; mirror it so yo
 3. `Read("<repo>/CLAUDE.md")` — repo-level instructions
 4. `Read("<repo>/README.md")` — first 50 lines for product framing
 5. PRD location, first match: `<repo>/docs/PRD.md` → `<repo>/docs/prd.md` → `<repo>/docs/prd/*.md` → `<repo>/.build-loop/prd.md`
-6. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` if present — load rule IDs the diff plausibly touches by keyword match on filenames + diff verbs
+6. `Read("<memory-store-root>/constitution.md")` and `Read("<memory-store-root>/projects/<slug>/constitution.md")` if present — load rule IDs the diff plausibly touches by keyword match on filenames + diff verbs
 7. `Bash("python3 scripts/audit_git.py log --oneline -5")` — trajectory
 8. `Bash("python3 scripts/audit_git.py diff <diff_sha_range>")` — the actual diff (truncate to 200 lines for your reasoning context if larger; you may read specific files at a revision via `audit_git.py show <sha>:<path>` when needed)
 
@@ -195,4 +195,4 @@ Per [Agent-as-a-Judge, arXiv:2410.10934](https://arxiv.org/abs/2410.10934), a ju
 
 ## Library / research context (when available)
 
-Per [IntPro, arXiv:2603.03325](https://arxiv.org/pdf/2603.03325), retrieval-conditioned context improves intent-aware judgment. The audit packet surfaces a `### Library / research context` section listing packages identified in the staged diff, their api-registry entries (docs URL, latest version, deprecation status, cache freshness), and matching entries from `~/dev/research/` from the last 30 days. When the section flags a deprecation or stale doc cache, treat that as load-bearing context — a verdict that ignores a flagged deprecation should not be `yay`.
+Per [IntPro, arXiv:2603.03325](https://arxiv.org/pdf/2603.03325), retrieval-conditioned context improves intent-aware judgment. The audit packet surfaces a `### Library / research context` section listing packages identified in the staged diff, their api-registry entries (docs URL, latest version, deprecation status, cache freshness), and matching entries from the local research store, if one is configured, from the last 30 days. When the section flags a deprecation or stale doc cache, treat that as load-bearing context — a verdict that ignores a flagged deprecation should not be `yay`.

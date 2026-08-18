@@ -1,0 +1,19 @@
+name: Portability guard
+# build-loop is installed by other people. This blocks a merge that ships a
+# path which only exists on the maintainer's machine. Needs no secret, so it
+# runs on forks and contributor PRs too.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  portability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Scan shipped surfaces for maintainer-machine paths
+        run: python3 scripts/check_portability.py --all

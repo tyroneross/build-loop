@@ -134,7 +134,7 @@ def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
 
     Mirrors `memory_facade._resolve_decision_dirs` — uses `_paths` and
     `project_resolver` to land on
-    `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/`. Returns
+    `<memory-store-root>/projects/<project>/decisions/`. Returns
     `None` on any resolution failure (graceful degradation contract).
     """
     try:
@@ -265,7 +265,7 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
 
     Canonical store after the memory-store cutover:
 
-      1. **Canonical**: `~/dev/git-folder/build-loop-memory/
+      1. **Canonical**: `<memory-store-root>/
          projects/<project>/decisions/*.md`
       2. **Legacy diagnostic**: `<workdir>/.episodic/decisions/*.md`
 

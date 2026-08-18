@@ -236,6 +236,6 @@ On-demand recall via `memory_facade.py recall --query "design contract ui hierar
 
 ## Why this agent exists
 
-The audit (`~/dev/research/topics/agentic-systems/agentic-systems.build-loop-agent-audit-2026-05-20.md` §6) showed that without a single-writer specialist, the UI and data contracts drift independently — ui-validator writes a tier change, scout writes a schema change, and `traceability.json` ends up inconsistent or out-of-date. Concentrating the write authority here (MECE: scout/validator EMIT, specialist INTEGRATES) restores the single-writer invariant for design state.
+The audit ("agentic-systems: build-loop agent audit, 2026-05-20" §6 (private research note)) showed that without a single-writer specialist, the UI and data contracts drift independently — ui-validator writes a tier change, scout writes a schema change, and `traceability.json` ends up inconsistent or out-of-date. Concentrating the write authority here (MECE: scout/validator EMIT, specialist INTEGRATES) restores the single-writer invariant for design state.
 
 See `agents/build-orchestrator.md` Phase 1 Assess / Phase 3 chunk-close / Phase 4 Review-A for the orchestrator-side dispatch sites. See `references/implementer-envelope-schema.md` for the canonical envelope shape this agent re-uses for `novel_decisions[]`.

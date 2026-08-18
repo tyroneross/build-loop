@@ -26,4 +26,14 @@ if [ -f "$RUNTIME_MEMORY_GUARD" ]; then
 fi
 # --- END private-slug-guard pre-commit ---
 
+# --- BEGIN portability-guard pre-commit ---
+# Blocks a commit that ships a maintainer-machine path to installed users.
+# Runs from the repo (no secret config needed, unlike the slug guard), so
+# there is no .git/hooks copy to desync. See scripts/check_portability.py.
+PORTABILITY_GUARD="$RALLY_POINT_TOPLEVEL/scripts/check_portability.py"
+if [ -f "$PORTABILITY_GUARD" ]; then
+  python3 "$PORTABILITY_GUARD" || exit 1
+fi
+# --- END portability-guard pre-commit ---
+
 exit 0

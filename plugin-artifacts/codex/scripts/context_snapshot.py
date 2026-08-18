@@ -56,6 +56,21 @@ VALID_TRIGGERS = {
 }
 
 
+
+def _memory_store_display() -> str:
+    """Resolved memory store root for display in the handoff doc.
+
+    Must not be a literal: the snapshot is read by the NEXT session, possibly
+    on another machine, and a wrong address sends it hunting a path that does
+    not exist.
+    """
+    try:
+        from _paths import memory_store_root  # noqa: PLC0415
+        return str(memory_store_root())
+    except Exception:  # pragma: no cover - display-only, never fail a snapshot
+        return "<memory store root>"
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -445,7 +460,8 @@ def current_markdown(snapshot: dict[str, Any]) -> str:
             "",
             f"- Snapshot JSON: `.build-loop/context/snapshots/` (id={snapshot_id})",
             f"- Snapshot index: `.build-loop/context/index.json`",
-            f"- Memory store: `~/dev/git-folder/build-loop-memory/projects/{snapshot.get('project') or '<unscoped>'}/`",
+            f"- Memory store: `{_memory_store_display()}/projects/"
+            f"{snapshot.get('project') or '<unscoped>'}/`",
             f"- Prior art digest (full): `packet.prior_art.digest_text` via context_bootstrap.py",
         ]
     )

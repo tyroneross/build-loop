@@ -89,7 +89,7 @@ def probe_project_memory(workdir: Path) -> dict[str, Any]:
     """Probe project memory at the consolidated location.
 
     Project memory lives at
-    ``~/dev/git-folder/build-loop-memory/projects/<slug>/MEMORY.md`` by default.
+    ``<memory-store-root>/projects/<slug>/MEMORY.md`` (root via _paths.memory_store_root()).
     Returns ``ok`` when populated, ``graceful_degradation`` when absent
     (expected for new projects). Never returns ``error`` — that's reserved
     for parse failures.

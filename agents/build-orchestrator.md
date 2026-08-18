@@ -187,7 +187,7 @@ Route to `tier: thinking` unconditionally on: (1) `synthesis_dimensions` count >
 
 ## Memory Systems
 
-Reads at Phase 1 Assess; writes at Phase 4 Review-G. Full protocol: `references/memory-systems.md`. Canonical durable files live under `~/dev/git-folder/build-loop-memory/projects/<project>/...` plus top-level cross-project lanes; Postgres `agent_memory.<schema>.semantic_facts` remains derived and rebuildable. Use `scripts/memory_facade.py recall()` for unified reads with graceful degradation.
+Reads at Phase 1 Assess; writes at Phase 4 Review-G. Full protocol: `references/memory-systems.md`. Canonical durable files live under `<memory-store-root>/projects/<project>/...` plus top-level cross-project lanes; Postgres `agent_memory.<schema>.semantic_facts` remains derived and rebuildable. Use `scripts/memory_facade.py recall()` for unified reads with graceful degradation.
 
 ## Deployment Policy
 

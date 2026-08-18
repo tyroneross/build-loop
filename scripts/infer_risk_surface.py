@@ -5,7 +5,7 @@
 
 Phase 1 Assess helper. Returns `risk_surface_change: true` whenever the goal,
 plan, or planned filesTouched overlap any rule in the build-loop constitution
-(`~/dev/git-folder/build-loop-memory/constitution.md`, plus project overrides
+(`<memory-store-root>/constitution.md`, plus project overrides
 loaded by the Phase 1 context bootstrap).
 
 Closes the gap surfaced by plan §11.4 Sim G (assess plan in

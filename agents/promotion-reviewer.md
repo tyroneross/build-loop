@@ -40,11 +40,11 @@ The orchestrator brief contains:
 Eager:
 - The candidate artifact file
 - Global constitution — `constitution.md` under the memory store root, via `scripts/memory_facade.py recall()` or `_paths.memory_store_root()` — durable invariants. Missing is `(none found)`, not an error; state explicitly if it was missing.
-- Project constitution if present at `~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
+- Project constitution if present at `<memory-store-root>/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
 - The experiment_log JSONL (sample outcomes, confound flags)
 
 Lazy (only when a candidate variance prompts it):
-- `~/dev/git-folder/build-loop-memory/MEMORY.md` and `~/dev/git-folder/build-loop-memory/projects/<slug>/MEMORY.md` indexes — to find related feedback or pattern memories
+- `<memory-store-root>/MEMORY.md` and `<memory-store-root>/projects/<slug>/MEMORY.md` indexes — to find related feedback or pattern memories
 - Specific `feedback_*.md` / `pattern_*.md` files cited as relevant
 - `state.json.runs[-5:]` for context on what the recent build environment looked like
 

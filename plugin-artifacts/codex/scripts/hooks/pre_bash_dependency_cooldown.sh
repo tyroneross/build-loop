@@ -245,7 +245,9 @@ def registry_author_owned(pkg):
     cpr = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if cpr:
         candidates.append(os.path.join(os.path.dirname(cpr), "api-registry"))
-    candidates.append(os.path.expanduser("~/dev/git-folder/api-registry"))
+    reg = os.environ.get("API_REGISTRY_ROOT", "")
+    if reg:
+        candidates.append(os.path.expanduser(reg))
     script = None
     for c in candidates:
         s = os.path.join(c, "scripts", "lookup.ts")

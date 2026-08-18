@@ -91,7 +91,7 @@ SECRET_FILENAME_PATTERNS = (
     # (`your-service-role-key`, `sk-...`) that satisfy SECRET_CONTENT_PATTERN.
     # Without this carve-out the auditor hard-blocks every commit that touches
     # the one env file a repo is SUPPOSED to track — observed 2026-07-28 on
-    # atomize-ai, where it blocked a merge whose `.env.example` diff REMOVED a
+    # example-app-ai, where it blocked a merge whose `.env.example` diff REMOVED a
     # published default secret.
     re.compile(r"(^|/)\.env(?!\.(?:example|sample|template|dist)$)(\..*)?$"),
     re.compile(r"(^|/)id_rsa(\..*)?$"),
@@ -530,7 +530,7 @@ def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Research-validated upgrades (see ~/dev/research/llm-judge-agents-for-coding-2026-05-23.md)
+# Research-validated upgrades (see "llm-judge-agents-for-coding", 2026-05-23 — private research note)
 #   1. Parallel library/research context (IntPro arXiv:2603.03325)
 #   2. Process-observation trajectory (Agent-as-a-Judge arXiv:2410.10934)
 #   4. Hook-path persistence to runs[] (Verifiability-First arXiv:2512.17259)
