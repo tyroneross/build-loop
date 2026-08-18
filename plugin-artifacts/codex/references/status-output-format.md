@@ -50,20 +50,36 @@ the response — that is the test for cutting it.
 - ❌ `This could cause problems down the line.`
 - ❌ `This is important to address.`
 
-**Plain words, not jargon — in the heading and the body.**
-Say the thing, not its label. Internal vocabulary reads as precise while
-carrying no meaning. Keep a technical term only when the reader must type it
-(a filename, a flag, an env var, a command). Otherwise translate it.
+**Plain words, not jargon — heading and body.**
 
-| don't say | say |
-|---|---|
-| private slugs | project names |
-| push to origin | get it onto your users' machines |
-| resolvers disagree | two lookups pick different models |
-| regression | the next real break |
-| public-boundary issue | published in your public repo |
-| portability fixes | name what they stop breaking |
-| T3/T4 routing | which model does the work |
+The test is not "is this technical." It is: **could a competent engineer who has
+never seen this project understand it?**
+
+KEEP standard, universal vocabulary. Commands and widely-shared terms are precise
+and everyone knows them — translating them adds nothing and sounds condescending:
+  `push to origin`, `push to main`, `merge`, `rebase`, `stash`, `pull request`
+  `regression`, `race condition`, `cache`, `timeout`, `schema`, `dependency`
+  filenames, flags, env vars, and anything the reader will type
+
+TRANSLATE project-internal vocabulary. It reads as precise while transferring
+nothing, because its meaning lives only in this codebase:
+  `private slugs`        -> the short names of your private projects
+  `T3/T4 routing`        -> which model does the work
+  `the ratchet baseline` -> the list of already-known problems the check ignores
+  `public-boundary issue`-> published in your public repo
+
+A TRANSLATION MUST CARRY THE MECHANISM. Swapping a term for a plainer one while
+dropping the "why" is not a translation — it is a vaguer version of the same
+sentence. If the plain wording leaves the reader asking "but why?", it is not done.
+
+  jargon:  "The resolvers disagree on T3/T4."
+  BAD:     "Two lookups pick different models."
+           (Reader asks: why would they? This is shorter, not clearer.)
+  GOOD:    "Ask for the same tier two different ways and you get two different
+           models back — one code path sorts by release date, the other by
+           capability rank, and nobody decided which is right."
+
+The good version is LONGER. Length is not the goal; a reader who can act is.
 
 **Name every specific individually.**
 "2 models affected" is a headline, not information. List each one with its own
