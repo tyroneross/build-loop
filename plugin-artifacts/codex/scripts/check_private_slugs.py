@@ -88,6 +88,32 @@ def _load_denylist(root: Path) -> list[str]:
             file=sys.stderr,
         )
         sys.exit(2)
+    example = root / EXAMPLE_FILENAME
+    if example.exists():
+        try:
+            same = cfg.read_bytes() == example.read_bytes()
+        except OSError:
+            same = False
+        if same:
+            # UNARMED, not merely misconfigured. A verbatim copy of the example
+            # denylist contains only placeholders, so every scan passes and the
+            # guard reports success while protecting nothing. That is strictly
+            # worse than a missing file, which at least exits 2 — it looks like
+            # a green check. Observed 2026-08-18: this repo's local copy was
+            # byte-identical to the example, so the pre-commit guard had been
+            # vacuous while CI (which has the real list) failed on 101 hits.
+            print(
+                f"check_private_slugs: {DENYLIST_FILENAME} is byte-identical to "
+                f"{EXAMPLE_FILENAME} — it holds placeholders, so this guard is "
+                f"UNARMED and would pass anything.",
+                file=sys.stderr,
+            )
+            print(
+                "  Replace it with the real slugs (one per line). A guard that "
+                "cannot fail is not a guard.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
     try:
         raw = cfg.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:

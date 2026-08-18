@@ -174,7 +174,9 @@ These tables index agent roles. None of them are commands you run directly. Core
 
 Each agent declares a `(segment, tier)` role that resolves to a concrete model at dispatch. Selection runs on two axes: a work-role **segment** (Generative Reasoning, Agentic Execution, Representation/Retrieval, Governance/Evaluation, plus dormant Realtime, Perception, and Generative Media lanes) and a seven-rung **capability tier** ladder (T0 through T5, plus T-S for specialist infrastructure). Both axes are encoded as data in [`references/model-taxonomy.json`](references/model-taxonomy.json), the **index** that is the durable source of truth. The `(segment, tier)` role is the KEY into that index; an agent's `model:` frontmatter is the index-DERIVED recommended fallback for the active host, kept in sync by [`scripts/sync_agent_model_defaults.py`](scripts/sync_agent_model_defaults.py) (never hand-edited). At dispatch the orchestrator resolves the role LIVE through [`scripts/resolve_agent_model.py`](scripts/resolve_agent_model.py) and OVERRIDES the frontmatter, so the running model always reflects the current index + availability. The `Tier` column below shows the legacy token (`Frontier`, `Thinking`, `Code`, `Pattern`), which aliases onto `T1`, `T2`, `T3`, `T4`, and the concrete model is an Anthropic fresh-install default. The index is **user-editable and chat-maintainable**: a new or different-provider model is adopted by classifying it once and reordering the cell, with no agent edits. Then `sync_agent_model_defaults.py --apply` regenerates the recommended `model:` values. Full mapping: [`references/model-tier-mapping.md`](references/model-tier-mapping.md).
 
-Resolution is availability-aware across dispatches: a model observed unavailable at dispatch (a provider outage) is recorded so the role falls back to the next host-reachable model in its tier — a frontier/judgment role degrades at most to the thinking tier, and a model the current host cannot dispatch is never offered. Outage records carry a timestamp and auto-expire after a TTL (`BUILD_LOOP_OUTAGE_TTL_SECONDS`, default 1800s), so a recovered model is picked up again without a manual clear. Recording and clearing run through [`scripts/dispatch_fallback.py`](scripts/dispatch_fallback.py); expiry is pruned on read in [`scripts/model_resolver.py`](scripts/model_resolver.py).
+Resolution is availability-aware across dispatches: a model observed unavailable at dispatch (a provider outage) is recorded so the role falls back to the next host-reachable model in its tier — a frontier/judgment role degrades at most to the thinking tier, and a model the current host cannot dispatch is never offered. Outage records carry a timestamp and auto-expire after a TTL (`BUILD_LOOP_OUTAGE_TTL_SECONDS`, default 1800s), so a recovered model is picked up again without a manual clear. Recording and clearing run through [`scripts/dispatch_fallback.py`](scripts/dispatch_fallback.py); expiry is pruned on read in [`scripts/model_resolver.py`](scripts/model_resolver.py). Resolution is also **host-capability aware**: a local model whose declared `min_ram_gb` exceeds the machine's RAM is folded into the unavailable set, so a 16GB laptop is never routed at a 30B coding model. A host whose RAM cannot be read filters nothing — absence of a reading is not evidence of a small machine.
+
+Any host can query the index **without a Python import** via [`scripts/model_index.py`](scripts/model_index.py) — `resolve`, `tiers`, `segments`, `models`, `agent`, and `export {json,env,toml}`. It runs from any working directory, takes `--json` on every subcommand, and stamps each payload with the taxonomy's schema version and content fingerprint so a consumer can detect staleness. `export --format env` emits `BUILDLOOP_MODEL_*` variables for a shell or a non-Claude agent profile. The contract is documented in [`references/model-index-contract.md`](references/model-index-contract.md).
 
 ### Lead / workflow agents
 
@@ -261,7 +263,17 @@ Consumer projects store run state under `.build-loop/`:
   backlog/
 ```
 
-Add `.build-loop/` to a consumer project's `.gitignore` unless the repo intentionally tracks selected backlog or plan files.
+Add `.build-loop/` to a consumer project's `.gitignore`. In a **public** repo, treat that as mandatory rather than optional: [`references/public-repository-documentation-boundary.md`](references/public-repository-documentation-boundary.md) §3 names `.build-loop/` working state and deferred-work lists as private, and this repo's own `check_runtime_memory_tracking` hook blocks a commit that tracks them.
+
+### Publishing a repo that build-loop has run in
+
+[`scripts/doc_boundary.py`](scripts/doc_boundary.py) grades a documentation tree against that policy and sorts every tracked doc into the policy's own buckets — `public_current`, `private_archived`, `public_removed`, `blocked`:
+
+```bash
+python3 scripts/doc_boundary.py --repo . --json     # exit 0 clean, 1 findings, 2 error
+```
+
+It honors the policy's rule that *"naming is evidence, not the decision"*: a `high` verdict needs a path signal **and** a content signal to agree, so a filename alone caps at `needs_review` and never convicts on its own. Only decided findings drive a non-zero exit; `needs_review` is advisory and expects a human read. Private repos are reported but never failed. Before removing anything it flags, archive it first — §4 requires a private-memory receipt, and a removal without one is not a passing review.
 
 build-loop memory defaults to `~/.build-loop-memory` on a fresh machine, or an existing `~/dev/git-folder/build-loop-memory` when present. Bootstrap or inspect it:
 

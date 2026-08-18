@@ -78,6 +78,30 @@ def test_empty_denylist_fails_closed(repo: Path):
     assert "empty" in res.stderr.lower()
 
 
+def test_placeholder_copy_of_the_example_fails_closed(repo: Path):
+    """An UNARMED denylist is worse than a missing one: it passes everything
+    while reporting success.
+
+    Observed 2026-08-18 — this repo's `.private-slugs` was byte-identical to
+    `.private-slugs.example`, so the local pre-commit guard had been vacuous
+    while CI (which holds the real list) failed on 101 hits across 35 files.
+    A missing file already exited 2; a placeholder copy looked like a pass.
+    """
+    example = repo / ".private-slugs.example"
+    example.write_text("# placeholders only\nexample-private-app\n")
+    (repo / ".private-slugs").write_bytes(example.read_bytes())
+    res = _run(repo, "--all")
+    assert res.returncode == 2
+    assert "UNARMED" in res.stderr
+
+
+def test_real_denylist_differing_from_the_example_still_scans(repo: Path):
+    (repo / ".private-slugs.example").write_text("example-private-app\n")
+    res = _run(repo, "--all")
+    assert res.returncode in (0, 1), res.stderr
+    assert "UNARMED" not in res.stderr
+
+
 def test_denylist_ignores_comments_and_blanks(repo: Path):
     (repo / ".private-slugs").write_text("# header\n\nsecretproj\n")
     (repo / "doc.md").write_text("mentions secretproj here\n")
