@@ -30,6 +30,7 @@ private slugs out of every tracked file, including this one.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -215,10 +216,77 @@ def _is_self(root: Path, path: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# RATCHET BASELINE
+# The tree carries pre-existing hits that predate this guard. Blocking all of
+# them means the guard fails on every commit, and a check that always fails is
+# a check everyone learns to bypass. So: record the KNOWN hits once, allow
+# exactly those, and fail on anything NEW. The count only ever goes down.
+#
+# Safe to commit: the baseline stores the same redacted sha256:<12> digest the
+# guard already prints to public Actions logs — never a slug value. It is keyed
+# by file and digest rather than line number so ordinary edits do not churn it.
+# ---------------------------------------------------------------------------
+BASELINE_FILENAME = ".private-slugs-baseline.json"
+
+
+def _load_baseline(root: Path) -> dict[str, dict[str, int]]:
+    f = root / BASELINE_FILENAME
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text(encoding="utf-8")).get("files", {})
+    except (OSError, ValueError):
+        # A corrupt baseline must not silently disarm the guard.
+        print(f"check_private_slugs: {BASELINE_FILENAME} unreadable — "
+              f"treating every hit as new", file=sys.stderr)
+        return {}
+
+
+def _tally(hits: list[tuple[str, int, str, str]]) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    for path, _lineno, slug, _line in hits:
+        digest = "sha256:" + hashlib.sha256(slug.encode("utf-8")).hexdigest()[:12]
+        out.setdefault(path, {}).setdefault(digest, 0)
+        out[path][digest] += 1
+    return out
+
+
+def _write_baseline(root: Path, hits: list[tuple[str, int, str, str]]) -> None:
+    payload = {
+        "_comment": (
+            "Known pre-existing private-slug hits, allowed so the guard does not "
+            "block every commit. Digests only — never slug values. NEW hits still "
+            "fail. Regenerate ONLY after genuinely reducing hits: "
+            "python3 scripts/check_private_slugs.py --all --update-baseline"
+        ),
+        "total": len(hits),
+        "files": _tally(hits),
+    }
+    (root / BASELINE_FILENAME).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _split_new(hits, baseline):
+    """Partition hits into (new, baselined). A file/digest over its recorded
+    count is new; under it is fine — the ratchet only tightens."""
+    seen: dict[str, dict[str, int]] = {}
+    new, old = [], []
+    for hit in hits:
+        path, _lineno, slug, _line = hit
+        digest = "sha256:" + hashlib.sha256(slug.encode("utf-8")).hexdigest()[:12]
+        seen.setdefault(path, {}).setdefault(digest, 0)
+        seen[path][digest] += 1
+        allowed = baseline.get(path, {}).get(digest, 0)
+        (old if seen[path][digest] <= allowed else new).append(hit)
+    return new, old
+
+
 def main(argv: list[str]) -> int:
     root = _repo_root()
     pattern = _compile_pattern(_load_denylist(root))
     mode_all = "--all" in argv
+    update_baseline = "--update-baseline" in argv
     explicit = [a for a in argv if not a.startswith("-")]
 
     if explicit:
@@ -265,11 +333,30 @@ def main(argv: list[str]) -> int:
             if m:
                 hits.append((path, lineno, m.group(1), line.strip()[:200]))
 
+    if update_baseline:
+        if not mode_all:
+            print("check_private_slugs: --update-baseline requires --all",
+                  file=sys.stderr)
+            return 2
+        _write_baseline(root, hits)
+        print(f"baseline written: {len(hits)} hit(s) recorded in "
+              f"{BASELINE_FILENAME}. NEW hits will still fail.")
+        return 0
+
+    # Ratchet: allow the recorded pre-existing hits, fail on anything new.
+    new_hits, baselined = _split_new(hits, _load_baseline(root))
+    if baselined and not new_hits:
+        print(f"check_private_slugs: {len(baselined)} known hit(s) allowed by "
+              f"{BASELINE_FILENAME}; 0 new. Cleanup still owed.", file=sys.stderr)
+    hits = new_hits
+
     if hits:
-        print("BLOCKED: private app slug found in staged content.", file=sys.stderr)
-        print("build-loop is open source — replace each hit with a generic,",
+        print("BLOCKED: a NEW private app slug was introduced.", file=sys.stderr)
+        print("build-loop is open source. Pre-existing hits are baselined and",
               file=sys.stderr)
-        print("non-private placeholder before committing.\n", file=sys.stderr)
+        print("allowed; this one is NOT in the baseline. Replace it with a",
+              file=sys.stderr)
+        print("generic placeholder before committing.\n", file=sys.stderr)
         for path, lineno, slug, _line in hits:
             # Redact: emit location + a stable short hash only — never the raw
             # slug or its surrounding line. This output lands in public Actions
