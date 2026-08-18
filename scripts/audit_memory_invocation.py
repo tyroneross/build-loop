@@ -170,13 +170,16 @@ def probe_recall_facade(workdir: Path) -> dict[str, Any]:
     audit is the envelope SHAPE: keys present, reasons[] populated when a
     backend is down, no exception raised.
     """
-    from memory_facade import recall  # type: ignore  # noqa: PLC0415
+    from memory_facade import KINDS, recall  # type: ignore  # noqa: PLC0415
     env = recall(query="architecture", kind=None, project=None, limit=5, workdir=workdir)
     # Envelope contract assertions (in-line, soft).
     expected_keys = {"query", "kind_filter", "project", "results_by_kind", "merged", "reasons"}
     missing_keys = sorted(expected_keys - set(env.keys()))
     rbk = env.get("results_by_kind", {})
-    expected_kinds = {"runs", "decisions", "lessons", "semantic", "debugger"}
+    # Sourced from `memory_facade.KINDS`, not a literal copy: the literal
+    # here still listed the pre-`backlog` lanes, so the probe would have
+    # reported `ok` with the backlog lane silently absent.
+    expected_kinds = set(KINDS)
     missing_kinds = sorted(expected_kinds - set(rbk.keys()))
     return {
         "invoked": True,

@@ -6,10 +6,33 @@ from __future__ import annotations
 import json, subprocess, sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import version_drift_warning as vdw  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cut the temp repos off from the developer's global/system git config.
+
+    Observed failure: `~/.gitconfig` carries `tag.gpgsign = true`, which turns
+    the plain `git tag v0.1.0` in `_mk()` into a signed annotated tag. With no
+    `-m` and no editor, git exits 128 with `fatal: no tag message?`, so
+    `test_drift_via_tag` and `test_manifest_version_ahead_of_installed` failed
+    on the maintainer's machine and would fail on any CI runner whose git
+    config sets tag/commit signing or a commit template. Same mechanism and
+    same cause already documented in `scripts/test_audit_git.py`; scoped to
+    this module via monkeypatch so it is restored after each test rather than
+    mutating the session environment. Applies to `_g()` and to the git
+    subprocesses `version_drift_warning.py` spawns — both inherit os.environ.
+    Per-repo `user.email` / `user.name` are still set in `_mk()`, so commits
+    work with no global identity.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 def _g(wd: Path, *args: str, check=True) -> str:

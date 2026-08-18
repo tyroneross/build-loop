@@ -25,14 +25,19 @@ sys.path.insert(0, str(SCRIPTS))
 
 def test_recall_envelope_shape_on_empty_workdir(tmp_path: Path) -> None:
     """recall() with an empty workdir must return a valid envelope, no exceptions."""
-    from memory_facade import recall  # type: ignore
+    from memory_facade import KINDS, recall  # type: ignore
 
     env = recall(query="nothing", kind=None, project=None, limit=5, workdir=tmp_path)
     # Required keys.
     assert set(env.keys()) >= {"query", "kind_filter", "project", "results_by_kind", "merged", "reasons"}
-    # Per-kind buckets must all be present, even if empty.
+    # Per-kind buckets must all be present, even if empty. Asserted against
+    # `memory_facade.KINDS` — the declared lane set — rather than a literal
+    # copy of it. The literal froze the pre-`backlog` lanes, so adding a lane
+    # (`backlog`, 9e7b6ee) failed a test that was meant to catch a MISSING or
+    # LEAKED bucket. Equality against KINDS still catches both: a lane that
+    # stops fanning out, and a key nothing declared.
     rbk = env["results_by_kind"]
-    assert set(rbk.keys()) == {"runs", "decisions", "lessons", "semantic", "debugger"}
+    assert set(rbk.keys()) == set(KINDS)
     for k, v in rbk.items():
         assert isinstance(v, list), f"results_by_kind[{k}] must be a list"
     # Merged is bounded by limit * #kinds.

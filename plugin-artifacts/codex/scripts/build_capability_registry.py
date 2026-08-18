@@ -195,13 +195,28 @@ CATEGORY_KEYWORDS = [
                       "preauthorization", "run_provenance", "security_checks",
                       "security_common", "staged_content_gate",
                       "stamp_skill_frontmatter", "surface_policy",
-                      "verify_worktree_target", "waivers")),
+                      "verify_worktree_target", "waivers",
+                      # doc_boundary grades a repo's tracked docs against
+                      # references/public-repository-documentation-boundary.md
+                      # and fails the run on high-confidence `blocked`
+                      # findings. Same shape as the privacy/secret scanners
+                      # already listed above: a gate that decides whether a
+                      # surface may ship, not something that ships it.
+                      "doc_boundary", "doc boundary",
+                      "documentation boundary")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
                       "deploy")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log",
-                       "cost-ledger", "cost ledger", "cost_rca")),
+                       "cost-ledger", "cost ledger", "cost_rca",
+                       # ops_state_probe generates the operational-state
+                       # inventory — which flags/services are actually ON,
+                       # OFF, CORRUPT, or UNKNOWN at runtime. It reports
+                       # reality and changes nothing, which is what puts it
+                       # here rather than in `validation`.
+                       "ops_state_probe", "operational-state",
+                       "operational state", "runtime state")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
                       "semantic", "embedding", "embed_backend", "retrieval",
                       "backend health", "backend_health",
