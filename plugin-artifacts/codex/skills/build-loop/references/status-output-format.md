@@ -1,138 +1,188 @@
 <!-- Canonical: how build-loop reports findings, status, and recommendations to a human.
-     Adopted 2026-08-18 after three rounds of correction from Tyrone in one session:
-     (1) every item needs its consequence, not just its fact;
-     (2) headings are action-verb phrases, not sentences with trailing explainers;
-     (3) plain words, not internal vocabulary.
-     Companion to references/output-style.md (sentence-level) and the style-calibrator
+     Adopted 2026-08-18 after four rounds of correction in one session. The progression
+     is preserved in §7 on purpose — each failed attempt fixed a different level of the
+     Leverage Stack while the sentence stayed unusable, which is the lesson.
+     Companion to references/output-style.md (sentence level) and the style-calibrator
      "Leverage Stack" profile (message logic). This file governs the SHAPE of a status
      block; those govern the sentences inside it. Reference this file, do not restate it. -->
 
 # Status & findings output format
 
-Use this shape for every finding, open item, status update, and recommendation.
+## 1. Who this is for, and when it applies
+
+You are an agent emitting a **user-facing report**: findings, open items, status
+updates, recommendations. Your reader is deciding what to do next, not reading for
+comprehension.
+
+**Applies to:** Phase 4 reports, review findings, queue items, handoff documents,
+commit-worthy summaries, any list of open work, any recommendation.
+
+**Does NOT apply to:**
+- Structured internal envelopes (subagent JSON returns, run records, judge
+  decisions, MECE briefs). Those exist for machines and are unconstrained.
+- Conversational replies, single-answer questions, and status one-liners. A
+  question that wants a sentence gets a sentence.
+- Code, commit bodies, and test names, which have their own conventions.
+
+If you are unsure whether a response is a status report, ask: *does the reader have
+to decide or act because of this?* If yes, use this format.
+
+## 2. The governing test — write for a cold reader
+
+**If a new agent with zero context read only this line, would it know what to do?**
+
+Not "is it short." Not "is it plain." Is it *actionable by someone who was not in
+the room*. A sentence fails when the reader cannot tell whether to remember it,
+decide something, act, or ignore it.
+
+This is the rule. Everything in §4 is a consequence of it — a block that satisfies
+every rule in §4 and still fails this test is wrong, and the rules are what yield.
+
+## 3. Three things every sentence carries
+
+| element | what it means | good | bad |
+|---|---|---|---|
+| **Actor — who** | a named person or system | `We`, `you`, `the guard`, `an installed user` | `two lookups`, `the resolvers`, `it` |
+| **Object — what** | concrete enough to build or verify | `one code path per model tier` | `different models`, `some issues` |
+| **Modality — what kind of statement** | requirement / fact / done / decision owed | `We need X`, `Today we have Y`, `I've done Z`, `Should we A or B?` | anything the reader must infer |
+
+**If you cannot name the actor, you do not yet understand the finding.** Go back to
+the code before you write the line.
+
+## 4. The block
+
+```
+[Action-verb phrase naming the specific thing, real numbers/names/dates inline]
+[One sentence: what breaks, for whom, when.]
+ - [Every affected item, named individually, with its own detail]
+ - [The fix, stated as an action]
+ - [The ask: "I've started this and will update you when done"
+          OR "I need your approval to do this" + why]
+```
+
 One block per item. No preamble, no wrap-up paragraph.
 
-## The block
+### 4.1 Heading is a phrase, not a sentence
 
-```
-[Action-verb phrase naming the specific thing, with real numbers/names/dates inline]
-Why this matters: what breaks, for whom, and when — in one sentence.
- - [Specifics: name every affected item individually, with its own detail]
- - [The fix: what needs to happen, stated as an action]
- - [The ask: EITHER "I've started this and will update you when done"
-                OR "I need your approval to do this" — never leave it implicit]
-```
-
-## The governing rule: write for a cold reader
-
-**Test every sentence: if a new agent with zero context read only this line, would
-it know what to do?** Not "is it short," not "is it plain" — is it *actionable by
-someone who was not in the room*.
-
-A sentence fails the cold-read test when the reader cannot tell whether to remember
-it, decide something, act, or ignore it.
-
-  FAILS:  "Two lookups pick different models."
-          Who is "two lookups"? What should happen instead? Is this a fact to file,
-          a bug to fix, or a decision waiting on me? A new agent reading this line
-          has nothing to do next.
-
-  PASSES: "We need one code path per model tier.
-           Today we have 2+ paths, with inconsistent results."
-
-Every sentence carries three things:
-
-1. **The actor — who.** `We`, `you`, `the guard`, `an installed user`. Never an
-   abstract subject standing in for a person or system: "two lookups", "the
-   resolvers", "it". If you cannot name who, you do not yet know the finding.
-2. **The specific object — what.** `one code path per model tier`, not `different
-   models`. The noun must be concrete enough to build or verify.
-3. **The modality — what kind of statement this is.** `We need X` = requirement.
-   `Today we have Y` = current fact. `I've done Z` = completed. `Should we A or B?`
-   = decision owed. The reader must never have to infer which.
-
-**Shape: target state first, then the gap.** State what should be true, then what
-is true today. Diagnosis-first framing — explaining how the defect works — reads as
-precision and transfers no decision. Mechanism belongs in the fix or the spec; it
-goes up top ONLY when it changes which option the reader picks.
-
-Rule of thumb: your finding is a specification, not an observation. Write the line
-you would want to receive as a work order.
-
-## Rules
-
-**Heading is a phrase, not a sentence.**
-Action verb + the concrete noun doing or receiving the action. Put real values
-inline — model names, counts, dates, file names. No trailing em-dash explainer,
-no clause that restates the point.
+Action verb + the concrete noun doing or receiving the action, real values inline.
+No trailing em-dash explainer. The noun carrying the stake is the subject.
 
 - ✅ `2 Groq models shut down on 2026-08-16`
 - ✅ `Unpushed commits keep the fixes off your users' machines`
 - ✅ `Seven broken tests hide the next real break`
-- ❌ `A deliberate expiry alarm on your Groq model facts fired 4 days ago — it's a staleness timer, not a bug.`
-- ❌ `Groq catalog issue`
-- ❌ `There are some test failures that need attention`
+- ❌ `A deliberate expiry alarm on your Groq model facts fired 4 days ago — it's a staleness timer, not a bug.` (sentence + explainer)
+- ❌ `Groq catalog issue` (no verb, no stake)
+- ❌ `The suite has failures` (container as subject, not the stake)
 
-Make the noun that carries the stake the subject. `failures hide the next break`,
-not `the suite has failures`.
+### 4.2 Second line is the consequence, not a restatement
 
-**Second line states the consequence, not a restatement.**
-Name what breaks, who it breaks for, and when. It must be falsifiable and
-specific. If you cannot write this line, the item probably does not belong in
-the response — that is the test for cutting it.
+What breaks, for whom, when. Falsifiable and specific.
 
 - ✅ `Work quietly goes to the wrong model instead of erroring.`
 - ✅ `The people installing your plugin are still hitting every problem we fixed.`
 - ❌ `This could cause problems down the line.`
 - ❌ `This is important to address.`
 
-**Plain words, not jargon — heading and body.**
+**This line is a relevance filter, not decoration.** If you cannot write it, the
+item does not belong in the response. That is the test for cutting.
+
+### 4.3 Shape: target state first, then the gap
+
+State what should be true, then what is true today. Diagnosis-first framing —
+explaining how the defect works — reads as precision and transfers no decision.
+Mechanism belongs in the fix or the spec; it goes up top ONLY when it changes which
+option the reader picks.
+
+### 4.4 Plain words, not jargon
 
 The test is not "is this technical." It is: **could a competent engineer who has
 never seen this project understand it?**
 
-KEEP standard, universal vocabulary. Commands and widely-shared terms are precise
-and everyone knows them — translating them adds nothing and sounds condescending:
-  `push to origin`, `push to main`, `merge`, `rebase`, `stash`, `pull request`
-  `regression`, `race condition`, `cache`, `timeout`, `schema`, `dependency`
-  filenames, flags, env vars, and anything the reader will type
+**KEEP** universal vocabulary — translating it adds nothing and reads as
+condescending: `push to origin`, `push to main`, `merge`, `rebase`, `stash`,
+`pull request`, `regression`, `race condition`, `cache`, `timeout`, `schema`,
+`dependency`, plus filenames, flags, env vars, and anything the reader will type.
 
-TRANSLATE project-internal vocabulary. It reads as precise while transferring
-nothing, because its meaning lives only in this codebase:
-  `private slugs`        -> the short names of your private projects
-  `T3/T4 routing`        -> which model does the work
-  `the ratchet baseline` -> the list of already-known problems the check ignores
-  `public-boundary issue`-> published in your public repo
+**TRANSLATE** project-internal vocabulary, whose meaning lives only in this codebase:
 
-Plain words alone are not enough — a plainer sentence that still fails the
-cold-read test above is not an improvement. See the worked progression there.
+| internal | plain |
+|---|---|
+| `private slugs` | the short names of your private projects |
+| `T3/T4 routing` | which model does the work |
+| `the ratchet baseline` | the list of already-known problems the check ignores |
+| `public-boundary issue` | published in your public repo |
 
-**Name every specific individually.**
-"2 models affected" is a headline, not information. List each one with its own
-date, replacement, or detail so the reader can act per-item.
+Plain words alone are not enough. A plainer sentence that still fails §2 is not an
+improvement — see the progression in §7.
 
-**Always close with a decision or a status.**
-Every block ends knowing what happens next and who does it. Two forms only:
+### 4.5 Name every specific individually
+
+`2 models affected` is a headline, not information. List each with its own date,
+replacement, or detail so the reader can act per item.
+
+### 4.6 Always close with a decision or a status
+
+Two forms only:
 - `I've started this and will update you when done.`
 - `I need your approval to do this.` — and say why approval is needed.
 
-Never end on a finding with no disposition.
+Never end a finding with no disposition.
 
-## Accuracy
+## 5. Accuracy
 
-State only what you verified, and say how. If a fact is assumed or unchecked,
-mark it. If you previously said something wrong, correct it plainly in one
-sentence and move on — do not bury it and do not dwell on it.
+State only what you verified, and say how. Mark anything assumed or unchecked.
+If you previously said something wrong, correct it in one plain sentence and move
+on — do not bury it, do not dwell on it.
 
-Do not inflate impact to make an item sound worth reporting. If the real impact
-is low, say it is low.
+Do not inflate impact to justify reporting something. **If the real impact is low,
+say it is low.** A reader who catches you inflating once discounts everything after.
 
-## Worked example
+## 6. Before you send — verify each block
+
+Run this check on every block. Any "no" means rewrite, not ship.
+
+1. Could an agent with zero context act on the heading alone?
+2. Does every sentence name an actor, a specific object, and its modality?
+3. Is the second line a consequence, or a restatement in different words?
+4. Does the heading lead with the target state rather than the diagnosis?
+5. Is every remaining technical term one the reader will actually type?
+6. Does the block end with a decision or a status?
+7. Would you be comfortable if this line were quoted back with no surrounding text?
+
+## 7. Worked progression — why the near-misses fail
+
+Real sequence from the session that produced this file. Each attempt fixed a
+different level and the sentence stayed unusable, because the defect was in message
+logic the whole time.
+
+**Original (jargon):** *"The resolvers disagree on T3/T4."*
+Project-internal vocabulary; meaningless outside this codebase.
+
+**Attempt 1 — FAILS:** *"Two lookups pick different models."*
+Plainer, and no more useful. No actor, no target, no modality. The reader asks "why
+would they?" and has nothing to do next.
+
+**Attempt 2 — ALSO FAILS:** *"Ask for the same tier two different ways and you get
+two different models back — one path sorts by release date, the other by capability
+rank."*
+Accurate, and still wrong. Diagnosis-first: it explains the internals, so the reader
+now understands the bug and still has to work out what to do about it.
+
+**PASSES:**
+```
+We need one code path per model tier
+Today we have 2+ paths, with inconsistent results
+```
+Actor (`we`), specific object (`one code path per model tier`), modality (`need` =
+requirement). Target state first, gap second. Longer than attempt 1 — length was
+never the goal.
+
+## 8. Worked example — a full block
 
 ```
-2 Groq models shut down on 2026-08-16, two days ago
-Anything still pointing at them fails outright, and the catalog still lists
-them as live, so the next person to read it picks a dead model.
+2 Groq models shut down on 2026-08-16
+Anything still pointing at them fails outright, and the catalog lists them as
+live, so the next person to read it picks a dead model.
 
  - llama-3.1-8b-instant — shut down 2026-08-16, replacement openai/gpt-oss-20b
  - llama-3.3-70b-versatile — shut down 2026-08-16, replacements
@@ -140,6 +190,18 @@ them as live, so the next person to read it picks a dead model.
  - Both were free + developer plan only; enterprise spend unaffected
  - To fix: re-read Groq's official docs, update all 15 entries, mark those 2
    retired, and move the re-check date forward
- - I need your approval — this needs live doc lookups, and I won't move the
+ - I need your approval — this needs live doc lookups, and I will not move the
    date without doing them
 ```
+
+## 9. Escape hatches
+
+- **Nothing to report.** Say so in one line. Do not manufacture blocks to fill a
+  report.
+- **You cannot name the modality.** That means you do not know whether it is a
+  requirement, a fact, or a decision. Find out before writing, or state the
+  uncertainty explicitly as the finding: *"I do not know whether X is intended
+  behaviour or a defect; deciding needs Y."*
+- **The item is genuinely trivial.** One line, no block. Format overhead on a typo
+  is noise.
+- **A rule fights the cold-read test.** §2 wins. Say which rule you broke and why.
