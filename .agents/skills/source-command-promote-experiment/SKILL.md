@@ -24,7 +24,7 @@ Promote a proven experimental artifact into the build-loop plugin itself. This i
 
 2. The build-loop plugin repo must be writable. Check:
    ```bash
-   BUILD_LOOP_REPO="${CLAUDE_PLUGIN_ROOT:-$HOME/Desktop/git-folder/build-loop}"
+   BUILD_LOOP_REPO="${CLAUDE_PLUGIN_ROOT:?set CLAUDE_PLUGIN_ROOT or BUILD_LOOP_REPO to your build-loop install}"
    [ -d "$BUILD_LOOP_REPO/.git" ] && [ -w "$BUILD_LOOP_REPO/skills" ]
    ```
    If false, abort with "build-loop plugin repo not writable at $BUILD_LOOP_REPO".

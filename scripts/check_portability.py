@@ -44,7 +44,8 @@ SELF_BASENAME = "check_portability.py"
 
 # Surfaces that SHIP to an installed user. docs/ and tests/ are excluded: they
 # are read by humans and CI, not followed as instructions by an installed agent.
-SHIPPED_DIRS = ("skills", "agents", "commands", "hooks", "references", "scripts", "templates")
+SHIPPED_DIRS = ("skills", "agents", "commands", "hooks", "references", "scripts",
+                "templates", ".agents", "codex-skills")
 
 # Paths where a maintainer-machine string is CORRECT and must never be flagged.
 # Keep this list short and justify every entry.
