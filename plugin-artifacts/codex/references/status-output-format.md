@@ -68,18 +68,27 @@ nothing, because its meaning lives only in this codebase:
   `the ratchet baseline` -> the list of already-known problems the check ignores
   `public-boundary issue`-> published in your public repo
 
-A TRANSLATION MUST CARRY THE MECHANISM. Swapping a term for a plainer one while
-dropping the "why" is not a translation — it is a vaguer version of the same
-sentence. If the plain wording leaves the reader asking "but why?", it is not done.
+**STATE THE TARGET STATE, THEN THE GAP.** This is what replaces the jargon — not a
+plainer description of the same confusion. Say what should be true, then what is
+true today. The reader gets the decision without reconstructing it.
 
   jargon:  "The resolvers disagree on T3/T4."
+
   BAD:     "Two lookups pick different models."
-           (Reader asks: why would they? This is shorter, not clearer.)
-  GOOD:    "Ask for the same tier two different ways and you get two different
+           Shorter, not clearer. The reader asks "why would they?"
+
+  ALSO BAD: "Ask for the same tier two different ways and you get two different
            models back — one code path sorts by release date, the other by
            capability rank, and nobody decided which is right."
+           Explains the INTERNALS. The reader now understands the bug and still
+           has to work out what to do about it. Mechanism is debugging detail.
 
-The good version is LONGER. Length is not the goal; a reader who can act is.
+  GOOD:    - We need one code path per model tier
+           - Today we have 2+ paths, with inconsistent results
+
+Two lines, each one idea, target first. Mechanism (release date vs capability
+rank) belongs in the fix or the spec — include it up top ONLY when it changes
+which option the reader picks.
 
 **Name every specific individually.**
 "2 models affected" is a headline, not information. List each one with its own
