@@ -101,7 +101,7 @@ python3 scripts/report_lint.py <draft.md> --json
 → script error: append "[warn] style-lint skipped" and continue
 ```
 
-The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured.
+The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured. Block-level framing is `skills/build-loop/references/status-output-format.md` — not lint-enforced, so it is the reviewer's check: every finding names who, names a specific object, and states its modality.
 
 ### Mandatory `runs[]` write + `## Judge decisions` block (orchestrator-owned)
 
