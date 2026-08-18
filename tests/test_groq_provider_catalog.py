@@ -22,7 +22,15 @@ def models_by_id(catalog: dict) -> dict[str, dict]:
 def test_catalog_has_dated_primary_source_provenance() -> None:
     catalog = load_catalog()
     assert catalog["provider"] == "groq"
-    assert catalog["captured_at"] == "2026-08-07"
+    # Was pinned to a literal capture date, which made every truthful refresh
+    # fail — the test enforced staleness rather than provenance. The real
+    # invariant is that provenance EXISTS, is a real date, and is not in the
+    # future. The freshness deadline is enforced separately by
+    # test_review_deadline_has_not_passed.
+    captured = date.fromisoformat(catalog["captured_at"])
+    assert captured <= date.today(), (
+        f"captured_at {captured} is in the future — provenance cannot post-date the scan"
+    )
     assert catalog["source_quality"] == "T1_PRIMARY_SINGLE_VENDOR"
     assert catalog["source_precedence"][0] == "deprecations"
 
@@ -83,7 +91,14 @@ def test_deprecation_schedule_overrides_models_page_badge() -> None:
     }
     for model_id, replacements in expected.items():
         model = models[model_id]
-        assert model["lifecycle"] == "production_deprecated"
+        # These shut down on 2026-08-16 (confirmed absent from the models
+        # page, rate-limits page, and the runtime /models listing on
+        # 2026-08-18). Before that date "production_deprecated" was correct —
+        # the models page still advertised them while the deprecation page
+        # scheduled removal. Asserting it now would tell a reader they are
+        # still callable; they return errors. The migration record below is
+        # what earns these entries their continued place in the catalog.
+        assert model["lifecycle"] == "retired"
         assert model["deprecation"]["shutdown_at"] == "2026-08-16"
         assert model["deprecation"]["plans"] == ["free", "developer"]
         assert model["deprecation"]["replacements"] == replacements

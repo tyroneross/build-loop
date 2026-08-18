@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "provider": "groq",
-  "captured_at": "2026-08-07",
-  "review_after": "2026-08-14",
+  "captured_at": "2026-08-18",
+  "review_after": "2026-09-17",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "source_precedence": [
     "deprecations",
@@ -29,28 +29,31 @@
     "provider_features.batch_processing"
   ],
   "sources": [
-    {"id": "models", "url": "https://console.groq.com/docs/models", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "deprecations", "url": "https://console.groq.com/docs/deprecations", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "structured_outputs", "url": "https://console.groq.com/docs/structured-outputs", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "tool_use", "url": "https://console.groq.com/docs/tool-use/overview", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "reasoning", "url": "https://console.groq.com/docs/reasoning", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "responses_api", "url": "https://console.groq.com/docs/responses-api", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "vision", "url": "https://console.groq.com/docs/vision", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "speech_to_text", "url": "https://console.groq.com/docs/speech-to-text", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "text_to_speech", "url": "https://console.groq.com/docs/text-to-speech", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "rate_limits", "url": "https://console.groq.com/docs/rate-limits", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "prompt_caching", "url": "https://console.groq.com/docs/prompt-caching", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "flex", "url": "https://console.groq.com/docs/flex-processing", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "batch", "url": "https://console.groq.com/docs/batch", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "latency", "url": "https://console.groq.com/docs/production-readiness/optimizing-latency", "captured_at": "2026-08-07", "tier": "T1"},
-    {"id": "production_checklist", "url": "https://console.groq.com/docs/production-readiness/production-ready-checklist", "captured_at": "2026-08-07", "tier": "T1"}
+    {"id": "models", "url": "https://console.groq.com/docs/models", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "deprecations", "url": "https://console.groq.com/docs/deprecations", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "structured_outputs", "url": "https://console.groq.com/docs/structured-outputs", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "tool_use", "url": "https://console.groq.com/docs/tool-use/overview", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "reasoning", "url": "https://console.groq.com/docs/reasoning", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "responses_api", "url": "https://console.groq.com/docs/responses-api", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "vision", "url": "https://console.groq.com/docs/vision", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "speech_to_text", "url": "https://console.groq.com/docs/speech-to-text", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "text_to_speech", "url": "https://console.groq.com/docs/text-to-speech", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "rate_limits", "url": "https://console.groq.com/docs/rate-limits", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "prompt_caching", "url": "https://console.groq.com/docs/prompt-caching", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "flex", "url": "https://console.groq.com/docs/flex-processing", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "batch", "url": "https://console.groq.com/docs/batch", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "latency", "url": "https://console.groq.com/docs/production-readiness/optimizing-latency", "captured_at": "2026-08-18", "tier": "T1"},
+    {"id": "production_checklist", "url": "https://console.groq.com/docs/production-readiness/production-ready-checklist", "captured_at": "2026-08-18", "tier": "T1"}
   ],
   "global_notes": {
     "performance": "Throughput and benchmark values are Groq-advertised observations, not independent Build Loop benchmarks or end-to-end latency SLAs.",
     "rate_limits": "Reference limits below are the Developer-plan values displayed on the models page at capture time. Limits apply at organization level, can vary by account, and must be confirmed in the Groq console.",
     "pricing": "List prices are snapshots, exclude applicable server-side tool charges, and must be reverified before billing decisions.",
     "preview": "Preview models are not recommended for production and may change or disappear on short notice.",
-    "active_models_api": "GET https://api.groq.com/openai/v1/models is the runtime authority for active model IDs but requires GROQ_API_KEY; it was not called for this documentation-only snapshot."
+    "retired": "lifecycle 'retired' means the announced shutdown date has passed and the model no longer appears on the models page, the rate-limits page, or the runtime models endpoint. Enterprise committed-spend contracts may still be served where the deprecation notice carved them out. Technical fields on a retired entry carry values_as_of and are last-known values for migration reference, not current offerings.",
+    "active_models_api": "GET https://api.groq.com/openai/v1/models was queried on 2026-08-18 with a Developer-plan key and returned 13 active IDs. Neither llama-3.1-8b-instant nor llama-3.3-70b-versatile was present, confirming the 2026-08-16 shutdown. minimaxai/minimax-m2.7 was also absent, which is expected for a non-Enterprise key and is not evidence of removal. Runtime pricing and context values for the 12 documented IDs matched the models page exactly.",
+    "undocumented_runtime_models": "The 2026-08-18 runtime listing also returned allam-2-7b (owner SDAIA, 4,096 context, json_object mode only, no pricing block). No page under console.groq.com/docs describes it, so its lifecycle, pricing, and support status cannot be established from primary documentation. It is deliberately excluded from models[] rather than recorded on runtime evidence alone.",
+    "stale_capability_pages": "The tool-use page still lists llama-3.3-70b-versatile and llama-3.1-8b-instant in its capability matrix after their shutdown. source_precedence resolves this: the deprecations page outranks capability-specific pages."
   },
   "provider_features": {
     "responses_api": {"lifecycle": "beta", "sources": ["responses_api"]},
@@ -61,7 +64,8 @@
     {
       "id": "llama-3.1-8b-instant",
       "kind": "chat_model",
-      "lifecycle": "production_deprecated",
+      "lifecycle": "retired",
+      "values_as_of": "2026-08-07",
       "modalities": ["text_input", "text_output"],
       "context_window_tokens": 131072,
       "max_completion_tokens": 131072,
@@ -69,13 +73,14 @@
       "pricing": {"unit": "usd_per_million_tokens", "input": 0.05, "output": 0.08},
       "developer_plan_limits": {"tpm": 250000, "rpm": 1000},
       "capabilities": {"reasoning": false, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": true, "built_in_tools": false, "prompt_caching": false, "vision": false},
-      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-20b"]},
+      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "shutdown_confirmed_at": "2026-08-18", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-20b"]},
       "sources": ["models", "deprecations", "tool_use"]
     },
     {
       "id": "llama-3.3-70b-versatile",
       "kind": "chat_model",
-      "lifecycle": "production_deprecated",
+      "lifecycle": "retired",
+      "values_as_of": "2026-08-07",
       "modalities": ["text_input", "text_output"],
       "context_window_tokens": 131072,
       "max_completion_tokens": 32768,
@@ -83,7 +88,7 @@
       "pricing": {"unit": "usd_per_million_tokens", "input": 0.59, "output": 0.79},
       "developer_plan_limits": {"tpm": 300000, "rpm": 1000},
       "capabilities": {"reasoning": false, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": true, "built_in_tools": false, "prompt_caching": false, "vision": false},
-      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"]},
+      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "shutdown_confirmed_at": "2026-08-18", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"]},
       "sources": ["models", "deprecations", "tool_use"]
     },
     {

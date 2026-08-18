@@ -1,8 +1,8 @@
 # Groq provider catalog and workload guide
 
-Snapshot date: **2026-08-07**
+Snapshot date: **2026-08-18**
 
-Review by: **2026-08-14**
+Review by: **2026-09-17**
 Machine-readable companion: `references/provider-catalogs/groq-models.json`
 
 Use this catalog for downstream workloads that call the Groq API. It does not make a Groq model reachable as a Build Loop host agent. Add a model to the host-agent taxonomy only after its adapter works and it clears the role-specific Build Loop benchmark.
@@ -13,7 +13,7 @@ Use this catalog for downstream workloads that call the Groq API. It does not ma
 - Evaluate `openai/gpt-oss-120b` only when representative workload tests demonstrate a quality gain worth its higher price and lower advertised throughput. Groq's capability pages do not establish that quality difference.
 - Use `groq/compound` or `groq/compound-mini` when Groq-managed server-side web/code/tool orchestration is the product requirement. They accept JSON mode but not caller-supplied local/remote tools, cap output at 8,192 tokens, and pass through underlying model/tool charges.
 - Use `whisper-large-v3` for error-sensitive multilingual transcription or English translation. Use `whisper-large-v3-turbo` for cheaper, faster transcription when translation is unnecessary.
-- Do not start new Free/Developer workloads on `llama-3.1-8b-instant` or `llama-3.3-70b-versatile`; Groq schedules both for shutdown on **2026-08-16**.
+- `llama-3.1-8b-instant` and `llama-3.3-70b-versatile` are gone. Groq shut both down on **2026-08-16** for Free and Developer plans, and the 2026-08-18 runtime model listing no longer returns either ID. Requests to them now fail. Migrate to `openai/gpt-oss-20b` and `openai/gpt-oss-120b` or `qwen/qwen3.6-27b` respectively.
 - Groq currently has no stable production vision, text-to-speech, or standalone safety-model default in this catalog. The documented choices are preview models.
 
 ## Current catalog
@@ -26,10 +26,15 @@ Use this catalog for downstream workloads that call the Groq API. It does not ma
 | `openai/gpt-oss-20b` | production | 131,072 / 65,536 | 1,000 t/s | $0.075 / $0.30 per 1M tokens | 250K TPM, 1K RPM | default production text/reasoning candidate |
 | `groq/compound` | production system | 131,072 / 8,192 | 450 t/s | pass-through model/tool charges | 200K TPM, 200 RPM | server-side multi-tool orchestration |
 | `groq/compound-mini` | production system | 131,072 / 8,192 | 450 t/s | pass-through model/tool charges | 200K TPM, 200 RPM | lighter server-side tool orchestration |
-| `llama-3.1-8b-instant` | production, deprecated | 131,072 / 131,072 | 560 t/s | $0.05 / $0.08 per 1M tokens | 250K TPM, 1K RPM | migrate to GPT OSS 20B |
-| `llama-3.3-70b-versatile` | production, deprecated | 131,072 / 32,768 | 280 t/s | $0.59 / $0.79 per 1M tokens | 300K TPM, 1K RPM | migrate to GPT OSS 120B or Qwen 3.6 |
 
-The last two rows resolve a documentation conflict. Groq's models page labels both Llama models production, while its deprecation page announces a 2026-08-16 Free/Developer shutdown. This guide treats the deprecation schedule as authoritative. Groq says Enterprise committed-spend plans are not affected by that notice.
+### Retired
+
+| ID | Shut down | Replacement | Migration note |
+|---|---|---|---|
+| `llama-3.1-8b-instant` | 2026-08-16 | `openai/gpt-oss-20b` | costs more: $0.075/$0.30 against Llama's former $0.05/$0.08, so 1.5x input and 3.75x output. Re-budget output-heavy jobs |
+| `llama-3.3-70b-versatile` | 2026-08-16 | `openai/gpt-oss-120b` or `qwen/qwen3.6-27b` | costs less: $0.15/$0.60 against Llama's former $0.59/$0.79, so 75% off input and 24% off output, and max completion doubles from 32,768 to 65,536 |
+
+The 2026-08-07 snapshot carried both as production-but-deprecated because Groq's models page still badged them production while the deprecation page scheduled the shutdown. That conflict is resolved: the shutdown executed, the models page dropped both rows, the rate-limits page dropped both rows, and a 2026-08-18 call to `GET /models` returned neither ID. Groq's notice carved out Enterprise committed-spend contracts, so those accounts may retain access; confirm with your Groq account team rather than with this catalog. Groq's tool-use page still lists both models in its capability matrix — that page is stale, and the deprecation schedule outranks it.
 
 ### Production speech-to-text
 
@@ -70,7 +75,7 @@ Groq exposes OpenAI-compatible endpoints under `https://api.groq.com/openai/v1`.
 ### Tools
 
 - GPT OSS 20B/120B support local and remote tools plus Groq built-in tools, but not parallel tool calls.
-- Qwen 3.6, MiniMax M2.7, and the deprecated Llama models support local/remote and parallel tool calls, but not built-in tools.
+- Qwen 3.6 and MiniMax M2.7 support local/remote and parallel tool calls, but not built-in tools.
 - Compound systems provide built-in server-side tools. They do not accept caller-supplied local or remote tools.
 - Tool prices may be additional pass-through charges. Recheck the tool-specific page before estimating cost.
 
@@ -101,7 +106,7 @@ Groq's tokens-per-second figures describe advertised generation throughput, not 
 
 ## Freshness protocol
 
-Recheck this catalog by 2026-08-14 because two shutdowns follow on 2026-08-16. After that event:
+Recheck this catalog by 2026-09-17. Nothing is currently scheduled for shutdown: the deprecation page's newest entry is the 2026-08-16 Llama retirement, which has already executed, so the seven-day pending-deprecation interval below does not apply and the 30-day stable interval does. Seven of the thirteen live models are preview, and preview models can be withdrawn without notice, so do not stretch the interval past 30 days. Refresh immediately, ahead of that date, if Groq emails a new deprecation notice or if a workload starts depending on a preview model. Each refresh:
 
 1. Fetch the official models, deprecations, rate-limit, pricing, and capability-specific pages.
 2. If `GROQ_API_KEY` is available, compare model IDs with `GET https://api.groq.com/openai/v1/models`; never store the key or response headers containing secrets.
@@ -113,7 +118,7 @@ Use a 30-day review interval for a stable catalog, a seven-day interval while a 
 
 ## Provenance
 
-All sources were captured on 2026-08-07 and are Groq first-party documentation (T1 primary, single-vendor):
+All sources were re-fetched on 2026-08-18 and are Groq first-party documentation (T1 primary, single-vendor). The runtime endpoint `GET https://api.groq.com/openai/v1/models` was also queried once on 2026-08-18 with a Developer-plan key to confirm the retirements; it is a first-party runtime check, not a documentation source, and no key or response header was recorded.
 
 - [Models](https://console.groq.com/docs/models)
 - [Deprecations](https://console.groq.com/docs/deprecations)
@@ -136,3 +141,6 @@ All sources were captured on 2026-08-07 and are Groq first-party documentation (
 - 2026-08-07: Added the current production, preview, and compound-system catalog; capability matrices; commercial metadata; production guidance; and a freshness contract.
 - 2026-08-07: Overrode the Llama production badges with the newer Free/Developer deprecation schedule and recorded replacements.
 - 2026-08-07: Kept Groq workload guidance separate from Build Loop host-agent resolution pending adapter and benchmark evidence.
+- 2026-08-18: Confirmed the 2026-08-16 shutdown executed. Moved `llama-3.1-8b-instant` and `llama-3.3-70b-versatile` out of the production table into a Retired section and changed their catalog lifecycle from `production_deprecated` to `retired`.
+- 2026-08-18: Re-verified every remaining model's context window, max completion tokens, price, advertised throughput, and Developer-plan limits against the models page. No value changed, and Groq added no model.
+- 2026-08-18: Recorded `allam-2-7b` as an undocumented runtime ID that is deliberately excluded from the catalog, and recorded the tool-use page as stale on the retired Llama models.
