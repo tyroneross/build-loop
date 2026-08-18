@@ -10,8 +10,20 @@ Thumbs.db
 # build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)
 !/.build-loop/
 /.build-loop/*
-!/.build-loop/backlog/
-!/.build-loop/backlog/**
+# NOT un-ignored: this repo is PUBLIC. references/public-repository-documentation
+# -boundary.md §3 denies "deferred-work lists" AND ".build-loop/ working state",
+# and scripts/hooks check_runtime_memory_tracking blocks the commit outright.
+# The backlog no longer "travels" in the public tree; its durable content belongs
+# in the private build-loop-memory repo.
+/.build-loop/backlog/
+
+# ...but NOT the individual backlog items. This repo is PUBLIC, and
+# references/public-repository-documentation-boundary.md §3 denies
+# "deferred-work lists" and ".build-loop/ working state". The scaffolding above
+# (README, INDEX, .gitattributes) keeps the backlog mechanism discoverable so it
+# still "travels"; the item bodies are internal planning and stay private.
+# scripts/doc_boundary.py flagged BUILDLOOP-COORD-001.md as a decided violation.
+/.build-loop/backlog/items/
 !/BACKLOG.md
 # NOTE: .codex/ is intentionally TRACKED in this repo — .codex/hooks.json is a
 # distributable hook config (Codex Stop/SessionStart → hooks/closeout.sh), the
