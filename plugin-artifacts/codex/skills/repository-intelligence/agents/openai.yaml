@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repository Intelligence"
+  short_description: "Map repositories into reusable application patterns"
+  default_prompt: "Use $repository-intelligence to inspect this repository and identify patterns worth adapting to my apps."

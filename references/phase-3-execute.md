@@ -8,6 +8,34 @@ Extracted from `agents/build-orchestrator.md` §"Phase 3: Execute (parallel)". T
 
 For each chunk, if `modifies_api: true` AND `state.json.scopeAuditorStatus.<chunk_id>` is not `"passed"`, halt dispatch. Run `Agent(subagent_type="build-loop:scope-auditor", ...)` against owned files + plan's caller-audit table. `verdict: scope_clean` → write `passed`, proceed. `verdict: scope_gap_found` → absorb missing callers OR record acceptance in `state.json.scopeGapAccepted[]`. Doc-only commits skip. See `agents/scope-auditor.md`.
 
+## External-source gate (chunks that adapt code you did not write)
+
+Before dispatching any chunk whose plan entry names an external repository,
+vendored tree, or unfamiliar library as the source of its approach, load
+`Skill("build-loop:repository-intelligence")` and run its inventory + two-pass
+discovery against the pinned source. Record the pinned identity — repo, branch
+or tag, and `git rev-parse HEAD` — in the chunk's implementer brief.
+
+Fires when the chunk `adapts`, `ports`, `vendors`, or `mirrors` an outside
+implementation. Does NOT fire for ordinary dependency use: importing a package
+whose documented API you are calling is `api-registry` / Context7 territory, not
+this. The distinction is whether you are reading someone else's source to decide
+your own structure.
+
+Why it is a dispatch gate rather than reviewer advice: an implementer that
+infers an external design from directory names produces a chunk whose defects
+are structural, and Phase 4 can only find those after the code exists. The skill
+is read-only and never executes the source, so the gate costs a scan, not a
+build.
+
+Set `triggers.externalSourceAdaptation` when this gate fires, so Review-D grades
+the diff against the same pinned source.
+
+Pass the implementer three things from the scan: the pinned SHA, the concepts
+judged portable, and the evidence state of each (`source-confirmed`,
+`issue-reported`, `inferred`). An `inferred` concept may not become a load-bearing
+design decision without a source-confirmed follow-up.
+
 ## Per-chunk dispatch sequence
 
 - Identify independent tasks from the plan's dependency graph; dispatch one subagent per task.

@@ -11,6 +11,12 @@ Scan the goal text and the set of files the plan will touch, then set:
 - **`structuredWriting`** (pyramid-principle): user-visible copy, README, CHANGELOG, docs, PR description, status update, exec summary, information architecture.
 - **`promptAuthoring`** (prompt-builder): product LLM prompts, agent instructions, eval judges, semantic-search query rewriting, RAG prompts.
 - **`promptEditingExisting`** (prompt-builder + user confirmation): editing a prompt that already ships in the product.
+- **`externalSourceAdaptation`** (repository-intelligence, Phase 3 gate + Review-D check): a chunk's plan entry names an external repository, vendored tree, or unfamiliar library as the SOURCE OF ITS APPROACH — the verbs are `adapts`, `ports`, `vendors`, `mirrors`. Set it when an implementer must read someone else's source to decide our structure.
+
+  Does NOT fire for ordinary dependency use. Importing a package and calling its documented API is `api-registry` / Context7 territory; the distinction is whether the external source is being read for design, not for signature.
+
+  Consequences: Phase 3 halts dispatch until the source is pinned (repo, branch or tag, `git rev-parse HEAD`) and scanned, and the implementer brief carries the portable concepts with their evidence state. Review-D then grades the diff against that same SHA. An `inferred` concept may not become a load-bearing decision without promotion to `source-confirmed`.
+
 - **`riskSurfaceChange`** (security-methodology + security-reviewer): the build introduces or modifies any of —
   - a new tool / MCP server / plugin / skill,
   - a new LLM call or shipped prompt,

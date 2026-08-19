@@ -46,6 +46,27 @@ Only when a mechanical metric exists. See `references/phase-gate-checklist.md` �
 
 `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8. See `references/phase-gate-checklist.md` §"Sub-step D — Fact-Check".
 
+### External-source adaptation check (fires on `triggers.externalSourceAdaptation`)
+
+When any chunk this run passed through the Phase 3 external-source gate, load
+`Skill("build-loop:repository-intelligence")` and grade the diff against the
+pinned source on two questions the other Sub-step D checks do not ask:
+
+1. **Concept or implementation?** The skill's operating contract is reuse of
+   concepts and interfaces, not copied implementation. A diff that reproduces an
+   external file's structure line-for-line is a finding even when it compiles and
+   passes tests.
+2. **License fit.** Check the source's license against this repo's. The skill is
+   explicit that a permissive license is not evidence the implementation fits;
+   it only removes one objection.
+
+Also verify no `inferred` concept from the Phase 3 scan became a load-bearing
+decision without being promoted to `source-confirmed`.
+
+Findings are WARN by default and BLOCK when the license is incompatible or the
+diff copies implementation from a source whose license requires attribution this
+repo does not carry.
+
 ## Sub-step E — Simplify
 
 `/simplify` on changed files; preserve API/tests/observability/user value. Default pass = remove dead code AND restructure over-complex logic/architecture into clearer, equal-or-better-performing forms (clear, behavior-preserving wins only). `complexity_detector.py` is a Python-specific accelerator, not a gate; the agent reasons over the diff language-agnostically; apply-vs-advise reuses Review-B + independent-auditor. Mandatory every-pass telemetry: `update_execution_state(state_path,'review_e_pass',files_scanned=[...],is_final=<bool>)` — measurement only, never changes what E does.

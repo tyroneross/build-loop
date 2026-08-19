@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e1845202b50f367d2cae057023c5cfc8031e24fb50d28bde26d6df358dc0fe25"
+    "content_sha256": "3c0373e87790a017c64fac4dab6938057af1e1ccbd5210babd9deae82a118d46"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1426,6 +1426,14 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-08-18"
+        }
+      },
+      "repository-intelligence": {
+        "description": "\"Map an unfamiliar repository or file tree into source-grounded concepts before adapting them. Use in Phase 3 when a chunk integrates or adapts an external repo/library rather than writing net-new code, and in Phase 4 when the diff adapts an external implementation and the reviewer must confirm concept-reuse over copied implementation plus license fit. Read-only: it never runs the source's code. Not for mapping the …",
+        "file": "skills/repository-intelligence/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
         }
       },
       "research": {
