@@ -267,16 +267,32 @@ def _released_key(model_id: str) -> _dt.date:
 
 
 def break_ties_by_recency(model_ids: list[str]) -> list[str]:
-    """Stable-sort a candidate list so newer-released models come first while
-    preserving the original (capability-rank) order among same-date models.
+    """Return the list unchanged. Kept as a no-op for callers and back-compat.
 
-    The caller uses this ONLY among equal-rank / unranked candidates — the
-    preferred-list order already encodes capability rank, which dominates.
-    Newer wins; unknown-date models keep their original relative position
-    behind any dated model."""
-    # Python's sort is stable, so equal keys preserve input order. We sort by
-    # descending date; date.min for unknowns puts them last among ties.
-    return sorted(model_ids, key=_released_key, reverse=True)
+    HISTORY — this used to ``sorted(..., key=_released_key, reverse=True)`` the
+    WHOLE candidate list, which is why it is now a no-op rather than a fixed
+    sort. The docstring claimed it only reordered "equal-rank / unranked"
+    candidates, and ``resolve_role``'s comment claimed every entry in a
+    ``(segment, tier)`` cell shares a rank. Both were wrong: the module
+    docstring states the preferred-list ORDER IS the capability rank, so no two
+    entries are equal-rank, and a date sort discarded that ranking entirely.
+
+    Measured 2026-08-18: it reordered 3 of 4 generative_reasoning cells —
+    gpt-5.6-terra displaced sonnet at T3, gpt-5.6-luna displaced haiku at T4,
+    and fable was demoted below gpt-5.6-sol at T1. Two entry points therefore
+    returned different models for the same tier: ``resolve_role`` (recency) vs
+    ``model_index resolve --tier`` (rank, via the in-tier chain).
+
+    Rank now wins everywhere. Recency is a proxy for capability that is wrong
+    whenever a newer SMALLER model ships, and the stated priority is
+    Accuracy > Speed > Cost. To prefer a newer model, move it up the preferred
+    list in references/model-taxonomy.json — that is the one place ranking is
+    expressed, and it is reviewable.
+
+    ``released()`` remains available for display and for a future per-cell
+    ``tiebreak: rank | recency`` field if a cell ever genuinely wants recency.
+    """
+    return list(model_ids)
 
 
 def legacy_registry(token: str | None = None) -> dict[str, list[str]] | list[str]:
