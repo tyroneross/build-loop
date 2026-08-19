@@ -1,6 +1,6 @@
 ---
 name: build-loop:data-plane-worktrees
-description: "Use when a Build Loop run or Git worktree touches mutable non-Git state: SQLite or file-backed databases, PostgreSQL databases/schemas and migrations, generated search/vector indexes, Docker volumes or service projects, mutable file trees, caches that cannot be rebuilt safely, or external cloud/account namespaces. Inventories each surface, selects per-worktree, shared-readonly, shared-serialized, or external-namespaced isolation, registers it in the run data manifest, validates collisions before writes, and requires a terminal disposition at closeout."
+description: "Decide how a build/worktree safely isolates mutable non-Git state (databases, caches, volumes, indexes) so parallel work doesn't collide. Use when the user asks \"is it safe to run this in parallel\" or \"will this migration collide with the other branch\", or a run touches a database/cache/volume. Covers SQLite and PostgreSQL databases, generated search/vector indexes, Docker volumes, mutable file trees, and external cloud/account namespaces."
 user-invocable: false
 ---
 

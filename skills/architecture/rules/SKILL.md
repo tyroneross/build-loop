@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-rules
-description: Use when Phase 4 Review checks architectural integrity, the user asks to "check for violations" or "find circular deps", or before a release. Detects orphans, layer violations, circular dependencies, and hotspots; build-loop's native rules engine from NavGator.
+description: Detect structural rule violations — layer violations, circular dependencies, and connection hotspots. Use when the user asks to "check for violations" or "find circular deps". Not for code with zero callers (use `architecture-dead`) or a full narrative review (use `architecture-review`).
 version: 0.1.0
 user-invocable: false
 source: NavGator/commands/test.md

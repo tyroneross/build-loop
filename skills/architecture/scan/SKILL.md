@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-scan
-description: Use when Phase 1 Assess detects stale architecture state, the user asks for an "architecture scan", or before blast-radius analysis. Refreshes Build Loop's native component and connection data in `.build-loop/architecture/`, with NavGator reserved for escalation-only capabilities.
+description: Refresh build-loop's native component/connection data before any other architecture check runs. Use when the user asks for "an architecture scan" or Phase 1 Assess finds the data stale. Not for finding violations or dead code — `architecture-rules`/`architecture-dead` need this data first.
 version: 0.1.0
 user-invocable: false
 source: NavGator/skills/architecture-scan/SKILL.md

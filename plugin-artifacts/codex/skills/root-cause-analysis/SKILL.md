@@ -1,6 +1,6 @@
 ---
 name: root-cause-analysis
-description: Blameless root-cause analysis that produces durable system levers, not blame or one-off patches. Use AFTER a failure/regression/wrong-output/near-miss when you need to explain why it existed AND why it escaped controls, then land the smallest system change that prevents recurrence. Tiered L0/L1/L2 by impact. Distinct from debug-loop (which fixes the live bug); this is what debug-loop's report step and the recursive-retrospective §8 delegate to. Agent-invoked (no dedicated command); the design is optimized for agent use: structured tiered (L0/L1/L2) output, primarily reached by delegation from debug-loop, recursive-retrospective, and the RCA agents; a human can still reach it by natural-language request after a failure. NOT for searching/storing past incidents — that is `debugging-memory` (`{op:search|store}`).
+description: Root-cause analysis run AFTER a bug is already fixed — explains why it existed and why it escaped controls, then lands a durable system fix, not a code patch. Use when the user asks "why did this keep happening", "root cause", wants a postmortem/RCA/"5 whys", or after a regression once the immediate fix lands. Not for fixing the bug live (use `debug-loop`) or searching/storing past incidents (use `debugging-memory`).
 user-invocable: false
 ---
 

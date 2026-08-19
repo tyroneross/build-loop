@@ -1,6 +1,6 @@
 ---
 name: research
-description: Use when the user asks to "research", "investigate", "evaluate options", or "find out about" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action.
+description: Generate a repo-grounded pre-decision research packet — risk, best path, confidence, next action — before deciding whether/how to build something in this repo. Use when the user asks to research/investigate/evaluate options for an imminent build decision here. Not for open-ended general research unconnected to a build in this repo — use the separate `research` plugin for that.
 user-invocable: false
 ---
 

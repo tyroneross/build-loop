@@ -1,6 +1,6 @@
 ---
 name: debug-loop
-description: Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues. NOT for blameless postmortem system-lever analysis (use `root-cause-analysis`) or memory search/store (use `debugging-memory`).
+description: Iteratively investigate and fix a live, currently-broken bug. Use when a fix didn't hold, `/build-loop:debug` is invoked, or the user wants it debugged right now. Not for checking whether this bug happened before (use `debugging-memory` first) or a post-fix blameless analysis (use `root-cause-analysis`).
 version: 1.1.0
 user-invocable: false
 ---

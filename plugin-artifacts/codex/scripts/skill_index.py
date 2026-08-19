@@ -67,8 +67,17 @@ from exposure_policy import (  # noqa: E402
 DEFAULT_OUTPUT = Path("docs") / "SKILL-INDEX.md"
 SKILLS_DIRNAME = "skills"
 
-#: Frontmatter description truncated to this many characters in the table.
-#: The full text always remains one click away in the linked SKILL.md.
+#: NO LONGER TRUNCATED. This used to cap the table cell at 160 chars on the
+#: assumption that "the full text always remains one click away in the linked
+#: SKILL.md". That assumption is true for READING and false for ROUTING: an
+#: agent picks a skill FROM the row — it does not open 50 files to disambiguate
+#: first. This repo's house style puts the disambiguator LAST ("... NOT for X,
+#: use Y"), so a head-truncation deleted precisely the sentence that decides
+#: between two similar skills. Measured 2026-08-18: 9 source descriptions
+#: carried a `NOT for` clause and 0 survived into the rendered table.
+#: A markdown table cell has no real width limit; only this constant did.
+#: Kept as the threshold for the adequacy test's "is this row long enough to
+#: have lost something" heuristic, not as a render-path cut.
 DESCRIPTION_MAX = 160
 
 #: The table's OWN column vocabulary — three values, not the policy's four. The
@@ -164,6 +173,21 @@ def parse_frontmatter(text: str) -> dict[str, str] | None:
 def collapse(value: str) -> str:
     """Collapse all whitespace runs to single spaces."""
     return " ".join(value.split())
+
+
+#: Phrasings that signal a description tells an agent WHEN to reach for the
+#: skill, rather than only what it is. Deliberately broad — a false "has
+#: triggers" is cheaper than appending a redundant when_to_use block.
+TRIGGER_MARKERS = (
+    "use when", "use this", "invoke", "trigger", "fires", "activates",
+    "run before", "run after", "call when", "when the user", "when a",
+    "when an", "asks to", "asks for", "reach for",
+)
+
+
+def _has_trigger_language(description: str) -> bool:
+    low = description.lower()
+    return any(m in low for m in TRIGGER_MARKERS)
 
 
 def truncate(value: str, limit: int = DESCRIPTION_MAX) -> str:
@@ -262,6 +286,19 @@ def build_row(workdir: Path, path: Path, plugin: str) -> SkillRow:
     if not description:
         description = "(no description in frontmatter — read the file)"
         warning = warning or "missing `description:` — cannot route on this skill"
+    elif not _has_trigger_language(description):
+        # A description that says what a skill IS but never WHEN to use it
+        # cannot be routed on. Some skills put their triggers in a separate
+        # `when_to_use:` block, which this generator never read — so that
+        # content was invisible to every agent choosing from this table.
+        extra = collapse(fields.get("when_to_use", ""))
+        if extra:
+            description = f"{description} When to use: {extra}"
+        else:
+            warning = warning or (
+                "description states what the skill IS but not WHEN to use it, "
+                "and no `when_to_use:` to fall back on — agents cannot route on this"
+            )
 
     skill_id = name if ":" in name else f"{plugin}:{name}"
     exposure = _exposure(fields)
@@ -327,8 +364,11 @@ def render(rows: list[SkillRow], plugin: str, output_rel: Path) -> str:
         "Column meanings:",
         "",
         "- **Skill** — the canonical skill id, linked to its source file.",
-        f"- **When to use** — the skill's own `description`, trimmed to {DESCRIPTION_MAX}"
-        " characters. Read the linked file for the full trigger list.",
+        "- **When to use** — the skill's own `description`, in full, plus its"
+        " `when_to_use:` block when the description states what the skill IS"
+        " but not WHEN to reach for it. Not truncated: the disambiguator in"
+        " this repo's house style comes last, and cutting it is what makes two"
+        " similar skills indistinguishable to a router.",
         "- **Invocation** — how an agent reaches it. `internal` skills are not"
         " loaded directly by a user; the plugin entrypoint routes to them.",
         "- **Exposure** — `hidden` is `user-invocable: false`. `public` is"
@@ -349,7 +389,7 @@ def render(rows: list[SkillRow], plugin: str, output_rel: Path) -> str:
         target = f"{link_base}/{row.path}" if link_base != "." else row.path
         lines.append(
             f"| [`{escape_cell(row.skill_id)}`]({target}) "
-            f"| {escape_cell(truncate(row.description))} "
+            f"| {escape_cell(row.description)} "
             f"| {escape_cell(row.invocation)} "
             f"| {row.exposure} |"
         )

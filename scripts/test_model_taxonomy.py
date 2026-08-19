@@ -177,15 +177,29 @@ class TaxonomyTests(unittest.TestCase):
         self.assertIn("gpt-5.6-terra", self.mt.preferred("agentic_execution", "code"))
         self.assertIn("gpt-5.6-luna", self.mt.preferred("governance_evaluation", "pattern"))
 
-    def test_break_ties_by_recency_newer_first(self) -> None:
-        # Input order is deliberately oldest-first so a no-op sort would fail:
-        # fable (2025-11-01) < gpt-5.5 (2026-02-01) < opus (2026-07-25).
-        ordered = self.mt.break_ties_by_recency(["fable", "gpt-5.5", "opus"])
-        self.assertEqual(ordered, ["opus", "gpt-5.5", "fable"])
+    def test_break_ties_by_recency_preserves_rank_order(self) -> None:
+        """Rank is the only key; this helper must not reorder anything.
 
-    def test_break_ties_unknown_date_sorts_last(self) -> None:
-        ordered = self.mt.break_ties_by_recency(["no-date-model", "fable"])
-        self.assertEqual(ordered[0], "fable")
+        It used to date-sort the whole candidate list. Because the preferred
+        list order IS the capability rank, that discarded the ranking and made
+        `resolve_role` disagree with `model_index resolve --tier` on T3 and T4.
+        Input is deliberately oldest-first, so the old descending-date sort
+        would reverse it and fail here.
+        """
+        candidates = ["fable", "gpt-5.5", "opus"]
+        self.assertEqual(self.mt.break_ties_by_recency(candidates), candidates)
+
+    def test_break_ties_does_not_promote_on_unknown_date(self) -> None:
+        # A model with no release date must not be moved either — the old
+        # implementation sorted it last; rank order says leave it alone.
+        candidates = ["no-date-model", "fable"]
+        self.assertEqual(self.mt.break_ties_by_recency(candidates), candidates)
+
+    def test_released_still_available_for_display(self) -> None:
+        # The date lookup is retained deliberately: it is no longer a
+        # resolution key, but it is still shown in resolution envelopes and
+        # would back a future per-cell `tiebreak: rank | recency` field.
+        self.assertEqual(self.mt.released("opus"), "2026-07-25")
 
     # --- Prompting profiles (T-01, T-02) -----------------------------------
     def test_prompting_profile_covers_ladder_and_folds_legacy_tokens(self) -> None:

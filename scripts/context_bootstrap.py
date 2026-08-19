@@ -1246,7 +1246,11 @@ def ops_state_context(workdir: Path) -> dict[str, Any]:
             probe_ops_state, summary_line, write_repo_artifact,
         )
         result = probe_ops_state(workdir)
-        write_repo_artifact(workdir, result)
+        # Only persist when .build-loop already exists. build_packet must never
+        # CREATE that directory as a side effect of reading state — a repo with
+        # no build-loop history should stay untouched by an Assess-time probe.
+        if (Path(workdir) / ".build-loop").is_dir():
+            write_repo_artifact(workdir, result)
         c = result["counts"]
         return {
             "exists": bool(result["flags"]) or bool(result["corrupt_other_keys"]),

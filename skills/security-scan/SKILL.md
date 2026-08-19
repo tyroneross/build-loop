@@ -1,6 +1,6 @@
 ---
 name: build-loop:security-scan
-description: "Run before any push OR any deployment, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — secrets in source and logs, SQL/command/eval injection, broken object-level authorization, missing or fail-open auth guards, privileged keys in client bundles, session/token hygiene, CORS, mass assignment, unbounded or ungated AI tool calls — and maps each finding to OWASP Web/LLM/Agentic IDs. Changed files get every check; the rest of the tree gets an advisory sweep. The judgment layer (business-rule authz, RAG tenant design, agent goal-drift) escalates to the security-reviewer agent + the security-methodology canon."
+description: "Run a deterministic, model-independent OWASP scan for secrets, injection, auth gaps, and unsafe AI tool calls, mapped to OWASP Web/LLM/Agentic IDs. Use before any push or deployment, or whenever an automated security pass is wanted. Not for business-rule/judgment-level review (use `security-methodology` + the security-reviewer agent)."
 version: 0.2.0
 user-invocable: false
 ---

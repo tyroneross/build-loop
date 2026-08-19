@@ -624,11 +624,15 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["released"], "2026-07-25")
 
     def test_resolve_role_accepts_ladder_tier_directly(self) -> None:
+        # GR/T4 = [haiku, gpt-5.6-luna, gpt-5.4-mini]. haiku heads the cell by
+        # list order = capability rank, so it wins. luna is NEWER (2026-07-09 vs
+        # 2025-10-01) and used to win here — that date sort is what made
+        # resolve_role disagree with `model_index resolve --tier`.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="T4", workdir=Path(td),
             )
-            self.assertEqual(r["model"], "gpt-5.6-luna")
+            self.assertEqual(r["model"], "haiku")
 
     def test_resolve_role_unavailable_falls_to_next_preferred(self) -> None:
         # GR/T2 preferred = [opus, gpt-5.5]; opus down -> gpt-5.5.
@@ -679,24 +683,24 @@ class TwoAxisRoleTests(unittest.TestCase):
                     segment="no-such-segment", tier="T1", workdir=Path(td),
                 )
 
-    # --- Recency tiebreak --------------------------------------------------
-    def test_recency_breaks_tie_among_equal_rank(self) -> None:
-        # Within a single (segment,tier) cell every entry shares the rung, so
-        # recency is a pure in-cell tiebreak. Use GR/T3 = [sonnet(2026-06-01),
-        # gpt-5.6-terra(2026-07-09), gpt-5.4, gemini-2.5-pro]: recency must
-        # REORDER the cell (terra jumps ahead of the list-order head sonnet).
-        # T2 is no longer usable for this: opus now leads that cell by list
-        # order AND by date, so the flag would change nothing there.
+    # --- Rank dominance (was: recency tiebreak) ----------------------------
+    def test_rank_wins_over_recency_regardless_of_flag(self) -> None:
+        # GR/T3 = [sonnet(2026-06-01), gpt-5.6-terra(2026-07-09), gpt-5.4].
+        # terra is NEWER than the list-order head. Under the old whole-list date
+        # sort terra won; rank now wins, so sonnet does — and critically the
+        # answer is the same with the flag ON, since recency_tiebreak is
+        # accepted and ignored. This is the regression guard: a caller passing
+        # the flag must not be able to reintroduce recency dominance.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="code",
                 workdir=Path(td), recency_tiebreak=True,
             )
-            self.assertEqual(r["model"], "gpt-5.6-terra")  # newer than sonnet
+            self.assertEqual(r["model"], "sonnet")
 
-    def test_no_recency_keeps_capability_order(self) -> None:
-        # Same cell as above with the flag off — the differential proves the
-        # flag is what moved the answer, not the cell's contents.
+    def test_flag_off_gives_the_same_answer(self) -> None:
+        # Same cell with the flag off. Both branches must agree now; a
+        # difference between them would mean recency dominance came back.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="code",
@@ -707,3 +711,48 @@ class TwoAxisRoleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class EntryPointAgreementTests(unittest.TestCase):
+    """Both resolution paths must return the same model for the same tier.
+
+    The defect this guards: `resolve_role` date-sorted its candidate list while
+    `model_index resolve --tier` walked the rank-ordered in-tier chain, so the
+    two disagreed on T3 and T4. Which model ran your work depended on which
+    entry point the caller used.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import importlib
+        self.mo = importlib.import_module("model_overrides")
+        self.mr = importlib.import_module("model_resolver")
+
+    def test_role_and_tier_paths_agree_on_every_rung(self) -> None:
+        for rung in ("T1", "T2", "T3", "T4"):
+            with self.subTest(rung=rung), tempfile.TemporaryDirectory() as td:
+                role = self.mo.resolve_role(
+                    segment="generative_reasoning", tier=rung, workdir=Path(td),
+                )
+                tier = self.mr.resolve_with_tier_fallback(
+                    tier={"T1": "frontier", "T2": "thinking",
+                          "T3": "code", "T4": "pattern"}[rung],
+                    workdir=Path(td),
+                )
+                self.assertEqual(
+                    role["model"], tier["model"],
+                    f"{rung}: resolve_role gave {role['model']!r} but the tier "
+                    f"chain gave {tier['model']!r} — the entry points disagree",
+                )
+
+    def test_break_ties_by_recency_does_not_reorder(self) -> None:
+        import importlib
+        mt = importlib.import_module("model_taxonomy")
+        for rung in ("T1", "T2", "T3", "T4"):
+            with self.subTest(rung=rung):
+                cell = mt.preferred("generative_reasoning", rung)
+                self.assertEqual(
+                    mt.break_ties_by_recency(cell), cell,
+                    f"{rung}: recency reordered the cell — rank must be the "
+                    f"only key, or the two entry points diverge again",
+                )

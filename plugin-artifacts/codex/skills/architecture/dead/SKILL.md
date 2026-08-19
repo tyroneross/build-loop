@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-dead
-description: Use when the user asks to "find dead code", "scan for orphaned components", or "clean up unused files", or during Phase 4 Review before a release. Scans for unreachable components and dead code; build-loop's native scan from NavGator's CLI.
+description: Find code/components with zero remaining callers — dead, unreachable, or orphaned files to delete. Use when the user asks to "find dead code", "clean up unused files", or "scan for orphaned components". Not for code that's still called but breaks a layer boundary or forms a cycle (use `architecture-rules`).
 version: 0.1.0
 user-invocable: false
 source: NavGator/commands/dead.md

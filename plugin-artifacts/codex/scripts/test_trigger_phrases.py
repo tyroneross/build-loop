@@ -54,15 +54,23 @@ EXPECTED_TRIGGERS: list[tuple[str, str]] = [
     ("authentication", "redirect_uri_mismatch"),
     ("authentication", "refresh_token"),
 
-    # debugging-memory — memory-first workflow triggers
+    # debugging-memory — memory-first workflow triggers. "root cause" retired
+    # 2026-08-18: disambiguated off this skill onto root-cause-analysis, which
+    # now exclusively owns it (see test_skill_index_routing_adequacy.py).
     ("debugging-memory", "debug"),
     ("debugging-memory", "fix"),
     ("debugging-memory", "investigate"),
-    ("debugging-memory", "root cause"),
 
-    # debug-loop — deeper investigation
-    ("debug-loop", "deep iterative debugging"),
-    ("debug-loop", "root cause analysis"),
+    # debug-loop — deeper investigation. "deep iterative debugging" and
+    # "root cause analysis" retired 2026-08-18: the former was internal
+    # jargon no real user types, the latter collided with debugging-memory
+    # and root-cause-analysis with no disambiguating boundary.
+    ("debug-loop", "fix didn't hold"),
+
+    # root-cause-analysis — now the sole owner of "root cause" among the
+    # three debug-family skills (added 2026-08-18 alongside the retirements
+    # above; closes the coverage gap the collision was hiding).
+    ("root-cause-analysis", "root cause"),
 
     # logging-tracer — observability
     ("logging-tracer", "logging"),

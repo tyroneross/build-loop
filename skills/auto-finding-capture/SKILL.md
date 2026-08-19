@@ -1,6 +1,6 @@
 ---
 name: auto-finding-capture
-description: Project-scoped skill documenting build-loop's DEFAULT-ON auto-capture of clearly-identified findings/issues into the backlog, regardless of which terminal or agent surfaced them. Provides the detection contract, routing rules, dedup strategy, and the standing rule that agents/critics must NOT gate identified issues behind a user selection. Use when an agent, audit, or critic surfaces a concrete severity-labeled issue, or when reasoning about where findings persist.
+description: Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`).
 user-invocable: false
 when_to_use: |
   - Any agent/audit/critic states a concrete, severity-labeled issue in the session

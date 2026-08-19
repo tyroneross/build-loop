@@ -1,6 +1,6 @@
 ---
 name: building-with-deepagents
-description: Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_agent`). Covers SubAgent API, middleware, tool scoping, streaming, checkpointing. Not for `.claude/agents/*.md`.
+description: Build or refactor an agent using the OSS `deepagents` framework (SubAgent API, middleware, tool scoping, streaming, checkpointing). Use when the user wants a multi-agent/subagent system built with deepagents, or the code imports it. Not for `.claude/agents/*.md` definitions.
 user-invocable: false
 ---
 

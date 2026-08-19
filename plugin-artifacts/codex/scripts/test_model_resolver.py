@@ -645,15 +645,19 @@ class ResolveRoleTests(unittest.TestCase):
             )
             self.assertEqual(r["model"], "sonnet")
 
-    def test_host_neutral_picks_recency_winner(self) -> None:
-        # Same cell, no host filter: recency must re-order the list so the newer
-        # gpt-5.6-terra beats the list-order first entry (sonnet).
+    def test_host_neutral_still_picks_by_rank_not_recency(self) -> None:
+        """With the host filter off, rank still decides — not release date.
+
+        gpt-5.6-terra (2026-07-09) is newer than sonnet (2026-06-01) and used to
+        win here. Removing the host filter must not smuggle recency back in: the
+        preferred-list order is the capability rank, and it is the only key.
+        """
         with tempfile.TemporaryDirectory() as td:
             r = self.mr.resolve_role(
                 segment="generative_reasoning", tier="code",
                 workdir=Path(td), host_providers=self.mr.HOST_FILTER_DISABLED,
             )
-            self.assertEqual(r["model"], "gpt-5.6-terra")  # newer, no host filter
+            self.assertEqual(r["model"], "sonnet")
 
     def test_persistent_availability_respected(self) -> None:
         # opus recorded unavailable on disk + anthropic host -> no reachable GR
@@ -667,11 +671,20 @@ class ResolveRoleTests(unittest.TestCase):
             # opus down + gpt-5.5 unreachable -> ladder floor walk -> sonnet (code)
             self.assertEqual(r["model"], "sonnet")
 
-    def test_cli_segment_flag_uses_two_axis_path(self) -> None:
-        # --segment routes through resolve_role; without it, legacy single-axis.
-        # The `code` tier discriminates the two paths: the two-axis preferred
-        # list applies the recency tiebreak (-> gpt-5.6-terra) while the legacy
-        # in-tier registry walk keeps registry order (-> sonnet).
+    def test_cli_segment_flag_agrees_with_the_legacy_path(self) -> None:
+        """--segment and no --segment must return the SAME model for a tier.
+
+        This test previously asserted they DIVERGED, and documented the `code`
+        tier as the discriminator: the two-axis path date-sorted to
+        gpt-5.6-terra while the legacy in-tier walk kept rank order and gave
+        sonnet. That divergence was the defect, not the contract — which model
+        ran your work depended on which flag the caller passed. The test
+        encoded the bug as spec, so it could never have caught it.
+
+        Now both paths are rank-ordered and must agree. Compare with
+        test_cli_no_segment_is_unchanged_legacy below, which pins the same
+        answer from the other entry point.
+        """
         with tempfile.TemporaryDirectory() as td:
             two_axis = run_resolver(
                 "--workdir", td, "--tier", "code",
@@ -679,7 +692,7 @@ class ResolveRoleTests(unittest.TestCase):
                 "--host-providers", "any", "--plain",
             )
             self.assertEqual(two_axis.returncode, 0, two_axis.stderr)
-            self.assertEqual(two_axis.stdout.strip(), "gpt-5.6-terra")
+            self.assertEqual(two_axis.stdout.strip(), "sonnet")
 
     def test_cli_no_segment_is_unchanged_legacy(self) -> None:
         with tempfile.TemporaryDirectory() as td:

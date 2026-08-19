@@ -510,7 +510,7 @@ def resolve_role(
     tier: str,
     workdir: Path,
     unavailable: set[str] | frozenset[str] | None = None,
-    recency_tiebreak: bool = True,
+    recency_tiebreak: bool = True,  # accepted and ignored; rank always wins
 ) -> dict[str, Any]:
     """Two-axis entrypoint: resolve a ``(segment, tier)`` ROLE to a model.
 
@@ -540,14 +540,13 @@ def resolve_role(
     wd = workdir.expanduser().resolve()
     unavail = expand_unavailable(unavailable)
 
+    # RANK IS THE ONLY KEY. The preferred list order encodes capability rank, so
+    # it is already the answer. This previously date-sorted the whole list, which
+    # discarded that ranking and made resolve_role disagree with
+    # `model_index resolve --tier` on T3 and T4. `recency_tiebreak` is retained
+    # as an accepted-and-ignored parameter so existing callers keep working; it
+    # no longer changes the result. See model_taxonomy.break_ties_by_recency.
     candidates = model_taxonomy.preferred(segment, rung)
-    if recency_tiebreak and candidates:
-        # Re-order ONLY among same-capability-rank entries. The preferred list is
-        # already rank-ordered, so we keep rank as the dominant key and recency
-        # as the tiebreak: group is the list itself (every entry shares the same
-        # (segment,tier) cell == same rung == same rank), so recency is a pure
-        # in-cell tiebreak. Newer wins.
-        candidates = model_taxonomy.break_ties_by_recency(candidates)
 
     resolution_path: list[dict[str, Any]] = []
     for mid in candidates:

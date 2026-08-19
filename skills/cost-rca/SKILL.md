@@ -1,6 +1,6 @@
 ---
 name: cost-rca
-description: Use for structured cost-impact root-cause analysis — quantify what a context/caching/model change did to token spend and dollars. Reads MEASURED tokens from the cost ledger (never estimates), splits inbound/outbound + cache-read/cache-write, computes context-window utilization, then prices each bucket against the CURRENT rate card fetched LIVE (never from memory). Triggers on "tokens saved", "cache impact", "cost of context", "dollar savings", "how much did that cost", "token delta", "cost regression". NOT for choosing a model tier (use model-tiering) or benchmarking models on a task (use model-bakeoff).
+description: Quantify what a context/caching/model change did to token spend and dollars, from measured usage data, never estimates. Use when the user asks "how much did that cost", "did caching save money", "why did my bill spike", or "token delta". Not for choosing which model to use (use `model-tiering`) or comparing models head-to-head (use `model-bakeoff`).
 user-invocable: false
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-impact
-description: Use when Phase 1 Assess evaluates top-risk components, Phase 5 Iterate precedes a cross-layer fix, or the user asks "what does changing X break". Blast-radius analysis tracing upstream/downstream dependencies for a component or file before refactor.
+description: Blast-radius analysis — trace upstream/downstream dependencies for one component or file before changing it. Use when the user asks "what does changing X break" or before a cross-layer fix.
 version: 0.1.0
 user-invocable: false
 source: NavGator/skills/impact-analysis/SKILL.md

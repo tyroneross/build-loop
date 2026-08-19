@@ -1,6 +1,6 @@
 ---
 name: model-tiering
-description: Use when choosing a model tier or segment for a subagent, deciding a role descriptor (segment + tier) in frontmatter, or escalating mid-flow. Covers the two-axis taxonomy (work-role segment × 7-rung capability ladder) — Opus/Sonnet/Haiku are Anthropic-default mappings; selection is provider-portable and data-driven. NOT for benchmarking models head-to-head on a task — use `model-bakeoff`.
+description: Recommend which model tier (e.g. Opus/Sonnet/Haiku) to use for a subagent or task. Use when the user asks "which model should I use", "is Sonnet enough or do I need Opus", or sets a segment+tier in agent frontmatter. Not for running multiple models head-to-head and scoring them (use `model-bakeoff`).
 user-invocable: false
 ---
 

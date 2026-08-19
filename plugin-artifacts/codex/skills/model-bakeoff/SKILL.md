@@ -1,6 +1,6 @@
 ---
 name: model-bakeoff
-description: Use to run a controlled multi-model bake-off — have N models (e.g. Opus 4.8, Sonnet 5.0, GPT-5.5) each independently diagnose→plan→execute the SAME bounded change in isolated git worktrees, then deterministically re-score their committed code on a fresh server, merge the best-of (grafting distinct wins from the others), and repeat per change. Triggers on "bake-off", "compare models on this task", "which model is best at", "run the same change across models and score them". NOT for choosing a model tier/segment for one agent — use `model-tiering`.
+description: Run the same bounded change across multiple models in parallel, then deterministically score and merge the best result. Use when the user says "bake-off", "compare models on this task", "which model is best at", or "A/B test these models". Not for picking a single model tier for one agent (use `model-tiering`).
 user-invocable: false
 ---
 

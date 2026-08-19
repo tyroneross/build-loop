@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-review
-description: Use when Phase 4 Review covers a build that crosses 2+ layers, or the user asks for an "architectural review" or "full integrity check". Covers system flow, component connections, documentation drift, and lessons; heavy-weight, native copy from NavGator.
+description: Full architectural integrity pass — system flow, connections, documentation drift, and lessons in one report. Use when the user asks for "an architectural review" or "full integrity check" on a build crossing 2+ layers. Not for a single violation/orphan pass (use `architecture-rules`) — this is the heavier superset.
 version: 0.1.0
 user-invocable: false
 source: NavGator/skills/code-review/SKILL.md

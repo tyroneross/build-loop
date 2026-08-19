@@ -1,6 +1,6 @@
 ---
 name: mcp-builder
-description: Use when building, packaging, or debugging an MCP server, adding MCP tools to a plugin, or working on .mcp.json, transport, or bundling. Pair with plugin-builder when the plugin exposes MCP tools.
+description: Build, package, or debug an MCP server and its tools. Use when the user is adding MCP tools, or working on `.mcp.json`, transport, or bundling. Not for scaffolding the plugin around it (use `plugin-builder`; pair the two when a plugin exposes MCP tools).
 user-invocable: false
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: plugin-builder
-description: Use when the user asks to create, build, scaffold, convert, or migrate a Claude Code plugin, or needs guidance on plugin.json, directory layout, hooks, MCP servers, agents, LSP, or distribution.
+description: Create, scaffold, or migrate a Claude Code plugin — manifest, directory layout, hooks, agents, distribution. Use when the user asks to create/build/scaffold/convert a plugin, or needs plugin.json/layout guidance. Not for building the MCP server itself once the shell exists (use `mcp-builder`; pair the two).
 user-invocable: false
 ---
 
