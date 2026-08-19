@@ -17,6 +17,13 @@ are present when the orchestrator decides, not buried behind a "load X" instruct
    2026-06-09 an auditor proposed a gate→phase validator check; a 30-second read
    of the presets showed gates key by risk category, not phase name — the "fix"
    would have failed all 5 real presets.
+   The same gate binds a causal claim of your OWN: co-occurrence is not a traced
+   path. Before asserting X causes Y, run the NEUTRAL mechanism query ("what
+   calls X") rather than the confirming one ("how big is X"). Evidence:
+   2026-08-18 a measured 7.86 MB payload on one wire op was offered as the cause
+   of a 2.6x read regression; the command under test never called that op, and
+   one grep of the caller would have shown it. A measured finding does not lend
+   its confidence to an inference that arrived in the same tool result.
 
 2. **Solicited review is not independent validation.** An agent you asked to check
    work is anchored by the ask. Treat its verdict as input; verify the load-bearing
@@ -47,11 +54,13 @@ are present when the orchestrator decides, not buried behind a "load X" instruct
    cross-host: independent audit, full stop. Do not spend Opus tokens verifying a
    typo fix or trust an exit code on a schema migration.
 
-8. **Name the falsifier before locking a decision.** State the single observation
+8. **Name the falsifier before locking a decision or diagnosis.** State the single observation
    that would prove the decision wrong; if it is cheaply observable NOW, observe
    it before locking (the presets read that reversed f1's suggested fix cost one
    command). If not cheaply observable, record it in the decision record as the
    revisit trigger.
+   A DIAGNOSIS counts as a decision here: "X is slow BECAUSE Y" feeds every
+   choice downstream, so it is already wrong by the time a decision gate sees it.
 
 9. **Parallelism follows write-sets, not enthusiasm.** Fan out only across disjoint
    write-sets. Same-repo overlapping-file work queues behind the active writer even
@@ -77,6 +86,31 @@ are present when the orchestrator decides, not buried behind a "load X" instruct
     how small they read.
 
 ## Where the rules bind (orchestrator decision points)
+
+### Phase 1 Assess — claim discipline (MANDATORY, full pass)
+
+Rules 1 and 8 bind at **Assess**, not only at Plan: a diagnosis is a truth-claim
+every later choice inherits. For each load-bearing finding:
+
+1. **Name the falsifier** — and when it is cheaply observable NOW, observe it
+   before locking the finding.
+2. **Mark each CLAIM, not each report** — `✅ verified` / `⚠️ untested` /
+   `❓ uncertain`. A report-level marker hides a weak claim inside a strong one.
+3. **Label `measured:` or `inferred:`** — an inference that arrived in the same
+   tool result as a measurement inherits none of its confidence.
+
+Two shape rules that catch the most:
+
+- A **universal claim** ("all", "none", "100%", "cannot") needs a counterexample
+  query, not a percentage. A rounded 99.8% erases the one row that refutes it.
+- A **per-unit extrapolation** needs the distribution, not the mean.
+
+### Phase 2 Plan — claim discipline (LIGHT, inherited claims only)
+
+Assess already ran the full pass. Re-check ONLY what the plan depends on: any
+Assess finding still marked `inferred:` / `⚠️` / `❓` that a chunk now rests on must
+be observed before the plan locks, or that chunk carries the falsifier as an
+acceptance criterion. Do not re-run the Assess pass.
 
 - **Phase 2 plan acceptance** → rules 4, 5, 8, 9, 12 (convergence-rank, dependency-
   order, name the falsifier, write-set parallelism, tier choice).

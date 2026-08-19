@@ -6,6 +6,22 @@ Loaded on demand by the build-orchestrator agent when a phase needs a capability
 
 ## Routing protocol
 
+### Execution-surface precedence
+
+For agentic coding work, route through the active host adapter before a direct
+provider API:
+
+1. Claude Code when the session is Claude Code; keep Claude-native aliases and
+   its permission/tool loop.
+2. Codex when the session is Codex; keep Codex-native model selection and
+   OpenAI role routing (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`).
+3. Direct API only for application/data-plane integrations, explicit API tests,
+   or when no supported host adapter is available.
+
+An explicit caller override wins. `model_resolver.py` detects the host provider
+and filters out models the active adapter cannot dispatch; a model ID in the
+registry is not itself an API call or an entitlement check.
+
 1. Consult the Capability Routing table in `skills/build-loop/SKILL.md`.
 2. If `availablePlugins.<flag>` is true → include `Invoke Skill("<plugin>:<skill>")` in the subagent prompt.
 3. If a secondary plugin is available → include it as a fallback step.
