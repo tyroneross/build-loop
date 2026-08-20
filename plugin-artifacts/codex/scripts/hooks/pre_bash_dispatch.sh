@@ -69,6 +69,56 @@ if [ -z "$CMD" ]; then
     exit 0
 fi
 
+# ── Privileged-command gate ──────────────────────────────────────────────────
+# Runs BEFORE the build-loop scope guard, and is the ONE gate here that does.
+# Every other gate polices repository work, so confining it to opted-in repos is
+# correct. An administrator-password dialog is not repository work: the same
+# `sfltool dumpbtm` opens the same anonymous dialog from any directory, and a
+# guard that let it through from an un-opted-in repo would be a silent hole in
+# exactly the control this gate exists to provide.
+#
+# Confining it here is safe because the matcher is EXACT — the sub-gate resolves
+# argv against scripts/privileged_commands.json, so `spctl -a` (unprivileged read)
+# and `spctl --add` (root) get opposite answers. The `case` below is only a cheap
+# pre-filter that decides whether to spawn at all; it deliberately over-matches
+# and lets the sub-gate say no. The character class anchors each name to a
+# command position (start, separator, or path), so prose and paths containing
+# "security" or "sudo" do not pay for a spawn.
+#
+# Named failure it exists for (2026-08-20): one Codex turn ran `sfltool dumpbtm`
+# twice, 14 seconds apart, producing two administrator-password dialogs that named
+# only "sfltool" — no app, no repository, no reason. Three sessions reached for
+# the same host fact inside 27 minutes with nothing coalescing them.
+#
+# A deny here is a REDIRECT, not a refusal: the reason carries the exact brokered
+# command to re-issue. It short-circuits the remaining gates because deny already
+# wins the merge — once the command is being rewritten, no other verdict matters.
+case " $CMD" in
+    *[\ \;\|\&\(/]sfltool*|*[\ \;\|\&\(/]sudo*|*[\ \;\|\&\(/]csrutil*|\
+    *[\ \;\|\&\(/]spctl*|*[\ \;\|\&\(/]systemsetup*|*[\ \;\|\&\(/]authopen*|\
+    *[\ \;\|\&\(/]nvram*|*[\ \;\|\&\(/]bputil*|*[\ \;\|\&\(/]kmutil*|\
+    *[\ \;\|\&\(/]softwareupdate*|*[\ \;\|\&\(/]pmset*|*[\ \;\|\&\(/]dscl*|\
+    *[\ \;\|\&\(/]launchctl*|*[\ \;\|\&\(/]installer*|*[\ \;\|\&\(/]security*|\
+    *[\ \;\|\&\(/]dsenableroot*|*[\ \;\|\&\(/]tmutil*|*[\ \;\|\&\(/]fdesetup*|\
+    *[\ \;\|\&\(/]diskutil*)
+        _PRIV_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+        if [ -z "$_PRIV_ROOT" ]; then
+            _PRIV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            _PRIV_ROOT="$(dirname "$(dirname "$_PRIV_DIR")")"
+        fi
+        _PRIV_GATE="$_PRIV_ROOT/scripts/hooks/pre_bash_privileged.py"
+        if [ -f "$_PRIV_GATE" ]; then
+            _PRIV_OUT=$(printf '%s' "$INPUT" | python3 "$_PRIV_GATE" 2>/dev/null) || _PRIV_OUT='{}'
+            case "$_PRIV_OUT" in
+                *'"permissionDecision": "deny"'*|*'"permissionDecision":"deny"'*)
+                    printf '%s' "$_PRIV_OUT"
+                    exit 0
+                    ;;
+            esac
+        fi
+        ;;
+esac
+
 # ── Per-repo state resolution ────────────────────────────────────────────────
 # Every `.build-loop/` read below resolves against the REPOSITORY THE COMMAND
 # ACTS ON, never the session's working directory. The two differ routinely —

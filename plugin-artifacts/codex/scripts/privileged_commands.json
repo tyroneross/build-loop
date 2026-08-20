@@ -1,0 +1,379 @@
+{
+  "schema": "buildloop.privileged.registry/1",
+  "version": "2026-08-20.1",
+  "_readme": [
+    "Registry of macOS commands that route to SecurityAgent (admin-password dialog) or",
+    "otherwise require root. This is DATA, not code: add an entry to cover a new command,",
+    "never edit privileged_broker.py to special-case one.",
+    "",
+    "Matching: a shell command is split into segments (pipes, &&, ;, newlines); each",
+    "segment's executable basename is matched against `executable`, then `argv_prefix`",
+    "must be a prefix of the remaining arguments. An entry with an empty `argv_prefix`",
+    "matches every invocation of that executable.  Longest argv_prefix wins.",
+    "",
+    "confidence:  observed  = seen prompting on this machine, with evidence on file",
+    "             documented = vendor/man page states root or admin is required",
+    "             inferred   = behaviour follows from the command class; unverified here",
+    "",
+    "mutating:    true  = changes host state. NEVER coalesced, NEVER cached, NEVER",
+    "                     inherits another task's authorization. One prompt per request.",
+    "             false = read-only query. Eligible for single-flight coalescing within",
+    "                     ttl_seconds.",
+    "",
+    "cacheable:   true  = the authorized RESULT may be persisted for ttl_seconds and",
+    "                     replayed to later identical requests.",
+    "             false = waiters may join an IN-FLIGHT invocation, but nothing is kept",
+    "                     once it drains (set ttl_seconds to 0 as well).",
+    "",
+    "negative_ttl_seconds: how long a denial / cancellation / timeout is remembered.",
+    "             This is the anti-retry-storm control. A non-zero value is what stops an",
+    "             agent from re-prompting 14 seconds after the user dismissed the dialog.",
+    "             It never grants anything: a cached negative can only DENY."
+  ],
+
+  "defaults": {
+    "trust_domain": "local-admin",
+    "ttl_seconds": 0,
+    "negative_ttl_seconds": 300,
+    "cacheable": false,
+    "mutating": true,
+    "purpose_required": true
+  },
+
+  "entries": [
+    {
+      "id": "sfltool-dumpbtm",
+      "executable": "sfltool",
+      "argv_prefix": ["dumpbtm"],
+      "scope": "btm:read",
+      "mutating": false,
+      "cacheable": true,
+      "ttl_seconds": 900,
+      "negative_ttl_seconds": 600,
+      "confidence": "observed",
+      "notes": "Dumps the Background Task Management store (login items, launch agents/daemons). Requires root; macOS shows a SecurityAgent dialog naming only 'sfltool'. NOT in sfltool(1), which documents only `sfltool archive`. Read-only and slow-changing, so a 15-minute shared result is safe and removes almost all repeat prompts."
+    },
+    {
+      "id": "sfltool-archive",
+      "executable": "sfltool",
+      "argv_prefix": ["archive"],
+      "scope": "btm:snapshot",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Writes a snapshot directory of the SharedFileList store. Documented in sfltool(1). Creates files, so it is mutating and never coalesces."
+    },
+    {
+      "id": "sfltool-other",
+      "executable": "sfltool",
+      "argv_prefix": [],
+      "scope": "btm:unknown",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "inferred",
+      "notes": "Catch-all for undocumented sfltool subcommands. Unknown effect is treated as mutating: it gets its own prompt and inherits nothing."
+    },
+
+    {
+      "id": "sudo-generic",
+      "executable": "sudo",
+      "argv_prefix": [],
+      "scope": "root:exec",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Any sudo invocation. Conservatively mutating: the broker does not attempt to classify the inner command. Note sudo has its OWN timestamp cache (sudoers timestamp_timeout) which is independent of this broker and is not managed here."
+    },
+    {
+      "id": "sudo-noninteractive",
+      "executable": "sudo",
+      "argv_prefix": ["-n"],
+      "scope": "root:exec",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "prompts": false,
+      "confidence": "documented",
+      "notes": "`sudo -n` tells sudo to fail rather than prompt. Still a privileged request worth attributing and recording, but it can never open a dialog, so it is excluded from prompt counts."
+    },
+
+    {
+      "id": "csrutil-mutate",
+      "executable": "csrutil",
+      "argv_prefix": [],
+      "scope": "sip:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "System Integrity Protection. `csrutil status` is unprivileged and is excluded below; everything else changes or asserts boot policy."
+    },
+    {
+      "id": "csrutil-status",
+      "executable": "csrutil",
+      "argv_prefix": ["status"],
+      "scope": "sip:read",
+      "privileged": false,
+      "confidence": "documented",
+      "notes": "Unprivileged. Listed so the broker positively EXCLUDES it rather than matching the csrutil catch-all."
+    },
+    {
+      "id": "csrutil-authenticated-root-status",
+      "executable": "csrutil",
+      "argv_prefix": ["authenticated-root", "status"],
+      "scope": "sip:read",
+      "privileged": false,
+      "confidence": "observed",
+      "notes": "Reads the signed-system-volume state. Unprivileged; seen misclassified by the csrutil catch-all before this entry existed."
+    },
+
+    {
+      "id": "spctl-mutate",
+      "executable": "spctl",
+      "argv_prefix": [],
+      "scope": "gatekeeper:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Gatekeeper policy changes (--master-disable, --add, --remove, --enable) require root."
+    },
+    {
+      "id": "spctl-status",
+      "executable": "spctl",
+      "argv_prefix": ["--status"],
+      "scope": "gatekeeper:read",
+      "privileged": false,
+      "confidence": "documented",
+      "notes": "Unprivileged read."
+    },
+    {
+      "id": "spctl-assess",
+      "executable": "spctl",
+      "argv_prefix": ["--assess"],
+      "scope": "gatekeeper:read",
+      "privileged": false,
+      "confidence": "documented",
+      "notes": "Unprivileged assessment of a bundle."
+    },
+    {
+      "id": "spctl-assess-short",
+      "executable": "spctl",
+      "argv_prefix": ["-a"],
+      "scope": "gatekeeper:read",
+      "privileged": false,
+      "confidence": "observed",
+      "notes": "`spctl -a` is the short form of --assess and is unprivileged. Distinct from `spctl --add`, which requires root. Seen misclassified by the spctl catch-all before this entry existed."
+    },
+
+    {
+      "id": "fdesetup-status",
+      "executable": "fdesetup",
+      "argv_prefix": ["status"],
+      "scope": "filevault:read",
+      "privileged": false,
+      "confidence": "documented",
+      "notes": "Unprivileged read."
+    },
+    {
+      "id": "fdesetup-mutate",
+      "executable": "fdesetup",
+      "argv_prefix": [],
+      "scope": "filevault:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "FileVault enable/disable/add-user require an authenticating admin."
+    },
+
+    {
+      "id": "systemsetup",
+      "executable": "systemsetup",
+      "argv_prefix": [],
+      "scope": "systemprefs:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "systemsetup requires root even for many -get verbs."
+    },
+    {
+      "id": "authopen",
+      "executable": "authopen",
+      "argv_prefix": [],
+      "scope": "file:privileged-open",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Opens a file with authorization rights; the whole point is a SecurityAgent prompt."
+    },
+    {
+      "id": "nvram-write",
+      "executable": "nvram",
+      "argv_prefix": [],
+      "scope": "nvram:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "nvram writes and deletes require root. `nvram -p` (print) is unprivileged and excluded below."
+    },
+    {
+      "id": "nvram-print",
+      "executable": "nvram",
+      "argv_prefix": ["-p"],
+      "scope": "nvram:read",
+      "privileged": false,
+      "confidence": "documented",
+      "notes": "Unprivileged read."
+    },
+    {
+      "id": "bputil",
+      "executable": "bputil",
+      "argv_prefix": [],
+      "scope": "bootpolicy:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Apple-silicon boot policy utility; requires an admin credential."
+    },
+    {
+      "id": "kmutil",
+      "executable": "kmutil",
+      "argv_prefix": [],
+      "scope": "kext:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "inferred",
+      "notes": "Kernel extension management. Some inspect verbs are unprivileged; treated conservatively as mutating until an entry proves otherwise."
+    },
+    {
+      "id": "softwareupdate-install",
+      "executable": "softwareupdate",
+      "argv_prefix": ["-i"],
+      "scope": "softwareupdate:install",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "System update installs require root."
+    },
+    {
+      "id": "pmset-all",
+      "executable": "pmset",
+      "argv_prefix": ["-a"],
+      "scope": "power:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Setting power management for all profiles requires root."
+    },
+    {
+      "id": "dscl-local-write",
+      "executable": "dscl",
+      "argv_prefix": ["."],
+      "scope": "directory:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Local directory node mutations (-create/-delete/-append/-merge) require root. Reads (-read/-list) generally do not, but are not separated here; a read that is wrongly classified mutating costs one extra prompt, never a wrong grant."
+    },
+    {
+      "id": "launchctl-system-domain",
+      "executable": "launchctl",
+      "argv_prefix": ["bootstrap", "system"],
+      "scope": "launchd:system-write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "The system launchd domain requires root. The gui/<uid> domain does not and is not matched."
+    },
+    {
+      "id": "launchctl-system-bootout",
+      "executable": "launchctl",
+      "argv_prefix": ["bootout", "system"],
+      "scope": "launchd:system-write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "See launchctl-system-domain."
+    },
+    {
+      "id": "installer-pkg",
+      "executable": "installer",
+      "argv_prefix": ["-pkg"],
+      "scope": "pkg:install",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Installing to -target / requires root."
+    },
+    {
+      "id": "security-authorize",
+      "executable": "security",
+      "argv_prefix": ["authorize"],
+      "scope": "authorization:acquire",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Explicitly acquires an authorization right; prompts by design."
+    },
+    {
+      "id": "dsenableroot",
+      "executable": "dsenableroot",
+      "argv_prefix": [],
+      "scope": "root:enable",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Enables or disables the root account."
+    },
+    {
+      "id": "tmutil-toggle",
+      "executable": "tmutil",
+      "argv_prefix": ["enable"],
+      "scope": "timemachine:write",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Enabling Time Machine requires root."
+    },
+    {
+      "id": "diskutil-erase",
+      "executable": "diskutil",
+      "argv_prefix": ["eraseDisk"],
+      "scope": "disk:destructive",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "Destructive. Included so it is attributed loudly, not so it is made easier."
+    },
+    {
+      "id": "diskutil-erasevolume",
+      "executable": "diskutil",
+      "argv_prefix": ["eraseVolume"],
+      "scope": "disk:destructive",
+      "mutating": true,
+      "cacheable": false,
+      "ttl_seconds": 0,
+      "confidence": "documented",
+      "notes": "See diskutil-erase."
+    }
+  ]
+}

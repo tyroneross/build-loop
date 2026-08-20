@@ -16,6 +16,26 @@ Action classification: SAFE → execute on main; RISKY → isolate to branch + l
 
 There is NO gate for code size or complexity. Genuine inability to proceed (missing credential, external blocker) is logged, worked around with available tasks, and reported in the readback — not a stop-and-ask. Oversight is the end-of-run readback, not a mid-run halt.
 
+## Privileged commands — always go through the broker
+
+**Never run a command that asks macOS for an administrator password directly.** Route it through the broker so the request is named before the dialog appears, shares one authorization with any identical read-only request already in flight, and lands in a durable record:
+
+```bash
+python3 <build-loop>/scripts/privileged_broker.py classify --command "<your command>" --json   # is anything privileged?
+python3 <build-loop>/scripts/privileged_broker.py request \
+  --purpose "<one plain sentence: why this is needed>" \
+  --task-id "$RUN_ID" --repo "$PWD" --initiating-app codex \
+  --argv <executable> <args...>
+```
+
+`--purpose` is mandatory; a request without one is refused. That sentence is what the user reads next to the password dialog, which today names only the binary.
+
+Exit codes: `0` completed · `1` denied/cancelled/timeout/failed · `2` refused by the broker.
+
+**On a `1`, do not retry.** A denial, cancellation, or timeout is cached and replayed, so an immediate retry cannot produce a different answer — it can only produce another dialog. This is the exact 2026-08-20 failure: one Codex turn ran `sfltool dumpbtm` twice, 14 seconds apart, because a refused read returned empty output that was indistinguishable from "no matches". Report the denial and continue with the rest of the work.
+
+Claude Code enforces this through a PreToolUse hook. Codex and other hosts follow it as protocol. Full contract, registry format, and risk-class behaviour when the coordinator is unavailable: `skills/build-loop/references/privileged-request-broker.md`.
+
 ## Session-start preflight
 
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Rally is coordination metadata, not verification evidence: use it to discover peers, claims, handoffs, and soft file conflicts; confirm code/package/release truth from the repo, tests, manifests, registries, or GitHub directly.
