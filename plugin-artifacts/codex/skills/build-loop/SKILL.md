@@ -154,6 +154,8 @@ their brief explicitly hands them a bounded implementation task.
 
 **Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
 
+**System-access requests**: before a read-only command could trigger a macOS administrator or privacy request, run it through `scripts/system_access_request.py` with a specific `--purpose`, `--scope`, and `--requester`. The wrapper prints that explanation before dispatch, records the first request, and makes identical callers wait. A dispatched denial, cancellation, or failure never triggers an automatic retry; only a process that failed before dispatch is retryable. Use this path for `sfltool dumpbtm`; do not invoke it directly.
+
 **Native agent-rally capabilities**: build-loop vendors `skills/agent-rally-point/SKILL.md` and `skills/agent-rally-watcher/SKILL.md` as embedded mini-plugin skills. Use those skill entrypoints for Rally Point substrate or watcher work before reaching for the standalone repos. The grouped extraction contract is `scripts/rally_point/plugin_boundary.json`; validate it with `python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json`.
 
 **Ephemeral plan cleanup**: never delete a `.build-loop/plan*.md` or
