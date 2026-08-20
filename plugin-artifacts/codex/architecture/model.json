@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d9524a557f3c4de2154d73dcf2e23e742f03fe4920b967774fda644ee26fe1a5"
+    "content_sha256": "03ee3cd0d0cbf8eb054398691d9348c069a10fd41cc0fb0b1c371a6bdeaece2c"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1861,6 +1861,7 @@
       "scripts/sync_navgator_lessons.py": "One-way NavGator lessons -> local SQLite semantic-facts sync.",
       "scripts/sync_plugin_cache.py": "Sync a local plugin source repo into installed host caches.",
       "scripts/sync_skills.py": "",
+      "scripts/system_access_request.py": "Run an OS-facing command once and make identical callers wait for its result.",
       "scripts/systemic_rca_doe.py": "Build run packets and score results for the systemic RCA DOE.\"\"\"",
       "scripts/systemic_rca_eval.py": "Deterministic evaluator for systemic root-cause-analysis reports.",
       "scripts/task_surface.py": "Derived active task surface for build-loop.\"\"\"",

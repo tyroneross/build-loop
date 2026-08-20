@@ -18,6 +18,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,6 +31,7 @@ from typing import Any, Iterator
 ACTIVE = {"requested", "dispatched"}
 TERMINAL = {"completed", "cancelled", "failed"}
 RETRYABLE = "failed_to_dispatch"
+_SENSITIVE_ARG = re.compile(r"(?:pass(?:word|wd)?|token|secret|api[-_]?key|authorization)", re.IGNORECASE)
 
 
 def _state_dir(value: str | None) -> Path:
@@ -69,13 +71,29 @@ def _signature(command: list[str], purpose: str, scope: str, risk: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _display_command(command: list[str]) -> list[str]:
+    """Keep the audit record useful without retaining credential arguments."""
+    displayed = list(command)
+    redact_next = False
+    for index, value in enumerate(displayed):
+        if redact_next:
+            displayed[index] = "<redacted>"
+            redact_next = False
+            continue
+        key, separator, _ = value.partition("=")
+        if _SENSITIVE_ARG.search(key):
+            displayed[index] = f"{key}{separator}<redacted>" if separator else value
+            redact_next = not bool(separator)
+    return displayed
+
+
 def _now() -> float:
     return time.time()
 
 
 def _new_request(command: list[str], purpose: str, scope: str, risk: str, requester: str) -> dict[str, Any]:
     return {
-        "command": command,
+        "command": _display_command(command),
         "created_at": _now(),
         "id": str(uuid.uuid4()),
         "purpose": purpose,

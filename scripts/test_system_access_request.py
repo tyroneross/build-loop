@@ -102,6 +102,13 @@ class SystemAccessRequestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             access.run_request(args(self.state, risk="mutating"), lambda *a, **k: Result(0))
 
+    def test_password_argument_is_never_written_to_the_ledger_or_message(self):
+        request = args(self.state, command=["fake-system-tool", "--password", "do-not-store"])
+        self.assertEqual(access.run_request(request, lambda *a, **k: Result(0)), 0)
+        ledger = (self.state / "ledger.json").read_text(encoding="utf-8")
+        self.assertNotIn("do-not-store", ledger)
+        self.assertIn("<redacted>", ledger)
+
 
 if __name__ == "__main__":
     unittest.main()
