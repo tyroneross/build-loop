@@ -406,6 +406,40 @@ class EnvTemplateCarveOutTests(_GitRepoCase):
                 self.assertTrue(self._blocked(name), f"{name} must still hard-block")
 
 
+class BackgroundItemIdentityGateTests(_GitRepoCase):
+    GENERIC = """<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.tyroneross.weekly-verify</string>
+<key>ProgramArguments</key><array>
+<string>/bin/bash</string><string>/tmp/weekly-verify.sh</string>
+</array>
+</dict></plist>
+"""
+
+    NAMED = """<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.tyroneross.weekly-verify</string>
+<key>ProgramArguments</key><array>
+<string>/Users/test/Library/Application Support/RossLabs/Background Item Identity/launchers/Weekly Verify</string>
+<string>/bin/bash</string><string>/tmp/weekly-verify.sh</string>
+</array>
+</dict></plist>
+"""
+
+    def test_generic_launchagent_is_a_deterministic_block(self) -> None:
+        self._write_and_stage("launchd/com.tyroneross.weekly-verify.plist", self.GENERIC)
+        result = self._run_hook()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("C-IDENTITY/background_item_identity", result.stderr)
+        self.assertIn("Weekly Verify", result.stderr)
+
+    def test_purpose_named_launchagent_passes_identity_gate(self) -> None:
+        self._write_and_stage("launchd/com.tyroneross.weekly-verify.plist", self.NAMED)
+        result = self._run_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("background_item_identity", result.stderr)
+
+
 class EscalatedPacketTests(_GitRepoCase):
     def test_high_risk_packet_is_mandatory_and_cites_files(self) -> None:
         self._write_and_stage(

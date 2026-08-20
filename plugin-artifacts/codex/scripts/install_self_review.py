@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import background_item_identity as background_identity
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -111,6 +113,8 @@ def _plist_xml(
 
     script = str(repo / "scripts" / "self_review_run.sh")
     log_path = str(repo / ".build-loop" / "self-review" / f"launchd-{log_suffix}.log")
+    display_name = background_identity.display_name_for_label(label)
+    launcher = str(background_identity.launcher_path(_identity_root(plist_dir), display_name))
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -119,8 +123,12 @@ def _plist_xml(
 <dict>
 \t<key>Label</key>
 \t<string>{label}</string>
+\t<key>Program</key>
+\t<string>{launcher}</string>
 \t<key>ProgramArguments</key>
 \t<array>
+\t\t<string>{launcher}</string>
+\t\t<string>/bin/bash</string>
 \t\t<string>/bin/bash</string>
 \t\t<string>{script}</string>
 \t\t<string>{mode}</string>
@@ -143,6 +151,20 @@ def _plist_xml(
 </dict>
 </plist>
 """
+
+
+def _identity_root(plist_dir: Path) -> Path:
+    default_plist_dir = Path.home() / "Library" / "LaunchAgents"
+    if plist_dir.expanduser().resolve() == default_plist_dir.resolve():
+        return background_identity.default_identity_root()
+    return plist_dir.parent / "Background Item Identity"
+
+
+def _launcher_path(label: str, plist_dir: Path) -> Path:
+    return background_identity.launcher_path(
+        _identity_root(plist_dir),
+        background_identity.display_name_for_label(label),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +305,15 @@ def cmd_install(args: argparse.Namespace) -> dict[str, Any]:
 
         plist_path = plist_dir / f"{label}.plist"
         try:
+            launcher = background_identity.ensure_launcher(
+                _identity_root(plist_dir),
+                background_identity.display_name_for_label(label),
+            )
             xml = _plist_xml(label, mode, repo, cadence, plist_dir, log_suffix)
             plist_path.write_text(xml)
             job_result["plist_path"] = str(plist_path)
+            job_result["display_name"] = launcher.name
+            job_result["launcher_path"] = str(launcher)
         except Exception as exc:
             job_result["status"] = "error"
             job_result["reason"] = f"plist write failed: {exc}"
@@ -326,6 +354,13 @@ def cmd_uninstall(args: argparse.Namespace) -> dict[str, Any]:
         else:
             job_result["plist_removed"] = False
 
+        launcher = _launcher_path(label, plist_dir)
+        if launcher.exists() and launcher.read_bytes() == background_identity.LAUNCHER_BODY:
+            launcher.unlink()
+            job_result["launcher_removed"] = True
+        else:
+            job_result["launcher_removed"] = False
+
         job_result["status"] = "ok" if ok else "error"
         result["jobs"].append(job_result)
 
@@ -339,11 +374,15 @@ def cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     for label in (LABEL_LIGHT, LABEL_DEEP):
         loaded = _is_loaded(label)
         plist_path = plist_dir / f"{label}.plist"
+        launcher = _launcher_path(label, plist_dir)
         result["jobs"].append({
             "label": label,
             "loaded": loaded,
             "plist_exists": plist_path.exists(),
             "plist_path": str(plist_path),
+            "display_name": background_identity.display_name_for_label(label),
+            "launcher_path": str(launcher),
+            "launcher_exists": launcher.exists(),
         })
 
     return result

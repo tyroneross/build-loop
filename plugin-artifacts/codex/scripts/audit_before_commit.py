@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Independent commit auditor — boundary-gated audit packet builder.
 
-Fires from the PreToolUse Bash hook on every `git commit`, regardless of
-who initiated the commit (manual user, Codex, build-loop, IDE button).
+Fires from the shell PreToolUse dispatcher and the installed git pre-commit
+hook. The git hook covers manual, Codex, build-loop, and IDE commits.
 Deterministically builds a context packet from on-disk intent / goal / PRD /
 constitution / trajectory, emits it to stderr for the running Claude session
 to interpret, and exit-2's on unambiguous violations (secrets, conflict
-markers). No LLM call from inside the hook — the running session renders
+markers, opaque macOS background-item identities). No LLM call from inside the hook — the running session renders
 the verdict in conversation.
 
 Verdict taxonomy (the running Claude chooses one):
@@ -19,7 +19,7 @@ Verdict taxonomy (the running Claude chooses one):
 
 Exit codes:
     0 — packet emitted, no deterministic block
-    2 — deterministic block (secrets file staged, merge-conflict markers)
+    2 — deterministic block (secrets, merge-conflict markers, opaque background items)
     1 — reserved
 
 Bypass: env var BUILDLOOP_AUDIT_BYPASS=1 skips all checks and logs to
@@ -36,7 +36,13 @@ import re
 import sqlite3
 import subprocess
 import sys
+import xml.parsers.expat
 from pathlib import Path
+
+try:
+    import background_item_identity as _background_identity
+except ImportError:  # Fail-open for older cached plugin artifacts during upgrade.
+    _background_identity = None
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -280,6 +286,18 @@ def _deterministic_block(files: list[str], diff_body: str) -> tuple[bool, str]:
                 # filename alone is enough for hard-pattern items
                 if pat.pattern.endswith(r"\.pem$") or "id_rsa" in pat.pattern or "id_ed25519" in pat.pattern:
                     return True, f"staged file `{f}` matches a hard secret-filename pattern"
+        if f.endswith(".plist") and _background_identity is not None:
+            content = _run(["git", "show", f":{f}"]).encode("utf-8")
+            try:
+                finding = _background_identity.inspect_plist_bytes(content, path=f)
+            except (ValueError, TypeError, xml.parsers.expat.ExpatError):
+                finding = None
+            if finding:
+                return True, (
+                    f"staged LaunchAgent `{f}` registers generic executable "
+                    f"`{finding.program}`; {_background_identity.RULE_ID} requires a "
+                    f"purpose-specific executable identity such as `{finding.display_name}`"
+                )
     if CONFLICT_MARKER.search(diff_body):
         return True, "staged diff contains unresolved merge-conflict markers"
     return False, ""

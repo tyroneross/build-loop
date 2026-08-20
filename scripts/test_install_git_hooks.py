@@ -335,6 +335,16 @@ class TestSessionStartAutoInstall(unittest.TestCase):
         content = hook_dst.read_text(encoding="utf-8")
         self.assertIn("build-loop", content)
 
+    def test_session_start_installs_independent_commit_audit(self):
+        rc, _, err = _run(
+            "bash", str(self.HOOK_SCRIPT),
+            env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO_ROOT), "CLAUDE_PROJECT_DIR": str(self.workdir)},
+        )
+        self.assertEqual(rc, 0, f"session-start hook failed: {err}")
+        hook = self.workdir / ".git" / "hooks" / "pre-commit"
+        self.assertTrue(hook.exists())
+        self.assertIn("scripts/audit_before_commit.py", hook.read_text(encoding="utf-8"))
+
     def test_session_start_outside_git_repo_is_noop(self):
         """Running in a non-git directory must exit 0 silently (not fail)."""
         non_git = self.parent / "not_a_repo"

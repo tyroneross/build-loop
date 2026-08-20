@@ -1,5 +1,5 @@
 #!/bin/sh
-# Public-repo hygiene pre-commit hook.
+# Public-repo hygiene and independent-audit pre-commit hook.
 #
 # build-loop is open source. This hook blocks a commit that stages a
 # private app slug (see scripts/check_private_slugs.py for the editable
@@ -35,5 +35,14 @@ if [ -f "$PORTABILITY_GUARD" ]; then
   python3 "$PORTABILITY_GUARD" || exit 1
 fi
 # --- END portability-guard pre-commit ---
+
+# --- BEGIN independent-audit pre-commit ---
+# Covers manual, Codex, IDE, and other commit paths. The auditor blocks only
+# deterministic integrity failures; its advisory packet remains visible.
+INDEPENDENT_AUDIT="$RALLY_POINT_TOPLEVEL/scripts/audit_before_commit.py"
+if [ -f "$INDEPENDENT_AUDIT" ]; then
+  python3 "$INDEPENDENT_AUDIT" || exit $?
+fi
+# --- END independent-audit pre-commit ---
 
 exit 0

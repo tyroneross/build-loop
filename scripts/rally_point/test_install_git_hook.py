@@ -92,6 +92,7 @@ def test_installs_pre_commit_guard(repo: Path):
     assert (repo / ".git" / "hooks" / ".private-slug-check.py").exists()
     assert (repo / ".git" / "hooks" / ".runtime-memory-tracking-check.py").exists()
     assert ".runtime-memory-tracking-check.py" in hook.read_text()
+    assert "scripts/audit_before_commit.py" in hook.read_text()
 
 
 def test_pre_commit_idempotent(repo: Path):
@@ -139,6 +140,31 @@ def test_pre_commit_reinstall_replaces_stale_segment(repo: Path):
     assert body.count(igh.PRE_MARKER) == 1  # exactly one segment
     assert "RALLY_POINT_TOPLEVEL" in body  # current template wiring
     assert ".runtime-memory-tracking-check.py" in body
+
+
+def test_linked_worktree_installs_into_effective_common_hooks(tmp_path: Path):
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=main, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=main, check=True)
+    (main / "README.md").write_text("test\n")
+    subprocess.run(["git", "add", "README.md"], cwd=main, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=main, check=True, capture_output=True)
+    subprocess.run(["git", "worktree", "add", "-b", "linked", str(linked)], cwd=main, check=True, capture_output=True)
+
+    assert igh.install(linked) is True
+
+    effective = subprocess.run(
+        ["git", "rev-parse", "--git-path", "hooks/pre-commit"],
+        cwd=linked,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    hook = Path(effective)
+    assert hook.exists()
+    assert igh.PRE_MARKER in hook.read_text()
 
 
 def test_post_commit_reinstall_replaces_stale_segment(repo: Path):

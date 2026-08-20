@@ -31,6 +31,7 @@ cwd or sys.path.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import stat
@@ -92,6 +93,10 @@ fi
 RUNTIME_MEMORY_GUARD="$RALLY_POINT_TOPLEVEL/.git/hooks/.runtime-memory-tracking-check.py"
 if [ -f "$RUNTIME_MEMORY_GUARD" ]; then
   python3 "$RUNTIME_MEMORY_GUARD" || exit 1
+fi
+INDEPENDENT_AUDIT="$RALLY_POINT_TOPLEVEL/scripts/audit_before_commit.py"
+if [ -f "$INDEPENDENT_AUDIT" ]; then
+  python3 "$INDEPENDENT_AUDIT" || exit $?
 fi
 {PRE_MARKER_END}
 '''
@@ -238,9 +243,9 @@ def _is_git_repo(repo: Path) -> bool:
         return False
 
 
-def _git_dir(repo: Path) -> Path:
+def _git_hooks_dir(repo: Path) -> Path:
     out = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
+        ["git", "rev-parse", "--git-path", "hooks"],
         cwd=str(repo), capture_output=True, text=True, check=True,
     ).stdout.strip()
     p = Path(out)
@@ -335,8 +340,19 @@ def install(repo: Path) -> bool:
     repo = Path(repo)
     if not _is_git_repo(repo):
         return False
-    hooks_dir = _git_dir(repo) / "hooks"
+    hooks_dir = _git_hooks_dir(repo)
     hooks_dir.mkdir(parents=True, exist_ok=True)
     _install_post_commit(hooks_dir)
     _install_pre_commit(hooks_dir)
     return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", default=".", help="Git repository to update.")
+    args = parser.parse_args(argv)
+    return 0 if install(Path(args.repo).resolve()) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

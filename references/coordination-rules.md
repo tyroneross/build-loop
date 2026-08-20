@@ -543,6 +543,8 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 
 **C-RCA/root_cause_before_done** — Before any "done"/completion claim, investigate EVERY open issue — failed tests, loose ends, errors, warnings, minor issues — to ROOT CAUSE; none are left unaddressed. A surface/symptom patch is a violation. Use the debugging skills (`build-loop:debug-loop` / `root-cause-investigator` / `systematic-debugging`) and/or a **5-whys / causal-tree** analysis to determine the true cause AND how far it spans (same root cause affecting other sites → fix all of them). The fix MUST be **verified by another, independent subagent** (confirms root cause correctly identified, fix resolves it, no regression introduced) before "done." Both the investigation-before-done and the second-subagent verification are mandatory; the specific technique is the operator's choice. The second-subagent check reuses existing surfaces (`independent-auditor`, `fix-critique`, or a dispatched verifier) — no new agent. C-RCA pairs with C-HEAL: C-HEAL governs what to do when a SAFE error surfaces (reactive fix + proactive simplification); C-RCA mandates that the root cause is understood, the fix is durable, and a peer has confirmed both before the run closes. It also operationalizes the standing "attack over defense / always the durable fix / fix everything" preferences as a completion gate. The investigation-before-done and second-subagent verification are non-negotiable; the specific technique is the operator's choice. Referenced from `agents/build-orchestrator.md` §"Root cause before done" and `skills/build-loop/SKILL.md` §"Root cause before done".
 
+**C-IDENTITY/background_item_identity** — Every OS-registered background item or permission-requesting helper must expose a purpose-specific human-readable executable identity. A generic interpreter (`bash`, `sh`, `env`, Python, Node, Ruby, Perl, or similar) may run behind that identity; it cannot be the registered `Program` or `ProgramArguments[0]` because macOS presents the interpreter name to the user. The existing commit auditor blocks staged launchd plists that violate this rule. Existing user-owned LaunchAgents are audited and reversibly repaired with `scripts/background_item_identity.py`; `apply` must back up each plist and must not call `launchctl` or execute a job.
+
 ---
 
 ## Quick-reference cross-index
@@ -557,6 +559,7 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 | Release-surface verification | `scripts/verify_release_surface.py` |
 | Three-file lockstep enforcement | `scripts/test_plugin_manifest.py` `VersionShapeTests` |
 | Closeout hygiene | `scripts/rally_point/lifecycle.py` + `scripts/collapse_run.py` + `agents/build-orchestrator.md` Phase D |
+| Background-item identity | `scripts/background_item_identity.py` + `scripts/audit_before_commit.py` |
 | Coord-file shape | `references/coordination-file-template.md` |
 
 ---

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "3c0373e87790a017c64fac4dab6938057af1e1ccbd5210babd9deae82a118d46"
+    "content_sha256": "d9524a557f3c4de2154d73dcf2e23e742f03fe4920b967774fda644ee26fe1a5"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-19"
         }
       },
       "database-assessor": {
@@ -1432,8 +1432,8 @@
         "description": "\"Map an unfamiliar repository or file tree into source-grounded concepts before adapting them. Use in Phase 3 when a chunk integrates or adapts an external repo/library rather than writing net-new code, and in Phase 4 when the diff adapts an external implementation and the reviewer must confirm concept-reuse over copied implementation plus license fit. Read-only: it never runs the source's code. Not for mapping the …",
         "file": "skills/repository-intelligence/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-08-19"
         }
       },
       "research": {
@@ -1559,6 +1559,7 @@
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
       "scripts/backend_health.py": "Phase 1 backend health-check surface.",
+      "scripts/background_item_identity.py": "Audit and repair opaque macOS LaunchAgent identities.",
       "scripts/backlog/__init__.py": "scripts/backlog/ — capture-time product-impact triage + causal-tree assessment.",
       "scripts/backlog/assess.py": "assess.py — render a product-impacting deferral as a backlog-item markdown.",
       "scripts/backlog/triage.py": "triage.py — deterministic product-impact classifier for descoped/deferred work.",

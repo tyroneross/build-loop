@@ -11,6 +11,7 @@ Does NOT call launchctl or write to ~/Library (uses tmp dirs via --plist-dir ove
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -100,15 +101,26 @@ class TestPlistGeneration(unittest.TestCase):
 
     def test_daily_plist_program_arguments(self) -> None:
         repo = _make_repo(self.tmp)
+        script = repo / "scripts" / "self_review_run.sh"
+        script.write_text('#!/bin/bash\ntest "$1" = "light"\n')
         xml = self._daily_plist_xml(repo)
         top = _parse_plist(xml)
 
         array = top["ProgramArguments"]
         self.assertEqual(array.tag, "array")
         args = [e.text for e in array]
-        self.assertEqual(args[0], "/bin/bash")
-        self.assertIn("self_review_run.sh", args[1])
-        self.assertEqual(args[2], "light")
+        self.assertEqual(Path(args[0]).name, "Build Loop Self Review Light")
+        self.assertEqual(top["Program"].text, args[0])
+        self.assertEqual(args[1], "/bin/bash")
+        self.assertEqual(args[2], "/bin/bash")
+        self.assertIn("self_review_run.sh", args[3])
+        self.assertEqual(args[4], "light")
+
+        import background_item_identity as identity
+
+        identity.ensure_launcher(installer._identity_root(self.tmp), "Build Loop Self Review Light")
+        completed = subprocess.run([args[0], *args[1:]], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_daily_plist_repo_env_var(self) -> None:
         repo = _make_repo(self.tmp)
@@ -143,16 +155,17 @@ class TestPlistGeneration(unittest.TestCase):
         xml = self._weekly_plist_xml(repo)
         top = _parse_plist(xml)
         args = [e.text for e in top["ProgramArguments"]]
-        self.assertEqual(args[2], "deep")
+        self.assertEqual(Path(args[0]).name, "Build Loop Self Review Deep")
+        self.assertEqual(args[4], "deep")
 
     def test_absolute_paths_baked_in(self) -> None:
         """ProgramArguments[1] (script path) and StandardOutPath must be absolute."""
         repo = _make_repo(self.tmp)
         xml = self._daily_plist_xml(repo)
         top = _parse_plist(xml)
-        # ProgramArguments array children: [/bin/bash, <script>, light]
+        # ProgramArguments: [launcher, program, original argv0, script, mode]
         args = [e.text for e in top["ProgramArguments"]]
-        script_path = args[1]
+        script_path = args[3]
         self.assertTrue(
             script_path.startswith("/"),
             f"script path must be absolute; got {script_path!r}",
@@ -169,6 +182,13 @@ class TestPlistGeneration(unittest.TestCase):
         xml_deep = self._weekly_plist_xml(repo)
         self.assertIn(installer.LABEL_LIGHT, xml_light)
         self.assertIn(installer.LABEL_DEEP, xml_deep)
+
+    def test_generated_plists_pass_background_identity_rule(self) -> None:
+        import background_item_identity as identity
+
+        repo = _make_repo(self.tmp)
+        for xml in (self._daily_plist_xml(repo), self._weekly_plist_xml(repo)):
+            self.assertIsNone(identity.inspect_plist_bytes(xml.encode(), path="generated.plist"))
 
 
 class TestConfigParsing(unittest.TestCase):
@@ -283,6 +303,13 @@ class TestLegacyLabelMigration(unittest.TestCase):
         self.assertEqual(
             new_plists,
             sorted(f"{label}.plist" for label in (installer.LABEL_LIGHT, installer.LABEL_DEEP)),
+        )
+        launchers = sorted(
+            p.name for p in (self.tmp / "Background Item Identity" / "launchers").iterdir()
+        )
+        self.assertEqual(
+            launchers,
+            ["Build Loop Self Review Deep", "Build Loop Self Review Light"],
         )
 
     def test_install_no_migration_entry_when_clean(self) -> None:
