@@ -150,6 +150,16 @@ class DispatchRoutingTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
         self.assertNotIn("Audit packet", r.stderr)
 
+    def test_direct_background_inspection_explains_the_coordinator(self) -> None:
+        """A direct potentially privileged inspection receives the wrapper hint.
+
+        The hook stays advisory: Codex cannot convert the hint into a reliable
+        command denial, while the wrapper records dispatch and handles waiting.
+        """
+        r = run_dispatch(self.repo, "sfltool dumpbtm")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+        self.assertIn("system_access_request.py", r.stderr)
+
     def test_staged_secret_hard_blocks_with_exit_2(self) -> None:
         """F1 CLOSURE PROOF: a staged id_rsa.pem with credential-shaped content
         trips the auditor's deterministic block (rc==2); the dispatcher MUST

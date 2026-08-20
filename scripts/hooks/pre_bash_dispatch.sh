@@ -195,6 +195,18 @@ if [ ! -f "$BL_SCOPE_ROOT/.build-loop/state.json" ] && [ ! -f "$BL_SCOPE_ROOT/.b
     exit 0
 fi
 
+# Codex can display this advisory, but its hook contract cannot reliably deny a
+# direct Bash command. The executable wrapper owns the exact-once guarantee by
+# recording dispatch before the command can ask macOS for access.
+case "$CMD" in
+    *"sfltool dumpbtm"*)
+        case "$CMD" in
+            *"system_access_request.py"*) : ;;
+            *) printf '[build-loop] This background-item inspection can ask macOS for system access. Use scripts/system_access_request.py so one request is explained and duplicate callers wait for its result.\n' >&2 ;;
+        esac
+        ;;
+esac
+
 # Resolve plugin root for locating sub-scripts.
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$PLUGIN_ROOT" ]; then
