@@ -207,9 +207,22 @@ CATEGORY_KEYWORDS = [
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
-                      "deploy")),
+                      "deploy",
+                      # OS-facing command wrappers. system_access_request runs a
+                      # host command and makes concurrent identical callers wait
+                      # on the first result instead of opening a second system
+                      # dialog. The single-flight behaviour is the mechanism; the
+                      # surface is still "run a command against the host".
+                      "os-facing", "os facing", "system access", "system_access",
+                      "single-flight")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log",
                        "cost-ledger", "cost ledger", "cost_rca",
+                       # macOS background-item surfaces. Auditing how launchd
+                       # attributes a LaunchAgent reports runtime reality the
+                       # same way ops_state_probe does; background_item_identity
+                       # also repairs, but the surface it exposes is the audit.
+                       "launchagent", "launch agent", "launchd",
+                       "background task management", "background item",
                        # ops_state_probe generates the operational-state
                        # inventory — which flags/services are actually ON,
                        # OFF, CORRUPT, or UNKNOWN at runtime. It reports
