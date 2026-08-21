@@ -38,6 +38,9 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -123,25 +126,36 @@ def detect_patterns(workdir: Path) -> int:
     clusters = cluster_root_causes(runs)
     cand_path = workdir / ".procedural" / "_candidates.jsonl"
     cand_path.parent.mkdir(parents=True, exist_ok=True)
-    have = existing_candidate_keys(cand_path)
-    new_lines: list[str] = []
-    for rc, ids in clusters.items():
-        if len(ids) < PATTERN_THRESHOLD:
-            continue
-        if rc in have:
-            continue
-        new_lines.append(json.dumps({
-            "name": slug(rc),
-            "root_cause": rc,
-            "incident_count": len(ids),
-            "run_ids": ids,
-        }))
-    if new_lines:
+    # The dedup read and the write must share one lock. Unlocked, two concurrent
+    # Stop hooks each read the old file, each build their own `existing + new`,
+    # and the second write REPLACES the first — lost rows, not merely interleaved
+    # ones. Every other run-record writer in build-loop already goes through
+    # LockedFile + atomic_write_bytes; this was the exception.
+    with LockedFile(cand_path):
+        have = existing_candidate_keys(cand_path)
+        new_lines: list[str] = []
+        for rc, ids in clusters.items():
+            if len(ids) < PATTERN_THRESHOLD:
+                continue
+            if rc in have:
+                continue
+            new_lines.append(json.dumps({
+                "name": slug(rc),
+                "root_cause": rc,
+                "incident_count": len(ids),
+                "run_ids": ids,
+            }))
+        if not new_lines:
+            _log("detect-patterns: no new candidates above threshold")
+            return 0
         existing = cand_path.read_text(encoding="utf-8") if cand_path.exists() else ""
-        cand_path.write_text(existing + "\n".join(new_lines) + "\n", encoding="utf-8")
-        _log(f"detect-patterns: wrote {len(new_lines)} candidate(s) to {cand_path}")
-    else:
-        _log("detect-patterns: no new candidates above threshold")
+        # A prior file with no trailing newline would otherwise splice its last row
+        # onto the first new one, producing a line that parses as neither.
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        payload = existing + "\n".join(new_lines) + "\n"
+        atomic_write_bytes(cand_path, payload.encode("utf-8"))
+    _log(f"detect-patterns: wrote {len(new_lines)} candidate(s) to {cand_path}")
     return 0
 
 
