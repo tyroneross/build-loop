@@ -181,3 +181,31 @@ priority now that the claims-half is handled.
    preamble.
 
 <!-- Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com> -->
+
+---
+
+## Re-validation 2026-08-20 — every ADOPT item had already landed
+
+Six weeks after this triage, none of the six ADOPT candidates was still open. The
+verdicts were recorded here and nowhere the code could see, so the queue kept
+surfacing them and `enforce_retro_signals.py` kept counting them toward recurrence.
+Checked against `HEAD` at `60af201`:
+
+| Candidate | 07-08 verdict | 08-20 state | Evidence |
+|---|---|---|---|
+| f6 · structural closeout at run-close | ADOPT (S) | **DONE** | `hooks/hooks.json` Stop → `hooks/closeout.sh:53` → `scripts/stop_closeout.py`, which imports `append_run` and `judgment_gate` and dispatches the retro-synthesizer (`stop_closeout.py:8,53,69`) |
+| EC-01 rca · mandatory closeout artifacts | ADOPT (S) | **DONE** | `scripts/stop_closeout.py:19` names the candidate: "closeout_incomplete flag + per-artifact checkboxes (EC-01 rca)"; flag emitted at `:557` |
+| EC-02 rca · countermeasure self-activation | ADOPT (S) | **PARTIAL** | Part 1 landed — `scripts/plan_verify.py` carries the `verified-live` rule (16 refs). Part 2 open: `scripts/brief_mece_validator.py` has no `verified-live` check, so a brief describing an enforcement mechanism still need not declare how its activation is proven |
+| EC-03 rca · worktree isolation pre-flight | ADOPT (S) | **DONE** | `scripts/rally_point/peer_collision.py:57` emits "[rally] WARN: peer active on this workdir (…)", wired via `hooks/session-start-rally-point.sh`; covered by `test_peer_collision.py` |
+| EC-01 coord · accruing triggers mining | ADOPT (M) | **DONE** | `scripts/learn_accruing.py:10` writes `.build-loop/learn/pending/`, read by the next run's Phase 6 via `read_pending` |
+| EC-02 coord · venv isolation for bg runners | ADOPT (M) | **DONE** | `scripts/worktree_isolation_lint.py:127-141` flags a bare `python3` (PATH-resolved) against a venv-pinned absolute path |
+| EC-04 coord · orphan reaper on session start | DEFER | still deferred | unchanged; `rally sessions --reap-processes` exists but is not invoked at session start |
+
+**The lesson is about where a verdict lives, not about these seven items.** A
+disposition recorded only in prose is invisible to the tooling that surfaces the
+work. `60af201` teaches `enforce_retro_signals.py` to honour a checked disposition
+box or a terminal frontmatter `status:`, so a decision made here now silences the
+signal there. Record future verdicts in BOTH places — this table, and the candidate
+file itself.
+
+**Remaining open work from this triage:** the second half of EC-02 rca only.
