@@ -1,6 +1,6 @@
 ---
 name: build-loop:repository-intelligence
-description: "Map an unfamiliar repository or file tree into source-grounded concepts before adapting them. Use in Phase 3 when a chunk integrates or adapts an external repo/library rather than writing net-new code, and in Phase 4 when the diff adapts an external implementation and the reviewer must confirm concept-reuse over copied implementation plus license fit. Read-only: it never runs the source's code. Not for mapping the repo you are building in (use `architecture` / architecture-scout)."
+description: "Map an unfamiliar EXTERNAL repository or file tree into source-grounded concepts before adapting them. Not for mapping the repo you are building in (use `architecture` / architecture-scout). Use in Phase 3 when a chunk integrates or adapts an external repo/library rather than writing net-new code, and in Phase 4 when the diff adapts an external implementation and the reviewer must confirm concept-reuse over copied implementation plus license fit. Read-only: it never runs the source's code."
 version: 0.1.0
 user-invocable: false
 ---

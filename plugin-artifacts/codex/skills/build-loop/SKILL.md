@@ -303,6 +303,41 @@ This is the crash-resume staleness signal — heartbeat staleness on `state.json
 
 **Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
 
+## Output contract — applies to EVERY user-facing message, not just the Phase 4 report
+
+Two references govern how build-loop talks to a human. Load them the first time a
+run emits user-facing text, and follow them for the rest of the session:
+
+- `references/output-style.md` — SENTENCE level. Lead with the answer to the
+  question actually asked. Strong verb over weak-verb-plus-filler
+  (`was responsible for` → `caused`). Data over adverbs
+  (`significantly increased` → `increased 42%`). Say `because` only when the cause
+  is proven, `suggesting` when evidence merely implies it.
+- `references/status-output-format.md` — BLOCK level, for findings, open items,
+  status updates, and recommendations. Heading is an action-verb phrase with real
+  numbers inline; second line is the consequence (what breaks, for whom, when);
+  specifics named individually; close with a decision or a status.
+
+**These are not Review-G-only.** They govern interim status, findings surfaced
+mid-run, handoffs, and any answer given while the skill is loaded. Review-G is
+where the deterministic lint runs, not where the contract begins. A run that
+reports conforming prose only in its final report has followed the lint and missed
+the rule.
+
+Self-check any substantial user-facing markdown before sending:
+
+```bash
+python3 scripts/report_lint.py <draft.md> --json   # weak-verb, filler-opener, hedge
+```
+
+WARN-only with self-heal — rewrite and move on; it never halts a run. The lint
+grades three mechanical rules; everything else in the two references is judgment,
+so a clean lint is not evidence the contract was met.
+
+The governing test, from `status-output-format.md` §2: *if an agent with zero
+context read only this line, would it know what to do?* A block that satisfies
+every rule and fails that test is still wrong.
+
 ## Efficiency
 
 - No extraneous code. Every line serves the goal
@@ -386,6 +421,8 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
+- `references/output-style.md` — Sentence-level user-facing style contract (see "Output contract" above)
+- `references/status-output-format.md` — Block-level shape for findings, open items, status, recommendations
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
 - `references/research-trigger-policy.md` — Research plugin trigger/depth gate, t-shirt depth lower bounds, and final-claim citation/unavailable rule
 - `references/task-capture-policy.md` — Read-only active task surface over existing plan/state/queue/backlog surfaces; no new task ledger by default
