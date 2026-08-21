@@ -11,9 +11,16 @@ Installs (or chains) two hooks in a consumer repo:
   - ``.git/hooks/pre-commit`` — public-repo hygiene guards. Blocks a
     commit that stages a private app slug (denylist in
     ``scripts/check_private_slugs.py``) or runtime memory/state files.
-    Only meaningful inside the build-loop plugin repo itself, but the
-    installer is harmless elsewhere — it stages copies of the guards next
-    to the hook.
+    The private-slug guard is installed ONLY where it can function: a
+    repo carrying a ``.private-slugs`` denylist (or the tracked
+    ``.private-slugs.example`` that documents one). It was previously
+    installed everywhere on the belief that it was "harmless elsewhere".
+    It is not: ``check_private_slugs.py`` exits 2 when the denylist is
+    absent, and an empty denylist is rejected too ("add at least one slug
+    or remove the guard"), so a repo with no denylist has NO passive
+    configuration — every commit by every agent is blocked. Observed
+    2026-08-20 in a private consumer repo, where the installer also
+    re-created the guard after it was disabled by hand.
 
 Contract:
   - only operates inside a git repo (``.git`` present);
@@ -288,6 +295,19 @@ def _install_post_commit(hooks_dir: Path) -> None:
     _make_executable(hook)
 
 
+def _repo_has_slug_denylist(hooks_dir: Path) -> bool:
+    """Can check_private_slugs.py actually run in this repo?
+
+    It needs a ``.private-slugs`` denylist at the repo root. Absent one it
+    exits 2 and blocks every commit; an empty one is rejected as well, so
+    there is no way to install it passively. ``.private-slugs.example``
+    counts: a repo that ships the template has opted into the guard and only
+    needs the operator to fill it in.
+    """
+    root = hooks_dir.parent.parent  # <repo>/.git/hooks -> <repo>
+    return (root / ".private-slugs").exists() or (root / ".private-slugs.example").exists()
+
+
 def _install_pre_commit(hooks_dir: Path) -> None:
     """Install/chain the public-repo hygiene pre-commit. Idempotent.
 
@@ -306,10 +326,16 @@ def _install_pre_commit(hooks_dir: Path) -> None:
     runtime_checker = _PKG_DIR.parent / "check_runtime_memory_tracking.py"
     if not private_checker.exists() and not runtime_checker.exists():
         return  # nothing to guard with — skip silently
-    if private_checker.exists():
-        guard = hooks_dir / ".private-slug-check.py"
+    guard = hooks_dir / ".private-slug-check.py"
+    if private_checker.exists() and _repo_has_slug_denylist(hooks_dir):
         guard.write_text(_PRE_GUARD_SRC.format(checker=str(private_checker)))
         guard.chmod(0o755)
+    else:
+        # Self-heal: a previous install may have left a guard that can only
+        # exit 2. The generated segment is defensive (`if [ -f ... ]`), so
+        # removing the file disables the check cleanly and leaves every other
+        # guard in the segment running.
+        guard.unlink(missing_ok=True)
     if runtime_checker.exists():
         guard = hooks_dir / ".runtime-memory-tracking-check.py"
         guard.write_text(_RUNTIME_GUARD_SRC.format(checker=str(runtime_checker)))
