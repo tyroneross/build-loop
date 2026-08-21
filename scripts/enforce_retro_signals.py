@@ -52,6 +52,29 @@ _NEXT_HEADING = re.compile(r"^##\s+\S", re.M)
 _WHITESPACE = re.compile(r"\s+")
 
 
+_DISPOSED_BOX = re.compile(r"^\s*-\s*\[[xX]\]", re.M)
+_DISPOSED_FM = re.compile(r"^status:\s*(done|adopted|rejected|closed|superseded)\b", re.M | re.I)
+
+
+def _is_dispositioned(body: str) -> bool:
+    """Has a human already decided this candidate?
+
+    A dispositioned candidate must stop counting toward recurrence. On
+    2026-07-08 a triage pass marked 6 of 13 named candidates DONE, but recorded
+    the verdicts in docs/retrospectives/2026-07-08-enforce-candidate-triage.md
+    and left every file in the queue. Six weeks later the closed
+    `inline-self-verification` candidate was still the STRONGEST signal here
+    (4 distinct run-ids) — closed work outranking open work, and new
+    retrospectives re-drafting candidates that judgment_gate.py had already
+    closed.
+
+    Two markers count, because the queue carries two file shapes: a checked
+    box in the `## Disposition` checklist that the retrospective writes, and a
+    terminal `status:` in the frontmatter that hand-written proposals use.
+    """
+    return bool(_DISPOSED_BOX.search(body) or _DISPOSED_FM.search(body))
+
+
 def _extract_candidate_text(body: str) -> str | None:
     """Pull the body of the ``## Candidate`` section. Returns None on miss."""
     m = _CANDIDATE_HEADING.search(body)
@@ -122,13 +145,14 @@ def scan(workdir: Path) -> dict[str, Any]:
         }
     """
     proposals_dir = workdir / PROPOSAL_SUBDIR
-    envelope: dict[str, Any] = {"scannedFiles": 0, "patterns": []}
+    envelope: dict[str, Any] = {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}
     if not proposals_dir.is_dir():
         return envelope
 
     # Group: signature -> {run_ids: set, evidence: [...]}
     buckets: dict[str, dict[str, Any]] = {}
     scanned = 0
+    dispositioned = 0
     for p in sorted(proposals_dir.iterdir()):
         if not p.is_file() or p.suffix != ".md":
             continue
@@ -140,6 +164,11 @@ def scan(workdir: Path) -> dict[str, Any]:
         except OSError:
             continue
         scanned += 1
+        if _is_dispositioned(body):
+            # Already decided. Counting it would let closed work outrank open
+            # work forever, and it did: see _is_dispositioned's docstring.
+            dispositioned += 1
+            continue
         text = _extract_candidate_text(body)
         if not text:
             continue
@@ -158,6 +187,7 @@ def scan(workdir: Path) -> dict[str, Any]:
             })
 
     envelope["scannedFiles"] = scanned
+    envelope["dispositionedSkipped"] = dispositioned
 
     for sig, bucket in buckets.items():
         run_count = len(bucket["run_ids"])

@@ -44,7 +44,10 @@ def workdir(tmp_path: Path) -> Path:
 def test_empty_dir_returns_zero_patterns(workdir: Path) -> None:
     """No proposals dir at all → envelope with scannedFiles=0, patterns=[]."""
     out = ers.scan(workdir)
-    assert out == {"scannedFiles": 0, "patterns": []}
+    # dispositionedSkipped is additive: the detector splices patterns[], so a
+    # superset envelope is safe, and a skipped-count that is never reported
+    # would be the same silent drop this key exists to prevent.
+    assert out == {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}
 
 
 def test_one_run_only_does_not_cross_threshold(workdir: Path) -> None:
@@ -154,3 +157,55 @@ def test_run_id_with_hyphens_is_preserved(workdir: Path) -> None:
     assert len(out["patterns"]) == 1
     # Distinct run-ids, not file-count
     assert out["patterns"][0]["count"] == 2
+
+
+def _candidate(text: str, *, disposed_box: bool = False, status: str | None = None) -> str:
+    fm = f"---\nstatus: {status}\n---\n\n" if status else ""
+    box = "- [x] Adopt as default in build-loop" if disposed_box else "- [ ] Adopt as default in build-loop"
+    return f"{fm}# Enforce candidate\n\n## Candidate\n\n{text}\n\n## Disposition\n\n{box}\n"
+
+
+def test_dispositioned_candidates_do_not_count_toward_recurrence(tmp_path):
+    """The defect this closes: a 2026-07-08 triage marked 6 of 13 candidates DONE
+    in a separate doc and left the files in place, so the closed
+    inline-self-verification candidate stayed the STRONGEST signal in the queue
+    (4 distinct run-ids) six weeks later — closed work outranking open work."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        (d / f"{run}-01.md").write_text(_candidate("enforce gate: already-closed", disposed_box=True))
+    out = ers.scan(tmp_path)
+    assert out["patterns"] == [], "a dispositioned candidate still counted"
+    assert out["dispositionedSkipped"] == 2
+    assert out["scannedFiles"] == 2, "skipped files must still be counted as scanned"
+
+
+def test_undispositioned_candidates_still_recur(tmp_path):
+    """Mutation check the other way: if this fails, the skip has silenced the
+    whole scanner rather than only closed items."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        (d / f"{run}-01.md").write_text(_candidate("enforce gate: genuinely open"))
+    out = ers.scan(tmp_path)
+    assert len(out["patterns"]) == 1, out
+    assert out["patterns"][0]["count"] == 2
+    assert out["dispositionedSkipped"] == 0
+
+
+def test_terminal_frontmatter_status_also_disposes(tmp_path):
+    """Hand-written proposals carry `status:` instead of a checklist."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        (d / f"{run}-01.md").write_text(_candidate("enforce gate: closed via frontmatter", status="done"))
+    assert ers.scan(tmp_path)["patterns"] == []
+
+
+def test_proposed_status_is_not_terminal(tmp_path):
+    """`status: proposed` is the OPEN state — it must keep counting."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        (d / f"{run}-01.md").write_text(_candidate("enforce gate: still open", status="proposed"))
+    assert len(ers.scan(tmp_path)["patterns"]) == 1
