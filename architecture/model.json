@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ae2ecafedb143b39b3084e482d0f8e47aeadc1646e7cde6baeaa4a2424283302"
+    "content_sha256": "1dc19df54df4c7ae2689786b2671211fdb40a73c15e9891ce4f1bc3f6d84dcdc"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1811,6 +1811,7 @@
       "scripts/retrospective/sections.py": "sections.py — assemble the 9 retrospective sections.",
       "scripts/retrospective/synthesize.py": "synthesize.py — entry point for the post-push retrospective.",
       "scripts/retrospective/write.py": "write.py — atomic active write + best-effort durable promotion.",
+      "scripts/revalidate_self_review_findings.py": "Re-validate self-review findings against current code and disposition the closed ones.",
       "scripts/review_finding_gate.py": "Block final Review exit while critical/high findings remain open.\"\"\"",
       "scripts/review_trigger.py": "Deterministic quality-gate trigger profiler for build-loop Review.",
       "scripts/revoke_decision.py": "Explicit revoke for a decision (Scenario 8 — different from supersede).",
