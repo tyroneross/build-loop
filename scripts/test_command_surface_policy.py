@@ -15,10 +15,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMANDS_DIR = REPO_ROOT / "commands"
 
-# The single human-facing command. If build-loop ever needs a second genuinely
-# human-only command, add it here WITH a comment justifying why plain-language
-# routing through `run` cannot cover it.
-PUBLIC_COMMANDS = {"run"}
+# Human-facing commands. Adding one REQUIRES a comment justifying why
+# plain-language routing through `run` cannot cover it.
+#
+# `run` — every build/debug/research/optimize/plan intent, routed by plain language.
+#
+# `feedback` — added 2026-08-18 (c8bee50) to file a GitHub issue against
+#   tyroneross/build-loop; the manifest carries no contact address by design.
+#   `run` cannot cover it: run dispatches the build orchestrator against the
+#   USER'S repo, so "file a bug about build-loop" would start a build loop to
+#   write an issue. Reporting a defect in the tool is not work on the tree the
+#   tool is pointed at, and it must stay reachable when the orchestrator is the
+#   thing that is broken — which is exactly when a user needs it.
+PUBLIC_COMMANDS = {"run", "feedback"}
 
 
 class CommandSurfaceTests(unittest.TestCase):
