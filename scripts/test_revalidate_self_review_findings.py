@@ -127,5 +127,54 @@ class TestApply(Fixture):
         self.assertEqual(f.read_text(), before, "an OPEN finding was closed")
 
 
+
+class TestImportBasedCoverage(Fixture):
+    """Filename matching alone reported 43 open findings when 27 already had a test
+    under a different name — a 63% false-open rate, the same overstatement this
+    script exists to correct."""
+
+    def test_differently_named_test_that_imports_the_module_counts(self):
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        (self.root / "scripts" / "test_gadgets.py").write_text("import widget\ndef test_x(): pass\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        out = rv.revalidate(self.root)
+        self.assertEqual(out["resolved"], 1, out)
+
+    def test_from_import_form_counts(self):
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        (self.root / "scripts" / "test_gadgets.py").write_text("from widget import x\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        self.assertEqual(rv.revalidate(self.root)["resolved"], 1)
+
+    def test_a_test_that_never_mentions_the_module_does_not_count(self):
+        """Mutation guard: if any test file satisfied any finding, the tool would
+        close all 43 at once and report a clean queue that is a lie."""
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        (self.root / "scripts" / "test_unrelated.py").write_text("import os\ndef test_x(): pass\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        self.assertEqual(rv.revalidate(self.root)["open"], 1)
+
+    def test_a_copy_under_plugin_artifacts_still_does_not_count(self):
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        stale = self.root / "plugin-artifacts" / "codex" / "scripts"
+        stale.mkdir(parents=True)
+        (stale / "test_gadgets.py").write_text("import widget\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        self.assertEqual(rv.revalidate(self.root)["open"], 1)
+
+    def test_evidence_records_how_the_test_was_found(self):
+        """Auditable: a reader must be able to tell a same-name test from an
+        import-based match without re-deriving it."""
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        (self.root / "scripts" / "test_gadgets.py").write_text("import widget\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        self.assertIn("(import)", rv.revalidate(self.root)["items"][0]["evidence"])
+
+    def test_same_name_test_is_reported_as_filename_match(self):
+        (self.root / "scripts" / "widget.py").write_text("x = 1\n")
+        (self.root / "scripts" / "test_widget.py").write_text("pass\n")
+        self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
+        self.assertIn("(filename)", rv.revalidate(self.root)["items"][0]["evidence"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

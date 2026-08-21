@@ -57,9 +57,40 @@ def resolve_source(root: Path, name: str) -> Path | None:
     return hits[0] if hits else None
 
 
-def find_test(root: Path, stem: str) -> Path | None:
-    hits = sorted(h for h in root.rglob(f"test_{stem}.py") if _live(h))
-    return hits[0] if hits else None
+def find_test(root: Path, stem: str) -> tuple[Path | None, str]:
+    """Locate a test covering `stem`. Returns (path, how) where how is
+    "filename" | "import" | "".
+
+    Filename alone is too strict, and measurably so: on 2026-08-21 it reported 43
+    open findings when 27 of them already had a test under a different name —
+    slice_acp.py covered by tests/architecture/test_acp.py, build_acp.py by
+    test_acp_lessons_in_scope.py, agent_rally.py by test_agent_rally_retract.py.
+    A 63% false-open rate makes the queue overstate remaining work, which is the
+    same defect this whole script exists to correct.
+
+    The finding under test says "no test file for X". A test module that IMPORTS X
+    is a test file for X, so an import is the semantically correct signal. It is
+    not proof of thorough coverage — but this finding kind does not claim to
+    measure depth, and asserting depth here would be inventing a stronger claim
+    than the finding makes.
+    """
+    named = sorted(h for h in root.rglob(f"test_{stem}.py") if _live(h))
+    if named:
+        return named[0], "filename"
+    pattern = re.compile(
+        rf"\bimport\s+{re.escape(stem)}\b"
+        rf"|\bfrom\s+{re.escape(stem)}\s+import"
+        rf"|{re.escape(stem)}\.py\b"
+    )
+    for tf in sorted(root.rglob("test_*.py")):
+        if not _live(tf):
+            continue
+        try:
+            if pattern.search(tf.read_text(encoding="utf-8", errors="ignore")):
+                return tf, "import"
+        except OSError:
+            continue
+    return None, ""
 
 
 def classify(root: Path, body: str) -> tuple[str, str, str]:
@@ -78,9 +109,9 @@ def classify(root: Path, body: str) -> tuple[str, str, str]:
     src = resolve_source(root, target)
     if src is None:
         return "source-gone", target, ""
-    test = find_test(root, Path(target).stem)
+    test, how = find_test(root, Path(target).stem)
     if test is not None:
-        return "resolved", target, str(test)
+        return "resolved", target, f"{test} ({how})"
     return "open", target, str(src)
 
 
