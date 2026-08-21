@@ -139,6 +139,22 @@ class EmbedBackendTests(unittest.TestCase):
 
         Measured baseline ≈ 0.9664; threshold gives margin for any
         per-machine numerical drift.
+
+        CURRENTLY RED, AND CORRECTLY SO — do not skip it to get green.
+        Backlog: BUIL-MEMORY-m0hcg9vzf60y895rj3vt9.
+
+        MLX_DEFAULT_MODEL is mxbai-embed-large-v1; OLLAMA_DEFAULT_MODEL is bge-m3.
+        Both emit 1024 dims, so every dimension check passes, but they are
+        different embedding spaces: measured cosine on identical text is -0.0487,
+        i.e. orthogonal. 8c9ed1c (2026-05-04) set BOTH backends to mxbai and the
+        0.9664 baseline above was taken then; c80a05c (2026-05-06) flipped Ollama
+        to bge-m3 and left MLX behind.
+
+        This assertion is the only thing surfacing that a fallback moves a caller
+        between embedding spaces mid-run, and that the DEFAULT backend disagrees
+        with the store's migration target (migrate_reembed_to_bgem3.py:
+        DEFAULT_TARGET = "bge-m3"). Silencing it would hide a retrieval-correctness
+        defect behind a green suite, which is worse than the red.
         """
         sample = "Postgres with pgvector extension powers retrieval"
 
