@@ -29,7 +29,13 @@ DEFAULT_TARGET = Path("plugin-artifacts/codex")
 # not in ``IGNORED_DIR_SUFFIXES``: that set is ``endswith``-matched, so it would
 # also swallow a legitimately-named ``foo.build`` directory, and exact-name
 # membership is what both the scan and the copy already agree on.
-IGNORED_NAMES = {".DS_Store", "__pycache__", ".pytest_cache", ".build"}
+IGNORED_NAMES = {
+    ".DS_Store",
+    "__pycache__",
+    ".pytest_cache",
+    ".build",
+    ".build-loop",
+}
 IGNORED_SUFFIXES = {".pyc"}
 IGNORED_DIR_SUFFIXES = {".egg-info"}
 TOP_LEVEL_FILES = (

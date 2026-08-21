@@ -196,6 +196,25 @@ class CodexPluginArtifactTests(unittest.TestCase):
             }
             self.assertEqual(scanned, {path.relative_to(target) for path in builder.iter_files(target)})
 
+    def test_builder_excludes_nested_build_loop_runtime_state(self) -> None:
+        """Runtime queues under packaged directories are never plugin source."""
+        builder = _load_builder()
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            tmp = Path(tmp_raw)
+            source = tmp / "source"
+            docs = source / "docs"
+            pending = docs / ".build-loop" / "pending-lessons"
+            pending.mkdir(parents=True)
+            (docs / "guide.md").write_text("# guide\n", encoding="utf-8")
+            (pending / "candidate.md").write_text("runtime state\n", encoding="utf-8")
+
+            target = tmp / "artifact"
+            builder.copy_tree(source, target)
+
+            copied = sorted(str(path.relative_to(target)) for path in builder.iter_files(target))
+            self.assertEqual(copied, ["docs/guide.md"])
+            self.assertTrue(builder.is_ignored_source_path(pending / "candidate.md", source))
+
     def test_builder_does_not_absorb_symlink_targets_outside_the_source_tree(self) -> None:
         """A symlink must not pull unreviewed, un-ignore-filtered content into the bundle."""
         builder = _load_builder()
