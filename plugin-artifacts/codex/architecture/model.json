@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "3dfa67bf8408f579a55cc40d817c46db6304170be2000ecc593c6b42cc09e1ee"
+    "content_sha256": "16d023711e00bd2d8d32b4afe000a5ecf87dfecd3c6f28b3684c68f683f6fead"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1433,7 +1433,7 @@
         "file": "skills/repository-intelligence/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-19"
+          "date": "2026-08-20"
         }
       },
       "research": {
@@ -1589,6 +1589,7 @@
       "scripts/classify_action.py": "Classify an orchestrator action into one of four MECE labels.",
       "scripts/classify_model_tier.py": "Classify an unknown model id into a build-loop tier — host-neutral.",
       "scripts/cleanup_legacy_memory_stubs.py": "cleanup_legacy_memory_stubs.py — safely remove migration .MOVED.md stubs.",
+      "scripts/cli_dispatch_consent.py": "Consent gate for shelling out to another vendor's LLM CLI.",
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
@@ -1597,6 +1598,7 @@
       "scripts/collision_scan.py": "",
       "scripts/commit_state_check.py": "Deterministic check for completed-but-uncommitted tracked work.",
       "scripts/complexity_detector.py": "complexity_detector.py — stdlib-`ast` detector that finds code to optimize.",
+      "scripts/consent_ask.py": "Host-specific ask adapter for the CLI dispatch consent gate.",
       "scripts/consolidate_memory.py": "Memory consolidation pass.",
       "scripts/context_bootstrap.py": "Build a Phase 1 context packet from all memory surfaces.",
       "scripts/context_snapshot.py": "Write non-blocking Build Loop context snapshots.",
@@ -1811,6 +1813,7 @@
       "scripts/retrospective/sections.py": "sections.py — assemble the 9 retrospective sections.",
       "scripts/retrospective/synthesize.py": "synthesize.py — entry point for the post-push retrospective.",
       "scripts/retrospective/write.py": "write.py — atomic active write + best-effort durable promotion.",
+      "scripts/revalidate_self_review_findings.py": "Re-validate self-review findings against current code and disposition the closed ones.",
       "scripts/review_finding_gate.py": "Block final Review exit while critical/high findings remain open.\"\"\"",
       "scripts/review_trigger.py": "Deterministic quality-gate trigger profiler for build-loop Review.",
       "scripts/revoke_decision.py": "Explicit revoke for a decision (Scenario 8 — different from supersede).",

@@ -38,6 +38,7 @@ sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "scan_transcript_for_decisions.py"
 
 from _test_helpers import MemIsolationMixin  # noqa: E402
+import scan_transcript_for_decisions as scan  # noqa: E402
 
 
 def _ollama_ready() -> bool:
@@ -482,3 +483,31 @@ class SteeringAnswerExtractionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ScanLockFileResolutionTests(unittest.TestCase):
+    """The lock path must be overridable by env so anything invoking the REAL
+    hook command can isolate itself. A test cannot pass --lock-file without
+    ceasing to test the command that actually ships."""
+
+    def setUp(self) -> None:
+        self._saved = os.environ.get(scan.LOCK_FILE_ENV)
+
+    def tearDown(self) -> None:
+        if self._saved is None:
+            os.environ.pop(scan.LOCK_FILE_ENV, None)
+        else:
+            os.environ[scan.LOCK_FILE_ENV] = self._saved
+
+    def test_default_is_machine_wide_when_env_unset(self) -> None:
+        os.environ.pop(scan.LOCK_FILE_ENV, None)
+        self.assertEqual(scan.default_lock_file(), scan.DEFAULT_LOCK_FILE)
+
+    def test_env_overrides_the_default(self) -> None:
+        os.environ[scan.LOCK_FILE_ENV] = "/tmp/some-isolated.lock"
+        self.assertEqual(scan.default_lock_file(), "/tmp/some-isolated.lock")
+
+    def test_empty_env_falls_back_rather_than_locking_on_empty_path(self) -> None:
+        """An empty string would resolve to a path of "" and break flock."""
+        os.environ[scan.LOCK_FILE_ENV] = ""
+        self.assertEqual(scan.default_lock_file(), scan.DEFAULT_LOCK_FILE)

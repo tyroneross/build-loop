@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1dc19df54df4c7ae2689786b2671211fdb40a73c15e9891ce4f1bc3f6d84dcdc"
+    "content_sha256": "16d023711e00bd2d8d32b4afe000a5ecf87dfecd3c6f28b3684c68f683f6fead"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1589,6 +1589,7 @@
       "scripts/classify_action.py": "Classify an orchestrator action into one of four MECE labels.",
       "scripts/classify_model_tier.py": "Classify an unknown model id into a build-loop tier — host-neutral.",
       "scripts/cleanup_legacy_memory_stubs.py": "cleanup_legacy_memory_stubs.py — safely remove migration .MOVED.md stubs.",
+      "scripts/cli_dispatch_consent.py": "Consent gate for shelling out to another vendor's LLM CLI.",
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
@@ -1597,6 +1598,7 @@
       "scripts/collision_scan.py": "",
       "scripts/commit_state_check.py": "Deterministic check for completed-but-uncommitted tracked work.",
       "scripts/complexity_detector.py": "complexity_detector.py — stdlib-`ast` detector that finds code to optimize.",
+      "scripts/consent_ask.py": "Host-specific ask adapter for the CLI dispatch consent gate.",
       "scripts/consolidate_memory.py": "Memory consolidation pass.",
       "scripts/context_bootstrap.py": "Build a Phase 1 context packet from all memory surfaces.",
       "scripts/context_snapshot.py": "Write non-blocking Build Loop context snapshots.",

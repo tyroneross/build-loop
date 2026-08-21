@@ -24,6 +24,8 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "procedural_governance.py"
 sys.path.insert(0, str(HERE))
 
+import procedural_governance as pg  # noqa: E402
+
 
 def _make_procedure(workdir: Path, name: str, depends_on: list[dict] | None = None) -> Path:
     proc_dir = workdir / ".procedural" / name
@@ -199,3 +201,82 @@ class ProceduralGovernanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- detect_patterns: locked, atomic candidate append -------------------------
+# Filed as a phase-6-learn race. It is worse than "interleaved rows": the dedup read
+# and the read-modify-write were both unlocked, so two concurrent Stop hooks each
+# read the old file and the SECOND write replaced the first — lost rows.
+
+class DetectPatternsAppendTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import shutil, tempfile
+        self.wd = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.wd, ignore_errors=True)
+        self.cand = self.wd / ".procedural" / "_candidates.jsonl"
+
+    def _seed_runs(self, root_cause: str, n: int) -> None:
+        """Enough incidents on one root cause to clear PATTERN_THRESHOLD."""
+        runs = [{"run_id": f"r{i}", "root_cause": root_cause}
+                for i in range(max(n, pg.PATTERN_THRESHOLD))]
+        state = self.wd / ".build-loop" / "state.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"runs": runs}))
+
+    def _rows(self) -> list[dict]:
+        if not self.cand.exists():
+            return []
+        return [json.loads(l) for l in self.cand.read_text().splitlines() if l.strip()]
+
+    def test_every_written_line_is_valid_json(self):
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        for line in self.cand.read_text().splitlines():
+            if line.strip():
+                json.loads(line)  # raises on a spliced row
+
+    def test_existing_file_without_trailing_newline_is_not_spliced(self):
+        """A prior row lacking its newline would otherwise concatenate onto the first
+        new row, producing a line that parses as neither."""
+        self.cand.parent.mkdir(parents=True, exist_ok=True)
+        self.cand.write_text('{"name":"prior","root_cause":"old"}')  # no newline
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        rows = self._rows()
+        self.assertGreaterEqual(len(rows), 2, self.cand.read_text())
+        self.assertEqual(rows[0]["name"], "prior")
+
+    def test_second_run_does_not_drop_the_first_runs_rows(self):
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        first = self._rows()
+        self._seed_runs("disk full", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        names = [r["root_cause"] for r in self._rows()]
+        self.assertIn("db timeout", names, "the earlier run's rows were replaced")
+        self.assertIn("disk full", names)
+        self.assertGreaterEqual(len(self._rows()), len(first) + 1)
+
+    def test_rerun_is_idempotent(self):
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        once = self._rows()
+        pg.detect_patterns(self.wd)
+        self.assertEqual(self._rows(), once, "a re-run duplicated candidates")
+
+    def test_the_write_is_serialised_by_the_shared_lock(self):
+        """Holding the sidecar lock must block the append rather than let it race.
+        This is the property the fix exists for; without the lock the call proceeds."""
+        import atomic_io
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        self.cand.parent.mkdir(parents=True, exist_ok=True)
+        with atomic_io.LockedFile(self.cand):
+            with self.assertRaises(TimeoutError):
+                with atomic_io.LockedFile(self.cand, timeout_s=0.1):
+                    pass
+
+    def test_no_temp_files_are_left_behind(self):
+        self._seed_runs("db timeout", pg.PATTERN_THRESHOLD)
+        pg.detect_patterns(self.wd)
+        litter = [p.name for p in self.cand.parent.iterdir() if ".tmp" in p.name]
+        self.assertEqual(litter, [])

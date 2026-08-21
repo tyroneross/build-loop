@@ -20,8 +20,11 @@ from typing import Any
 SEVERITY_ORDER: dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 # A confirmed false positive is silenced with `# nosec: <reason>` (Python/shell)
-# or `// nosec: <reason>` (JS/TS) on the flagged line. The reason is mandatory by
-# convention — a bare `nosec` still matches, but review should reject it.
+# or `// nosec: <reason>` (JS/TS) on the flagged line. The COLON IS REQUIRED: a
+# bare `# nosec` does not suppress, so the reason is enforced by the pattern, not
+# only by convention. (An earlier comment here claimed a bare `nosec` still
+# matched; it never did. Pinned by
+# test_security_common.py::test_bare_nosec_without_colon_does_NOT_suppress.)
 NOSEC_RE = re.compile(r"(#|//)\s*nosec\s*:", re.IGNORECASE)
 
 

@@ -29,6 +29,30 @@ if [ -z "$CMD" ]; then
     exit 0
 fi
 
+# Directory -> the root of the repository that owns it. `.build-loop/` lives at
+# the repo root, so a command run from a SUBDIRECTORY must still find it. Copied
+# from pre_bash_dispatch.sh:_bl_repo_root rather than reinvented, so the two
+# hooks cannot drift on what "this project" means.
+#
+# Measured 2026-08-21 before this change: with .build-loop/config.json at a repo
+# root, the autonomy hook engaged at the root and returned a bare `{}` from
+# `<root>/sub/deeper` — no enforcement at all — while the dispatcher, which
+# already resolved the root, kept enforcing. One gate on, one gate off, in the
+# same repo, decided by which directory the shell happened to sit in.
+_bl_repo_root() {
+    dir="$1"
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        printf '%s' "$dir"
+        return 0
+    fi
+    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$top" ] && [ -d "$top" ]; then
+        printf '%s' "$top"
+    else
+        printf '%s' "$dir"
+    fi
+}
+
 # Scope guard: only police Bash in projects that have opted in to build-loop.
 # A build-loop project is identified by .build-loop/state.json (active run) or
 # .build-loop/config.json (configured policy). Without either, this gate must
@@ -44,7 +68,16 @@ if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$HOME" ]; then
     echo '{}'
     exit 0
 fi
-if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.json" ]; then
+# Resolve to the repo root BEFORE the opt-in check, so a session parked in a
+# subdirectory is gated the same as one at the root. The empty/root/HOME guard
+# above still runs against the raw CWD, and is re-applied to the resolved root:
+# a repo whose toplevel IS $HOME must not activate the gate for every command.
+BL_ROOT=$(_bl_repo_root "$CWD")
+if [ -z "$BL_ROOT" ] || [ "$BL_ROOT" = "/" ] || [ "$BL_ROOT" = "$HOME" ]; then
+    echo '{}'
+    exit 0
+fi
+if [ ! -f "$BL_ROOT/.build-loop/state.json" ] && [ ! -f "$BL_ROOT/.build-loop/config.json" ]; then
     echo '{}'
     exit 0
 fi
@@ -70,7 +103,7 @@ if [ ! -f "$GATE" ]; then
     exit 0
 fi
 
-WORKDIR="${CWD:-.}"
+WORKDIR="${BL_ROOT:-${CWD:-.}}"
 
 # Invoke the gate; capture stdout regardless of exit code.
 # Gate exits 0=auto/warn, 1=confirm, 2=block — these are informational, not errors.

@@ -92,6 +92,24 @@ SCRIPT_WALL_CLOCK_BUDGET_S = 25
 # on this machine", not "one per repo").
 DEFAULT_LOCK_FILE = "/tmp/build-loop-scan.lock"
 
+# Env override for the lock path. The machine-wide default is deliberate for real
+# sessions, but it makes anything that invokes the REAL hook command
+# non-hermetic: a test cannot pass `--lock-file` without ceasing to test the
+# command that actually ships. scripts/test_stop_hook_integration.py already
+# isolates the memory store via AGENT_MEMORY_ROOT for the same reason; the lock
+# is the other piece of global state that invocation touches.
+#
+# Measured 2026-08-20: test_hook_command_runs_end_to_end_with_live_qwen timed out
+# at 180s with 0 decisions while another scan held the lock, and passed in 6.72s
+# with the lock free. Same commit, same models — the only variable was contention.
+LOCK_FILE_ENV = "BUILD_LOOP_SCAN_LOCK"
+
+
+def default_lock_file() -> str:
+    """Lock path: ``BUILD_LOOP_SCAN_LOCK`` if set and non-empty, else the
+    machine-wide default. An explicit ``--lock-file`` still wins over both."""
+    return os.environ.get(LOCK_FILE_ENV) or DEFAULT_LOCK_FILE
+
 # Log rotation policy.
 LOG_ROTATE_TRIGGER_BYTES = 10 * 1024 * 1024  # 10 MB
 LOG_ROTATE_KEEP_BYTES = 1 * 1024 * 1024  # 1 MB tail
@@ -832,10 +850,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--lock-file",
-        default=DEFAULT_LOCK_FILE,
+        default=None,
         help=(
-            "Path to the single-flight lock file. Default /tmp/build-loop-scan.lock. "
-            "If the lock is held by another scan, this invocation exits 0 immediately."
+            "Path to the single-flight lock file. Defaults to $BUILD_LOOP_SCAN_LOCK "
+            "when set, else /tmp/build-loop-scan.lock. If the lock is held by another "
+            "scan, this invocation exits 0 immediately."
         ),
     )
     return p.parse_args(argv)
@@ -872,7 +891,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Single-flight lock: skip if another scan is already running.
-    lock_path = Path(args.lock_file).expanduser()
+    lock_path = Path(args.lock_file or default_lock_file()).expanduser()
     lock_fd = acquire_lock(lock_path)
     if lock_fd is None:
         log(f"scan: another scan holds {lock_path}; skipping this invocation")

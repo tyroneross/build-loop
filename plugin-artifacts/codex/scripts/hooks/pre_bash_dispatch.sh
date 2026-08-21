@@ -313,6 +313,21 @@ case "$CMD" in
         ;;
 esac
 
+# CLI dispatch consent: only when a vendor LLM CLI binary name (claude, codex,
+# cursor-agent, ollama) appears in the command at all. Cheap substring
+# pre-filter — this MUST be a SUPERSET of pre_bash_consent.sh's own
+# leading-invocation check (contract: references/cli-dispatch-consent-contract.md
+# "Enforcement points"), same discipline as the dependency-cooldown guard
+# above: a false positive here just spawns one extra gate that then says
+# nothing (`grep codex f.txt` costs a spawn but the inner gate emits `{}`); a
+# false negative here would let a real vendor dispatch skip consent entirely.
+# WARN-ONLY rollout (contract "Rollout"): the gate never denies in this phase.
+case "$CMD" in
+    *codex*|*claude*|*cursor-agent*|*ollama*)
+        ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/hooks/pre_bash_consent.sh")")
+        ;;
+esac
+
 # Commit auditor: only when the command commits. This is the big win — the
 # 515-LOC auditor no longer spawns on every non-commit Bash call.
 #

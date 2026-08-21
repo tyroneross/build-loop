@@ -288,6 +288,13 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         # scan (and any write_decision.py it spawns) writes to the tmpdir,
         # not to the real ~/dev/git-folder/build-loop-memory store.
         env["AGENT_MEMORY_ROOT"] = self._memroot.name
+        # Isolate the single-flight lock too. Without this the test shares
+        # /tmp/build-loop-scan.lock with every other scan on the machine, so a
+        # concurrent scan makes the backgrounded sweep exit 0 immediately and this
+        # test polls 180s for decisions that were never going to be written.
+        # Measured 2026-08-20: 180s timeout with 0 decisions under contention,
+        # 6.72s pass with the lock free — same commit, same models.
+        env["BUILD_LOOP_SCAN_LOCK"] = str(Path(self._memroot.name) / "scan.lock")
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],

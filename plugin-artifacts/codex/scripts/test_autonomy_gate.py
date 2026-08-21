@@ -403,3 +403,58 @@ class AutonomyGateFlagsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# --- Deploy shapes carrying no literal `deploy` token -------------------------
+# Measured 2026-08-21: five of ten real production-deploy commands classified
+# `auto`, including `vercel --prod` — the canonical Vercel production deploy, and
+# the one CLAUDE.md names explicitly as requiring confirmation. The default glob
+# `* deploy * --prod*` only matches commands containing the word "deploy".
+
+class DeployWithoutDeployTokenTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.wd = Path(self._tmp.name)
+
+    def _action(self, command: str) -> str:
+        """Runs the real CLI in an EMPTY workdir, so the DEFAULT lists are what is
+        under test — a repo config would replace them and hide the defect."""
+        return envelope(run(self.wd, "bash", command))["action"]
+
+    def test_canonical_vercel_prod_deploy_confirms(self):
+        self.assertEqual(self._action("vercel --prod"), "confirm")
+
+    def test_npx_wrapped_vercel_prod_confirms(self):
+        """A wrapper prefix must not defeat the gate."""
+        self.assertEqual(self._action("npx vercel --prod"), "confirm")
+
+    def test_deploy_shapes_without_the_word_deploy_confirm(self):
+        for cmd in ("fly deploy", "flyctl deploy", "wrangler deploy",
+                    "wrangler pages deploy", "eas submit --platform ios",
+                    "railway up"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._action(cmd), "confirm", cmd)
+
+    def test_shapes_that_already_worked_still_confirm(self):
+        """Regression guard: widening the list must not displace existing rules."""
+        for cmd in ("vercel deploy --prod", "netlify deploy --prod",
+                    "npm publish", "gh release create v1"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._action(cmd), "confirm", cmd)
+
+    def test_local_dev_server_is_not_a_deploy(self):
+        """The false-positive direction. A gate that prompts on `vercel dev` gets
+        bypassed, and a bypassed gate protects nothing."""
+        self.assertEqual(self._action("vercel dev"), "auto")
+
+    def test_a_commit_whose_message_mentions_deploy_stays_auto(self):
+        """The originally-filed defect, which did NOT reproduce. Pinned so the
+        widening above cannot introduce it."""
+        self.assertEqual(
+            self._action("git commit -m 'fix: correct the deploy classifier'"), "auto")
+
+    def test_ordinary_commands_stay_auto(self):
+        for cmd in ("npm test", "ls", "git status", "python3 -m pytest"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._action(cmd), "auto", cmd)

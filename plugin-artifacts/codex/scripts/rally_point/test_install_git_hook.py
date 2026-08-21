@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
+import unittest
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +88,12 @@ def test_migrates_legacy_app_pulse_segment(repo: Path):
 
 def test_installs_pre_commit_guard(repo: Path):
     import os
+    # The private-slug guard installs only where a denylist makes it runnable
+    # (see PrivateSlugGuardScopeTests). This test asserts the guard wiring, so
+    # it opts the fixture in rather than asserting the old install-everywhere
+    # behaviour — that behaviour was the defect: without a denylist
+    # check_private_slugs.py exits 2 and blocks every commit.
+    (repo / ".private-slugs").write_text("some-private-slug\n")
     assert igh.install(repo) is True
     hook = repo / ".git" / "hooks" / "pre-commit"
     assert hook.exists() and igh.PRE_MARKER in hook.read_text()
@@ -197,3 +206,68 @@ def test_capture_routes_commit_records_through_post_bridge(repo: Path):
     assert "append_change" not in body
     assert "make_record" not in body
     assert "bump_revision" not in body
+
+
+class PrivateSlugGuardScopeTests(unittest.TestCase):
+    """The private-slug guard must install ONLY where it can run.
+
+    check_private_slugs.py exits 2 without a .private-slugs denylist, and
+    rejects an empty one, so a repo without a denylist has no passive
+    configuration — installing the guard there blocks every commit by every
+    agent. Observed 2026-08-20 in a private consumer repo.
+    """
+
+    def _repo(self, *, denylist: bool, example: bool = False) -> Path:
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(d)], check=True)
+        if denylist:
+            (d / ".private-slugs").write_text("some-private-slug\n")
+        if example:
+            (d / ".private-slugs.example").write_text("# template\n")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _guard(self, repo: Path) -> Path:
+        return repo / ".git" / "hooks" / ".private-slug-check.py"
+
+    def test_guard_installed_when_denylist_present(self) -> None:
+        """The working path. If this ever fails the guard has been disabled
+        everywhere, which is the opposite defect."""
+        repo = self._repo(denylist=True)
+        igh.install(repo)
+        self.assertTrue(self._guard(repo).exists(),
+                        "guard must install where a denylist makes it runnable")
+
+    def test_guard_installed_when_only_the_example_is_present(self) -> None:
+        """Shipping the template is opting in; the operator just has to fill it."""
+        repo = self._repo(denylist=False, example=True)
+        igh.install(repo)
+        self.assertTrue(self._guard(repo).exists())
+
+    def test_guard_NOT_installed_without_a_denylist(self) -> None:
+        """The defect this closes."""
+        repo = self._repo(denylist=False)
+        igh.install(repo)
+        self.assertFalse(self._guard(repo).exists(),
+                         "guard installed into a repo where it can only exit 2")
+
+    def test_reinstall_removes_a_guard_left_by_an_earlier_bad_install(self) -> None:
+        """Re-running the installer must self-heal, not re-create the blocker.
+        The observed repo had the guard re-appear after being disabled by hand."""
+        repo = self._repo(denylist=False)
+        hooks = repo / ".git" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        stale = self._guard(repo)
+        stale.write_text("#!/usr/bin/env python3\nraise SystemExit(2)\n")
+        stale.chmod(0o755)
+        igh.install(repo)
+        self.assertFalse(stale.exists(), "stale blocking guard survived a re-install")
+
+    def test_other_guards_still_install_without_a_denylist(self) -> None:
+        """Scope check: only the slug guard is gated. The runtime-memory guard
+        needs no config and must keep working."""
+        repo = self._repo(denylist=False)
+        igh.install(repo)
+        hook = (repo / ".git" / "hooks" / "pre-commit")
+        self.assertTrue(hook.exists())
+        self.assertIn("RUNTIME_MEMORY_GUARD", hook.read_text())
