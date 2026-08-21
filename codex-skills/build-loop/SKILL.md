@@ -20,3 +20,18 @@ Load and follow the canonical workflow:
 
 Use internal helper skills only through that workflow. Read their files
 directly from `../../skills/` when the canonical workflow asks for them.
+
+## Completion gate
+
+Before declaring a Codex Build Loop run complete:
+
+- Integrate every validated run commit into the intended local target branch and
+  rerun the canonical verifier on that exact target state.
+- For every run-created branch or worktree that has been merged, load
+  `../../references/phase-d-closeout.md` and close it with `collapse_run.py`
+  using `--strict --merged-only --owner-released`.
+- Require `strict_success: true`, `bundle_verified: true`, `errors: []`, an
+  absent worktree path, and an absent temporary branch ref before saying
+  "done."
+- Report the run as partial when any branch or worktree remains open without an
+  explicit retained disposition.

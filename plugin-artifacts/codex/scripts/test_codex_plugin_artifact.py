@@ -104,7 +104,11 @@ class CodexPluginArtifactTests(unittest.TestCase):
             wrapper = target / "codex-skills" / "build-loop" / "SKILL.md"
             canonical = wrapper.parent / ".." / ".." / "skills" / "build-loop" / "SKILL.md"
             self.assertTrue(canonical.resolve().is_file())
-            self.assertIn("user-invocable: true", wrapper.read_text(encoding="utf-8"))
+            wrapper_text = wrapper.read_text(encoding="utf-8")
+            self.assertIn("user-invocable: true", wrapper_text)
+            self.assertIn("## Completion gate", wrapper_text)
+            self.assertIn("--strict --merged-only --owner-released", wrapper_text)
+            self.assertIn("absent temporary branch ref", wrapper_text)
             attributes = (target / ".gitattributes").read_text(encoding="utf-8")
             self.assertIn("* -whitespace", attributes)
             self.assertIn("* conflict-marker-size=64", attributes)
