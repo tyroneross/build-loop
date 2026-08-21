@@ -60,15 +60,58 @@ orchestration-lane peers. The provider-partitioned resolver cannot express that,
 lane always collapses to the host's own vendor. **Model-tier routing is, in practice,
 vendor routing.**
 
-## Not verified
+## CORRECTION 2026-08-21 — verified against codex session logs and the rally ledger
 
-No Codex session was observed actually deploying Sonnet. Everything here is read from
-code and measured on the Claude side only. A rally transcript showing Codex naming
-Sonnet would contradict this reading of `presence` and should be examined before
-anyone acts on this document.
+The "not verified" section below was resolved by reading the logs. One claim in the
+original analysis was **wrong**.
 
-## Possible fix, deliberately not built
+### Rally carries no model. Verified.
 
-Wire `codex exec --model` to a tier decision so a lane can resolve cross-vendor,
-instead of gating cross-host dispatch on a stuck-detector. That changes which model
-executes work, which is a routing-policy decision rather than a defect fix.
+`build-loop/.rally/facts.db`, 11,472 events: **zero** have any `*model*` JSON key. The
+`agent-rally.fact.v1` schema is `created_at, event_id, evidence, from_session_id, kind,
+ref, role, scope, subject, summary, target, thread_id, tool, uri`. 477 events mention a
+model *in prose*; none carry it as a field. Rally cannot dispatch a model because the
+fact schema has no place to put one. That part of the original analysis holds.
+
+### Codex DOES run Claude models — by shelling out, not through rally. This corrects the original.
+
+The original speculated Codex was "handing off to a Claude session that resolves Sonnet
+locally". It is not. Codex invokes the Claude CLI directly with an explicit model.
+
+Session `rollout-2026-08-20T16-15-54-01a02175-aa61-7883-b222-b52829ee38a1.jsonl`:
+
+```
+claude -p --model opus   --effort xhigh --safe-mode      x11
+claude -p --model sonnet --effort high  --safe-mode       x7
+claude -p --model sonnet --effort high  --permission...   x6
+claude -p --model opus   --effort high  --permission...   x4
+sonnet:PASS x3   opus:PASS x3
+```
+
+The same session authored rally fact `seq=11377` with evidence
+`['self_mod_verify:pass 9/9', 'artifact regression:18/18', 'sonnet:PASS', 'opus:PASS']`.
+Rally recorded the *result*; the CLI did the dispatch.
+
+Codex also authors the routing config itself — `seq=6368` claims
+`references/model-taxonomy.json` and `model-tier-mapping.md` to "Wire GPT-5.6
+Sol/Terra/Luna model routing"; `seq=6387` claims five `agents/*.md` files to "Route five
+medium-risk reviewers to Claude Opus while retaining GPT-5.6 Sol". Those are file
+claims, not runtime dispatch.
+
+### The asymmetry, restated
+
+Codex reaches Claude models through `claude -p --model <id> --effort <level>`, a
+first-class pattern in its sessions. Claude reaches Codex through `codex exec`, and
+across recent Claude transcripts essentially every occurrence is **prose about the
+auditor ladder** rather than an invocation. Exactly one real invocation with a model
+appears: `codex exec -m gpt-5.6-sol -c model_reasoning_effort=...`.
+
+So the capability exists on both sides and only one side uses it habitually. The
+resolver's provider partition explains why neither host can *resolve* cross-vendor; it
+does not explain the dispatch gap. That gap is convention, not mechanism.
+
+### What would close it
+
+Give Claude the same habit Codex has: `codex exec -m <id>` selected by tier, rather than
+`codex exec` bare on a stuck-detector. The flag already works — it appears once in the
+transcripts and `scripts/exec_state.py:60` accepts `--model`.
