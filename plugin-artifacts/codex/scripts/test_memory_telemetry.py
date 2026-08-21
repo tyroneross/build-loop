@@ -23,6 +23,7 @@ import re
 import sys
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -168,8 +169,40 @@ class AppendOnlyTests(unittest.TestCase):
                 )
             self.assertEqual(len(mt.read_rows(path)), 2)
 
+    def test_concurrent_appends_preserve_every_row(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            path = Path(td) / "TELEMETRY.jsonl"
+
+            def emit(index: int) -> None:
+                mt.emit_read(
+                    phase="stress",
+                    reader=f"r{index % 8}",
+                    query="q",
+                    memory_ids_seen=[str(index)],
+                    telemetry_path=path,
+                    source="test",
+                )
+
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                list(pool.map(emit, range(100)))
+            rows = mt.read_rows(path)
+            self.assertEqual(len(rows), 100)
+            self.assertEqual(len({row["memory_ids_seen"][0] for row in rows}), 100)
+
 
 class SourceSeparationTests(unittest.TestCase):
+    def test_pid_default_test_stream_creates_its_parent(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td, \
+                mock.patch.object(mt.tempfile, "gettempdir", return_value=td), \
+                mock.patch.dict(os.environ, {"BUILD_LOOP_TELEMETRY_SOURCE": "test"}, clear=False):
+            os.environ.pop("BUILD_LOOP_TEST_TELEMETRY_PATH", None)
+            expected = mt.default_telemetry_path()
+            mt.emit_read(phase="p", reader="r", query="q", memory_ids_seen=[])
+            self.assertTrue(expected.is_file())
+            self.assertEqual(mt.read_rows(expected)[0]["source"], "test")
+
     def test_explicit_test_source_uses_isolated_default_path(self):
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as td:

@@ -33,6 +33,7 @@ from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 
 DEFAULT_LIMIT = 5
+MAX_FALLBACK_CANDIDATES = 500
 INDEX_RELATIVE_PATH = Path("indexes/INDEX.jsonl")
 UPDATE_LEDGER_RELATIVE_PATH = Path("indexes/updates.jsonl")
 GLOBAL_PROJECTS = {"", "_global", "_unscoped", "global"}
@@ -54,9 +55,10 @@ SKIP_NAMES = {"INDEX.md", "MEMORY.md", "README.md", "TELEMETRY.jsonl"}
 SKIP_DIRS = {"archive", "indexes", "raw", "raw-originals"}
 STOPWORDS = {
     "about", "after", "again", "also", "and", "been", "being", "build", "could",
-    "does", "for", "from", "have", "into", "memory", "other", "should", "that", "the",
-    "their", "them", "then", "there", "these", "this", "using", "what",
-    "when", "where", "which", "with", "would",
+    "can", "does", "fix", "for", "from", "get", "have", "how", "into", "make",
+    "memory", "need", "new", "other", "run", "should", "that", "the", "their",
+    "them", "then", "there", "these", "this", "use", "using", "want", "what",
+    "when", "where", "which", "why", "with", "would",
 }
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.IGNORECASE)
 
@@ -96,16 +98,28 @@ def _read_index(index_path: Path) -> tuple[list[dict[str, Any]], list[str]]:
     return rows, reasons
 
 
-def _index_is_fresh(root: Path, index_path: Path) -> tuple[bool, str | None]:
+def _index_is_fresh(root: Path, index_path: Path, project: str | None) -> tuple[bool, str | None]:
     if not index_path.is_file():
         return False, f"index_missing: {index_path}"
     ledger = root / UPDATE_LEDGER_RELATIVE_PATH
     try:
         if ledger.is_file() and ledger.stat().st_mtime_ns > index_path.stat().st_mtime_ns:
             return False, f"index_older_than_update_ledger: {ledger}"
+        index_mtime = index_path.stat().st_mtime_ns
+        for lane_root in _search_roots(root, project):
+            if lane_root.stat().st_mtime_ns > index_mtime:
+                return False, f"index_older_than_lane_directory: {lane_root}"
     except OSError as exc:
         return False, f"index_freshness_error: {exc}"
     return True, None
+
+
+def _safe_index_path(root: Path, relative: str) -> Path | None:
+    candidate = Path(relative)
+    if not relative or candidate.is_absolute():
+        return None
+    resolved = (root / candidate).resolve()
+    return resolved if resolved.is_relative_to(root) else None
 
 
 def _project_allowed(row_project: str, project: str | None) -> bool:
@@ -126,15 +140,22 @@ def _score_fields(row: dict[str, Any], terms: list[str], body: str = "") -> tupl
     score = 0
     matched_terms: set[str] = set()
     matched: list[str] = []
+    body_lower = body.lower() if body else ""
+
+    def contains(field_text: str, term: str) -> bool:
+        if len(term) >= 3:
+            return term in field_text
+        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", field_text) is not None
+
     for term in terms:
         for field_name, field_text, weight in fields:
-            if term in field_text:
+            if contains(field_text, term):
                 score += weight
                 matched_terms.add(term)
                 matched.append(f"{field_name}:{term}")
                 break
         else:
-            count = body.lower().count(term) if body else 0
+            count = len(re.findall(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", body_lower)) if body_lower else 0
             if count:
                 score += min(count, 3)
                 matched_terms.add(term)
@@ -146,9 +167,10 @@ def _score_fields(row: dict[str, Any], terms: list[str], body: str = "") -> tupl
 
 def _result(row: dict[str, Any], root: Path, score: int, coverage: float, matched: list[str]) -> dict[str, Any]:
     rel = str(row.get("canonical_path") or row.get("path") or "")
+    absolute = _safe_index_path(root, rel)
     return {
         "path": rel,
-        "absolute_path": str((root / rel).resolve()),
+        "absolute_path": str(absolute) if absolute is not None else "",
         "id": str(row.get("id") or rel),
         "title": str(row.get("title") or Path(rel).stem),
         "project": str(row.get("project") or "_global"),
@@ -175,8 +197,12 @@ def _rank_index(
             continue
         if not _project_allowed(row_project, project):
             continue
+        if _safe_index_path(root, str(row.get("canonical_path") or row.get("path") or "")) is None:
+            continue
         score, coverage, matched = _score_fields(row, terms)
-        if coverage < 0.5 or score < 8:
+        matched_count = round(coverage * len(terms))
+        required_matches = min(3, max(1, (len(terms) + 2) // 4))
+        if matched_count < required_matches or score < 8:
             continue
         ranked.append(_result(row, root, score, coverage, matched))
     ranked.sort(key=lambda item: (-item["score"], -item["coverage"], item["path"]))
@@ -186,18 +212,19 @@ def _rank_index(
 def _result_files_match_index(results: list[dict[str, Any]], rows_by_path: dict[str, dict[str, Any]], root: Path) -> bool:
     """Validate only the files about to be returned; keep the fast path cheap."""
     for result in results:
-        path = root / result["path"]
         row = rows_by_path.get(result["path"], {})
-        if not path.is_file():
+        safe_path = _safe_index_path(root, result["path"])
+        if safe_path is None or not safe_path.is_file():
             return False
         expected = str(row.get("checksum") or "")
-        if expected:
-            try:
-                actual = hashlib.sha256(path.read_bytes()).hexdigest()
-            except OSError:
-                return False
-            if actual != expected:
-                return False
+        if not expected:
+            return False
+        try:
+            actual = hashlib.sha256(safe_path.read_bytes()).hexdigest()
+        except OSError:
+            return False
+        if actual != expected:
+            return False
     return True
 
 
@@ -206,7 +233,7 @@ def _search_roots(root: Path, project: str | None) -> list[Path]:
     if project and project not in GLOBAL_PROJECTS:
         projects_root = (root / "projects").resolve()
         project_root = (projects_root / project).resolve()
-        if project_root == projects_root or project_root.is_relative_to(projects_root):
+        if project_root != projects_root and project_root.is_relative_to(projects_root):
             roots.extend(project_root / lane for lane in CANONICAL_LANES)
     return [path for path in roots if path.is_dir()]
 
@@ -243,7 +270,14 @@ def _rg_candidates(root: Path, project: str | None, terms: list[str]) -> tuple[l
         else:
             if proc.returncode in {0, 1}:
                 paths = [Path(line) for line in proc.stdout.splitlines() if line.strip()]
-                return [p for p in paths[:1000] if _allowed_markdown(p, root)], "rg", []
+                allowed = [path for path in paths if _allowed_markdown(path, root)]
+                allowed.sort(
+                    key=lambda path: (
+                        -sum(term in str(path).lower() for term in terms),
+                        str(path),
+                    )
+                )
+                return allowed[:MAX_FALLBACK_CANDIDATES], "rg", []
             rg_reason = f"rg_failed: exit={proc.returncode}: {proc.stderr.strip()}"
     else:
         rg_reason = "rg_not_installed" if not rg else "query_has_no_terms"
@@ -256,7 +290,13 @@ def _rg_candidates(root: Path, project: str | None, terms: list[str]) -> tuple[l
                     candidates.append(path)
         except OSError:
             continue
-    return candidates[:1000], "python-scan", [rg_reason]
+    candidates.sort(
+        key=lambda path: (
+            -sum(term in str(path).lower() for term in terms),
+            str(path),
+        )
+    )
+    return candidates[:MAX_FALLBACK_CANDIDATES], "python-scan", [rg_reason]
 
 
 def _fallback_row(path: Path, root: Path) -> tuple[dict[str, Any], str]:
@@ -281,7 +321,7 @@ def _fallback_row(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         "id": str(rel.with_suffix("")).replace("/", "-"),
         "title": title,
         "project": project,
-        "type": lane.rstrip("s") or "memory",
+        "type": lane.removesuffix("s") or "memory",
         "status": "active",
         "tags": [],
     }, text
@@ -301,7 +341,9 @@ def _rank_fallback(
         if not _project_allowed(str(row["project"]), project):
             continue
         score, coverage, matched = _score_fields(row, terms, body)
-        if coverage < 0.5 or score < 6:
+        matched_count = round(coverage * len(terms))
+        required_matches = min(3, max(1, (len(terms) + 2) // 4))
+        if matched_count < required_matches or score < 6:
             continue
         ranked.append(_result(row, root, score, coverage, matched))
     ranked.sort(key=lambda item: (-item["score"], -item["coverage"], item["path"]))
@@ -323,7 +365,7 @@ def locate(
     terms = query_terms(query)
     index_path = root / INDEX_RELATIVE_PATH
     rows, reasons = _read_index(index_path)
-    index_fresh, freshness_reason = _index_is_fresh(root, index_path)
+    index_fresh, freshness_reason = _index_is_fresh(root, index_path, project)
     if freshness_reason:
         reasons.append(freshness_reason)
 
@@ -331,7 +373,10 @@ def locate(
     engine = "index-jsonl"
     if terms and rows and index_fresh:
         results = _rank_index(rows, root=root, terms=terms, project=project, limit=limit)
-        rows_by_path = {str(row.get("canonical_path") or ""): row for row in rows}
+        rows_by_path = {
+            str(row.get("canonical_path") or row.get("path") or ""): row
+            for row in rows
+        }
         if results and not _result_files_match_index(results, rows_by_path, root):
             results = []
             index_fresh = False
@@ -355,8 +400,9 @@ def locate(
         "results": results,
         "reasons": list(dict.fromkeys(reasons)),
         "telemetry_correlation_id": None,
+        "use_tracking": "caller emits memory-use after opening returned paths",
     }
-    if emit_telemetry:
+    if emit_telemetry and (telemetry_path is not None or root.exists()):
         try:
             import memory_telemetry
 
@@ -374,6 +420,8 @@ def locate(
             )
         except Exception as exc:  # noqa: BLE001 - locator must remain usable
             receipt["reasons"].append(f"telemetry_error: {exc}")
+    elif emit_telemetry:
+        receipt["reasons"].append("telemetry_skipped_memory_root_missing")
     return receipt
 
 

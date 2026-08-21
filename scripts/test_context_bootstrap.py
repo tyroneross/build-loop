@@ -928,7 +928,10 @@ class DeterministicLocatorIntegrationTests(unittest.TestCase):
             codex_root.mkdir()
             with mock.patch.dict(
                 os.environ,
-                {"BUILD_LOOP_MEMORY_STORE_ROOT": str(memory_root)},
+                {
+                    "BUILD_LOOP_MEMORY_STORE_ROOT": str(memory_root),
+                    "BUILD_LOOP_LESSONS_RETRIEVAL": "locator",
+                },
                 clear=False,
             ), mock.patch.object(cb, "locate_memory", return_value=receipt), \
                     mock.patch.object(
@@ -944,6 +947,129 @@ class DeterministicLocatorIntegrationTests(unittest.TestCase):
 
         self.assertEqual(packet["lessons_retrieval"], "locator")
         self.assertEqual(packet["lessons_progressive"][0]["source_path"], "/memory/lessons/hook.md")
+
+    def test_empty_query_uses_workdir_name_for_locator(self):
+        receipt = {
+            "query": "repo",
+            "project": "repo",
+            "engine": "none",
+            "index_fresh": False,
+            "latency_ms": 0.1,
+            "results": [],
+            "reasons": [],
+            "telemetry_correlation_id": None,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            workdir = root / "repo"
+            memory_root = root / "memory"
+            codex_root = root / "codex"
+            workdir.mkdir()
+            memory_root.mkdir()
+            codex_root.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "BUILD_LOOP_MEMORY_STORE_ROOT": str(memory_root),
+                    "BUILD_LOOP_LESSONS_RETRIEVAL": "locator",
+                },
+                clear=False,
+            ), mock.patch.object(cb, "locate_memory", return_value=receipt) as locate_mock:
+                cb.build_packet(workdir=workdir, query="", codex_memory_root=codex_root)
+
+        self.assertEqual(locate_mock.call_args.args[0], "repo")
+
+    def test_non_lesson_locator_hit_does_not_suppress_facade_lessons(self):
+        locator_receipt = {
+            "query": "architecture",
+            "project": "repo",
+            "engine": "index-jsonl",
+            "index_fresh": True,
+            "latency_ms": 1.0,
+            "results": [
+                {
+                    "path": "projects/repo/decisions/d.md",
+                    "absolute_path": "/memory/projects/repo/decisions/d.md",
+                    "id": "decision-d",
+                    "title": "Decision D",
+                    "project": "repo",
+                    "type": "decision",
+                    "score": 20,
+                }
+            ],
+            "reasons": [],
+            "telemetry_correlation_id": "mt-locator",
+        }
+
+        def recall(*, kind, **_kwargs):
+            row = {"id": "facade-lesson", "path": "/memory/lessons/facade.md", "_recency_ts": 1}
+            return {
+                "results_by_kind": {kind: [row] if kind == "lessons" else []},
+                "reasons": [],
+                "telemetry_correlation_id": None,
+            }
+
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(cb, "recall_memory", side_effect=recall), \
+                mock.patch.object(cb, "ensure_root_constitution", return_value=[]), \
+                mock.patch.object(cb, "canonical_memory_files", return_value=([], [])), \
+                mock.patch.object(cb, "memory_store_root", return_value=Path(td)):
+            result = cb.canonical_memory_context(
+                workdir=Path(td) / "repo",
+                query="architecture",
+                project="repo",
+                terms=["architecture"],
+                limit=5,
+                include_postgres=False,
+                include_debugger=False,
+                max_chars=1000,
+                locator=locator_receipt,
+            )
+
+        self.assertEqual(result["results_by_kind"]["lessons"][0]["id"], "facade-lesson")
+
+    def test_sqlite_lessons_retrieval_is_explicit_opt_in(self):
+        locator_receipt = {
+            "query": "repo",
+            "project": "repo",
+            "engine": "none",
+            "index_fresh": False,
+            "latency_ms": 0.1,
+            "results": [],
+            "reasons": [],
+            "telemetry_correlation_id": "mt-locator",
+        }
+        sqlite_lessons = [{"name": "sqlite lesson", "source_path": "/memory/sqlite.md"}]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            workdir = root / "repo"
+            memory_root = root / "memory"
+            codex_root = root / "codex"
+            workdir.mkdir()
+            memory_root.mkdir()
+            codex_root.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "BUILD_LOOP_MEMORY_STORE_ROOT": str(memory_root),
+                    "BUILD_LOOP_LESSONS_RETRIEVAL": "sqlite",
+                },
+                clear=False,
+            ), mock.patch.object(cb, "locate_memory", return_value=locator_receipt), \
+                    mock.patch.object(
+                        cb,
+                        "lessons_progressive_context",
+                        return_value=(sqlite_lessons, []),
+                    ) as sqlite_mock:
+                packet = cb.build_packet(
+                    workdir=workdir,
+                    query="repo",
+                    codex_memory_root=codex_root,
+                )
+
+        sqlite_mock.assert_called_once()
+        self.assertEqual(packet["lessons_retrieval"], "sqlite")
+        self.assertEqual(packet["lessons_progressive"], sqlite_lessons)
 
 
 if __name__ == "__main__":

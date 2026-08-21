@@ -51,6 +51,14 @@ from _paths import (  # type: ignore  # noqa: E402
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
 DEFAULT_LIMIT = 6
 DEFAULT_MAX_EXCERPT_CHARS = 1600
+LOCATOR_LESSON_TYPES = {
+    "improvement-proposal",
+    "lesson",
+    "lesson-topic",
+    "reference",
+    "research",
+    "research-report",
+}
 CONSTITUTION_TEMPLATE = HERE.parent / "templates" / "memory" / "constitution.md.template"
 # WP-C: the decision-quality doctrine reference, injected at Phase 1/2 so the
 # orchestrator's judgment rules are present when it decides — phase-gated
@@ -745,6 +753,7 @@ def canonical_memory_context(
     include_debugger: bool,
     max_chars: int,
     locator: dict[str, Any] | None = None,
+    use_locator_lessons: bool = True,
 ) -> dict[str, Any]:
     kinds = ["runs", "decisions", "lessons", "backlog"]
     if include_postgres:
@@ -763,7 +772,7 @@ def canonical_memory_context(
     if locator is None:
         try:
             locator = locate_memory(
-                query,
+                query or workdir.name,
                 project=project if project != "_unscoped" else None,
                 limit=limit,
                 memory_root=root,
@@ -783,7 +792,12 @@ def canonical_memory_context(
 
     try:
         for kind in kinds:
-            if kind == "lessons" and locator.get("results"):
+            locator_lessons = [
+                row
+                for row in (locator.get("results") or [])
+                if str(row.get("type") or "") in LOCATOR_LESSON_TYPES
+            ]
+            if kind == "lessons" and use_locator_lessons and locator_lessons:
                 kind_results = [
                     {
                         "_kind": "lessons",
@@ -798,7 +812,7 @@ def canonical_memory_context(
                         "path": row.get("absolute_path"),
                         "_relevance": row.get("score", 0),
                     }
-                    for row in locator["results"][:limit]
+                    for row in locator_lessons[:limit]
                 ]
                 results_by_kind[kind] = kind_results
                 merged.extend(kind_results)
@@ -1536,7 +1550,10 @@ def emit_read_telemetry(
         import memory_telemetry as _mt  # noqa: PLC0415
 
         locator = ((packet.get("sources") or {}).get("canonical_memory") or {}).get("locator") or {}
-        if locator.get("telemetry_correlation_id"):
+        if (
+            packet.get("lessons_retrieval") == "locator"
+            and locator.get("telemetry_correlation_id")
+        ):
             # The locator already emitted the read/returned-path receipt. Do not
             # duplicate it as a second context_bootstrap read row.
             return str(locator["telemetry_correlation_id"])
@@ -1603,9 +1620,20 @@ def build_packet(
         os.environ.get("CODEX_MEMORY_ROOT", str(DEFAULT_CODEX_MEMORY_ROOT))
     )
 
+    requested_lessons_retrieval = os.environ.get(
+        "BUILD_LOOP_LESSONS_RETRIEVAL", "locator"
+    ).strip().lower()
+    lessons_retrieval = requested_lessons_retrieval
+    invalid_retrieval_reason: str | None = None
+    if lessons_retrieval not in {"locator", "sqlite"}:
+        invalid_retrieval_reason = (
+            f"invalid_lessons_retrieval: {requested_lessons_retrieval!r}; using locator"
+        )
+        lessons_retrieval = "locator"
+
     try:
         locator = locate_memory(
-            query,
+            query or workdir.name,
             project=project if project != "_unscoped" else None,
             limit=max(limit, 5),
             memory_root=memory_store_root(),
@@ -1622,14 +1650,14 @@ def build_packet(
             "telemetry_correlation_id": None,
         }
 
-    lessons_retrieval = os.environ.get("BUILD_LOOP_LESSONS_RETRIEVAL", "locator").strip().lower()
     if lessons_retrieval == "sqlite":
         lessons, lesson_reasons = lessons_progressive_context(
             query=query, project=project, workdir=workdir, limit=5
         )
     else:
-        lessons_retrieval = "locator"
         lessons, lesson_reasons = locator_progressive_context(locator)
+    if invalid_retrieval_reason:
+        lesson_reasons.append(invalid_retrieval_reason)
 
     packet: dict[str, Any] = {
         "generated_at": utc_now(),
@@ -1665,6 +1693,7 @@ def build_packet(
                 include_debugger=include_debugger,
                 max_chars=max_excerpt_chars,
                 locator=locator,
+                use_locator_lessons=lessons_retrieval == "locator",
             ),
             "repo_local": repo_local_context(
                 workdir=workdir,

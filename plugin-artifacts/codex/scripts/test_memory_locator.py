@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the deterministic build-loop-memory file locator."""
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import memory_locator as locator
 
@@ -131,6 +136,45 @@ def test_empty_query_does_not_scan_corpus(tmp_path: Path) -> None:
     assert receipt["engine"] == "none"
     assert receipt["results"] == []
     assert "query_has_no_terms" in receipt["reasons"]
+
+
+def test_index_path_cannot_escape_memory_root(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-memory.md"
+    outside.write_text("# Secret outside file\nquantum banana telescope", encoding="utf-8")
+    malicious = {
+        "canonical_path": "../outside-memory.md",
+        "checksum": hashlib.sha256(outside.read_bytes()).hexdigest(),
+        "id": "outside",
+        "project": "_global",
+        "status": "active",
+        "tags": ["quantum", "banana", "telescope"],
+        "title": "Outside memory",
+        "type": "lesson",
+    }
+    _write_index(tmp_path, [malicious])
+
+    receipt = locator.locate(
+        "quantum banana telescope",
+        project="build-loop",
+        memory_root=tmp_path,
+        emit_telemetry=False,
+    )
+
+    assert receipt["results"] == []
+
+
+def test_read_only_lookup_does_not_create_missing_memory_root(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-memory"
+
+    receipt = locator.locate(
+        "hook timeout",
+        project="build-loop",
+        memory_root=missing,
+    )
+
+    assert not missing.exists()
+    assert receipt["telemetry_correlation_id"] is None
+    assert "telemetry_skipped_memory_root_missing" in receipt["reasons"]
 
 
 def test_cli_plain_output_is_fetchable_absolute_path(tmp_path: Path, capsys) -> None:

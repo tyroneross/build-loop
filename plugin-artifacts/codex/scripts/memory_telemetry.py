@@ -128,13 +128,15 @@ def _append_row(path: Path, row: dict[str, Any]) -> None:
     """
     try:
         line = (json.dumps(row, separators=(",", ":"), default=str) + "\n").encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
         with LockedFile(path, timeout_s=LOCK_TIMEOUT_S):
-            path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
             try:
                 remaining = memoryview(line)
                 while remaining:
                     written = os.write(fd, remaining)
+                    if written == 0:
+                        raise OSError("telemetry append wrote zero bytes")
                     remaining = remaining[written:]
             finally:
                 os.close(fd)

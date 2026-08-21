@@ -209,12 +209,25 @@ Edit the template that the install script seeded — the prefilled rules are rea
 # Check status
 python3 scripts/install_memory.py --check
 
+# Find canonical files without an LLM. The generated JSONL index is the fast
+# path; a stale, missing, or low-confidence index falls back to ripgrep.
+python3 scripts/memory_locator.py \
+  --query "hook exit 127 timeout" --project build-loop --limit 5 --json
+
 # Test memory recall (will exit 0 even if backends are down)
 python3 scripts/memory_facade.py recall --query "test" --limit 3
 
 # Backend health probe
 python3 scripts/backend_health.py
 ```
+
+Phase 1 uses the deterministic locator for lessons by default and returns file
+paths for the agent to fetch. Set `BUILD_LOOP_LESSONS_RETRIEVAL=sqlite` only
+when the SQLite/FTS lessons path is specifically needed. Retrieval telemetry
+records the engine, returned paths, latency, zero-result status, and source
+(`runtime`, `test`, `hook`, or `interactive`). Call
+`memory_telemetry.emit_use(...)` after a returned file is actually opened so
+"returned" and "used" remain distinct.
 
 If any of these fail, see `references/memory-systems.md` for the full backend topology and graceful-degradation contract.
 

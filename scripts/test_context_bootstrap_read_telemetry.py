@@ -87,3 +87,20 @@ def test_emit_read_telemetry_writes_to_indexes_path(tmp_path, monkeypatch):
     cb.emit_read_telemetry(packet, telemetry_path=tpath)
     reads = [r for r in mt.read_rows(tpath) if r.get("kind") == "memory-read"]
     assert len(reads) == 1
+
+
+def test_sqlite_mode_records_surfaced_lessons_not_locator_receipt(tmp_path):
+    tpath = tmp_path / "TELEMETRY.jsonl"
+    packet = _packet([{"source_path": "lessons/sqlite-result.md"}])
+    packet["lessons_retrieval"] = "sqlite"
+    packet["sources"] = {
+        "canonical_memory": {
+            "locator": {"telemetry_correlation_id": "mt-locator"}
+        }
+    }
+
+    cid = cb.emit_read_telemetry(packet, telemetry_path=tpath)
+
+    assert cid != "mt-locator"
+    reads = [row for row in mt.read_rows(tpath) if row.get("kind") == "memory-read"]
+    assert reads[0]["memory_ids_seen"] == ["lessons/sqlite-result.md"]
