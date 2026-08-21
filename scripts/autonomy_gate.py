@@ -65,6 +65,23 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     "production deploy*",
     "* deploy * --prod*",
     "gh release create*",
+    # Deploy commands whose shape carries NO literal `deploy` token. Measured
+    # 2026-08-21: `vercel --prod` — the canonical Vercel production deploy, and the
+    # one CLAUDE.md names explicitly as requiring confirmation — classified `auto`,
+    # as did `npx vercel --prod`, `fly deploy`, `wrangler deploy`, `eas submit`, and
+    # `railway up`. Five of ten real deploy shapes were ungated because
+    # `* deploy * --prod*` matches only commands containing the word "deploy".
+    #
+    # Widening a confirm list is the safe direction: it can add a prompt, never
+    # permit a deploy. The failure it prevents is the reverse — shipping to
+    # production with no operator in the loop.
+    "*vercel*--prod*",
+    "fly deploy*",
+    "flyctl deploy*",
+    "wrangler deploy*",
+    "wrangler pages deploy*",
+    "*eas submit*",
+    "railway up*",
     # Destructive DATA deletion. Archive (reversible) is auto; the purge confirms.
     "DROP TABLE*",
     "DROP DATABASE*",
