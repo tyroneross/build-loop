@@ -192,3 +192,57 @@ class CaptureTests(unittest.TestCase):
         # Without the capture flags, nothing is written.
         bmv.main(["--brief-file", str(brief), "--workdir", self.tmp])
         self.assertFalse((Path(self.tmp) / ".build-loop" / "briefs").exists())
+
+
+# --- EC-02 rca part 2: enforcement briefs must claim an activation path -------
+
+_SEVEN = (
+    "## Owns\nx\n## Does-not-own\ny\n## Interface-contract\nz\n"
+    "## Integration-checkpoint\nc\n## Allowed-tools\nRead\n## Denied-tools\nBash\n"
+    "## Acceptance-criteria\npasses\n"
+)
+
+
+def _brief(body: str) -> str:
+    return _SEVEN + "\n" + body
+
+
+def test_enforcement_brief_without_activation_warns():
+    """The defect: a peer is handed a gate and never told what fires it."""
+    out = bmv.validate_brief(_brief("Build a pre-commit gate that blocks staged secrets."))
+    assert any("activation path" in w for w in out["warnings"]), out
+
+
+def test_enforcement_brief_with_activation_claim_is_quiet():
+    """Mutation check the other way: if this warns too, the rule fires on every
+    enforcement brief and gets routed around."""
+    out = bmv.validate_brief(_brief(
+        "Build a pre-commit gate that blocks staged secrets.\n"
+        "- trigger: .git/hooks/pre-commit — verified-live: yes\n"))
+    assert not any("activation path" in w for w in out["warnings"]), out
+
+
+def test_non_enforcement_brief_is_quiet():
+    """A brief with no enforcement vocabulary must never trip this."""
+    out = bmv.validate_brief(_brief("Rename the parser module and update imports."))
+    assert not any("activation path" in w for w in out["warnings"]), out
+
+
+def test_warning_never_invalidates_the_brief():
+    """WARN, not BLOCK — `valid` stays governed by the seven MECE fields."""
+    out = bmv.validate_brief(_brief("Add a lint that enforces the schema."))
+    assert any("activation path" in w for w in out["warnings"])
+    assert out["valid"] is True, "activation warning must not fail a complete brief"
+
+
+def test_explicit_override_silences_it():
+    out = bmv.validate_brief(_brief(
+        "Add a lint that enforces the schema.\noverride: activation-claim-exempt\n"))
+    assert not any("activation path" in w for w in out["warnings"]), out
+
+
+def test_override_quoted_in_prose_does_not_silence_it():
+    """Anchored: mentioning the token must not disable the rule."""
+    out = bmv.validate_brief(_brief(
+        "Add a lint that enforces the schema. Do NOT use `override: activation-claim-exempt`."))
+    assert any("activation path" in w for w in out["warnings"]), out

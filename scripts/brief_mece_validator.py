@@ -68,6 +68,57 @@ MECE_FIELDS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
 )
 
 
+
+# ---------------------------------------------------------------------------
+# EC-02 rca part 2 (2026-06-13, landed 2026-08-21): a brief that hands a peer an
+# ENFORCEMENT mechanism must say how its activation is proven.
+#
+# plan_verify.py:rule_activation_map_required already enforces this for PLANS —
+# build-loop's recurring failure class is "machinery built, activation path never
+# verified", four live instances in one week. A handoff brief is the other door
+# into the same failure: the plan can be clean while the brief that dispatches the
+# work never mentions activation, so the peer builds a gate nothing fires.
+#
+# The vocabulary is deliberately COPIED from plan_verify rather than reinvented, so
+# the two surfaces cannot drift into disagreeing about what "enforcement" means.
+#
+# WARN, never a hard fail: `valid` stays governed by the seven MECE fields. The
+# original proposal specified WARNING, and a brief is authored under time pressure
+# mid-dispatch — a blocking check here would be routed around.
+_ENFORCEMENT_RE = re.compile(
+    r"\b(?:stop\s+hook|sessionstart|pretooluse|posttooluse|cron|launchd|watcher|"
+    r"git\s+hook|pre-commit|post-commit|webhook|hooks?\.json|"
+    r"(?:repo-level|lifecycle|codex|claude(?:\s+code)?|session|host)\s+hooks?|"
+    r"gate|guard|lint|linter|validator|enforce[sd]?|enforcement|blocker)\b",
+    re.IGNORECASE,
+)
+# An activation claim: naming the trigger, or declaring verified-live either way.
+_ACTIVATION_CLAIM_RE = re.compile(
+    r"\b(?:verified-live\s*:|trigger\s*:|activation\s*(?:map|path)?\s*:|"
+    r"fires\s+(?:on|at|when|for)|invoked\s+(?:by|from)|wired\s+(?:in|into|to))",
+    re.IGNORECASE,
+)
+# Anchored so quoting the token in prose cannot silence the check.
+_ACTIVATION_EXEMPT_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?override\s*:\s*activation-claim-exempt", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _enforcement_without_activation(text: str) -> str | None:
+    """WARN message when a brief describes enforcement but claims no activation."""
+    if _ACTIVATION_EXEMPT_RE.search(text):
+        return None
+    m = _ENFORCEMENT_RE.search(text)
+    if not m or _ACTIVATION_CLAIM_RE.search(text):
+        return None
+    return (
+        f"brief describes an enforcement mechanism ({m.group(0)!r}) but names no "
+        f"activation path — add `trigger:` and `verified-live: yes|pending`, or "
+        f"`override: activation-claim-exempt`. Machinery whose trigger is never "
+        f"stated is the failure class plan_verify's activation-map rule exists for."
+    )
+
+
 def validate_brief(brief: str) -> dict[str, Any]:
     """Return MECE validation for a handoff brief.
 
@@ -88,6 +139,9 @@ def validate_brief(brief: str) -> dict[str, Any]:
     warnings: list[str] = []
     if not text.strip():
         warnings.append("brief is empty")
+    activation_warning = _enforcement_without_activation(text)
+    if activation_warning:
+        warnings.append(activation_warning)
 
     return {
         "valid": not missing,
