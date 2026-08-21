@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "03ee3cd0d0cbf8eb054398691d9348c069a10fd41cc0fb0b1c371a6bdeaece2c"
+    "content_sha256": "03490061b3200311dd9c9f87272940cec91e20d528854f42b5ec65458046a180"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1446,7 +1446,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-20"
         }
       },
       "building-with-deepagents": {
@@ -1928,6 +1928,7 @@
       "scripts/memory_facade/semantic.py": "Backend 3: local SQLite semantic index, with optional Postgres fallback.\"\"\"",
       "scripts/memory_graph/__init__.py": "Portable graph adapter for build-loop-memory.",
       "scripts/memory_index.py": "Append-only log of build-loop-memory writes for cross-session discovery.",
+      "scripts/memory_locator.py": "Find a small set of canonical memory files without an LLM.",
       "scripts/memory_staleness_check.py": "",
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
       "scripts/memory_update_ledger.py": "Global append-only update ledger for build-loop memory.",

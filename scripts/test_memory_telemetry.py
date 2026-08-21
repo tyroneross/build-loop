@@ -3,8 +3,8 @@
 """Tests for scripts/memory_telemetry.py.
 
 Covers:
-    - schema_version is "1.0" on every row
-    - kind enum: memory-read | memory-write | memory-effect
+    - schema_version is "1.1" on every row
+    - kind enum: memory-read | memory-write | memory-effect | memory-use
     - effect enum: changed_plan | changed_routing | added_check |
                    informed_decision | ignored | stale
     - append-only behavior (rows are not rewritten)
@@ -18,11 +18,13 @@ Run:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -30,8 +32,8 @@ from scripts import memory_telemetry as mt  # noqa: E402
 
 
 class SchemaVersionTests(unittest.TestCase):
-    def test_module_constant_is_1_0(self):
-        self.assertEqual(mt.SCHEMA_VERSION, "1.0")
+    def test_module_constant_is_1_1(self):
+        self.assertEqual(mt.SCHEMA_VERSION, "1.1")
 
     def test_emit_read_row_has_schema_version(self):
         from tempfile import TemporaryDirectory
@@ -46,7 +48,7 @@ class SchemaVersionTests(unittest.TestCase):
             )
             rows = mt.read_rows(path)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["schema_version"], "1.0")
+            self.assertEqual(rows[0]["schema_version"], "1.1")
 
     def test_emit_write_row_has_schema_version(self):
         from tempfile import TemporaryDirectory
@@ -60,13 +62,13 @@ class SchemaVersionTests(unittest.TestCase):
                 telemetry_path=path,
             )
             rows = mt.read_rows(path)
-            self.assertEqual(rows[0]["schema_version"], "1.0")
+            self.assertEqual(rows[0]["schema_version"], "1.1")
 
 
 class KindEnumTests(unittest.TestCase):
     def test_known_kinds_exhaustive(self):
         self.assertEqual(
-            mt.VALID_KINDS, {"memory-read", "memory-write", "memory-effect"}
+            mt.VALID_KINDS, {"memory-read", "memory-write", "memory-effect", "memory-use"}
         )
 
     def test_read_kind(self):
@@ -153,6 +155,80 @@ class AppendOnlyTests(unittest.TestCase):
             # First line bytes must be preserved verbatim
             new_bytes = path.read_bytes()
             self.assertTrue(new_bytes.startswith(first_bytes))
+
+    def test_append_does_not_read_existing_file(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            path = Path(td) / "TELEMETRY.jsonl"
+            path.write_text('{"existing":true}\n', encoding="utf-8")
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("rewrite path")):
+                mt.emit_read(
+                    phase="p", reader="r", query="q",
+                    memory_ids_seen=["a"], telemetry_path=path,
+                )
+            self.assertEqual(len(mt.read_rows(path)), 2)
+
+
+class SourceSeparationTests(unittest.TestCase):
+    def test_explicit_test_source_uses_isolated_default_path(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            test_path = Path(td) / "test-telemetry.jsonl"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "BUILD_LOOP_TELEMETRY_SOURCE": "test",
+                    "BUILD_LOOP_TEST_TELEMETRY_PATH": str(test_path),
+                },
+                clear=False,
+            ):
+                mt.emit_read(
+                    phase="p", reader="r", query="q", memory_ids_seen=[]
+                )
+            rows = mt.read_rows(test_path)
+            self.assertEqual(rows[0]["source"], "test")
+            self.assertFalse(mt.DEFAULT_TELEMETRY_PATH == test_path)
+
+    def test_retrieval_fields_are_recorded(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            path = Path(td) / "TELEMETRY.jsonl"
+            mt.emit_read(
+                phase="1-assess",
+                reader="memory_locator",
+                query="hook timeout",
+                memory_ids_seen=["lesson-hook"],
+                telemetry_path=path,
+                source="interactive",
+                engine="index-jsonl",
+                returned_paths=["lessons/hook.md"],
+                latency_ms=3.5,
+                zero_result=False,
+            )
+            row = mt.read_rows(path)[0]
+            self.assertEqual(row["source"], "interactive")
+            self.assertEqual(row["engine"], "index-jsonl")
+            self.assertEqual(row["returned_paths"], ["lessons/hook.md"])
+            self.assertEqual(row["latency_ms"], 3.5)
+            self.assertFalse(row["zero_result"])
+
+    def test_use_event_records_files_actually_read(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            path = Path(td) / "TELEMETRY.jsonl"
+            mt.emit_use(
+                correlation_id="mt-receipt",
+                memory_ids_used=["lesson-hook"],
+                files_read=["lessons/hook.md"],
+                effect="added_check",
+                telemetry_path=path,
+                source="runtime",
+            )
+            row = mt.read_rows(path)[0]
+            self.assertEqual(row["kind"], "memory-use")
+            self.assertEqual(row["correlation_id"], "mt-receipt")
+            self.assertEqual(row["files_read"], ["lessons/hook.md"])
+            self.assertEqual(row["effect"], "added_check")
 
 
 class IndexNotTouchedTests(unittest.TestCase):

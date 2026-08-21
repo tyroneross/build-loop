@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -823,6 +824,126 @@ class TestBacklogDiscoverability(unittest.TestCase):
         }
         brief = cb.agent_brief(packet)
         self.assertIn("adopt --dry-run", brief)
+
+
+class DeterministicLocatorIntegrationTests(unittest.TestCase):
+    def test_canonical_context_surfaces_locator_receipt(self):
+        receipt = {
+            "query": "hook timeout",
+            "project": "build-loop",
+            "engine": "index-jsonl",
+            "index_fresh": True,
+            "latency_ms": 3.5,
+            "results": [
+                {
+                    "path": "projects/build-loop/lessons/hook.md",
+                    "title": "Hook hygiene",
+                }
+            ],
+            "reasons": [],
+            "telemetry_correlation_id": "mt-locator",
+        }
+        empty_envelope = {
+            "results_by_kind": {
+                "runs": [], "decisions": [], "lessons": [], "backlog": [],
+            },
+            "reasons": [],
+            "telemetry_correlation_id": None,
+        }
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(cb, "locate_memory", return_value=receipt), \
+                mock.patch.object(cb, "recall_memory", return_value=empty_envelope), \
+                mock.patch.object(cb, "ensure_root_constitution", return_value=[]), \
+                mock.patch.object(cb, "canonical_memory_files", return_value=([], [])), \
+                mock.patch.object(cb, "memory_store_root", return_value=Path(td)):
+            result = cb.canonical_memory_context(
+                workdir=Path(td),
+                query="hook timeout",
+                project="build-loop",
+                terms=["hook", "timeout"],
+                limit=5,
+                include_postgres=False,
+                include_debugger=False,
+                max_chars=1000,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["locator"], receipt)
+
+    def test_agent_brief_puts_fetchable_locator_paths_up_front(self):
+        packet = {
+            "project": "build-loop",
+            "workdir": "/repo",
+            "query": "hook timeout",
+            "sources": {
+                "canonical_memory": {
+                    "merged": [],
+                    "files": [],
+                    "reasons": [],
+                    "locator": {
+                        "engine": "index-jsonl",
+                        "latency_ms": 3.5,
+                        "results": [{"path": "lessons/hook.md", "title": "Hook hygiene"}],
+                    },
+                },
+                "repo_local": {},
+                "codex_memory": {},
+                "rally": {},
+            },
+        }
+
+        brief = cb.agent_brief(packet)
+
+        self.assertIn("Deterministic memory locator: 1 paths via index-jsonl", brief)
+        self.assertIn("lessons/hook.md", brief)
+
+    def test_build_packet_uses_locator_without_sqlite_by_default(self):
+        receipt = {
+            "query": "hook timeout",
+            "project": "repo",
+            "engine": "index-jsonl",
+            "index_fresh": True,
+            "latency_ms": 3.5,
+            "results": [
+                {
+                    "path": "lessons/hook.md",
+                    "absolute_path": "/memory/lessons/hook.md",
+                    "id": "hook",
+                    "title": "Hook hygiene",
+                    "project": "_global",
+                    "type": "lesson",
+                    "score": 20,
+                }
+            ],
+            "reasons": [],
+            "telemetry_correlation_id": "mt-locator",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            workdir = root / "repo"
+            memory_root = root / "memory"
+            codex_root = root / "codex"
+            workdir.mkdir()
+            memory_root.mkdir()
+            codex_root.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"BUILD_LOOP_MEMORY_STORE_ROOT": str(memory_root)},
+                clear=False,
+            ), mock.patch.object(cb, "locate_memory", return_value=receipt), \
+                    mock.patch.object(
+                        cb,
+                        "lessons_progressive_context",
+                        side_effect=AssertionError("SQLite retrieval should be opt-in"),
+                    ):
+                packet = cb.build_packet(
+                    workdir=workdir,
+                    query="hook timeout",
+                    codex_memory_root=codex_root,
+                )
+
+        self.assertEqual(packet["lessons_retrieval"], "locator")
+        self.assertEqual(packet["lessons_progressive"][0]["source_path"], "/memory/lessons/hook.md")
 
 
 if __name__ == "__main__":

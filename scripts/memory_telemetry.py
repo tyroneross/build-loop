@@ -45,8 +45,10 @@ Zero dependencies. Python 3.11+.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,22 +57,48 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from _paths import memory_indexes_dir  # type: ignore  # noqa: E402
-from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402
+from atomic_io import LockedFile  # type: ignore  # noqa: E402
 
 LOCK_TIMEOUT_S = 5
 
 
-def default_telemetry_path() -> Path:
+VALID_SOURCES = {"runtime", "test", "hook", "interactive", "background"}
+
+
+def telemetry_source(explicit: str | None = None) -> str:
+    """Classify the event stream without making every caller test-aware."""
+    source = explicit or os.environ.get("BUILD_LOOP_TELEMETRY_SOURCE")
+    if source in VALID_SOURCES:
+        return source
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return "test"
+    return "runtime"
+
+
+def default_telemetry_path(source: str | None = None) -> Path:
+    """Return a runtime or isolated test stream path.
+
+    Pytest sets ``PYTEST_CURRENT_TEST`` after module import, so callers must use
+    this function at emit time instead of relying only on the compatibility
+    constant below.
+    """
+    resolved_source = telemetry_source(source)
+    if resolved_source == "test":
+        override = os.environ.get("BUILD_LOOP_TEST_TELEMETRY_PATH")
+        if override:
+            return Path(override).expanduser()
+        return Path(tempfile.gettempdir()) / "build-loop-memory-telemetry-tests" / f"{os.getpid()}.jsonl"
     return memory_indexes_dir() / "TELEMETRY.jsonl"
 
 
-DEFAULT_TELEMETRY_PATH = default_telemetry_path()
-SCHEMA_VERSION = "1.0"
+DEFAULT_TELEMETRY_PATH = memory_indexes_dir() / "TELEMETRY.jsonl"
+SCHEMA_VERSION = "1.1"
 
 KIND_READ = "memory-read"
 KIND_WRITE = "memory-write"
 KIND_EFFECT = "memory-effect"
-VALID_KINDS = {KIND_READ, KIND_WRITE, KIND_EFFECT}
+KIND_USE = "memory-use"
+VALID_KINDS = {KIND_READ, KIND_WRITE, KIND_EFFECT, KIND_USE}
 
 VALID_EFFECTS = {
     "changed_plan",
@@ -91,17 +119,25 @@ def _correlation_id() -> str:
 
 
 def _append_row(path: Path, row: dict[str, Any]) -> None:
-    """Atomic append under sidecar lock. Fire-and-forget — swallows errors.
+    """Append one row under a sidecar lock. Fire-and-forget — swallows errors.
 
     Routes through atomic_io.LockedFile (timeout_s=LOCK_TIMEOUT_S). LockedFile
     raises TimeoutError on lock-acquisition timeout; the outer except swallows
     it + logs, preserving the best-effort give-up-rather-than-block contract.
+    A single ``O_APPEND`` write avoids the previous O(file-size) read + rewrite.
     """
     try:
         line = (json.dumps(row, separators=(",", ":"), default=str) + "\n").encode("utf-8")
         with LockedFile(path, timeout_s=LOCK_TIMEOUT_S):
-            existing = path.read_bytes() if path.exists() else b""
-            atomic_write_bytes(path, existing + line)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                remaining = memoryview(line)
+                while remaining:
+                    written = os.write(fd, remaining)
+                    remaining = remaining[written:]
+            finally:
+                os.close(fd)
     except Exception as exc:  # noqa: BLE001 — fire-and-forget by contract
         print(f"WARN: memory_telemetry append failed: {exc}", file=sys.stderr)
 
@@ -116,6 +152,11 @@ def emit_read(
     effect: str | None = None,
     reason: str = "",
     telemetry_path: Path | None = None,
+    source: str | None = None,
+    engine: str | None = None,
+    returned_paths: list[str] | None = None,
+    latency_ms: float | None = None,
+    zero_result: bool | None = None,
 ) -> str:
     """Emit a `memory-read` row. Returns a correlation_id for follow-up effect rows.
 
@@ -131,6 +172,7 @@ def emit_read(
         effect = "informed_decision"
 
     cid = _correlation_id()
+    resolved_source = telemetry_source(source)
     row: dict[str, Any] = {
         "ts": _iso_utc(),
         "kind": KIND_READ,
@@ -143,8 +185,13 @@ def emit_read(
         "memory_ids_used": list(memory_ids_used or []),
         "effect": effect,
         "reason": reason,
+        "source": resolved_source,
+        "engine": engine,
+        "returned_paths": list(returned_paths or []),
+        "latency_ms": latency_ms,
+        "zero_result": bool(zero_result) if zero_result is not None else not memory_ids_seen,
     }
-    _append_row(telemetry_path or DEFAULT_TELEMETRY_PATH, row)
+    _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
     return cid
 
 
@@ -156,6 +203,7 @@ def emit_write(
     why_durable: str,
     action: str = "write",
     telemetry_path: Path | None = None,
+    source: str | None = None,
 ) -> str:
     """Emit a `memory-write` row.
 
@@ -164,6 +212,7 @@ def emit_write(
     persisting this lesson (must be non-empty for the row to be useful).
     """
     cid = _correlation_id()
+    resolved_source = telemetry_source(source)
     row: dict[str, Any] = {
         "ts": _iso_utc(),
         "kind": KIND_WRITE,
@@ -174,8 +223,9 @@ def emit_write(
         "memory_id": memory_id,
         "action": action,
         "why_durable": why_durable,
+        "source": resolved_source,
     }
-    _append_row(telemetry_path or DEFAULT_TELEMETRY_PATH, row)
+    _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
     return cid
 
 
@@ -185,6 +235,7 @@ def emit_effect(
     effect: str,
     reason: str = "",
     telemetry_path: Path | None = None,
+    source: str | None = None,
 ) -> None:
     """Emit a follow-up `memory-effect` row joining back to an earlier read/write."""
     if effect not in VALID_EFFECTS:
@@ -193,6 +244,7 @@ def emit_effect(
             file=sys.stderr,
         )
         effect = "informed_decision"
+    resolved_source = telemetry_source(source)
     row: dict[str, Any] = {
         "ts": _iso_utc(),
         "kind": KIND_EFFECT,
@@ -200,13 +252,46 @@ def emit_effect(
         "correlation_id": correlation_id,
         "effect": effect,
         "reason": reason,
+        "source": resolved_source,
     }
-    _append_row(telemetry_path or DEFAULT_TELEMETRY_PATH, row)
+    _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
+
+
+def emit_use(
+    *,
+    correlation_id: str,
+    memory_ids_used: list[str],
+    files_read: list[str],
+    effect: str | None = None,
+    reason: str = "",
+    telemetry_path: Path | None = None,
+    source: str | None = None,
+) -> None:
+    """Record which returned paths a consumer actually opened or used."""
+    if effect is not None and effect not in VALID_EFFECTS:
+        print(
+            f"WARN: memory_telemetry invalid effect {effect!r}; coercing to 'informed_decision'",
+            file=sys.stderr,
+        )
+        effect = "informed_decision"
+    resolved_source = telemetry_source(source)
+    row: dict[str, Any] = {
+        "ts": _iso_utc(),
+        "kind": KIND_USE,
+        "schema_version": SCHEMA_VERSION,
+        "correlation_id": correlation_id,
+        "memory_ids_used": list(memory_ids_used),
+        "files_read": list(files_read),
+        "effect": effect,
+        "reason": reason,
+        "source": resolved_source,
+    }
+    _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
 
 
 def read_rows(path: Path | None = None) -> list[dict[str, Any]]:
     """Read all telemetry rows. Used by tests + Phase 6 Learn aggregation."""
-    p = path or DEFAULT_TELEMETRY_PATH
+    p = path or default_telemetry_path()
     if not p.exists():
         return []
     out: list[dict[str, Any]] = []

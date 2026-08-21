@@ -35,6 +35,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from memory_facade import recall as recall_memory  # type: ignore  # noqa: E402
+from memory_locator import locate as locate_memory  # type: ignore  # noqa: E402
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 from load_current import load_current, WorkingContextEnvelope  # type: ignore  # noqa: E402
 from _paths import (  # type: ignore  # noqa: E402
@@ -523,6 +524,28 @@ def lessons_progressive_context(
     return results, reasons
 
 
+def locator_progressive_context(locator: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Adapt locator paths to the existing compact lessons packet shape.
+
+    The default Phase-1 path only needs to tell the agent which canonical file
+    to fetch. It deliberately does not ingest SQLite, start an embedding
+    backend, or read every candidate file.
+    """
+    results = [
+        {
+            "name": item.get("title") or Path(str(item.get("path") or "")).stem,
+            "description": f"{item.get('type') or 'memory'} path; fetch the file for content",
+            "snippet": "",
+            "score": item.get("score", 0),
+            "source_path": item.get("absolute_path") or item.get("path") or "",
+        }
+        for item in (locator.get("results") or [])
+    ]
+    # Locator reasons already live under sources.canonical_memory.locator and
+    # canonical_memory.reasons; returning them here would duplicate warnings.
+    return results, []
+
+
 def read_session_prefs(workdir: Path) -> dict[str, Any]:
     """Read session_prefs from state.json and config.json (config overrides).
 
@@ -721,6 +744,7 @@ def canonical_memory_context(
     include_postgres: bool,
     include_debugger: bool,
     max_chars: int,
+    locator: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     kinds = ["runs", "decisions", "lessons", "backlog"]
     if include_postgres:
@@ -736,8 +760,49 @@ def canonical_memory_context(
     root = memory_store_root()
     reasons.extend(ensure_root_constitution(root))
 
+    if locator is None:
+        try:
+            locator = locate_memory(
+                query,
+                project=project if project != "_unscoped" else None,
+                limit=limit,
+                memory_root=root,
+            )
+        except Exception as exc:  # noqa: BLE001 - bootstrap must not block Assess
+            locator = {
+                "query": query,
+                "project": project,
+                "engine": "unavailable",
+                "index_fresh": False,
+                "latency_ms": 0.0,
+                "results": [],
+                "reasons": [f"memory_locator_error: {exc}"],
+                "telemetry_correlation_id": None,
+            }
+    reasons.extend(locator.get("reasons") or [])
+
     try:
         for kind in kinds:
+            if kind == "lessons" and locator.get("results"):
+                kind_results = [
+                    {
+                        "_kind": "lessons",
+                        "_scope": "global"
+                        if row.get("project") in {"", "_global", "_unscoped", "global"}
+                        else "project",
+                        "_recency_ts": 0,
+                        "id": row.get("id"),
+                        "name": Path(str(row.get("path") or "")).name,
+                        "title": row.get("title"),
+                        "metadata_type": row.get("type"),
+                        "path": row.get("absolute_path"),
+                        "_relevance": row.get("score", 0),
+                    }
+                    for row in locator["results"][:limit]
+                ]
+                results_by_kind[kind] = kind_results
+                merged.extend(kind_results)
+                continue
             stderr_buf = io.StringIO()
             with contextlib.redirect_stderr(stderr_buf):
                 envelope = recall_memory(
@@ -765,6 +830,7 @@ def canonical_memory_context(
     except Exception as exc:  # noqa: BLE001 - bootstrap must not block Assess
         return {
             "ok": False,
+            "locator": locator,
             "results_by_kind": {},
             "merged": [],
             "reasons": [f"canonical_memory_error: {exc}"],
@@ -783,6 +849,7 @@ def canonical_memory_context(
     reasons.extend(file_reasons)
     return {
         "ok": True,
+        "locator": locator,
         "files": canonical_files,
         "results_by_kind": results_by_kind,
         "merged": merged[: limit * len(kinds)],
@@ -1284,6 +1351,16 @@ def agent_brief(packet: dict[str, Any]) -> str:
         f"- Rally/coordination: {'checked' if rally.get('checked') else 'skipped'}; reasons={rally.get('reasons') or []}",
     ]
 
+    locator = canonical.get("locator") or {}
+    locator_results = locator.get("results") or []
+    if locator_results:
+        lines.append(
+            f"- Deterministic memory locator: {len(locator_results)} paths via "
+            f"{locator.get('engine')} in {locator.get('latency_ms')} ms."
+        )
+        for result in locator_results[:3]:
+            lines.append(f"  - {result.get('path')} — {result.get('title')}")
+
     staleness = packet.get("staleness") or {}
     if staleness.get("memory") or staleness.get("context"):
         lines.append(
@@ -1458,6 +1535,12 @@ def emit_read_telemetry(
     try:
         import memory_telemetry as _mt  # noqa: PLC0415
 
+        locator = ((packet.get("sources") or {}).get("canonical_memory") or {}).get("locator") or {}
+        if locator.get("telemetry_correlation_id"):
+            # The locator already emitted the read/returned-path receipt. Do not
+            # duplicate it as a second context_bootstrap read row.
+            return str(locator["telemetry_correlation_id"])
+
         ids: list[str] = []
         for lesson in packet.get("lessons_progressive") or []:
             if not isinstance(lesson, dict):
@@ -1520,9 +1603,33 @@ def build_packet(
         os.environ.get("CODEX_MEMORY_ROOT", str(DEFAULT_CODEX_MEMORY_ROOT))
     )
 
-    lessons, lesson_reasons = lessons_progressive_context(
-        query=query, project=project, workdir=workdir, limit=5
-    )
+    try:
+        locator = locate_memory(
+            query,
+            project=project if project != "_unscoped" else None,
+            limit=max(limit, 5),
+            memory_root=memory_store_root(),
+        )
+    except Exception as exc:  # noqa: BLE001 - bootstrap remains fail-soft
+        locator = {
+            "query": query,
+            "project": project,
+            "engine": "unavailable",
+            "index_fresh": False,
+            "latency_ms": 0.0,
+            "results": [],
+            "reasons": [f"memory_locator_error: {exc}"],
+            "telemetry_correlation_id": None,
+        }
+
+    lessons_retrieval = os.environ.get("BUILD_LOOP_LESSONS_RETRIEVAL", "locator").strip().lower()
+    if lessons_retrieval == "sqlite":
+        lessons, lesson_reasons = lessons_progressive_context(
+            query=query, project=project, workdir=workdir, limit=5
+        )
+    else:
+        lessons_retrieval = "locator"
+        lessons, lesson_reasons = locator_progressive_context(locator)
 
     packet: dict[str, Any] = {
         "generated_at": utc_now(),
@@ -1537,6 +1644,7 @@ def build_packet(
         "backlog": backlog_summary(workdir),
         "backlog_discoverability": backlog_discoverability(workdir),
         "lessons_progressive": lessons,
+        "lessons_retrieval": lessons_retrieval,
         "prior_art": prior_art_context(
             workdir=workdir,
             query=query,
@@ -1556,6 +1664,7 @@ def build_packet(
                 include_postgres=include_postgres,
                 include_debugger=include_debugger,
                 max_chars=max_excerpt_chars,
+                locator=locator,
             ),
             "repo_local": repo_local_context(
                 workdir=workdir,
