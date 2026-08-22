@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9d0efab65267e4fdc108cf6523ae79b6f7a2b332fee68de35d4d70dd7914a4d7"
+    "content_sha256": "9ef89b89381571d6369bb2a2e928c24348d144b1224ed79646375d914681a08f"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1538,7 +1538,7 @@
         }
       },
       "ibr-bridge": {
-        "description": "Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).",
+        "description": "Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Use when a build changes, compares, or audits a rendered UI and that change needs visual evidence before it can close. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).",
         "file": "skills/ibr-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1931,6 +1931,7 @@
       "scripts/memory_graph/__init__.py": "Portable graph adapter for build-loop-memory.",
       "scripts/memory_index.py": "Append-only log of build-loop-memory writes for cross-session discovery.",
       "scripts/memory_locator.py": "Find a small set of canonical memory files without an LLM.",
+      "scripts/memory_receipt_report.py": "memory_receipt_report.py — is the memory receipt safe to enforce yet?",
       "scripts/memory_staleness_check.py": "",
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
       "scripts/memory_update_ledger.py": "Global append-only update ledger for build-loop memory.",
@@ -2101,6 +2102,7 @@
       "scripts/temporal_membership.py": "temporal_membership.py — gate attaching an external record to a run by time + host overlap.",
       "scripts/token_efficiency_benchmark.py": "Compare exact-repeat Build Loop runs using measured tokens and quality outcomes.\"\"\"",
       "scripts/transcript-pattern-miner.py": "transcript-pattern-miner.py — thin shim; implementation lives in transcript_pattern_miner/.",
+      "scripts/transcript_adapter.py": "transcript_adapter.py — one transcript shape for every host.",
       "scripts/transcript_pattern_miner/__init__.py": "transcript_pattern_miner — folder-per-capability package.",
       "scripts/transcript_pattern_miner/__main__.py": "transcript_pattern_miner.__main__ — CLI entry point.",
       "scripts/transcript_pattern_miner/accuracy/__init__.py": "accuracy — precision/recall harness for the 5 transcript-pattern-miner detectors.\"\"\"",
