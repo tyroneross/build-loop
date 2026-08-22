@@ -564,6 +564,200 @@ _STDLIB = frozenset({"os", "sys", "re", "json", "datetime", "pathlib", "subproce
                      "logging", "sqlite3"})
 
 
+# --- Memory receipt (learn/memory-receipt-at-commit) --------------------------
+# A change that alters an API, a prompt, architecture, or data shape is exactly
+# the change a later session must be able to recall. Nothing enforced that: the
+# memory read (context_bootstrap) is invoked only from skill/AGENTS.md prose on
+# BOTH hosts, and every memory hook is fail-open by design. Measured cost of
+# leaving it advisory: 27 retrospectives orphaned outside the store, 0 of 40,860
+# recall events ever recording that a memory was used, and 2 of ~75 project
+# lanes holding any architecture entry.
+#
+# The commit is the one action both Claude and Codex must take, and this hook
+# already fires there — so the receipt is checked here rather than in a
+# host-specific session hook.
+#
+# WARN-ONLY BY DEFAULT. A noisy gate is worse than no gate, so this reports in
+# the packet until its false-positive rate has been measured on real commits.
+# Opt in to hard-blocking exactly like the risk gate: BUILDLOOP_ENFORCE_MEMORY=1
+# or sessionPrefs.enforceMemoryReceipt.
+
+# Trigger calibration (measured over 112 real commits in this repo):
+#   broad substring match ("schema", "contract", "prompt", "/agents/") ... 59% of commits
+#   + generated artifacts included ............................................ 51-62%
+#   authored knowledge only, derived + tests excluded ......................... 24%
+# The first two fire so often they train the reader to ignore the packet, which
+# is worse than no gate. The 24% rule fires only on files that ARE the durable
+# knowledge -- an agent definition, a skill contract, AGENTS.md, a data-shape
+# contract. Blast radius is deliberately NOT a trigger: a 57-file refactor that
+# teaches nothing needs no memory entry.
+MEMORY_GENERATED_PREFIXES = (
+    "architecture/ARCHITECTURE.md",
+    "architecture/model.json",
+    "docs/build-loop-flow-mockup.html",
+    "plugin-artifacts/",
+)
+MEMORY_KNOWLEDGE_RE = re.compile(
+    r"(AGENTS\.md$|/SKILL\.md$|^agents/|^\.agents/|^architecture/|/migrations/"
+    r"|openapi|\.proto$|schema\.(sql|prisma|graphql)$)"
+)
+
+
+def _enforce_memory_receipt_enabled(root: Path) -> bool:
+    """Opt-in gate for the memory hard-block. DEFAULT OFF on both paths."""
+    if os.environ.get("BUILDLOOP_ENFORCE_MEMORY") == "1":
+        return True
+    config_path = root / ".build-loop" / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            if (cfg.get("sessionPrefs") or {}).get("enforceMemoryReceipt") is True:
+                return True
+        except (ValueError, OSError):
+            pass
+    return False
+
+
+def _head_commit_epoch(root: Path) -> float:
+    """Start of the window that counts as 'during this work'.
+
+    Everything since the last commit on this branch is the work being committed
+    now, so evidence newer than HEAD is evidence from this unit of work. This
+    needs no session-id plumbing and behaves identically under both hosts.
+    """
+    raw = _run(["git", "log", "-1", "--format=%ct"], cwd=root).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def _is_generated(path: str) -> bool:
+    return any(path == g or path.startswith(g) for g in MEMORY_GENERATED_PREFIXES)
+
+
+def _is_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return "/test" in path or name.startswith("test_") or name.endswith("_test.py")
+
+
+def _memory_lane_hits(files: list[str]) -> list[str]:
+    """Files that ARE durable knowledge, not files that merely mention it."""
+    return [
+        f
+        for f in files
+        if not _is_generated(f) and not _is_test_path(f) and MEMORY_KNOWLEDGE_RE.search(f)
+    ]
+
+
+def _telemetry_since(kind: str, since_epoch: float) -> tuple[bool, str]:
+    """True when a telemetry row of `kind` was written after `since_epoch`.
+
+    Fail-open: an unreadable or absent telemetry file yields (False, reason) and
+    never raises into the commit path.
+    """
+    try:
+        from _paths import memory_indexes_dir  # type: ignore
+
+        path = memory_indexes_dir() / "TELEMETRY.jsonl"
+    except Exception:
+        return False, "telemetry path unresolvable"
+    if not path.is_file():
+        return False, "no telemetry file"
+    try:
+        # Read the tail only; this file reaches tens of thousands of rows.
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 200_000))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return False, "telemetry unreadable"
+    newest = ""
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line or kind not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("kind") != kind:
+            continue
+        ts = str(row.get("ts") or "")
+        try:
+            epoch = _dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=_dt.timezone.utc
+            ).timestamp()
+        except ValueError:
+            continue
+        if epoch >= since_epoch:
+            newest = ts
+    return bool(newest), (f"{kind} at {newest}" if newest else f"no {kind} since HEAD")
+
+
+def _memory_receipt(root: Path, files: list[str], risk: dict) -> dict:
+    """Did this unit of work consult memory, and record what it learned?"""
+    lane_hits = _memory_lane_hits(files)
+    reasons: list[str] = []
+    if lane_hits:
+        reasons.append(
+            f"touches durable-knowledge surface ({len(lane_hits)} file(s)): "
+            + ", ".join(lane_hits[:6])
+        )
+    required = bool(reasons)
+
+    since = _head_commit_epoch(root)
+    read_found, read_ev = _telemetry_since("memory-read", since)
+    if not read_found:
+        packet = root / ".build-loop" / "context-bootstrap.json"
+        try:
+            if packet.is_file() and packet.stat().st_mtime >= since:
+                read_found, read_ev = True, "context-bootstrap.json refreshed since HEAD"
+        except OSError:
+            pass
+    write_found, write_ev = _telemetry_since("memory-write", since)
+
+    return {
+        "required": required,
+        "reasons": reasons,
+        "read": {"found": read_found, "evidence": read_ev},
+        "write": {"found": write_found, "evidence": write_ev},
+        "satisfied": (not required) or (read_found and write_found),
+        "lane_hits": lane_hits,
+    }
+
+
+def _memory_receipt_section(receipt: dict) -> str:
+    if not receipt["required"]:
+        return (
+            "### Memory receipt\n"
+            "- not required — diff touches no durable-knowledge surface\n"
+        )
+    lines = ["### Memory receipt", f"- required: **yes** — {'; '.join(receipt['reasons'])}"]
+    for label in ("read", "write"):
+        mark = "ok" if receipt[label]["found"] else "MISSING"
+        lines.append(f"- {label}: **{mark}** ({receipt[label]['evidence']})")
+    if not receipt["satisfied"]:
+        lines += [
+            "",
+            "This change alters something a later session will need to recall, and no "
+            "memory activity is recorded for it. Before committing:",
+            "",
+            "```bash",
+            "# read what is already known (any host, searches every project)",
+            "python3 scripts/memory_locator.py --query '<topic>' --all-projects --json",
+            "# record what this change establishes",
+            "python3 scripts/memory_writer.py write --type <decision|architecture|api-contract> \\",
+            "  --title '<one line>' --body-file <path>",
+            "```",
+            "",
+            "_WARN-ONLY: this does not block the commit. Set "
+            "`BUILDLOOP_ENFORCE_MEMORY=1` once its false-positive rate is measured._",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 def _extract_packages(diff_body: str) -> list[str]:
     pkgs: set[str] = set()
     for pat in _PKG_PATTERNS:
@@ -853,6 +1047,11 @@ def _emit_packet(root: Path) -> int:
     # the packet, the recorded runs[] entry, and the opt-in hard block below
     # all see the same verdict.
     risk = _classify_risk(files, diff_body)
+    memory_receipt = _memory_receipt(root, files, risk)
+    enforce_memory = _enforce_memory_receipt_enabled(root)
+    memory_blocked = (
+        enforce_memory and memory_receipt["required"] and not memory_receipt["satisfied"]
+    )
     enforce_risk_audit = _enforce_risk_audit_enabled(root)
     risk_blocked = False
     risk_block_reason = ""
@@ -890,6 +1089,11 @@ def _emit_packet(root: Path) -> int:
     if blocked:
         out(f"### DETERMINISTIC BLOCK\n{reason}\n\n")
 
+    if memory_blocked:
+        out("### MEMORY RECEIPT BLOCK\n")
+        out("This diff changes durable knowledge but no memory read/write is recorded "
+            "for it. Read the store, write what changed, then commit.\n\n")
+
     if risk_blocked:
         out(f"### RISK GATE BLOCK\n{risk_block_reason}\n\n")
         out("Risky files:\n")
@@ -913,6 +1117,9 @@ def _emit_packet(root: Path) -> int:
     else:
         out("- reasons: _(none)_\n")
     out(f"- enforceRiskAudit: {enforce_risk_audit}\n\n")
+
+    out(_memory_receipt_section(memory_receipt))
+    out("\n")
 
     out("### Staged diff\n")
     out("```\n")
@@ -979,6 +1186,8 @@ def _emit_packet(root: Path) -> int:
         status = "deterministic_block"
     elif risk_blocked:
         status = "risk_block"
+    elif memory_blocked:
+        status = "memory_receipt_block"
     else:
         status = "packet_emitted"
     _record_runs_judge_entry(
@@ -1011,7 +1220,7 @@ def _emit_packet(root: Path) -> int:
         "a green gate with a thin oracle is false confidence (arXiv:2606.09863); recording coverage makes it visible. The flag is optional and never blocks.\n\n")
     out("This audit packet is independent of any orchestrator dispatch. The hook fires at the git-commit boundary on every commit.\n\n")
 
-    return 2 if (blocked or risk_blocked) else 0
+    return 2 if (blocked or risk_blocked or memory_blocked) else 0
 
 
 # ---------------------------------------------------------------------------
