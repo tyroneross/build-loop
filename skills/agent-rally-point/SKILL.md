@@ -58,6 +58,14 @@ surfaced on Rally Point records as top-level `build_loop_id` and
   adapter named in `plugin_boundary.json`.
 - Use stable tool ids: `claude_code`, `codex`, `cursor`, `gemini`, or another
   lowercase id agreed by the adapter.
+- When the work produces a handoff or retrospective **document**, post its
+  **absolute** path (`rally say handoff ... --evidence "file:/abs/path"`) and
+  state that same path in the terminal reply. A receiver runs in a different
+  working directory, so a relative path resolves to nothing or to the wrong
+  file, and a retrospective written to the memory store is unreachable from the
+  repo unless its path is said out loud. Post first, then go on writing; the
+  post needs no reading and nothing should delay it. The common failure is not
+  a thin handoff, it is a thorough one nobody located.
 
 ## Commands
 

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "048b1a9f1c39d5f06a9bc9ee8ab1e5a93e44c35f00fd91682d0f7a575d5288fc"
+    "content_sha256": "202e4113578606f68adf3c80593033ee4d2e78ace643264d7ee2b06452305549"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-19"
+          "date": "2026-08-22"
         }
       },
       "database-assessor": {
@@ -914,7 +914,7 @@
         "file": "agents/design-contract-specialist.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-22"
         }
       },
       "fact-checker": {
@@ -1103,7 +1103,7 @@
         "file": "agents/ui-validator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-08-22"
         }
       }
     },
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-20"
+          "date": "2026-08-22"
         }
       },
       "building-with-deepagents": {
@@ -1313,7 +1313,7 @@
         "file": "skills/ibr-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-22"
         }
       },
       "knowledge": {
@@ -1393,7 +1393,7 @@
         "file": "skills/plugin-tests/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-08-22"
         }
       },
       "prd-bridge": {
@@ -1513,7 +1513,7 @@
         "file": "skills/ui-design/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-22"
         }
       }
     },

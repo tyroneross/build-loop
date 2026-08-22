@@ -137,6 +137,36 @@ head-40 would have emitted 40 `.bookmark/` cache paths and cut every source edit
 
 `--full-git` restores the raw per-file listing when it is genuinely wanted.
 
+## Delivery is not the same as writing it
+
+A handoff that exists only on disk has not been handed off. Two things are required
+every time, and neither is optional because the file was committed.
+
+**1. State the absolute path in the reply.** Not "handoff written", not a repo-relative
+path. The person picking this up is in a different terminal, often a different repo, and
+frequently is not a person. Print the full path:
+
+```
+/Users/<user>/dev/git-folder/<repo>/HANDOFF.md
+```
+
+**2. Post it to Rally Point.** A handoff invisible to the coordination substrate cannot be
+picked up by a peer agent, which is the case it most exists for.
+
+```bash
+rally say fact --tool "<your-tool-id>" \
+  --subject "handoff: <one line, what state the work is in>" \
+  --evidence "file:<absolute path>" --json
+```
+
+The same applies to a retrospective. Those land in the memory store rather than the repo,
+so they are unfindable from the working directory unless the path is stated.
+
+**Why this is a rule and not a preference.** The seven content classes below exist so a
+cold reader can resume without the author. All of that work is wasted if the reader cannot
+locate the document. The most common failure is not a thin handoff; it is a good handoff
+nobody found.
+
 ## Usage — no flag (emit doc)
 
 ```bash
