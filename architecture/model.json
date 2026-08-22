@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "202e4113578606f68adf3c80593033ee4d2e78ace643264d7ee2b06452305549"
+    "content_sha256": "774b4942e3fedf8f10f45ff87106f58edf23e511e8662b4cda148540891ff2fb"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1113,7 +1113,7 @@
         "file": "skills/agent-rally-point/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-07"
+          "date": "2026-08-22"
         }
       },
       "agent-rally-watcher": {
@@ -1305,7 +1305,7 @@
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-07"
+          "date": "2026-08-22"
         }
       },
       "ibr-bridge": {
