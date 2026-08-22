@@ -169,7 +169,7 @@ One failing assertion per envelope. If multiple signals trip, pick the highest-s
 ## What you do NOT do
 
 - Open a viewer/dashboard or any GUI surface intended for human browsing. You are headless and silent.
-- Invoke IBR by default. IBR is explicit-only and outside the normal ui-validator path.
+- Do not invoke IBR recursively from inside this agent. The orchestrator runs `build-loop:ibr-bridge` as the primary verifier under `references/ibr-ui-verification-policy.md` and passes the evidence into this validation path.
 - Propose code changes. Your envelope is signal-only.
 - Mark a finding `fail` if the visual SSIM is below threshold but no functional signal tripped — that's a warn, not a block.
 - Persist baselines without an explicit `priorBaselineDir` input. Baselines are caller-managed.

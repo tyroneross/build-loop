@@ -434,7 +434,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `../ui-design/references/ui-guidance-sources.md` — Source map for local UI guidance across build-loop, UI Guidance, IBR, Mockup Gallery, document/deck plugins, research, vault, project-local hidden folders, and build-loop-memory.
 - `references/refactor-history/` — Internal assessment of the 2026-04 refactor. `ASSESSMENT.md` explains rationale, `trace-comparison.md` shows before/after flow, `STANDALONE_TEST_RUN.md` validates the model, `scenarios/01..06` contain 6 test scenarios.
 - `eval-guide.md` — How to interpret build-loop scorecards.
-- `fallbacks.md` — Degraded-but-useful behavior when bridge plugins or rendered UI tooling are absent. IBR remains explicit-only through `build-loop:ibr-bridge`.
+- `fallbacks.md` — Degraded-but-useful behavior when bridge plugins or rendered UI tooling are absent. Headless IBR verification follows `../../references/ibr-ui-verification-policy.md`; viewer surfaces remain explicit-only.
 - `phases/fact-check.md` — Detailed fact-check sub-step specification.
 
 Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>")`):

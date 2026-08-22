@@ -79,7 +79,7 @@ For Validate failures (no queue entry), construct an inline plan in the same sha
 
 ## UI re-validate hook
 
-After each implementer subagent reports back AND before re-entering Sub-step B, run the build-loop-owned UI re-validate path for affected route(s): `ui-validator` for web when a route is known, native AX driver for macOS, or simulator screenshot/interaction commands for iOS. If no renderable route can be resolved, record the gap in the iterate brief and fall back to the static design-rule scanner. IBR is not invoked unless the user explicitly requested it for this build.
+After each implementer subagent reports back AND before re-entering Sub-step B, follow `ibr-ui-verification-policy.md`: invoke headless IBR for affected renderable UI surfaces when installed, then run `ui-validator` in parallel for web. Use native AX or simulator/browser evidence as the platform fallback. If no renderable route can be resolved, record the gap and fall back to the static design-rule scanner.
 
 Loop back to Review sub-step B (Validate). Sub-step A usually skipped on re-runs.
 

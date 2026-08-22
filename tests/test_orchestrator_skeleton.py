@@ -110,7 +110,7 @@ def test_capability_registry_wired() -> None:
 
 def test_build_loop_ui_route_present() -> None:
     """The orchestrator should route UI work through build-loop-owned design
-    and validation surfaces, not the retired IBR-first path."""
+    direction and automatic IBR visual verification when renderable."""
     text = _read()
     assert "build-loop:ui-design" in text
     assert "design-contract-specialist" in text
@@ -118,7 +118,8 @@ def test_build_loop_ui_route_present() -> None:
     assert "recent_design_structures_path" in text
     assert "ui_design_source_map_path" in text
     assert "ui-validator" in text
-    assert "do not route to IBR" in text
+    assert "ibr-ui-verification-policy.md" in text
+    assert "IBR" in text
 
 
 def test_deployment_policy_block_present() -> None:

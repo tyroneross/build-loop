@@ -62,4 +62,4 @@ Skip the dispatch entirely when:
 
 ## Render-path fallback
 
-If no browser/simulator/native-AX render path is available, `ui-validator` returns `skipped` with the reason and the orchestrator records the evidence gap. Review-D then falls back to `audit-design-rules.mjs` plus the static checks in `skills/build-loop/fallbacks.md#web-ui`. IBR is not an automatic fallback; run `build-loop:ibr-bridge` only when the user explicitly asks for IBR / Interface Built Right / `.ibr-test.json`.
+For every renderable UI design update, comparison, or audit, follow `ibr-ui-verification-policy.md`: IBR is primary when installed. If IBR or the platform render path is unavailable, `ui-validator` returns `skipped` with the reason and the orchestrator records the evidence gap. Review-D then falls back to `audit-design-rules.mjs` plus `skills/build-loop/fallbacks.md#web-ui`.

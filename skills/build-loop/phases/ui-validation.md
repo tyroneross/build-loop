@@ -21,7 +21,7 @@ When `uiTarget != null`, the UI gates wire in automatically:
 1. **Phase 1 (Assess)** — mockup pre-flight scan + required UI scoring criteria
 2. **Phase 2 (Plan)** — UI input/output contract section from `references/ui-io-contract.md`, then mockup-gallery hook for major UI work (new page or ≥40% redesign): draft B&W mockups via `mockup-gallery:mockup-session-new` before any UI is written. The exception to build-loop's "actions/functions only, no plugin UI" policy — mockup drafting is itself the action.
 3. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch, including the plan's UI input/output contract
-4. **Phase 4 sub-step B (Validate)** — build-loop-owned `ui-validator` first, then design-rule scanner on changed files, contract coverage, code graders, and visual evidence capture
+4. **Phase 4 sub-step B (Validate)** — IBR primary when installed for renderable UI design updates/comparisons/audits, with `ui-validator` in parallel; then design-rule scanner, contract coverage, and code graders
 5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 5a UI input/output contract scan; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`
 6. **Phase 5 (Iterate)** — drains the UX queue alongside Validate failures; parallel fan-out (≤4) for independent fixes; runs the build-loop UI re-validate hook before returning to Review-B
 
@@ -44,7 +44,7 @@ When `uiTarget != null`, build-loop owns the design route:
 
 1. Phase 2 loads `build-loop:ui-design`, then dispatches `design-contract-specialist` with `trigger_point: phase2-design-direction` for non-trivial UI work. It reads the UI input/output contract, `references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, product/workflow needs, project tokens, mockups, screenshots, and local design artifacts, then chooses a fit-for-purpose direction and writes `.build-loop/app-contract/ui.md`. Recent and existing design patterns are inputs, not mandates.
 2. Phase 3 implementers receive the UI contract plus `templates/ui-subagent-prompt.md`.
-3. Visual verification routes per `state.json.availablePlugins.ibr`:
+3. Visual verification follows `../../../references/ibr-ui-verification-policy.md` and routes per `state.json.availablePlugins.ibr`:
    - **IBR installed → IBR primary**: dispatch IBR `scan` (web) / `scan_macos` (macOS) via `build-loop:ibr-bridge`; `ui-validator` runs in parallel as the build-loop-owned check.
    - **IBR absent → native fallback**: Phase 4-B dispatches `ui-validator` first (web), or routes to `native-ax-driver` (macOS), or the iOS-simulator screenshot path (`uiTarget: "mobile"`). Either path satisfies the BL-1 visual-evidence gate.
 4. Phase 4-B always runs scanners and code graders after the visual verifier. The BL-1 gate (`scanners/require-visual-evidence.mjs`) is a separate exit-code check; it does not care which route ran, only that the evidence is visual/AX rather than symbol/string.

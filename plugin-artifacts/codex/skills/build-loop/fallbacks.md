@@ -14,7 +14,7 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 
 **Build-loop-owned static fallback.** When no browser/simulator/native-AX path is available, build-loop cannot compute every rendered style value, but it CAN grep the code for specific UI contract and design-rule violations. The checks below are the minimum-viable static-analysis subset.
 
-> **Precedence note**: IBR is explicit-only. Do not route web UI builds, Review-B validation, coverage-gap generation, or Iterate re-validation through `build-loop:ibr-bridge` unless the user specifically asks for IBR / Interface Built Right / `.ibr-test.json`. The default path is `design-contract-specialist` for direction, `ui-validator` for rendered checks, and this static matrix when rendered evidence is unavailable.
+> **Precedence note**: follow `../../references/ibr-ui-verification-policy.md`. Headless IBR is the primary verifier when Build Loop updates, compares, or audits a renderable UI design and IBR is installed. This file defines the fallback when IBR is absent or cannot reach the surface. Interactive viewers and persistent sessions remain explicit-only.
 
 ### Design principles (Calm Precision, condensed from global `CLAUDE.md`)
 

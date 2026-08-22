@@ -101,7 +101,7 @@ hygiene check as `scripts/` scales.
 | `plan_verify.py` | Deterministic plan grep-rules verifier |
 | `version_advisor.py` | Suggest semver bumps based on `release-pending.md` |
 | `ux_triage.py` | Sub-step D Gates 7/8 UX triage and UI coverage-gap queueing |
-| `ibr_quickpass.py` | Legacy explicit-only helper for user-requested IBR suite runs |
+| `ibr_quickpass.py` | Legacy helper for headless IBR suite runs; current UI verification policy lives in `references/ibr-ui-verification-policy.md` |
 | `optimize_loop.py`, `optimize_doe.py`, `metric_runner.py` | Optimization runner + DOE |
 | `systemic_rca_eval.py` | Experimental scorer for system-level RCA report shape: plain-language lead, failure-map depth, system-control terminal cause, evidence, tradeoffs/impact, and prevention control |
 | `systemic_rca_doe.py` | Experimental packet builder and results scorer for the systemic RCA DOE matrix |

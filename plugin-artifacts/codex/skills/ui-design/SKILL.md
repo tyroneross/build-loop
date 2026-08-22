@@ -25,6 +25,7 @@ Use this skill when `uiTarget != null` and the work is not copy-only:
 7. Derive colour from the engine, never by hand — load `references/color-engine.md` before writing any hex, generating a palette, or accepting an inherited one (including a mode brief's). Check for the Groundwork colour engine first (`$GROUNDWORK_ROOT` env var, else the checkout path `references/color-engine.md` names) — when it's present, use it as documented there. When it's absent, `references/color-engine.md`'s own "No Groundwork checkout" fallback section is the design route instead of hand-picking hex values: it distills the same rules (one accent, two stops, contrast verified per role) into a checkout-free procedure. Either way, declare in `.build-loop/app-contract/ui.md` which path produced the palette — engine or fallback. A palette is a relationship vector, not a list of colours: contrast is solved per role and verified in both the light and dark twin. One accent, status hues reserved, colour only where it encodes state.
 8. Choose the design direction from product fit: user job, workflow frequency, data shape, information density, platform, accessibility risk, error cost, and the Calm Precision core-consideration pass.
 9. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
+10. When the work updates, compares, or audits a renderable UI design, invoke headless IBR as the primary visual verifier when installed. Follow `../../references/ibr-ui-verification-policy.md`; record the platform fallback when IBR is unavailable.
 
 ## Design Layers
 
@@ -35,7 +36,7 @@ Think in layers, not competing design systems:
 3. **Calm Precision core considerations** — the baseline rules and perceptual-science foundations that every design direction must satisfy or explicitly except.
 4. **Project surface** — existing tokens, components, brand, screenshots, and selected mockups.
 5. **Structure or style mode** — recent design structures such as Conversational Command Surface, Bento Operating Dashboard, Pipeline Wizard, Outcome Ledger, Pyramid Detail, Glass Workspace, Warm Craft, Data Narrative, native mobile, or AI Artifact Canvas.
-6. **Validation evidence** — `ui-validator`, design-rule scanner, browser/simulator screenshots, and contract traceability.
+6. **Validation evidence** — IBR comparison/scan evidence when installed, then `ui-validator`, design-rule scanner, browser/simulator screenshots, and contract traceability.
 
 Calm Precision is not just one optional theme or reference. It is a core design gate. Every non-trivial UI decision should be checked against the relevant Calm Precision principles before selecting structure, style mode, token treatment, motion, or interaction behavior. A Glass, Warm Craft, Aurora, Data Narrative, or native mobile direction can change surface treatment, density, and mood, but it must not override Calm Precision's hierarchy, accessibility, motion, interaction, and real-data rules unless the app contract records an explicit exception.
 
@@ -67,7 +68,7 @@ Implementers should read the app contract and UI input/output contract, not the 
 
 ## Guardrails
 
-- Do not route to IBR unless the user explicitly asks for IBR, Interface Built Right, or an IBR-specific artifact.
+- Route every renderable UI design update, comparison, or audit through the automatic IBR policy in `../../references/ibr-ui-verification-policy.md`. Interactive IBR viewers and persistent sessions remain explicit-only.
 - Do not force recent structures. They are options, not requirements.
 - Do not treat Calm Precision as a citation, theme, or surface style. Use it as the shared baseline and decision gate under the selected mode.
 - Do not load broad vault/research folders into implementation prompts. Select one to three relevant sources and synthesize them.

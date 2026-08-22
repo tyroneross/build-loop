@@ -303,20 +303,21 @@ def test_shortlist_demotes_ibr_when_no_uitarget(real_registry: dict, tmp_path: P
     )
 
 
-def test_shortlist_suppresses_ibr_for_generic_ui_work(real_registry: dict, tmp_path: Path) -> None:
-    """IBR is explicit-only; generic UI work should surface build-loop-owned
-    design/validation surfaces instead."""
+def test_shortlist_auto_routes_ibr_for_ui_design_comparison(real_registry: dict, tmp_path: Path) -> None:
+    """UI design comparisons automatically surface the headless IBR bridge."""
     _make_state(tmp_path, uiTarget="web")
     out = cs.shortlist(
         real_registry,
-        phase=2,
-        intent="plan a web UI redesign and choose visual direction",
+        phase=1,
+        intent="compare draft mockup to current site style",
         workdir=tmp_path,
     )
     names = {r["name"] for r in out["results"]}
-    assert "build-loop:ibr-bridge" not in names, (
-        f"ibr-bridge surfaced without explicit IBR request: {names}"
+    assert "build-loop:ibr-bridge" in names, (
+        f"ibr-bridge missing for automatic UI comparison: {names}"
     )
+    bridge = next(r for r in out["results"] if r["name"] == "build-loop:ibr-bridge")
+    assert "automatic:ui-visual-verification" in bridge["reasons"]
 
 
 def test_shortlist_allows_ibr_when_explicitly_requested(real_registry: dict, tmp_path: Path) -> None:

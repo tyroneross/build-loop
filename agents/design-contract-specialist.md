@@ -163,7 +163,7 @@ When `trigger_point == "phase2-design-direction"`, act as build-loop's designer 
 
 Avoid prescriptive pattern locking. Do not select "dashboard", "glass", "warm", "native", "editor", or any other named pattern because it exists in guidance. Select it only if the concrete surface benefits from that mode, and record the reason plus at least one rejected alternative.
 
-Do not route to IBR from this mode. If a design tool is useful, consume the artifact the host provides or ask the orchestrator to capture one; the design decision remains in build-loop's app contract.
+The design decision remains in Build Loop's app contract. Ask the orchestrator to invoke IBR whenever this mode updates, compares, or audits a renderable UI design; consume the returned evidence rather than opening an interactive viewer from this agent. Follow `references/ibr-ui-verification-policy.md`.
 
 The `domain` field surfaces in the memory store root's `INDEX.jsonl` for provenance.
 

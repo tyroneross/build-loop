@@ -192,7 +192,7 @@ High-signal sources:
 - `interface-built-right/templates/patterns/`
 - `interface-built-right/src/ui-guidance/`
 
-Use only when the user explicitly asks for IBR or when a selected IBR artifact is passed to the specialist as evidence. Do not make IBR the default build route.
+Use IBR automatically as the verifier for renderable UI design updates, comparisons, and audits under `../../../references/ibr-ui-verification-policy.md`. IBR does not own design direction; pass its evidence to the specialist and keep viewer/dashboard surfaces explicit-only.
 
 ## Mockup Gallery
 

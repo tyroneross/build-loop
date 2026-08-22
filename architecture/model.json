@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "16d023711e00bd2d8d32b4afe000a5ecf87dfecd3c6f28b3684c68f683f6fead"
+    "content_sha256": "048b1a9f1c39d5f06a9bc9ee8ab1e5a93e44c35f00fd91682d0f7a575d5288fc"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1309,7 +1309,7 @@
         }
       },
       "ibr-bridge": {
-        "description": "Route UI visual-verification requests to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Use when the user asks to visually verify, screenshot, or check the rendered UI of a build. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).",
+        "description": "Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).",
         "file": "skills/ibr-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

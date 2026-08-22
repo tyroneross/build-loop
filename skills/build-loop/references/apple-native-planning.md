@@ -302,7 +302,7 @@ For native iOS/macOS modernization passes scoped from a prior audit, run a three
 
 ### Native visual evidence
 
-Use built-in simulator screenshots and native AX evidence for visual regression after a redesign that changes layout. Those tools do not extract computed SwiftUI font/color/spacing values, so source-code extraction remains load-bearing for metric audits. Use grep + Read for typography, color, spacing, and token claims. IBR native scans are explicit-only auxiliary evidence when the user asks for IBR.
+When IBR can reach the running native surface, use its headless native scan or comparison automatically as the primary visual verifier for UI design updates, comparisons, and audits. Keep built-in simulator screenshots and native AX evidence as the fallback and corroborating evidence. Those tools do not extract computed SwiftUI font/color/spacing values, so source-code extraction remains load-bearing for metric audits. Use grep + Read for typography, color, spacing, and token claims. Interactive IBR viewers and persistent sessions remain explicit-only.
 
 ### Three-tier ROI ordering
 

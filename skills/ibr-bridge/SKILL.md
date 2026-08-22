@@ -1,6 +1,6 @@
 ---
 name: build-loop:ibr-bridge
-description: Route UI visual-verification requests to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Use when the user asks to visually verify, screenshot, or check the rendered UI of a build. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).
+description: Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).
 version: 0.3.0
 user-invocable: false
 ---
@@ -19,6 +19,7 @@ At Phase 1 Assess, the orchestrator reads `state.json.availablePlugins.ibr` (pop
 
 | Build-loop need | Primary (when `availablePlugins.ibr == true`) | Fallback (when IBR absent) |
 |---|---|---|
+| UI design update / comparison / audit | IBR `snapshot` + `compare`, `match`, or the narrowest platform `scan` | `ui-validator` / native AX / simulator or browser screenshots + static scanner |
 | Web UI verify | IBR `scan` against the dev-server route | `ui-validator` agent + browser/screenshot tooling |
 | macOS UI verify | IBR `scan_macos` against the running `.app` | `native-ax-driver` (`skills/native-ax-driver/`) pid-anchored AX-tree + screenshot |
 | iOS sim UI verify | IBR `scan` against the booted sim (when supported) | `xcrun simctl io booted screenshot` + `idb ui` for interaction |
@@ -60,6 +61,8 @@ The bridge returns results in the same envelope shape regardless of which route 
 ```
 
 The orchestrator forwards `verification` and `artifacts` to the BL-1 gate envelope as the chunk's `verification` and `evidence_paths` fields.
+
+The binding automatic trigger and viewer boundary are defined once in `../../references/ibr-ui-verification-policy.md`.
 
 ## Status: 0.3.0 (2026-06-04)
 

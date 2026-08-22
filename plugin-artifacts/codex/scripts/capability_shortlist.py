@@ -46,6 +46,8 @@ TRIGGER_DEMOTION_PENALTY = 5
 # Names containing these tokens get demoted when the matching trigger is off.
 _UI_VALIDATION_TOKENS = ("ibr", "frontend-design", "calm-precision", "ui-guidance")
 _IBR_EXPLICIT_TOKENS = ("ibr", "interface-built-right", "interface built right")
+_IBR_AUTO_UI_NOUNS = ("ui", "interface", "design", "mockup", "screen", "layout", "visual")
+_IBR_AUTO_UI_ACTIONS = ("update", "change", "modify", "compare", "audit", "review", "redesign", "validate", "verify", "test")
 _PROMPT_TOKENS = ("prompt-builder", "prompt_builder")
 _MIGRATION_TOKENS = ("replit-migrate", "replit_migrate")
 
@@ -329,22 +331,38 @@ def apply_trigger_demotion(
 def apply_explicit_only_policy(
     scored: list[tuple],
     intent: str,
+    all_entries: list[dict[str, Any]] | None = None,
 ) -> list[tuple]:
-    """Suppress explicit-only bridges unless the user named them.
+    """Auto-route IBR for UI design verification; suppress it elsewhere.
 
-    IBR is no longer a default UI build/validation route. It remains available
-    for direct user requests, but capability shortlist should not surface it for
-    generic UI work just because `uiTarget` is set.
+    Headless IBR is the primary verifier for UI design updates, comparisons,
+    and audits. Interactive viewer/dashboard usage remains explicit-only.
     """
     intent_l = (intent or "").lower()
     ibr_explicit = any(tok in intent_l for tok in _IBR_EXPLICIT_TOKENS)
-    if ibr_explicit:
+    ibr_auto = (
+        any(tok in intent_l for tok in _IBR_AUTO_UI_NOUNS)
+        and any(tok in intent_l for tok in _IBR_AUTO_UI_ACTIONS)
+    )
+    if ibr_explicit or ibr_auto:
+        candidates = list(scored)
+        present = {e.get("name") for _, _, e in candidates}
+        for e in all_entries or []:
+            name_l = (e.get("name") or "").lower()
+            source_l = (e.get("source_path") or "").lower()
+            if (
+                (name_l == "build-loop:ibr-bridge" or "skills/ibr-bridge" in source_l)
+                and e.get("name") not in present
+            ):
+                candidates.append((0, [], e))
+                present.add(e.get("name"))
         out: list[tuple] = []
-        for score, reasons, e in scored:
+        for score, reasons, e in candidates:
             name_l = (e.get("name") or "").lower()
             source_l = (e.get("source_path") or "").lower()
             if name_l == "build-loop:ibr-bridge" or "skills/ibr-bridge" in source_l:
-                out.append((score + 100, list(reasons) + ["explicit:ibr-bridge"], e))
+                reason = "explicit:ibr-bridge" if ibr_explicit else "automatic:ui-visual-verification"
+                out.append((score + 100, list(reasons) + [reason], e))
             else:
                 out.append((score, reasons, e))
         return out
@@ -354,7 +372,7 @@ def apply_explicit_only_policy(
         name_l = (e.get("name") or "").lower()
         source_l = (e.get("source_path") or "").lower()
         if "ibr" in name_l or "skills/ibr-bridge" in source_l:
-            out.append((score - 100, list(reasons) + ["suppress:ibr-explicit-only"], e))
+            out.append((score - 100, list(reasons) + ["suppress:ibr-not-ui-verification"], e))
         else:
             out.append((score, reasons, e))
     return out
@@ -402,7 +420,7 @@ def shortlist(
     # categories based on Phase 1 sub-routers (uiTarget, migrationSource)
     # and triggers (promptAuthoring/promptEditingExisting).
     scored = apply_plugin_surface_collapse(scored)
-    scored = apply_explicit_only_policy(scored, intent)
+    scored = apply_explicit_only_policy(scored, intent, entries)
     if workdir is not None:
         triggers = _read_state_triggers(Path(workdir))
         scored = apply_trigger_demotion(scored, triggers)
