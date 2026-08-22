@@ -1031,6 +1031,43 @@ def _record_runs_judge_entry(
 # Packet emission
 
 
+def _receipt_ledger_path() -> Path:
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state) / "build-loop" / "memory-receipt-ledger.jsonl"
+
+
+def _record_receipt_observation(
+    root: Path, commit_hash: str, receipt: dict, enforced: bool, blocked: bool
+) -> None:
+    """Append one row per real commit so the gate can be measured, not guessed.
+
+    The historical replay that calibrated the trigger is a proxy: it reconstructs
+    what WOULD have fired. This records what DOES fire, across every repo whose
+    pre-commit hook runs this, so enforcement is turned on against observed
+    precision rather than a backtest. Append-only, fail-open, never raises into
+    the commit path.
+    """
+    try:
+        path = _receipt_ledger_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "repo": root.name,
+            "commit": commit_hash,
+            "required": receipt.get("required"),
+            "satisfied": receipt.get("satisfied"),
+            "read": bool((receipt.get("read") or {}).get("found")),
+            "write": bool((receipt.get("write") or {}).get("found")),
+            "lane_hits": (receipt.get("lane_hits") or [])[:10],
+            "enforced": enforced,
+            "blocked": blocked,
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:
+        return
+
+
 def _emit_packet(root: Path) -> int:
     files = _staged_files()
     diff_body = _staged_diff()
@@ -1193,6 +1230,7 @@ def _emit_packet(root: Path) -> int:
     _record_runs_judge_entry(
         root, commit_hash, status, reason if blocked else f"{len(files)} files staged", risk=risk
     )
+    _record_receipt_observation(root, commit_hash, memory_receipt, enforce_memory, memory_blocked)
 
     out("### Verdict request\n")
     if risk["level"] == "high":
