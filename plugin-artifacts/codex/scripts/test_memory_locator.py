@@ -192,3 +192,50 @@ def test_cli_plain_output_is_fetchable_absolute_path(tmp_path: Path, capsys) -> 
 
     assert code == 0
     assert capsys.readouterr().out.strip() == str(target.resolve())
+
+
+def test_default_scope_hides_other_projects_and_all_projects_reveals_them(tmp_path: Path) -> None:
+    """A repo-scoped agent cannot name the project that holds the answer.
+
+    Without ALL_PROJECTS the sibling project's lesson is invisible, which is the
+    defect this flag exists to remove -- so the test asserts BOTH regimes.
+    """
+    mine = tmp_path / "projects" / "build-loop" / "lessons" / "local-note.md"
+    theirs = tmp_path / "projects" / "easy-terminal" / "lessons" / "ptyd-pane-ledger.md"
+    for path, body in (
+        (mine, "# Local note\nUnrelated local guidance."),
+        (theirs, "# Ptyd pane ledger\nThe ptyd pane event ledger reconciles panes."),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    _write_index(tmp_path, [
+        _row(tmp_path, "projects/build-loop/lessons/local-note.md",
+             title="Local note", project="build-loop", tags=[]),
+        _row(tmp_path, "projects/easy-terminal/lessons/ptyd-pane-ledger.md",
+             title="Ptyd pane ledger", project="easy-terminal", tags=["ptyd"]),
+    ])
+
+    scoped = locator.locate("ptyd pane ledger", project="build-loop",
+                              memory_root=tmp_path, emit_telemetry=False)
+    assert not any("easy-terminal" in r["path"] for r in scoped["results"])
+
+    everywhere = locator.locate("ptyd pane ledger", project=locator.ALL_PROJECTS,
+                                  memory_root=tmp_path, emit_telemetry=False)
+    assert any("easy-terminal" in r["path"] for r in everywhere["results"])
+
+
+def test_all_projects_scan_reaches_lanes_without_an_index(tmp_path: Path) -> None:
+    """Fallback scan must widen too -- index freshness must not gate the flag."""
+    target = tmp_path / "projects" / "spectra" / "retrospectives" / "2026-08-08" / "capture-run.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# Capture run\nSpectra capture walkthrough recording notes.", encoding="utf-8")
+
+    found = locator.locate("spectra capture walkthrough", project=locator.ALL_PROJECTS,
+                           memory_root=tmp_path, emit_telemetry=False)
+    assert any("spectra" in r["path"] for r in found["results"])
+
+
+def test_retrospectives_and_architecture_are_searchable_lanes() -> None:
+    """These lanes hold real content; omitting them made it unreachable."""
+    for lane in ("retrospectives", "architecture", "prompts"):
+        assert lane in locator.CANONICAL_LANES

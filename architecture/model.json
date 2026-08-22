@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "774b4942e3fedf8f10f45ff87106f58edf23e511e8662b4cda148540891ff2fb"
+    "content_sha256": "9d0efab65267e4fdc108cf6523ae79b6f7a2b332fee68de35d4d70dd7914a4d7"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1058,7 +1058,7 @@
         "file": "agents/scope-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-22"
+          "date": "2026-08-22"
         }
       },
       "security-reviewer": {

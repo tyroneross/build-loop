@@ -37,9 +37,16 @@ MAX_FALLBACK_CANDIDATES = 500
 INDEX_RELATIVE_PATH = Path("indexes/INDEX.jsonl")
 UPDATE_LEDGER_RELATIVE_PATH = Path("indexes/updates.jsonl")
 GLOBAL_PROJECTS = {"", "_global", "_unscoped", "global"}
+# Sentinel project id meaning "every project lane, not just the resolved one".
+# A repo-scoped agent cannot know which project holds the answer, so cross-repo
+# recall must be expressible without naming a project.
+ALL_PROJECTS = "*"
 CANONICAL_LANES = (
+    "architecture",
+    "data",
     "decisions",
     "design",
+    "design-contract",
     "debugging",
     "docs",
     "experiments",
@@ -48,8 +55,11 @@ CANONICAL_LANES = (
     "model-profiles",
     "plugins",
     "product",
+    "prompts",
     "references",
     "research",
+    "retrospectives",
+    "ui",
 )
 SKIP_NAMES = {"INDEX.md", "MEMORY.md", "README.md", "TELEMETRY.jsonl"}
 SKIP_DIRS = {"archive", "indexes", "raw", "raw-originals"}
@@ -123,6 +133,8 @@ def _safe_index_path(root: Path, relative: str) -> Path | None:
 
 
 def _project_allowed(row_project: str, project: str | None) -> bool:
+    if project == ALL_PROJECTS:
+        return True
     if not project or project in GLOBAL_PROJECTS:
         return row_project in GLOBAL_PROJECTS
     return row_project in GLOBAL_PROJECTS or row_project == project
@@ -230,8 +242,13 @@ def _result_files_match_index(results: list[dict[str, Any]], rows_by_path: dict[
 
 def _search_roots(root: Path, project: str | None) -> list[Path]:
     roots = [root / lane for lane in CANONICAL_LANES]
-    if project and project not in GLOBAL_PROJECTS:
-        projects_root = (root / "projects").resolve()
+    projects_root = (root / "projects").resolve()
+    if project == ALL_PROJECTS:
+        if projects_root.is_dir():
+            for project_dir in sorted(projects_root.iterdir()):
+                if project_dir.is_dir():
+                    roots.extend(project_dir / lane for lane in CANONICAL_LANES)
+    elif project and project not in GLOBAL_PROJECTS:
         project_root = (projects_root / project).resolve()
         if project_root != projects_root and project_root.is_relative_to(projects_root):
             roots.extend(project_root / lane for lane in CANONICAL_LANES)
@@ -429,6 +446,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--query", required=True, help="keywords describing the memory to find")
     parser.add_argument("--project", help="canonical project id; defaults from --workdir")
+    parser.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="search every project lane instead of only the resolved project. "
+        "Use when the answer may live in another repo's memory.",
+    )
     parser.add_argument("--workdir", type=Path, default=Path.cwd(), help="repo used to resolve project")
     parser.add_argument("--memory-root", type=Path, help="override build-loop-memory root")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
@@ -439,7 +462,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    project = args.project or resolve_project(args.workdir.resolve())
+    project = ALL_PROJECTS if args.all_projects else (
+        args.project or resolve_project(args.workdir.resolve())
+    )
     receipt = locate(
         args.query,
         project=project,
