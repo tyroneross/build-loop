@@ -15,6 +15,12 @@ of a condition**. A wait whose only exit is the harness timeout is never the
 right shape: the harness already re-invokes an agent when tracked work finishes,
 so the loop is pure waste even when it happens to be short.
 
+The rejection also names the resume primitive THIS host actually has, resolved
+through ``scripts/wake_scheduler.py`` (Claude Code gets ``ScheduleWakeup``; Codex,
+Cursor, Gemini and unknown hosts get the poll watcher). Before 2026-08-22 the gate
+offered one host-agnostic snippet, so the only self-resume advice build-loop ever
+gave assumed a Claude-only harness feature.
+
 build-loop already ships the correct idiom (agents/architecture-scout.md:180):
 
     for i in $(seq 1 30); do
@@ -39,8 +45,10 @@ manufacture a block.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+from pathlib import Path
 
 # A loop header that never terminates on its own.
 _INFINITE_HEADER = re.compile(
@@ -68,6 +76,48 @@ _BOUNDED_IDIOM = """  for i in $(seq 1 30); do
   done"""
 
 
+def _host_resume_hint(env: dict[str, str] | None = None) -> str | None:
+    """Name the resume primitive this host actually has, or None.
+
+    Delegates to ``scripts/wake_scheduler.py`` so the host matrix lives in exactly
+    one place. Called with no ``next_action``, ``plan_wake`` is pure stdlib — no
+    subprocess, no file IO — which is what lets a PreToolUse gate afford it.
+
+    Fails open (returns None) on any error: a gate that cannot resolve the host
+    still has a correct host-agnostic answer to give, and must never hard-fail.
+    """
+    try:
+        import importlib.util
+
+        scripts_dir = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location(
+            "wake_scheduler", scripts_dir / "wake_scheduler.py"
+        )
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        saved = os.environ.copy()
+        try:
+            if env is not None:
+                os.environ.clear()
+                os.environ.update(env)
+            plan = mod.plan_wake(None, mod.EXTERNAL, desired_seconds=1200)
+        finally:
+            if env is not None:
+                os.environ.clear()
+                os.environ.update(saved)
+
+        directive = plan.get("directive")
+        host = plan.get("host")
+        if not directive or not host:
+            return None
+        return f"On this host ({host}) the resume primitive is:\n\n  {directive}"
+    except Exception:
+        return None
+
+
 def _command(payload: dict) -> str:
     tool = payload.get("tool_name") or payload.get("toolName") or ""
     if tool and tool != "Bash":
@@ -79,13 +129,18 @@ def _command(payload: dict) -> str:
     return command if isinstance(command, str) else ""
 
 
-def evaluate(command: str) -> str | None:
-    """Return a rejection message, or None when the command is fine."""
+def evaluate(command: str, env: dict[str, str] | None = None) -> str | None:
+    """Return a rejection message, or None when the command is fine.
+
+    ``env`` overrides host detection for the resume hint; production callers omit
+    it and the real environment decides.
+    """
     if not command or "sleep" not in command.lower():
         return None
 
+    message = None
     if _INFINITE_HEADER.search(command) and not _ESCAPE.search(command):
-        return (
+        message = (
             "This loop waits on a duration, not a condition — nothing in it can "
             "end it, so it runs until the harness kills it.\n\n"
             "If you are waiting on work the harness tracks (a subagent, a "
@@ -94,16 +149,23 @@ def evaluate(command: str) -> str | None:
             "If you must poll something the harness cannot see, bound it and "
             "give it a real exit condition:\n\n" + _BOUNDED_IDIOM
         )
+    else:
+        longest = max((float(m) for m in _SLEEP.findall(command)), default=0.0)
+        if longest >= _LONG_BARE_SLEEP_SECONDS:
+            message = (
+                f"`sleep {longest:g}` is a duration-wait. A sleep that long is "
+                "standing in for a condition you have not written.\n\n"
+                "Wait on the condition instead:\n\n" + _BOUNDED_IDIOM
+            )
 
-    longest = max((float(m) for m in _SLEEP.findall(command)), default=0.0)
-    if longest >= _LONG_BARE_SLEEP_SECONDS:
-        return (
-            f"`sleep {longest:g}` is a duration-wait. A sleep that long is "
-            "standing in for a condition you have not written.\n\n"
-            "Wait on the condition instead:\n\n" + _BOUNDED_IDIOM
-        )
+    if message is None:
+        return None
 
-    return None
+    hint = _host_resume_hint(env)
+    if hint:
+        message += "\n\nTo resume later instead of waiting now, do not hand-roll a\n"
+        message += "host-specific call. " + hint
+    return message
 
 
 def main() -> int:

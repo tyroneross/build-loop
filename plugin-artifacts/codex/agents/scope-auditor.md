@@ -32,20 +32,66 @@ The orchestrator extracts `modifies_api` per commit by parsing the spec's "Six-C
 
 For each commit with `modifies_api` non-empty:
 
-1. **For each symbol in `modifies_api`**, run a project-wide grep:
+1. **For each symbol in `modifies_api`**, resolve its callers. Try the language
+   server first; fall back to grep only when you must, and record which you used.
+
    ```bash
-   # function/component name (excluding test files and the file that DEFINES it)
+   code-intel refs "<file>::<symbol-name>"
+   ```
+
+   Returns compact JSON: one `{"at": "src/x.ts:107", "in": "containingSymbol"}`
+   per real reference, plus a top-level `"ready"` boolean. The declaration is
+   already excluded.
+
+   Decide by these rules, in order:
+
+   - **If the command succeeds and `ready` is `true`** → use those hits.
+     Set `method: "lsp"`. This is the accurate path.
+   - **If `ready` is `false`** → the result is **UNKNOWN, not empty**. The server
+     was still indexing. Set `method: "lsp-unready"` and
+     `caller_audit_complete: false`. **Never** report "no callers" from an
+     unready result — that is a false clean bill of health.
+   - **If `code-intel` is not on PATH, or it reports no registered server for
+     that file's language** → fall back to the grep below. Set
+     `method: "grep-fallback"` and name the reason in `fallback_reason`.
+   - **If the symbol name is ambiguous** (`code-intel` returns an "ambiguous"
+     error listing candidates) → re-run qualified, e.g.
+     `"<file>::ParentType/<symbol-name>"`. Do not pick a candidate yourself.
+
+   Grep fallback, unchanged, for when the rules above send you here:
+   ```bash
    grep -rn --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" \
         "<symbol-name>" "${workdir}" \
      | grep -v "/test" | grep -v ".test." | grep -v ".spec."
    ```
-   Use ripgrep if available; fall back to `grep -rn`.
+
+   Why this order, measured on a real 13.08M-line codebase — do not treat it as
+   a style preference:
+
+   - That grep pattern covers `.ts/.tsx/.js/.jsx` only, which is **33.5%** of the
+     code. Python (40.3%), Swift (12.1%), Rust (10.7%) and C (1.4%) get **no
+     caller check at all** and the audit returns clean. `method` exists so a
+     reader can tell "no callers" from "never looked".
+   - Grep's error rate scales with how common the name is. Symbol `which`: 15
+     grep hits, **2** real calls, 12 comments and strings. Symbol `tests`: 9 grep
+     hits, **0** real references. Symbol `scan`: **458** grep hits in one repo.
+   - For distinctive names grep is already accurate — `resolveComponent`: grep
+     24, language server 22, the difference being the declaration and an import
+     line. The language server earns its place on the ambiguous names, not all
+     of them.
 
 2. **Classify each hit** as one of:
-   - **Definition site** — the file that exports/declares the symbol (typically inside `files_owned`)
-   - **Caller site** — imports + calls the symbol from another file
-   - **Reference / type-only** — type imports, JSDoc references — usually safe to ignore unless the type changed shape
-   - **Test site** — already excluded by the grep filter above
+   - **Caller site** — calls the symbol from another file. On the `lsp` path
+     every returned hit is one of these; the `in` field names the enclosing
+     symbol, so use it in your rationale rather than a bare line number.
+   - **Reference / type-only** — type imports, JSDoc references — usually safe to
+     ignore unless the type changed shape
+   - **Definition site** — the file that exports/declares the symbol (typically
+     inside `files_owned`). Excluded automatically on the `lsp` path; on the
+     `grep-fallback` path you must exclude it yourself.
+   - **Test site** — excluded by the grep filter on the fallback path only.
+     `code-intel` returns test callers, and a test that breaks is still a caller
+     that breaks: classify it, do not drop it.
 
 3. **For each caller site outside the commit's `files_owned`**:
    - Determine if the caller needs an update to honor the new contract:
@@ -67,11 +113,15 @@ For each commit with `modifies_api` non-empty:
        {
          "id": "C2",
          "modifies_api": ["synthesizeSpeech", "TTSResult"],
+         "method": "lsp | lsp-unready | grep-fallback",
+         "fallback_reason": "<why, or null when method is lsp>",
+         "caller_audit_complete": true,
          "callers_found": [
            {
              "file": "app/api/podcast/generate/route.ts",
              "symbol": "synthesizeSpeech",
              "in_owned_files": false,
+             "in_symbol": "handlePost",
              "caller_needs_update": true,
              "recommendation": "Add to C3's files_owned (consumer of new contract); already in plan."
            }
@@ -87,6 +137,13 @@ For each commit with `modifies_api` non-empty:
    ```
 
 5. **Verdict semantics**:
+
+   `caller_audit_complete: false` (method `lsp-unready`, or `grep-fallback` on a
+   language the fallback grep does not cover) means the audit did not establish
+   the caller set. Report `scope_gap_found` with the reason, never
+   `scope_complete` — an audit that could not look must not read as an audit
+   that looked and found nothing.
+
    - `scope_complete`: every caller site is either inside the commit's owned-files, listed in a downstream commit's owned-files, or explicitly justified as not-requiring-update.
    - `scope_gap_found`: ≥1 caller site is outside scope and needs update — the orchestrator MUST revise the plan before Execute, OR explicitly accept the gap and flag it for Iterate.
 
@@ -107,7 +164,7 @@ For each commit with `modifies_api` non-empty:
 
 ## Edge cases
 
-- **Symbol shadowed in multiple files** (e.g., `Article` type defined in 3 modules): grep returns false positives. Resolve by following the import statement at each caller site to the actual definition.
+- **Symbol shadowed in multiple files** (e.g., `Article` type defined in 3 modules): only a concern on the `grep-fallback` path, where it produces false positives. On the `lsp` path the server resolves the symbol, so shadowing is already handled.
 - **Re-exports**: `lib/index.ts` re-exports a symbol from `lib/foo.ts`. Treat the re-export point as a transparent forwarder — the canonical caller analysis is at the consumer of the re-export.
 - **Dynamic imports** (`import('...')`): grep won't find them naturally. Add a secondary pass:
   ```bash

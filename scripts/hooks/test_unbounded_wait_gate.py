@@ -114,5 +114,66 @@ class Plumbing(unittest.TestCase):
             gate.sys.stdin = sys_stdin
 
 
+class HostResumeHint(unittest.TestCase):
+    """The rejection must name the primitive THIS host has.
+
+    Before 2026-08-22 the gate gave one host-agnostic snippet, so build-loop's
+    only self-resume advice silently assumed a Claude-only harness feature.
+    """
+
+    INFINITE = "while true; do " + "sle" + "ep 30; done"
+
+    def test_claude_code_is_told_to_use_schedule_wakeup(self) -> None:
+        msg = gate.evaluate(self.INFINITE, env={"CLAUDE_PLUGIN_ROOT": "/x"})
+        self.assertIn("ScheduleWakeup", msg)
+        self.assertIn("claude_code", msg)
+
+    def test_codex_is_never_told_to_use_schedule_wakeup(self) -> None:
+        msg = gate.evaluate(self.INFINITE, env={"CODEX_HOME": "/x"})
+        self.assertNotIn("ScheduleWakeup", msg)
+        self.assertIn("coordination_watch.py", msg)
+        self.assertIn("codex", msg)
+
+    def test_unknown_host_gets_the_universal_fallback(self) -> None:
+        msg = gate.evaluate(self.INFINITE, env={})
+        self.assertNotIn("ScheduleWakeup", msg)
+        self.assertIn("coordination_watch.py", msg)
+
+    def test_long_bare_sleep_also_carries_the_hint(self) -> None:
+        msg = gate.evaluate("sl" + "eep 300", env={"CLAUDE_PLUGIN_ROOT": "/x"})
+        self.assertIn("ScheduleWakeup", msg)
+
+    def test_allowed_commands_get_no_hint(self) -> None:
+        # The hint rides on a rejection; it must never appear on a clean command.
+        self.assertIsNone(gate.evaluate("sl" + "eep 2", env={"CLAUDE_PLUGIN_ROOT": "/x"}))
+
+    def test_fails_open_when_wake_scheduler_is_unreachable(self) -> None:
+        # A gate that cannot resolve the host still has a correct host-agnostic
+        # answer, and must never hard-fail or drop the rejection.
+        real = gate.Path
+
+        class _Missing:
+            def __init__(self, *a, **k) -> None: ...
+            def resolve(self):
+                raise OSError("no filesystem")
+
+        gate.Path = _Missing
+        try:
+            self.assertIsNone(gate._host_resume_hint({"CLAUDE_PLUGIN_ROOT": "/x"}))
+            msg = gate.evaluate(self.INFINITE, env={"CLAUDE_PLUGIN_ROOT": "/x"})
+            self.assertIsNotNone(msg)
+            self.assertIn("bound it", msg)
+            self.assertNotIn("resume primitive", msg)
+        finally:
+            gate.Path = real
+
+    def test_host_detection_does_not_leak_into_the_real_environment(self) -> None:
+        import os
+
+        before = dict(os.environ)
+        gate.evaluate(self.INFINITE, env={"CODEX_HOME": "/x"})
+        self.assertEqual(dict(os.environ), before)
+
+
 if __name__ == "__main__":
     unittest.main()
