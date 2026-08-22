@@ -95,7 +95,7 @@ in-process argument).
       "decided_at": "2026-08-21T18:04:11Z",
       "decided_by": "user",
       "decided_via": "claude_code_ask",
-      "decided_in_repo": "/Users/x/dev/git-folder/build-loop",
+      "decided_in_repo": "<absolute path to the repo where the decision was made>",
       "prev_sha256": null,
       "entry_sha256": "9f2b…"
     }

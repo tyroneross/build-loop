@@ -1,6 +1,6 @@
 ---
 name: build-loop:ibr-bridge
-description: Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).
+description: Route rendered UI design updates, comparisons, and audits to the IBR plugin when installed, falling back to build-loop's own driver otherwise. Use when a build changes, compares, or audits a rendered UI and that change needs visual evidence before it can close. Not for registering a new API (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).
 version: 0.3.0
 user-invocable: false
 ---

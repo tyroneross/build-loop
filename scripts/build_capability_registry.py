@@ -86,6 +86,11 @@ CATEGORY_KEYWORDS = [
                       "classify model", "model_overrides", "model overrides",
                       "transcript", "pattern-miner", "pattern miner",
                       "slice", "acp",
+                      # Cross-vendor dispatch surfaces: gating a shell-out to
+                      # another vendor's LLM CLI is dispatch infrastructure,
+                      # same layer as subagent dispatch above.
+                      "cli dispatch", "cli_dispatch", "consent gate",
+                      "vendor's llm", "vendor llm",
                       # Crash recovery / state.json checkpoint surfaces (M1-M4):
                       "crash recovery", "crash-recovery", "state_finalize",
                       "stop_finalize", "finalize",

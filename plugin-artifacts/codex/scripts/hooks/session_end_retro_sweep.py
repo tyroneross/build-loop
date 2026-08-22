@@ -42,8 +42,10 @@ Invoked fire-and-forget (nohup &) by the host SessionEnd hook.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -106,6 +108,45 @@ def session_is_trivial(transcript: Path) -> bool:
     except Exception:
         return True  # unreadable → treat as trivial (do nothing)
     return not (saw_commit or tool_uses >= MIN_TOOL_USES)
+
+
+def _adapter():
+    """Import the host-neutral transcript adapter, or None if unavailable.
+
+    Fail-open: a missing adapter degrades to Claude-only behavior, exactly what
+    this sweep did before -- it must never turn a working Claude retro into an
+    error.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import transcript_adapter  # type: ignore
+
+        return transcript_adapter
+    except Exception:
+        return None
+
+
+def normalize_transcript(transcript: Path, workdir: Path) -> tuple[Path, Path | None]:
+    """Return (transcript_to_read, session_cwd_from_transcript).
+
+    Codex writes a different envelope than Claude, so every consumer here reads
+    ZERO events from a raw Codex rollout -- measured 0 rendered turns vs 29 via
+    the adapter on one real session. Normalizing at the entry point fixes every
+    downstream step at once instead of teaching each one a second format.
+    """
+    ta = _adapter()
+    if ta is None:
+        return transcript, None
+    try:
+        if ta.detect_format(transcript) != ta.CODEX:
+            return transcript, None
+        dest = workdir / "transcript-normalized.jsonl"
+        if ta.normalize_to_file(transcript, dest) == 0:
+            return transcript, None
+        cwd = ta.session_cwd(transcript)
+        return dest, (Path(cwd) if cwd else None)
+    except Exception:
+        return transcript, None
 
 
 def resolve_project_cwd(transcript: Path) -> Path | None:
@@ -340,8 +381,17 @@ def main() -> None:
     transcript_env = resolve_transcript()
     if not transcript_env:
         _log_and_exit()
-    transcript = Path(transcript_env)
-    if not transcript.exists() or session_is_trivial(transcript):
+    raw_transcript = Path(transcript_env)
+    if not raw_transcript.exists():
+        _log_and_exit()
+
+    # Normalize BEFORE the triviality check: session_is_trivial() parses the
+    # Claude shape, so a raw Codex rollout scores as empty and the sweep exits
+    # having silently skipped a real session.
+    _norm_dir = Path(tempfile.mkdtemp(prefix="bl-retro-norm-"))
+    atexit.register(shutil.rmtree, _norm_dir, True)
+    transcript, adapter_cwd = normalize_transcript(raw_transcript, _norm_dir)
+    if session_is_trivial(transcript):
         _log_and_exit()
 
     build_loop = find_build_loop()
@@ -352,7 +402,9 @@ def main() -> None:
     # that never opened a build-loop run. Independent of miner candidates — a
     # session with issues/tool-usage/automation signal but no repeated ritual
     # still deserves its retro + memory write. Zero-LLM, fail-open.
-    cwd = resolve_project_cwd(transcript)
+    # Codex records cwd in session_meta/turn_context, not as a top-level field,
+    # so the adapter is the only path that resolves a Codex project at all.
+    cwd = adapter_cwd or resolve_project_cwd(transcript)
     if cwd is not None and is_project_dir(cwd) and not formal_run_retro_exists(cwd):
         run_session_retro(build_loop, transcript, cwd)
 

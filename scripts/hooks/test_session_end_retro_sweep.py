@@ -205,3 +205,52 @@ def test_plugin_hooks_json_wires_sessionend_sweep():
     cmds = " ".join(h.get("command", "") for g in se for h in g.get("hooks", []))
     assert "session_end_retro_sweep.py" in cmds, "SessionEnd must invoke the sweep"
     assert "transcript_path" in cmds, "must pass transcript_path from stdin"
+
+
+def test_codex_rollout_survives_the_triviality_gate(tmp_path):
+    """A raw Codex rollout scores as empty under the Claude parser.
+
+    Normalization must happen BEFORE session_is_trivial(), or every Codex
+    session exits the sweep silently -- the same failure the Stop sweeps had.
+    """
+    codex = tmp_path / "rollout.jsonl"
+    rows = [
+        {"timestamp": "2026-08-22T16:14:53Z", "type": "session_meta",
+         "payload": {"session_id": "s1", "cwd": str(tmp_path)}},
+    ] + [
+        {"timestamp": "2026-08-22T16:15:00Z", "type": "event_msg",
+         "payload": {"type": "user_message", "message": f"do the thing {i}"}}
+        for i in range(6)
+    ] + [
+        {"timestamp": "2026-08-22T16:15:02Z", "type": "event_msg",
+         "payload": {"type": "agent_message", "message": f"done {i}"}}
+        for i in range(6)
+    ] + [
+        # Codex puts the command under "cmd" inside a JS payload; every consumer
+        # here reads input["command"]. Without that mapping a Codex session that
+        # committed still scores as trivial.
+        {"timestamp": "2026-08-22T16:15:03Z", "type": "response_item",
+         "payload": {"type": "custom_tool_call", "name": "exec",
+                     "input": 'tools.exec_command({"cmd":"git commit -m wip"})'}},
+    ]
+    codex.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    assert sweep.session_is_trivial(codex) is True, "raw Codex should look empty"
+
+    norm_dir = tmp_path / "norm"
+    norm_dir.mkdir()
+    normalized, cwd = sweep.normalize_transcript(codex, norm_dir)
+    assert normalized != codex
+    assert cwd == Path(str(tmp_path))
+    assert sweep.session_is_trivial(normalized) is False
+
+
+def test_claude_transcript_is_not_rewritten(tmp_path):
+    """Normalization must be a no-op for the host that already worked."""
+    claude = tmp_path / "t.jsonl"
+    claude.write_text(json.dumps(
+        {"type": "user", "sessionId": "a",
+         "message": {"role": "user", "content": "hi"}}) + "\n", encoding="utf-8")
+    out, cwd = sweep.normalize_transcript(claude, tmp_path / "norm2")
+    assert out == claude
+    assert cwd is None
