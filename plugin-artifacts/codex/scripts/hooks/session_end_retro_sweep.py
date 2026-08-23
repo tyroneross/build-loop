@@ -374,7 +374,22 @@ def resolve_transcript() -> str:
     Fall back to argv, then the (non-standard) env var for manual/test runs."""
     if len(sys.argv) > 1 and sys.argv[1]:
         return sys.argv[1]
-    return os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+    env = os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+    if env:
+        return env
+    # No path supplied. On Codex there may never be one -- its Stop-payload
+    # contract is not something we can depend on -- so resolve the session from
+    # cwd instead of no-oping. Claude always supplies argv[1], so this branch
+    # only runs for hosts that do not.
+    ta = _adapter()
+    if ta is not None:
+        try:
+            found = ta.find_codex_transcript(os.environ.get("PWD") or Path.cwd())
+            if found:
+                return str(found)
+        except Exception:
+            pass
+    return ""
 
 
 def main() -> None:

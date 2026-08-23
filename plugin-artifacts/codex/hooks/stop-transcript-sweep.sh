@@ -59,8 +59,10 @@ _noop() {
 [ -n "$SWEEP" ] || _noop
 
 # Read the Stop payload once. Empty/absent stdin is a normal no-op.
+# Empty stdin is NORMAL on a host that supplies no Stop payload (Codex). The
+# old `[ -n "$PAYLOAD" ] || _noop` here made every non-Claude host a silent
+# no-op before the transcript was ever looked for.
 PAYLOAD="$(cat 2>/dev/null || true)"
-[ -n "$PAYLOAD" ] || _noop
 
 # Resolve python3 without depending on a populated PATH (shared helper).
 _HOOK_DIR="$(dirname "$0")"
@@ -102,6 +104,18 @@ CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
 [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
+
+# No transcript in the payload: resolve the host's own session from CWD and
+# normalize it to the Claude shape every sweep below parses. One call does both
+# -- handing back a raw Codex path would move the no-op one step downstream.
+# Claude always supplies transcript_path, so this is for hosts that do not.
+if [ -z "$TRANSCRIPT" ]; then
+    _adapter="${PLUGIN_ROOT}/scripts/transcript_adapter.py"
+    if [ -f "$_adapter" ]; then
+        TRANSCRIPT="$("$_py" "$_adapter" --find-codex-session "$CWD" \
+            --cache-dir "$STATE_DIR/transcript-cache" 2>/dev/null)" || TRANSCRIPT=""
+    fi
+fi
 
 case "$SWEEP" in
     decisions)

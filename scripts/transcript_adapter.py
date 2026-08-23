@@ -43,6 +43,7 @@ Stdlib only. Python 3.11+. Never raises on a malformed line.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -108,6 +109,58 @@ def session_cwd(path: Path) -> str | None:
                         return str(cwd)
     except OSError:
         return None
+    return None
+
+
+CODEX_SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
+# Newest-first, so the first cwd match is the answer. Bounded because the
+# rollout store grows without limit (2,557 files at time of writing).
+_MAX_SESSION_SCAN = 400
+
+
+def find_codex_transcript(
+    cwd: str | Path, sessions_root: Path | None = None, max_scan: int = _MAX_SESSION_SCAN
+) -> Path | None:
+    """Newest Codex rollout recorded for ``cwd``, or None.
+
+    WHY DISCOVERY RATHER THAN A PAYLOAD FIELD
+    -----------------------------------------
+    Claude delivers `transcript_path` in the hook payload. Codex's Stop-payload
+    contract is not documented here and was not observable without running a
+    live session, so depending on it would mean registering hooks that MIGHT
+    silently no-op -- the exact failure this whole line of work exists to stop.
+    Resolving from cwd removes the dependency instead of guessing at it: it is
+    verifiable now, against real files. Callers still prefer an explicit path
+    when the host supplies one.
+
+    LIMIT: with two concurrent Codex sessions in one repo this returns the most
+    recently written, which is the one that just ended in the Stop case but is
+    not guaranteed to be the caller's own session.
+    """
+    root = sessions_root or CODEX_SESSIONS_ROOT
+    if not root.is_dir():
+        return None
+    target = str(Path(cwd)).rstrip("/")
+    try:
+        files = sorted(
+            root.rglob("rollout-*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+        )[:max_scan]
+    except OSError:
+        return None
+    for path in files:
+        try:
+            with path.open(errors="replace") as fh:
+                for _, line in zip(range(3), fh):
+                    obj = _loads(line)
+                    if obj is None or obj.get("type") != "session_meta":
+                        continue
+                    payload = obj.get("payload") or {}
+                    found = payload.get("cwd") if isinstance(payload, dict) else None
+                    if found and str(found).rstrip("/") == target:
+                        return path
+                    break
+        except OSError:
+            continue
     return None
 
 
@@ -235,14 +288,104 @@ def normalize_to_file(src: Path, dest: Path) -> int:
     return count
 
 
+# A normalized rollout runs to multiple MB, four Stop sweeps fire per session,
+# and nothing evicts them -- an unbounded accumulator fed by every session. The
+# cache is keyed by SOURCE FILE so the four sweeps share one normalization
+# instead of writing four copies, and stale entries are reaped on every call.
+CACHE_TTL_DAYS = 2
+
+
+def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS) -> None:
+    import time
+
+    cutoff = time.time() - ttl_days * 86400
+    try:
+        for old in cache_dir.glob("normalized-*.jsonl"):
+            try:
+                if old.stat().st_mtime < cutoff:
+                    old.unlink()
+            except OSError:
+                continue
+    except OSError:
+        return
+
+
+def normalized_cache_path(source: Path, cache_dir: Path) -> Path:
+    import hashlib
+
+    digest = hashlib.sha256(str(Path(source).resolve()).encode()).hexdigest()[:16]
+    return Path(cache_dir) / f"normalized-{digest}.jsonl"
+
+
+def normalize_cached(source: Path, cache_dir: Path) -> Path | None:
+    """Normalize ``source`` into ``cache_dir``, reusing a fresh result.
+
+    Four sweeps race here, so the write is atomic (temp + rename): a reader can
+    only ever see a complete file, never a half-written one.
+    """
+    source = Path(source)
+    cache_dir = Path(cache_dir)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    _reap(cache_dir)
+    dest = normalized_cache_path(source, cache_dir)
+    try:
+        if dest.is_file() and dest.stat().st_mtime >= source.stat().st_mtime:
+            return dest
+    except OSError:
+        pass
+    tmp = dest.with_suffix(f".{os.getpid()}.part")
+    try:
+        if normalize_to_file(source, tmp) == 0:
+            tmp.unlink(missing_ok=True)
+            return None
+        os.replace(tmp, dest)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    return dest
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("transcript", type=Path)
+    parser.add_argument("transcript", type=Path, nargs="?")
+    parser.add_argument("--find-codex-session", metavar="CWD",
+                        help="print the newest Codex rollout recorded for CWD, then exit")
     parser.add_argument("--out", type=Path, help="write a normalized JSONL copy here")
+    parser.add_argument("--cache-dir", type=Path,
+                        help="normalize into a shared, self-reaping cache and print its path")
     parser.add_argument("--json", action="store_true", help="print a detection receipt")
     args = parser.parse_args(argv)
+
+    if args.find_codex_session:
+        found = find_codex_transcript(args.find_codex_session)
+        if found is None:
+            return 1
+        # With --cache-dir/--out, resolve AND normalize in one call: every
+        # consumer parses the Claude shape, so handing back a raw Codex path
+        # would just move the silent no-op one step downstream.
+        if args.cache_dir:
+            cached = normalize_cached(found, args.cache_dir)
+            if cached is None:
+                return 1
+            print(cached)
+        elif args.out:
+            if normalize_to_file(found, args.out) == 0:
+                return 1
+            print(args.out)
+        else:
+            print(found)
+        return 0
+
+    if args.transcript is None:
+        parser.error("transcript is required unless --find-codex-session is used")
 
     fmt = detect_format(args.transcript)
     if args.out:

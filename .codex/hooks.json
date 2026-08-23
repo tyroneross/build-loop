@@ -75,6 +75,35 @@
             "timeout": 3000
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/stop-transcript-sweep.sh\" decisions 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/stop-transcript-sweep.sh\" corrections 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/stop-transcript-sweep.sh\" findings 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/stop-transcript-sweep.sh\" cost-ledger 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; s=\"$root/scripts/hooks/session_end_retro_sweep.py\"; [ -f \"$s\" ] && nohup python3 \"$s\" </dev/null >/dev/null 2>&1 & exit 0",
+            "timeout": 5000
+          }
+        ]
       }
     ]
   }

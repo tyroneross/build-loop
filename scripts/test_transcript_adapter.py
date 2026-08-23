@@ -132,3 +132,101 @@ def test_command_key_is_synthesized_for_every_codex_payload_shape(tmp_path: Path
     ]
     events = list(ta.iter_events(_write(tmp_path / "cx.jsonl", rows)))
     assert "git commit" in events[0]["message"]["content"][0]["input"]["command"]
+
+
+def _rollout(root: Path, name: str, cwd: str, mtime: float) -> Path:
+    import os
+
+    day = root / "2026" / "08" / "22"
+    day.mkdir(parents=True, exist_ok=True)
+    path = day / f"rollout-{name}.jsonl"
+    path.write_text(json.dumps(
+        {"timestamp": "2026-08-22T16:14:53Z", "type": "session_meta",
+         "payload": {"session_id": name, "cwd": cwd}}) + "\n", encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_finds_the_newest_rollout_for_a_repo(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    _rollout(root, "old", "/repos/demo", 1_000_000)
+    newest = _rollout(root, "new", "/repos/demo", 2_000_000)
+    _rollout(root, "other", "/repos/elsewhere", 3_000_000)
+    assert ta.find_codex_transcript("/repos/demo", sessions_root=root) == newest
+
+
+def test_repo_names_containing_spaces_resolve(tmp_path: Path) -> None:
+    """Space-in-path repos were a real failure cluster for the promotion path."""
+    root = tmp_path / "sessions"
+    target = _rollout(root, "spaced", "/repos/My Repo Name", 1_000_000)
+    assert ta.find_codex_transcript("/repos/My Repo Name", sessions_root=root) == target
+
+
+def test_trailing_slash_does_not_prevent_a_match(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    target = _rollout(root, "s", "/repos/demo", 1_000_000)
+    assert ta.find_codex_transcript("/repos/demo/", sessions_root=root) == target
+
+
+def test_unknown_repo_and_missing_store_return_none(tmp_path: Path) -> None:
+    root = tmp_path / "sessions"
+    _rollout(root, "s", "/repos/demo", 1_000_000)
+    assert ta.find_codex_transcript("/repos/nothing", sessions_root=root) is None
+    assert ta.find_codex_transcript("/repos/demo", sessions_root=tmp_path / "gone") is None
+
+
+def test_scan_is_bounded_so_an_unbounded_store_cannot_stall_a_hook(tmp_path: Path) -> None:
+    """The rollout store grows without limit; a Stop hook must still return fast."""
+    root = tmp_path / "sessions"
+    for i in range(12):
+        _rollout(root, f"noise{i}", "/repos/elsewhere", 9_000_000 + i)
+    _rollout(root, "target", "/repos/demo", 1_000)
+    assert ta.find_codex_transcript("/repos/demo", sessions_root=root, max_scan=5) is None
+    assert ta.find_codex_transcript("/repos/demo", sessions_root=root, max_scan=50) is not None
+
+
+def test_four_sweeps_share_one_normalization(tmp_path: Path) -> None:
+    """Four Stop sweeps fire per session; four multi-MB copies is a leak."""
+    src = _write(tmp_path / "cx.jsonl", CODEX_ROWS)
+    cache = tmp_path / "cache"
+    paths = {ta.normalize_cached(src, cache) for _ in range(4)}
+    assert len(paths) == 1
+    assert len(list(cache.glob("normalized-*.jsonl"))) == 1
+
+
+def test_cache_refreshes_when_the_session_grows(tmp_path: Path) -> None:
+    """A session is still being written at Stop time; a stale copy loses turns."""
+    import os
+
+    src = _write(tmp_path / "cx.jsonl", CODEX_ROWS)
+    cache = tmp_path / "cache"
+    before = ta.normalize_cached(src, cache).read_text().count("\n")
+    _write(src, CODEX_ROWS + [
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "one more"}}])
+    os.utime(src, (9_999_999_999, 9_999_999_999))
+    assert ta.normalize_cached(src, cache).read_text().count("\n") == before + 1
+
+
+def test_stale_cache_entries_are_reaped(tmp_path: Path) -> None:
+    import os
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    old = cache / "normalized-deadbeefdeadbeef.jsonl"
+    old.write_text("{}\n", encoding="utf-8")
+    os.utime(old, (1_000_000, 1_000_000))
+    ta.normalize_cached(_write(tmp_path / "cx.jsonl", CODEX_ROWS), cache)
+    assert not old.exists()
+
+
+def test_partial_files_are_never_left_behind(tmp_path: Path) -> None:
+    """Readers must see a complete file or none -- four sweeps race on this."""
+    cache = tmp_path / "cache"
+    ta.normalize_cached(_write(tmp_path / "cx.jsonl", CODEX_ROWS), cache)
+    assert list(cache.glob("*.part")) == []
+
+
+def test_empty_source_produces_no_cache_entry(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    assert ta.normalize_cached(empty, tmp_path / "cache") is None
