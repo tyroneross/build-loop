@@ -99,21 +99,26 @@ def _milestones_path(memory_root: Path, slug: str) -> Path:
 
 
 def _last_line(path: Path) -> dict | None:
-    """Return parsed last non-empty line of a JSONL file, or None."""
-    if not path.exists():
-        return None
+    """Return parsed last non-empty line of a JSONL file, or None.
+
+    Streams rather than reading the file in — the milestone log is append-only
+    and grows without bound, so holding it in memory to reach its final line is
+    the wrong trade.
+    """
     try:
         with path.open("r", encoding="utf-8") as f:
-            last: dict | None = None
+            last = ""
             for raw in f:
                 raw = raw.strip()
                 if raw:
-                    try:
-                        last = json.loads(raw)
-                    except json.JSONDecodeError:
-                        last = None
-        return last
+                    last = raw
     except OSError:
+        return None
+    if not last:
+        return None
+    try:
+        return json.loads(last)
+    except json.JSONDecodeError:
         return None
 
 

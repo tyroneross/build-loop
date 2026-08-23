@@ -54,6 +54,49 @@ log() {
 log "starting"
 
 # ---------------------------------------------------------------------------
+# 3b. Put a supported python3 on PATH
+# ---------------------------------------------------------------------------
+# Same root cause as the claude-CLI resolution below, one layer down. Under
+# launchd, PATH is the bare /usr/bin:/bin:/usr/sbin:/sbin, so bare `python3`
+# resolves to /usr/bin/python3 — 3.9.6 on macOS 15, below this repo's declared
+# `requires-python = ">=3.11"`. Observed 2026-08-23: pyyaml missing (so
+# artifact_guard read a ModuleNotFoundError as artifact drift) and `tomllib`
+# missing (so test_artifact_guard's hook subprocess failed on the interpreter,
+# not on the code). Every gate this job runs — self_mod_verify, artifact_guard,
+# the git hooks they shell into — inherited the wrong interpreter, which makes
+# a headless test result not comparable to the same suite run in a terminal.
+#
+# Prepend the resolved interpreter's directory rather than only exporting a
+# variable: the failures are in GRANDCHILD processes (git hook -> `python3`),
+# and PATH is the only channel that reaches them.
+_py_ok() {  # $1 = candidate interpreter; true when it satisfies >=3.11
+    [[ -n "$1" && -x "$1" ]] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null
+}
+
+PYTHON_BIN=""
+for candidate in \
+    "${BUILDLOOP_PYTHON:-}" \
+    "$(command -v python3 2>/dev/null || true)" \
+    "/opt/homebrew/bin/python3" \
+    "/usr/local/bin/python3" \
+    "$HOME/.local/bin/python3"; do
+    if _py_ok "$candidate"; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$PYTHON_BIN" ]]; then
+    PATH="$(dirname "$PYTHON_BIN"):$PATH"
+    export PATH
+    log "python3 -> $PYTHON_BIN ($("$PYTHON_BIN" -V 2>&1))"
+else
+    # Fail-soft by contract, but say exactly what was searched so the next
+    # failure is diagnosable instead of surfacing as unrelated test noise.
+    log "WARN no python3 >=3.11 found (searched \$BUILDLOOP_PYTHON, PATH=$PATH, /opt/homebrew/bin, /usr/local/bin, ~/.local/bin) — continuing on $(python3 -V 2>&1); gate results may not match a terminal run"
+fi
+
+# ---------------------------------------------------------------------------
 # 4. Run the gatherer
 # ---------------------------------------------------------------------------
 GATHER_JSON="$( python3 scripts/self_review/__main__.py --mode "$MODE" --workdir "$REPO" --json 2>>"$RUN_LOG" || true )"
