@@ -76,15 +76,34 @@ with open(os.environ["BL_TEST_RECORD"], "a") as fh:
 '''
 
 
-def _hook_command(sweep: str) -> str:
-    """Return the Stop-hook command string for one sweep, from hooks.json."""
+def _sweep_registrations() -> list[str]:
+    """Every Stop-hook command that invokes the transcript sweep."""
     data = json.loads(HOOKS_JSON.read_text())
+    return [
+        entry.get("command", "")
+        for group in data["hooks"]["Stop"]
+        for entry in group["hooks"]
+        if "stop-transcript-sweep.sh" in entry.get("command", "")
+    ]
+
+
+def _hook_command(sweep: str) -> str:
+    """Return the Stop-hook command that must launch ``sweep``.
+
+    The four sweeps share a firing moment, an input, and an intent, so they are
+    registered ONCE in `all` mode rather than four times. Each per-sweep test
+    still drives the real registration and asserts its own recorder fired --
+    the contract under test is "this sweep launches from stdin transcript_path",
+    not "this sweep has its own hook entry".
+    """
+    registrations = _sweep_registrations()
+    for cmd in registrations:
+        if '.sh" all' in cmd:
+            return cmd
     markers = SWEEP_MARKERS[sweep]
-    for group in data["hooks"]["Stop"]:
-        for entry in group["hooks"]:
-            cmd = entry.get("command", "")
-            if any(m in cmd for m in markers):
-                return cmd
+    for cmd in registrations:
+        if any(m in cmd for m in markers):
+            return cmd
     raise AssertionError(f"no Stop-hook entry found for sweep {sweep!r} in {HOOKS_JSON}")
 
 
@@ -160,8 +179,13 @@ class StopSweepHostContractTests(unittest.TestCase):
             timeout=20,
         )
 
-    def _records(self, timeout_s: float = 15.0) -> list[dict]:
-        """Poll for the backgrounded stub's record rows."""
+    def _records(self, sweep: str | None = None, timeout_s: float = 15.0) -> list[dict]:
+        """Poll for the backgrounded stub's record rows.
+
+        `all` mode launches four recorders CONCURRENTLY, so the first row to
+        land is not necessarily the sweep under test. Waiting for the named
+        sweep's own row is the difference between a real assertion and a race.
+        """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if self.record.exists():
@@ -170,7 +194,11 @@ class StopSweepHostContractTests(unittest.TestCase):
                     for line in self.record.read_text().splitlines()
                     if line.strip()
                 ]
-                if rows:
+                if sweep is not None:
+                    matching = [r for r in rows if r.get("sweep") == sweep]
+                    if matching:
+                        return matching
+                elif rows:
                     return rows
             time.sleep(0.1)
         return []
@@ -185,7 +213,7 @@ class StopSweepHostContractTests(unittest.TestCase):
     def test_decisions_sweep_launches_from_stdin_transcript_path(self) -> None:
         cp = self._run("decisions", self._payload())
         self._assert_hook_contract(cp)
-        rows = self._records()
+        rows = self._records("decisions")
         self.assertTrue(
             rows,
             msg="decisions sweep never launched — transcript_path was not read from stdin JSON",
@@ -195,7 +223,7 @@ class StopSweepHostContractTests(unittest.TestCase):
     def test_corrections_sweep_launches_from_stdin_transcript_path(self) -> None:
         cp = self._run("corrections", self._payload())
         self._assert_hook_contract(cp)
-        rows = self._records()
+        rows = self._records("corrections")
         self.assertTrue(
             rows,
             msg="corrections sweep never launched — transcript_path was not read from stdin JSON",
@@ -205,7 +233,7 @@ class StopSweepHostContractTests(unittest.TestCase):
     def test_findings_sweep_launches_from_stdin_transcript_path(self) -> None:
         cp = self._run("findings", self._payload())
         self._assert_hook_contract(cp)
-        rows = self._records()
+        rows = self._records("findings")
         self.assertTrue(
             rows,
             msg="findings sweep never launched — transcript_path was not read from stdin JSON",
@@ -216,7 +244,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         """cost_ledger_hook.py parses the payload itself, so it must be piped it."""
         cp = self._run("cost-ledger", self._payload())
         self._assert_hook_contract(cp)
-        rows = self._records()
+        rows = self._records("cost-ledger")
         self.assertTrue(
             rows,
             msg="cost-ledger sweep never launched — transcript_path was not read from stdin JSON",
@@ -269,7 +297,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         )
         cp = self._run("decisions", payload)
         self._assert_hook_contract(cp)
-        rows = self._records()
+        rows = self._records("decisions")
         self.assertTrue(rows, msg="decisions sweep never launched")
         self.assertIn(str(evil), rows[0]["argv"])
         self.assertFalse(
@@ -303,3 +331,23 @@ class StopHookEnvVarPolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class StopSweepRegistrationIsMeceTests(unittest.TestCase):
+    """One firing moment + one input + one intent = one hook.
+
+    Four separate registrations were four copies of the same hook, each
+    re-resolving and re-normalizing the same transcript. A future edit that
+    re-splits them has to argue with this test.
+    """
+
+    def test_exactly_one_sweep_registration_exists(self) -> None:
+        registrations = _sweep_registrations()
+        self.assertEqual(
+            len(registrations), 1,
+            f"expected ONE collapsed sweep registration, found {len(registrations)}: "
+            f"{registrations}",
+        )
+
+    def test_the_single_registration_runs_all_mode(self) -> None:
+        self.assertIn('.sh" all', _sweep_registrations()[0])

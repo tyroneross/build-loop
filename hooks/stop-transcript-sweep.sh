@@ -5,7 +5,14 @@
 # stop-transcript-sweep.sh — launch ONE background transcript sweep from the
 # Claude Code `Stop` hook.
 #
-#   $1 = sweep: decisions | corrections | findings | cost-ledger
+#   $1 = sweep: all | decisions | corrections | findings | cost-ledger
+#
+#        `all` is the ONLY mode that should be REGISTERED as a hook. The four
+#        sweeps share a firing moment, an input, and an intent (extract signals
+#        from this session's transcript), so four registrations were four
+#        copies of one hook -- each re-resolving and re-normalizing the same
+#        transcript. One hook resolves once and fans out. The individual modes
+#        remain callable for testing and manual re-runs.
 #
 # WHY THIS EXISTS (the defect it fixes)
 # ------------------------------------
@@ -117,9 +124,12 @@ if [ -z "$TRANSCRIPT" ]; then
     fi
 fi
 
-case "$SWEEP" in
+# Every sweep needs a transcript; check once rather than in each arm.
+[ -n "$TRANSCRIPT" ] || _noop
+
+_run_one() {
+    case "$1" in
     decisions)
-        [ -n "$TRANSCRIPT" ] || _noop
         nohup "$_py" "${PLUGIN_ROOT}/scripts/scan_transcript_for_decisions.py" \
             --workdir "$CWD" \
             --transcript "$TRANSCRIPT" \
@@ -127,7 +137,6 @@ case "$SWEEP" in
             </dev/null >/dev/null 2>&1 &
         ;;
     corrections)
-        [ -n "$TRANSCRIPT" ] || _noop
         nohup env PYTHONPATH="${PLUGIN_ROOT}/scripts" "$_py" -m scan_corrections \
             --workdir "$CWD" \
             --transcript "$TRANSCRIPT" \
@@ -135,7 +144,6 @@ case "$SWEEP" in
             </dev/null >/dev/null 2>&1 &
         ;;
     findings)
-        [ -n "$TRANSCRIPT" ] || _noop
         nohup env PYTHONPATH="${PLUGIN_ROOT}/scripts" "$_py" -m scan_findings \
             --workdir "$CWD" \
             --transcript "$TRANSCRIPT" \
@@ -147,14 +155,19 @@ case "$SWEEP" in
         # session_id + cwd + transcript_path), so hand it the RAW payload on
         # stdin rather than argv. printf writes and exits; the sweep stays
         # detached.
-        [ -n "$TRANSCRIPT" ] || _noop
         printf '%s' "$PAYLOAD" \
             | nohup "$_py" "${PLUGIN_ROOT}/scripts/cost_ledger_hook.py" \
                 >/dev/null 2>&1 &
         ;;
-    *)
-        _noop
-        ;;
-esac
+    esac
+}
+
+if [ "$SWEEP" = "all" ]; then
+    for one in decisions corrections findings cost-ledger; do
+        _run_one "$one"
+    done
+else
+    _run_one "$SWEEP"
+fi
 
 _noop
