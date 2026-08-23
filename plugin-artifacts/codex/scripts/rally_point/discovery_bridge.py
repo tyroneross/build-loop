@@ -12,27 +12,27 @@ Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
 2. Native ``rally enter/say/whoami`` CLI (rally's real surface) backed by
-   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, the fetched
-   pinned binary cache, ``rally`` on ``$PATH``, or (lowest priority) a
+   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, standalone
+   ``rally`` on ``$PATH``, the fetched pinned compatibility cache, or (lowest priority) a
    repo-associated sibling ``agent-rally-point/target/*/rally`` checkout. The
-   pinned cache is the source of truth for version currency, so a sibling dev
-   build is only used when nothing higher-priority resolves — it must never
-   shadow the pin with a stale version.
+   standalone binary is the default owner. The compatibility cache and sibling
+   build are used only when no higher-priority standalone binary resolves.
 3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
 4. ``agent_rally_point.discover`` Python import (sibling-repo install
    or local ``.venv``).
 5. Fetch-on-install: provision the pinned ``rally`` release, then resolve.
-6. Embedded fallback to ``channel_paths.app_slug`` /
-   ``channel_paths.app_channel_dir`` (canonical
-   ``~/.agent-rally-point/apps/`` root, compatibility env overrides honored).
+6. Embedded fallback to ``channel_paths.fallback_channel_dir`` under the
+   Build Loop-owned, canonical-repository-keyed
+   ``~/.build-loop/apps/<repo>-<identity>/`` root (policy overrides honored).
 
 The internal fallback is a degraded-coordination path: it surfaces
 ``resolved_via: "build-loop-internal"`` and ``policy: "legacy-only"``
 so callers can distinguish embedded fallback from native package discovery.
-The fallback root is canonical, but the protocol source is still not silently
-treated as native agent-rally-point (the v0.12.16 defect class — see
-``protocol-of-record-audit`` memory note).
+Only Build Loop readers consume this backend. It preserves host identity
+(``codex``, ``claude_code``, ``cursor``) as data, but those hosts coordinate
+there only while running Build Loop. The fallback is never treated as native
+Rally (the v0.12.16 defect class — see ``protocol-of-record-audit`` memory note).
 
 Protocol-version compatibility: the bridge pins
 ``protocol_version >= 1.0, < 3.0``. When the discover envelope reports
@@ -46,11 +46,16 @@ so an env override never serves a stale binary-derived value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import shutil
+import sqlite3
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +77,11 @@ except ImportError:  # script import
 
 CACHE_TTL_SECONDS = 60
 """Per-workdir cache lifetime. β-design value; not yet operator-tunable."""
+
+_CACHE_MAX_ENTRIES = 256
+"""Hard process-local bound; expired and least-recently-written entries prune."""
+
+_MAX_MIGRATION_MARKER_BYTES = 16 * 1024
 
 MIN_PROTOCOL_VERSION = (1, 0)
 MAX_PROTOCOL_VERSION_EXCLUSIVE = (3, 0)
@@ -149,6 +159,63 @@ class DiscoveryEnvelope:
             self.resolved_via, self.coordination_unavailable
         )
 
+    @property
+    def backend(self) -> str:
+        """Name the coordination authority selected for this run."""
+        # Discovery can locate a Rally transport and still refuse to authorize
+        # it. Refusal wins over source labeling so callers cannot mistake an
+        # incompatible protocol or ambiguous host for a usable Rally backend.
+        if self.coordination_unavailable:
+            return "unavailable"
+        if self.resolved_via in {"repo-local-rally-cli", "fetched-binary"}:
+            return "rally"
+        if self.resolved_via == "build-loop-internal":
+            return "build-loop-local"
+        if self.capability_level == "unavailable":
+            return "unavailable"
+        return "rally-legacy-discovery"
+
+    @property
+    def transport(self) -> str:
+        """Name the only supported write transport for the selected backend."""
+        if self.backend == "rally":
+            return "rally-cli"
+        if self.backend == "build-loop-local":
+            return "fact-v1"
+        if self.backend == "unavailable":
+            return "none"
+        return "legacy-discovery"
+
+    @property
+    def refusal_reason(self) -> str | None:
+        """Human-readable cause for a discovery refusal."""
+        if not self.coordination_unavailable:
+            return None
+        detail = self.raw.get("detail") if isinstance(self.raw, dict) else None
+        if detail:
+            return str(detail)
+        return f"coordination unavailable: {self.coordination_unavailable}"
+
+    @property
+    def refusal_remedy(self) -> str | None:
+        """Bounded operator action that can restore coordination authority."""
+        if not self.coordination_unavailable:
+            return None
+        configured = self.raw.get("remedy") if isinstance(self.raw, dict) else None
+        if configured:
+            return str(configured)
+        if self.coordination_unavailable == "incompatible_protocol":
+            return (
+                "select a Rally build compatible with protocol >=1.0,<3.0, "
+                "then retry"
+            )
+        if self.coordination_unavailable == "ambiguous_host":
+            return (
+                "run `rally whoami --json`, resolve the ambiguous host runtime, "
+                "then retry"
+            )
+        return "restore the selected coordination backend, then retry"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "channel_dir": self.channel_dir,
@@ -159,10 +226,14 @@ class DiscoveryEnvelope:
             "protocol_version": self.protocol_version,
             "last_resolved_at": self.last_resolved_at,
             "resolved_via": self.resolved_via,
+            "backend": self.backend,
+            "transport": self.transport,
             "capability_level": self.capability_level,
             "legacy_channel_dir": self.legacy_channel_dir,
             "merged_view": self.merged_view,
             "coordination_unavailable": self.coordination_unavailable,
+            "reason": self.refusal_reason,
+            "remedy": self.refusal_remedy,
             "raw": self.raw,
         }
 
@@ -288,18 +359,14 @@ repo_local_rally_binary = rust_rally_binary
 def _rally_binary_candidates(workdir: Path | None) -> list[str]:
     """Return candidate ``rally`` paths in priority order.
 
-    Priority (highest → lowest): env override → fetch-on-install pinned cache
-    → ``rally`` on ``$PATH`` → repo-associated sibling ``target/{release,debug}``
+    Priority (highest → lowest): env override → standalone ``rally`` on
+    ``$PATH`` → fetch-on-install pinned compatibility cache → repo-associated
+    sibling ``target/{release,debug}``
     dev builds (checked last, across all resolved roots).
 
-    The pinned cache is the source of truth for version currency (see
-    ``binary_fetch.PINNED_VERSION``). A sibling ``target/release/rally`` /
-    ``target/debug/rally`` checkout is the LEAST trustworthy candidate for
-    version currency — it is whatever a prior local ``cargo build`` happened to
-    produce, with no guarantee it matches the pin — so it must never shadow a
-    live system binary or the pin. It is still probed (never removed): a
-    contributor actively developing ``agent-rally-point`` locally needs their
-    freshly-built binary reachable when nothing higher-priority resolves.
+    Standalone Rally owns its own version and ledger. The Build Loop pin is a
+    compatibility fallback, not an authority that may shadow a newer installed
+    Rally. A sibling development build is least trustworthy and remains last.
     """
     candidates: list[str] = []
     seen: set[str] = set()
@@ -314,11 +381,12 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
 
     add(os.environ.get("AGENT_RALLY_BINARY"))
 
+    add(shutil.which("rally"))
+
     # Fetch-on-install: a previously-fetched pinned binary in the build-loop
-    # runtime cache. Checked before PATH/sibling so the pin — the source of
-    # truth for version currency — is preferred over a live-but-possibly-stale
-    # system or dev-checkout binary. We do NOT trigger a fetch here (that is
-    # the discovery-tier's job); we only ADD an already-cached path.
+    # runtime cache. It follows standalone Rally on PATH and precedes only the
+    # unversioned sibling development builds. We do not trigger a fetch here;
+    # this tier only adds an already-cached compatibility binary.
     if not os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
         try:
             from . import binary_fetch as _fetch
@@ -331,8 +399,6 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
             cached = _fetch.cached_binary_path()
             if cached.is_file():
                 add(cached)
-
-    add(shutil.which("rally"))
 
     # Sibling dev-checkout builds — LAST priority (see docstring above).
     if (
@@ -389,29 +455,159 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
     return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
 
 
-def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
-    binary = repo_local_rally_binary(workdir)
-    if not binary:
-        return None
+@dataclass(frozen=True)
+class _NativeProbe:
+    status: str
+    payload: dict[str, Any] | None = None
+    reason: str | None = None
+
+
+def _run_rally_json(
+    binary: str, args: list[str], workdir: Path, *, expected_schema: str
+) -> _NativeProbe:
+    """Run one read-only Rally command and validate its command envelope."""
     try:
         proc = subprocess.run(
-            [binary, "whoami", "--json"],
+            [binary, *args],
             cwd=str(workdir),
             capture_output=True,
             text=True,
             timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as exc:
+        return _NativeProbe("unavailable", reason=str(exc))
+    if not proc.stdout.strip():
+        return _NativeProbe("unavailable", reason=proc.stderr.strip() or "empty reply")
     try:
         raw = json.loads(proc.stdout)
     except (ValueError, TypeError):
+        return _NativeProbe(
+            "incompatible" if proc.returncode == 0 else "unavailable",
+            reason="Rally returned malformed JSON",
+        )
+    if not isinstance(raw, dict):
+        return _NativeProbe("incompatible", reason="Rally reply is not an object")
+    product = raw.get("product")
+    schema = raw.get("schema")
+    if (product is not None and product != "rally") or (
+        schema is not None and schema != expected_schema
+    ):
+        return _NativeProbe(
+            "incompatible",
+            payload=raw,
+            reason=f"expected rally/{expected_schema}",
+        )
+    if proc.returncode != 0 or raw.get("ok") is not True:
+        return _NativeProbe(
+            "unavailable",
+            payload=raw,
+            reason=proc.stderr.strip() or str(raw.get("error") or "Rally read failed"),
+        )
+    if product != "rally" or schema != expected_schema:
+        return _NativeProbe(
+            "incompatible",
+            payload=raw,
+            reason=f"expected rally/{expected_schema}",
+        )
+    return _NativeProbe("ok", payload=raw)
+
+
+def _native_refusal_envelope(
+    *,
+    binary: str,
+    workdir: Path,
+    resolved_via: str,
+    policy: str,
+    reason: str,
+    detail: str | None,
+    whoami: dict[str, Any] | None = None,
+) -> DiscoveryEnvelope:
+    identity = ((whoami or {}).get("data") or {}).get("whoami") or {}
+    repo_root = identity.get("repo_root") or str(channel_paths.canonical_workdir(workdir))
+    repo_id = identity.get("repo_id") or channel_paths.app_slug(workdir)
+    return DiscoveryEnvelope(
+        channel_dir=str(Path(str(repo_root)).expanduser().resolve() / ".rally"),
+        app_slug=str(repo_id),
+        repo_id=str(repo_id),
+        channel_layout="repo-local-rally",
+        policy=policy,
+        protocol_version="1.0",
+        last_resolved_at=_utc_iso(),
+        resolved_via=resolved_via,
+        coordination_unavailable=reason,
+        raw={
+            "rally_binary": binary,
+            "refusal_reason": reason,
+            "detail": detail,
+            "whoami": whoami,
+        },
+    )
+
+
+def _resolve_native_rally_channel(
+    binary: str,
+    workdir: Path,
+    *,
+    resolved_via: str,
+    policy: str,
+) -> DiscoveryEnvelope | None:
+    """Resolve Rally only when identity and the room store are operational.
+
+    ``whoami`` intentionally remains readable when a room ledger is corrupt, so
+    binary presence is not availability. ``status read`` is the bounded,
+    read-only store probe that prevents Build Loop from routing writes into a
+    Rally room that cannot currently accept or project them.
+    """
+    version_probe = _run_rally_json(
+        binary,
+        ["version", "--json"],
+        workdir,
+        expected_schema="agent-rally.command.version.v1",
+    )
+    whoami_probe = _run_rally_json(
+        binary,
+        ["whoami", "--json"],
+        workdir,
+        expected_schema="agent-rally.command.whoami.v1",
+    )
+    status_probe = _run_rally_json(
+        binary,
+        ["status", "--json", "read", "--tool", "build_loop:discovery"],
+        workdir,
+        expected_schema="agent-rally.command.status_read.v1",
+    )
+    probes = (version_probe, whoami_probe, status_probe)
+    incompatible = next((probe for probe in probes if probe.status == "incompatible"), None)
+    if incompatible is not None:
+        return _native_refusal_envelope(
+            binary=binary,
+            workdir=workdir,
+            resolved_via=resolved_via,
+            policy=policy,
+            reason="incompatible_protocol",
+            detail=incompatible.reason,
+            whoami=whoami_probe.payload,
+        )
+    if any(probe.status != "ok" for probe in probes):
         return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True:
+    version = version_probe.payload or {}
+    whoami_raw = whoami_probe.payload or {}
+    status_raw = status_probe.payload or {}
+    whoami = ((whoami_raw.get("data") or {}).get("whoami") or {})
+    required = ("repo_root", "repo_id", "room_id", "worktree", "build_id")
+    if not isinstance(whoami, dict) or any(not whoami.get(k) for k in required):
         return None
-    whoami = ((raw.get("data") or {}).get("whoami") or {})
+    host_runtime = whoami.get("host_runtime") or {}
+    if not isinstance(host_runtime, dict) or host_runtime.get("ambiguous") is True:
+        return _native_refusal_envelope(
+            binary=binary,
+            workdir=workdir,
+            resolved_via=resolved_via,
+            policy=policy,
+            reason="ambiguous_host",
+            detail="Rally could not identify one host runtime; resolve identity before writing",
+            whoami=whoami_raw,
+        )
     repo_root = whoami.get("repo_root") or str(workdir)
     channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
     repo_id = whoami.get("repo_id") or channel_dir.parent.name
@@ -421,15 +617,29 @@ def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
         "app_slug": str(repo_id),
         "repo_id": str(repo_id),
         "channel_layout": "repo-local-rally",
-        "policy": "repo-local",
+        "policy": policy,
         "protocol_version": "1.0",
         "last_resolved_at": _utc_iso(),
         "rally_binary": binary,
-        "whoami": raw,
+        "rally_version": version,
+        "whoami": whoami_raw,
+        "status_read": status_raw,
     }
     return _shape_envelope_from_discover(
         shaped,
+        resolved_via=resolved_via,
+    )
+
+
+def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return None
+    return _resolve_native_rally_channel(
+        binary,
+        workdir,
         resolved_via="repo-local-rally-cli",
+        policy="repo-local",
     )
 
 
@@ -502,41 +712,12 @@ def _resolve_fetched_binary_channel(
     stamps ``resolved_via: "fetched-binary"`` so the source is attributable to
     the fetch tier. Still a FULL-capability source.
     """
-    try:
-        proc = subprocess.run(
-            [binary, "whoami", "--json"],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        raw = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True:
-        return None
-    whoami = ((raw.get("data") or {}).get("whoami") or {})
-    repo_root = whoami.get("repo_root") or str(workdir)
-    channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
-    repo_id = whoami.get("repo_id") or channel_dir.parent.name
-    shaped = {
-        "installed": True,
-        "channel_dir": str(channel_dir),
-        "app_slug": str(repo_id),
-        "repo_id": str(repo_id),
-        "channel_layout": "repo-local-rally",
-        "policy": "fetched-binary",
-        "protocol_version": "1.0",
-        "last_resolved_at": _utc_iso(),
-        "rally_binary": binary,
-        "whoami": raw,
-    }
-    return _shape_envelope_from_discover(shaped, resolved_via="fetched-binary")
+    return _resolve_native_rally_channel(
+        binary,
+        workdir,
+        resolved_via="fetched-binary",
+        policy="fetched-binary",
+    )
 
 
 def _try_python_import(workdir: Path) -> DiscoveryEnvelope | None:
@@ -584,16 +765,12 @@ def _internal_fallback(workdir: Path) -> DiscoveryEnvelope:
     write when their contract requires native package discovery. The embedded
     fallback is NEVER silently treated as native agent-rally-point discovery.
 
-    Capability split (loud-vs-degraded):
-      * UNSUPPORTED host (no fetchable asset) → ``coordination_unavailable:
-        "unsupported_host"`` → capability ``unavailable`` (LOUD no-coordination;
-        never a policy mirror, per the migration contract).
-      * Supported host that simply has no binary yet → ``coordination_
-        unavailable: None`` → capability ``degraded-breadcrumb`` (may write
-        capability-marked breadcrumb facts only).
+    A missing or unsupported native Rally binary is exactly the condition that
+    authorizes Build Loop's private fallback. Protocol incompatibility remains
+    a loud refusal and is handled before this function is selected.
     """
     slug = channel_paths.app_slug(workdir)
-    channel_dir = channel_paths.app_channel_dir(slug)
+    channel_dir = channel_paths.fallback_channel_dir(workdir, slug)
     unsupported = not _host_can_fetch_binary()
     return DiscoveryEnvelope(
         channel_dir=str(channel_dir),
@@ -606,17 +783,57 @@ def _internal_fallback(workdir: Path) -> DiscoveryEnvelope:
         resolved_via="build-loop-internal",
         legacy_channel_dir=str(channel_dir),
         merged_view=False,
-        coordination_unavailable="unsupported_host" if unsupported else None,
-        raw={},
+        coordination_unavailable=None,
+        raw={
+            "fallback_reason": (
+                "unsupported_host" if unsupported else "rally_unavailable"
+            )
+        },
     )
 
 
+def _writable_discovery_result(
+    envelope: DiscoveryEnvelope | None,
+) -> DiscoveryEnvelope | None:
+    """Return a resolver result only when it names a supported writer.
+
+    Legacy discovery remains useful to old readers, but it is not a writable
+    authority: Build Loop must never append its private files to a path merely
+    returned by ``agent-rally-discover``. An incompatible protocol is retained
+    so callers fail loudly instead of silently creating a second ledger.
+    """
+    if envelope is None:
+        return None
+    if envelope.coordination_unavailable == "incompatible_protocol":
+        return envelope
+    if envelope.transport == "rally-cli":
+        return envelope
+    return None
+
+
+def _prune_cache(now: float | None = None) -> None:
+    """Remove expired entries and cap distinct workdir/source combinations."""
+    current = time.time() if now is None else now
+    for key, (cached_at, _envelope) in list(_CACHE.items()):
+        if (current - cached_at) > CACHE_TTL_SECONDS:
+            _CACHE.pop(key, None)
+    overflow = len(_CACHE) - _CACHE_MAX_ENTRIES
+    if overflow > 0:
+        # ``dict`` preserves insertion order, and ``sorted`` is stable, so ties
+        # evict the earliest inserted entry instead of the just-written one.
+        oldest = sorted(_CACHE.items(), key=lambda item: item[1][0])
+        for key, _entry in oldest[:overflow]:
+            _CACHE.pop(key, None)
+
+
 def _cache_get(workdir_key: str, source_tag: str) -> DiscoveryEnvelope | None:
+    now = time.time()
+    _prune_cache(now)
     entry = _CACHE.get((workdir_key, source_tag))
     if entry is None:
         return None
     cached_at, envelope = entry
-    if (time.time() - cached_at) > CACHE_TTL_SECONDS:
+    if (now - cached_at) > CACHE_TTL_SECONDS:
         _CACHE.pop((workdir_key, source_tag), None)
         return None
     return envelope
@@ -625,7 +842,10 @@ def _cache_get(workdir_key: str, source_tag: str) -> DiscoveryEnvelope | None:
 def _cache_put(
     workdir_key: str, source_tag: str, envelope: DiscoveryEnvelope
 ) -> None:
-    _CACHE[(workdir_key, source_tag)] = (time.time(), envelope)
+    now = time.time()
+    _prune_cache(now)
+    _CACHE[(workdir_key, source_tag)] = (now, envelope)
+    _prune_cache(now)
 
 
 def resolve(workdir: Path | str) -> DiscoveryEnvelope:
@@ -640,18 +860,14 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     binary → internal fallback. The first non-``None`` source wins.
     Each successful resolution is cached for ``CACHE_TTL_SECONDS``.
 
-    Channel-split fix (worktree canonicalization): ``workdir`` is collapsed
-    to the canonical repo root via ``channel_paths.canonical_workdir``
-    BEFORE any resolver runs. Two ``git worktree`` checkouts of one repo
-    pass different paths here; the native ``rally`` / ``agent-rally-discover``
-    binaries key the channel on that path verbatim, so without
-    canonicalization the worktrees split into separate (empty) channels.
-    Canonicalizing once at the entry makes every resolver — native binary
-    or embedded fallback — receive the identical main-checkout root. A
-    non-git ``workdir`` is returned unchanged, preserving the ``_unscoped``
-    behavior downstream.
+    Native Rally receives the original active worktree so its identity and
+    branch projection remain accurate; Rally itself resolves all linked
+    worktrees to one shared repo room. Legacy discovery and the Build Loop
+    fallback receive the canonical checkout root so their path-keyed stores do
+    not split across worktrees.
     """
-    workdir_path = channel_paths.canonical_workdir(workdir)
+    requested_workdir = Path(workdir).expanduser().resolve()
+    workdir_path = channel_paths.canonical_workdir(requested_workdir)
     workdir_key = str(workdir_path)
 
     # Test-isolation hook: ``BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1`` short-
@@ -668,21 +884,59 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         _cache_put(workdir_key, "build-loop-internal", envelope)
         return envelope
 
-    # Probe each source in priority order; cache hits short-circuit.
+    # Operator discovery overrides and the legacy discover surfaces are
+    # read-only compatibility inputs. They may veto writes for an incompatible
+    # protocol, but they cannot become a Build Loop write authority.
+    for source_tag, probe in (("env-override", _try_env_override),):
+        cached = _cache_get(workdir_key, source_tag)
+        envelope = cached if cached is not None else probe(workdir_path)
+        if envelope is not None:
+            _cache_put(workdir_key, source_tag, envelope)
+            writable = _writable_discovery_result(envelope)
+            if writable is not None:
+                return writable
+
+    # Standalone Rally is the default only when its read path is operational.
+    # ``whoami`` can succeed against a corrupt room, so a failed status-read
+    # probe is a deliberate backend transition to Build Loop local storage;
+    # do not fall through to a second writer for the same broken Rally room.
+    native_key = str(requested_workdir)
+    cached = _cache_get(native_key, "repo-local-rally-cli")
+    if cached is not None:
+        return cached
+    native_binary = repo_local_rally_binary(requested_workdir)
+    if native_binary:
+        envelope = _resolve_native_rally_channel(
+            native_binary,
+            requested_workdir,
+            resolved_via="repo-local-rally-cli",
+            policy="repo-local",
+        )
+        if envelope is not None:
+            _cache_put(native_key, "repo-local-rally-cli", envelope)
+            return envelope
+        fallback = _internal_fallback(workdir_path)
+        fallback.raw = {
+            "fallback_reason": "rally_unhealthy",
+            "rally_binary": native_binary,
+        }
+        _cache_put(native_key, "repo-local-rally-cli", fallback)
+        return fallback
+
+    # Legacy discovery compatibility, then fetch-on-install when no standalone
+    # Rally binary exists at all. Only the fetched native CLI is writable.
     for source_tag, probe in (
-        ("env-override", _try_env_override),
-        ("repo-local-rally-cli", _try_repo_local_rally_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
         ("fetched-binary", _try_fetched_binary),
     ):
         cached = _cache_get(workdir_key, source_tag)
-        if cached is not None:
-            return cached
-        envelope = probe(workdir_path)
+        envelope = cached if cached is not None else probe(workdir_path)
         if envelope is not None:
             _cache_put(workdir_key, source_tag, envelope)
-            return envelope
+            writable = _writable_discovery_result(envelope)
+            if writable is not None:
+                return writable
 
     # Internal fallback — always succeeds.
     cached = _cache_get(workdir_key, "build-loop-internal")
@@ -699,9 +953,18 @@ def clear_cache() -> None:
 
 
 # Once-per-process guard so the seam does not re-shell on every coordination
-# write. migrate-legacy is itself idempotent (event_id dedup), so this is an
-# efficiency layer, not a correctness one. Keyed by resolved channel dir.
+# write for the same exact fallback contents. migrate-legacy is itself
+# idempotent (event_id dedup), so this is an efficiency layer, not correctness.
+# Keys include the store digest; appending a fact creates a new sync attempt.
 _MIGRATED_THIS_PROCESS: set[str] = set()
+_MIGRATED_THIS_PROCESS_MAX_ENTRIES = 256
+
+
+def _remember_migrated(store_key: str) -> None:
+    """Bound the process optimization; durable markers retain correctness."""
+    while len(_MIGRATED_THIS_PROCESS) >= _MIGRATED_THIS_PROCESS_MAX_ENTRIES:
+        _MIGRATED_THIS_PROCESS.pop()
+    _MIGRATED_THIS_PROCESS.add(store_key)
 
 
 def maybe_auto_migrate(
@@ -709,95 +972,255 @@ def maybe_auto_migrate(
 ) -> dict | None:
     """Auto-run ``rally migrate-legacy`` on the fallback→ARP transition seam.
 
-    Fires when (a) the resolved envelope is FULL capability (any real binary owns
-    the active channel — ``repo-local-rally-cli``, ``fetched-binary``,
-    ``env-override``, ``path-binary``, ``python-import``) AND (b) a stranded global
-    fallback store exists at the embedded apps path
-    (``channel_paths.app_channel_dir(slug)/changes.jsonl``) holding ≥1
-    ``agent-rally.fact.v1`` line. Shells out to ``rally migrate-legacy --json``
-    (binary from ``rust_rally_binary``), which losslessly + idempotently replays the
-    stranded store into the ARP repo ledger — a ONE-WAY migration of the retired
-    ``build-loop-internal`` fallback logs into ``.rally``.
+    Fires when (a) the resolved envelope is FULL capability and (b) a stranded
+    identity-keyed Build Loop fallback store holds at least one losslessly
+    migratable fact. An exact historical directory may also be included through
+    ``BUILD_LOOP_LEGACY_MIGRATION_SOURCE``; basename scans are intentionally
+    forbidden because they cannot prove repository identity. The Rally binary
+    pinned in the discovery envelope replays each staged source through the
+    public ``rally migrate-legacy --json`` command.
 
     Returns the parsed migrate result dict (``slugs_found``, ``facts_read``,
     ``facts_migrated``, ``facts_skipped_existing``, ``warnings``) on success, or
     ``None`` when not applicable / on any error. Fire-and-forget — never raises into
     the caller, never imports agent-rally-point.
 
-    A per-process marker (``<fallback_channel>/.migrated``) + an in-memory set skip
-    re-invocation; migrate-legacy's own event_id dedup is the correctness backstop.
+    ``<fallback_channel>/.migrated`` stores the successfully synchronized source
+    digest. It is never written for a non-zero exit, malformed response, or an
+    incomplete read count. Appended facts change the digest and trigger another
+    idempotent reconciliation.
     """
     try:
         env = envelope if envelope is not None else resolve(workdir)
         if env.capability_level != "full":
             return None
 
-        # Locate the stranded global fallback store for this repo's slug.
+        # Reconcile the Build Loop-owned fallback plus, only when the operator
+        # selected one exact path, a retired historical store. A temporary HOME
+        # bridge lets Rally consume the explicit source without writing the live
+        # fallback into Rally's old shared namespace.
         slug = channel_paths.app_slug(workdir)
-        fallback_dir = channel_paths.app_channel_dir(slug)
-        store = fallback_dir / "changes.jsonl"
-        if not store.exists():
-            return None
-
-        marker = fallback_dir / ".migrated"
-        store_key = str(store.resolve())
-        if store_key in _MIGRATED_THIS_PROCESS or marker.exists():
-            return None
-
-        # Require ≥1 fact.v1 line — otherwise migrate-legacy would migrate zero
-        # (it silently skips non-fact.v1 lines).
-        if not _has_fact_v1_line(store):
-            return None
-
-        binary = rust_rally_binary(workdir)
+        binary_value = env.raw.get("rally_binary")
+        binary = str(binary_value) if binary_value else None
         if not binary:
             return None
+        aggregate: dict[str, Any] | None = None
+        for fallback_dir in _migration_source_dirs(Path(workdir), slug):
+            try:
+                if fallback_dir.is_symlink() or not fallback_dir.is_dir():
+                    continue
+            except OSError:
+                continue
+            store = fallback_dir / "changes.jsonl"
+            marker = fallback_dir / ".migrated"
+            if _regular_path_token(store) is None or not _marker_path_is_safe(marker):
+                continue
+            if _marker_matches_stat(marker, store):
+                continue
 
-        try:
-            proc = subprocess.run(
-                [binary, "migrate-legacy", "--json"],
-                cwd=str(Path(workdir)),
-                capture_output=True,
-                text=True,
-                timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
+            # v0.25 and earlier Build Loop stores used a schema-less record
+            # shape Rally silently skips. Preserve those lines byte-for-byte
+            # and append one deterministic fact.v1 companion per source row.
+            if not _backfill_legacy_fact_rows(store):
+                continue
+            fingerprint = _store_fingerprint(store)
+            if fingerprint is None:
+                continue
+            store_key = f"{store.resolve()}:{fingerprint['sha256']}"
+            if store_key in _MIGRATED_THIS_PROCESS or _marker_matches(
+                marker, fingerprint
+            ):
+                continue
+            expected_identity = (
+                int(fingerprint["device"]), int(fingerprint["inode"])
             )
-        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return None
+            if not _has_fact_v1_line(
+                store, expected_identity=expected_identity
+            ) or not _store_is_losslessly_migratable(
+                store, expected_identity=expected_identity
+            ):
+                continue
 
-        # Process guard suppresses per-session retries (efficiency, not correctness)
-        # and is set even on a non-zero/timeout result so a transient failure does
-        # not retry-loop within this session. The .migrated file is the CROSS-session
-        # durability marker; it is written below only after the subprocess returns,
-        # so a failed run leaves it absent and a future process re-attempts.
-        _MIGRATED_THIS_PROCESS.add(store_key)
-        try:
-            marker.write_text(_utc_iso(), encoding="utf-8")
-        except OSError:
-            pass
+            # The source may be appended concurrently. Only migrate and mark a
+            # byte-identical regular file; otherwise the next post retries.
+            if _store_fingerprint(store) != fingerprint:
+                continue
 
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return None
-        try:
-            out = json.loads(proc.stdout)
-        except (ValueError, TypeError):
-            return None
-        if isinstance(out, dict) and isinstance(out.get("data"), dict):
-            data = out["data"]
-            # Live rally emits the result under the hyphenated command name.
-            return (
-                data.get("migrate-legacy")
-                or data.get("migrate_legacy")
-                or data
+            result = _migrate_explicit_store(
+                binary=binary,
+                workdir=Path(workdir),
+                store=store,
+                repo_basename=channel_paths.canonical_workdir(workdir).name,
+                expected_fact_count=_fact_v1_count(
+                    store, expected_identity=expected_identity
+                ),
+                expected_fingerprint=fingerprint,
             )
-        return out if isinstance(out, dict) else None
+            if result is None:
+                continue
+            if (
+                _store_fingerprint(store) != fingerprint
+                or not _marker_path_is_safe(marker)
+            ):
+                continue
+            _remember_migrated(store_key)
+            _publish_marker_atomic(
+                marker, {**fingerprint, "synced_at": _utc_iso()}
+            )
+            aggregate = _merge_migration_results(aggregate, result)
+        return aggregate
     except Exception:  # noqa: BLE001 — fire-and-forget seam, never block a host action
         return None
 
 
-def _has_fact_v1_line(store: Path) -> bool:
+def _migration_source_dirs(workdir: Path, slug: str) -> list[Path]:
+    """Return the identity-bound fallback and an explicitly approved legacy dir.
+
+    Historical ``~/.agent-rally-point/apps/<basename>`` directories are not
+    bound to a canonical repository identity. Automatically scanning them can
+    import an unrelated repository with the same basename. An operator may
+    approve one exact historical directory with
+    ``BUILD_LOOP_LEGACY_MIGRATION_SOURCE``; symlink sources are refused.
+    """
+    candidates = [channel_paths.fallback_channel_dir(workdir, slug)]
+    approved = os.environ.get("BUILD_LOOP_LEGACY_MIGRATION_SOURCE", "").strip()
+    if approved:
+        legacy = Path(approved).expanduser()
+        try:
+            if not legacy.is_symlink() and legacy.is_dir():
+                candidates.append(legacy.resolve(strict=True))
+        except (OSError, RuntimeError):
+            pass
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate.expanduser().resolve(strict=False))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def _migrate_explicit_store(
+    *,
+    binary: str,
+    workdir: Path,
+    store: Path,
+    repo_basename: str,
+    expected_fact_count: int,
+    expected_fingerprint: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Replay one exact fallback store through Rally's public migrator."""
+    source_digest = hashlib.sha256(str(store.resolve()).encode("utf-8")).hexdigest()[:12]
+    import_slug = f"{repo_basename}-{source_digest}"
+    try:
+        with tempfile.TemporaryDirectory(prefix="build-loop-rally-import-") as temp_home:
+            bridge_dir = (
+                Path(temp_home)
+                / ".agent-rally-point"
+                / "apps"
+                / import_slug
+            )
+            bridge_dir.mkdir(parents=True, exist_ok=False)
+            source_fd = os.open(
+                str(store), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            )
+            try:
+                source_stat = os.fstat(source_fd)
+                expected_stat = {
+                    key: expected_fingerprint.get(key)
+                    for key in ("device", "inode", "size", "mtime_ns", "ctime_ns")
+                }
+                actual_stat = {
+                    "device": source_stat.st_dev,
+                    "inode": source_stat.st_ino,
+                    "size": source_stat.st_size,
+                    "mtime_ns": source_stat.st_mtime_ns,
+                    "ctime_ns": source_stat.st_ctime_ns,
+                }
+                if (
+                    not stat.S_ISREG(source_stat.st_mode)
+                    or actual_stat != expected_stat
+                ):
+                    return None
+                with os.fdopen(source_fd, "rb", closefd=False) as source, open(
+                    bridge_dir / "changes.jsonl", "xb"
+                ) as destination:
+                    copied_digest = hashlib.sha256()
+                    copied_size = 0
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        destination.write(chunk)
+                        copied_digest.update(chunk)
+                        copied_size += len(chunk)
+                    destination.flush()
+                    os.fsync(destination.fileno())
+                    final_stat = os.fstat(source.fileno())
+                final_token = {
+                    "device": final_stat.st_dev,
+                    "inode": final_stat.st_ino,
+                    "size": final_stat.st_size,
+                    "mtime_ns": final_stat.st_mtime_ns,
+                    "ctime_ns": final_stat.st_ctime_ns,
+                }
+                if (
+                    final_token != expected_stat
+                    or copied_size != expected_fingerprint.get("size")
+                    or copied_digest.hexdigest()
+                    != expected_fingerprint.get("sha256")
+                ):
+                    return None
+            finally:
+                os.close(source_fd)
+            child_env = dict(os.environ)
+            child_env["HOME"] = temp_home
+            proc = subprocess.run(
+                [binary, "migrate-legacy", "--json"],
+                cwd=str(workdir),
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
+            )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    return _migration_result(
+        out,
+        expected_slug=import_slug,
+        expected_fact_count=expected_fact_count,
+    )
+
+
+def _merge_migration_results(
+    aggregate: dict[str, Any] | None,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    if aggregate is None:
+        return dict(result)
+    merged = dict(aggregate)
+    for key in ("facts_read", "facts_migrated", "facts_skipped_existing"):
+        merged[key] = int(merged.get(key, 0)) + int(result.get(key, 0))
+    for key in ("slugs_found", "append_outcomes", "outcome_unknowns", "warnings"):
+        left = merged.get(key) if isinstance(merged.get(key), list) else []
+        right = result.get(key) if isinstance(result.get(key), list) else []
+        merged[key] = [*left, *right]
+    return merged
+
+
+def _has_fact_v1_line(
+    store: Path, *, expected_identity: tuple[int, int] | None = None
+) -> bool:
     """Return True if ``store`` holds ≥1 ``agent-rally.fact.v1`` line."""
     try:
-        with open(store, "r", encoding="utf-8") as fh:
+        with _open_regular_text(store, expected_identity=expected_identity) as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -811,6 +1234,535 @@ def _has_fact_v1_line(store: Path) -> bool:
     except OSError:
         return False
     return False
+
+
+def _fact_v1_count(
+    store: Path, *, expected_identity: tuple[int, int] | None = None
+) -> int:
+    """Count fact rows in the exact staged source after strict preflight."""
+    count = 0
+    try:
+        with _open_regular_text(store, expected_identity=expected_identity) as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except (ValueError, TypeError):
+                    return 0
+                if (
+                    isinstance(value, dict)
+                    and value.get("schema") == "agent-rally.fact.v1"
+                ):
+                    count += 1
+    except OSError:
+        return 0
+    return count
+
+
+_LEGACY_REQUIRED_KEYS = frozenset(
+    {"ts", "kind", "tool", "model", "run_id", "app_slug", "payload", "revision"}
+)
+_LEGACY_STRING_KEYS = ("kind", "tool", "model", "run_id", "app_slug")
+_LEGACY_COMPANION_FIELDS = (
+    "schema",
+    "event_id",
+    "thread_id",
+    "kind",
+    "subject",
+    "scope",
+    "created_at",
+    "evidence",
+    "tool",
+    "summary",
+    "target",
+    "ref",
+    "status",
+    "severity",
+    "uri",
+)
+
+
+def _is_standard_legacy_record(record: Any) -> bool:
+    """Recognize the schema-less Build Loop record contract, not arbitrary JSON."""
+    if not isinstance(record, dict) or "schema" in record:
+        return False
+    if not _LEGACY_REQUIRED_KEYS.issubset(record):
+        return False
+    if any(not isinstance(record.get(key), str) for key in _LEGACY_STRING_KEYS):
+        return False
+    ts = record.get("ts")
+    if (
+        isinstance(ts, bool)
+        or not isinstance(ts, (int, float))
+        or not math.isfinite(float(ts))
+    ):
+        return False
+    revision = record.get("revision")
+    return bool(
+        isinstance(record.get("payload"), dict)
+        and isinstance(revision, int)
+        and not isinstance(revision, bool)
+        and revision >= 0
+    )
+
+
+def _legacy_created_at(ts: int | float) -> str | None:
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(ts)))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _legacy_fact(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Build the deterministic append-only companion for one historical row."""
+    if not _is_standard_legacy_record(record):
+        return None
+    created_at = _legacy_created_at(record["ts"])
+    if created_at is None:
+        return None
+    try:
+        try:
+            from .fact_v1 import to_fact_v1
+            from .payload_codec import has_oversize_marker
+        except ImportError:
+            from fact_v1 import to_fact_v1  # type: ignore
+            from payload_codec import has_oversize_marker  # type: ignore
+
+        producer = {
+            key: value for key, value in record.items() if key.startswith("producer_")
+        }
+        build_loop_fields = {
+            key: record[key]
+            for key in (
+                "build_loop_id",
+                "build_loop_started_at",
+                "build_loop_run_label",
+            )
+            if key in record
+        }
+        fact = to_fact_v1(
+            kind=record["kind"],
+            tool=record["tool"],
+            model=record["model"],
+            run_id=record["run_id"],
+            app_slug=record["app_slug"],
+            payload=record["payload"],
+            revision=record["revision"],
+            producer=producer or None,
+            build_loop_fields=build_loop_fields or None,
+            source_record=record,
+            created_at=created_at,
+        )
+        if has_oversize_marker(fact.get("evidence")):
+            return None
+        return fact
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_exact_legacy_companion(fact: dict[str, Any], expected: dict[str, Any]) -> bool:
+    """Compare every Rally-surviving field emitted for a historical row."""
+    return all(
+        (key in fact) == (key in expected) and fact.get(key) == expected.get(key)
+        for key in _LEGACY_COMPANION_FIELDS
+    )
+
+
+def _represented_legacy_event_id(fact: dict[str, Any]) -> str | None:
+    try:
+        try:
+            from .payload_codec import decode_event, has_oversize_marker
+        except ImportError:
+            from payload_codec import decode_event, has_oversize_marker  # type: ignore
+        evidence = fact.get("evidence")
+        if (
+            not isinstance(evidence, list)
+            or has_oversize_marker(evidence)
+        ):
+            return None
+        event = decode_event(evidence)
+        source = event.get("source_record") if isinstance(event, dict) else None
+        expected = _legacy_fact(source) if isinstance(source, dict) else None
+        if expected is None or not _is_exact_legacy_companion(fact, expected):
+            return None
+        return str(expected["event_id"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _backfill_legacy_fact_rows(store: Path) -> bool:
+    """Append missing fact.v1 companions without rewriting historical lines."""
+    try:
+        try:
+            from .fact_v1 import FACT_SCHEMA, write_missing_fact_v1_lines
+        except ImportError:
+            from fact_v1 import FACT_SCHEMA, write_missing_fact_v1_lines  # type: ignore
+
+        with tempfile.TemporaryDirectory(
+            prefix="build-loop-legacy-index-"
+        ) as temp_dir:
+            conn = sqlite3.connect(str(Path(temp_dir) / "legacy.sqlite3"))
+            try:
+                conn.execute("PRAGMA journal_mode=OFF")
+                conn.execute("PRAGMA synchronous=OFF")
+                conn.execute("PRAGMA cache_size=-1024")
+                conn.execute(
+                    "CREATE TABLE candidates ("
+                    "event_id TEXT PRIMARY KEY, source_ordinal INTEGER NOT NULL, "
+                    "fact_json TEXT NOT NULL"
+                    ") WITHOUT ROWID"
+                )
+                conn.execute(
+                    "CREATE TABLE represented (event_id TEXT PRIMARY KEY) WITHOUT ROWID"
+                )
+                source_ordinal = 0
+                with _open_regular_text(store) as fh:
+                    source_stat = os.fstat(fh.fileno())
+                    source_identity = (source_stat.st_dev, source_stat.st_ino)
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except (ValueError, TypeError):
+                            return False
+                        if not isinstance(record, dict):
+                            return False
+                        if record.get("schema") == FACT_SCHEMA:
+                            represented_id = _represented_legacy_event_id(record)
+                            if represented_id is not None:
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO represented VALUES (?)",
+                                    (represented_id,),
+                                )
+                            continue
+                        expected = _legacy_fact(record)
+                        if expected is None:
+                            return False
+                        source_ordinal += 1
+                        conn.execute(
+                            "INSERT OR IGNORE INTO candidates VALUES (?, ?, ?)",
+                            (
+                                str(expected["event_id"]),
+                                source_ordinal,
+                                json.dumps(expected, separators=(",", ":")),
+                            ),
+                        )
+                conn.commit()
+
+                def _missing_facts():
+                    rows = conn.execute(
+                        "SELECT c.fact_json FROM candidates c "
+                        "LEFT JOIN represented r USING (event_id) "
+                        "WHERE r.event_id IS NULL ORDER BY c.source_ordinal"
+                    )
+                    for (raw_fact,) in rows:
+                        yield json.loads(raw_fact)
+
+                if write_missing_fact_v1_lines(
+                    store.parent,
+                    _missing_facts(),
+                    expected_identity=source_identity,
+                ) is None:
+                    return False
+            finally:
+                conn.close()
+        return _store_is_losslessly_migratable(
+            store, expected_identity=source_identity
+        )
+    except OSError:
+        return False
+
+
+def _store_is_losslessly_migratable(
+    store: Path, *, expected_identity: tuple[int, int] | None = None
+) -> bool:
+    """Require valid facts and an exact companion for every historical row."""
+    try:
+        try:
+            from .fact_v1 import FACT_SCHEMA
+            from .payload_codec import decode_event, has_oversize_marker
+        except ImportError:
+            from fact_v1 import FACT_SCHEMA  # type: ignore
+            from payload_codec import decode_event, has_oversize_marker  # type: ignore
+        found = False
+        with tempfile.TemporaryDirectory(
+            prefix="build-loop-lossless-index-"
+        ) as temp_dir:
+            conn = sqlite3.connect(str(Path(temp_dir) / "lossless.sqlite3"))
+            try:
+                conn.execute("PRAGMA journal_mode=OFF")
+                conn.execute("PRAGMA synchronous=OFF")
+                conn.execute("PRAGMA cache_size=-1024")
+                conn.execute(
+                    "CREATE TABLE required (event_id TEXT PRIMARY KEY) WITHOUT ROWID"
+                )
+                conn.execute(
+                    "CREATE TABLE represented (event_id TEXT PRIMARY KEY) WITHOUT ROWID"
+                )
+                with _open_regular_text(
+                    store, expected_identity=expected_identity
+                ) as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except (ValueError, TypeError):
+                            return False
+                        if not isinstance(obj, dict):
+                            return False
+                        if obj.get("schema") != FACT_SCHEMA:
+                            expected = _legacy_fact(obj)
+                            if expected is None:
+                                return False
+                            conn.execute(
+                                "INSERT OR IGNORE INTO required VALUES (?)",
+                                (str(expected["event_id"]),),
+                            )
+                            continue
+                        found = True
+                        evidence = obj.get("evidence")
+                        if not isinstance(evidence, list) or has_oversize_marker(evidence):
+                            return False
+                        event = decode_event(evidence)
+                        if event is None:
+                            return False
+                        represented_id = _represented_legacy_event_id(obj)
+                        if (
+                            isinstance(event, dict)
+                            and "source_record" in event
+                            and represented_id is None
+                        ):
+                            return False
+                        if represented_id is not None:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO represented VALUES (?)",
+                                (represented_id,),
+                            )
+                missing = conn.execute(
+                    "SELECT 1 FROM required q "
+                    "LEFT JOIN represented r USING (event_id) "
+                    "WHERE r.event_id IS NULL LIMIT 1"
+                ).fetchone()
+                return found and missing is None
+            finally:
+                conn.close()
+    except OSError:
+        return False
+
+
+def _store_fingerprint(store: Path) -> dict[str, Any] | None:
+    """Return stable content identity for one fallback JSONL store."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(store), flags)
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(fd)
+            return None
+        with os.fdopen(fd, "rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+            final_metadata = os.fstat(fh.fileno())
+    except OSError:
+        return None
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(
+        getattr(metadata, field) != getattr(final_metadata, field)
+        for field in stable_fields
+    ) or size != final_metadata.st_size:
+        return None
+    metadata = final_metadata
+    return {
+        "sha256": digest.hexdigest(),
+        "size": size,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+
+
+def _regular_path_token(path: Path) -> dict[str, int] | None:
+    """Return no-follow identity for a regular file, else None."""
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return None
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return None
+    return {
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+
+
+def _open_regular_text(
+    path: Path, *, expected_identity: tuple[int, int] | None = None
+):
+    """Open one no-follow regular UTF-8 file and retain its verified fd."""
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("migration source must be a regular file")
+        if expected_identity is not None and (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) != expected_identity:
+            raise OSError("migration source identity changed")
+        return os.fdopen(fd, "r", encoding="utf-8")
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _read_regular_json(path: Path) -> Any:
+    with _open_regular_text(path) as stream:
+        if os.fstat(stream.fileno()).st_size > _MAX_MIGRATION_MARKER_BYTES:
+            raise ValueError("migration marker exceeds byte ceiling")
+        raw = stream.read(_MAX_MIGRATION_MARKER_BYTES + 1)
+        if len(raw.encode("utf-8")) > _MAX_MIGRATION_MARKER_BYTES:
+            raise ValueError("migration marker exceeds byte ceiling")
+        return json.loads(raw)
+
+
+def _marker_path_is_safe(marker: Path) -> bool:
+    """Accept an absent marker or an existing no-follow regular file only."""
+    try:
+        metadata = marker.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return not stat.S_ISLNK(metadata.st_mode) and stat.S_ISREG(metadata.st_mode)
+
+
+def _marker_matches_stat(marker: Path, store: Path) -> bool:
+    """Fast steady-state marker gate without rereading an unchanged ledger."""
+    if not _marker_path_is_safe(marker):
+        return False
+    token = _regular_path_token(store)
+    if token is None:
+        return False
+    try:
+        stored = _read_regular_json(marker)
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(stored, dict)
+        and all(stored.get(key) == value for key, value in token.items())
+        and isinstance(stored.get("sha256"), str)
+    )
+
+
+def _publish_marker_atomic(marker: Path, payload: dict[str, Any]) -> bool:
+    """Publish a migration marker atomically without following marker links."""
+    if not _marker_path_is_safe(marker):
+        return False
+    temp = marker.with_name(
+        f".{marker.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    try:
+        fd = os.open(
+            str(temp),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            offset = 0
+            while offset < len(encoded):
+                written = os.write(fd, encoded[offset:])
+                if written <= 0:
+                    raise OSError("zero-byte migration marker write")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if not _marker_path_is_safe(marker):
+            return False
+        os.replace(temp, marker)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _marker_matches(marker: Path, fingerprint: dict[str, Any]) -> bool:
+    """True only for a validated-success marker of these exact contents."""
+    if not _marker_path_is_safe(marker):
+        return False
+    try:
+        stored = _read_regular_json(marker)
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(stored, dict)
+        and stored.get("sha256") == fingerprint.get("sha256")
+        and stored.get("size") == fingerprint.get("size")
+    )
+
+
+def _migration_result(
+    out: Any,
+    *,
+    expected_slug: str,
+    expected_fact_count: int | None = None,
+) -> dict[str, Any] | None:
+    """Validate Rally's migration receipt before persisting a watermark."""
+    if (
+        not isinstance(out, dict)
+        or out.get("ok") is not True
+        or out.get("product") != "rally"
+        or out.get("schema") != "agent-rally.command.migrate-legacy.v1"
+    ):
+        return None
+    data = out.get("data")
+    if not isinstance(data, dict):
+        return None
+    result = data.get("migrate-legacy") or data.get("migrate_legacy")
+    if not isinstance(result, dict):
+        return None
+    values = (
+        result.get("facts_read"),
+        result.get("facts_migrated"),
+        result.get("facts_skipped_existing"),
+    )
+    if any(type(value) is not int or value < 0 for value in values):
+        return None
+    facts_read, migrated, skipped = values
+    if min(facts_read, migrated, skipped) < 0 or facts_read != migrated + skipped:
+        return None
+    if expected_fact_count is not None and facts_read != expected_fact_count:
+        return None
+    slugs = result.get("slugs_found")
+    warnings = result.get("warnings")
+    if not isinstance(slugs, list) or expected_slug not in slugs:
+        return None
+    if not isinstance(warnings, list) or warnings:
+        return None
+    unknowns = result.get("outcome_unknowns", [])
+    if not isinstance(unknowns, list) or unknowns:
+        return None
+    return result
 
 
 # --------------------------------------------------------------------------

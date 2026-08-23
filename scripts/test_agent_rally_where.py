@@ -39,9 +39,9 @@ class AgentRallyWhereTests(unittest.TestCase):
         self.workdir = self.tmp / "repo"
         self.workdir.mkdir()
         self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
+        self._old_internal_only = os.environ.get("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
         os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
-        from rally_point import discovery_bridge as _bridge
         _bridge.clear_cache()
         subprocess.run(
             ["git", "init"], cwd=self.workdir, check=True, capture_output=True
@@ -52,6 +52,11 @@ class AgentRallyWhereTests(unittest.TestCase):
             os.environ.pop("BUILD_LOOP_APPS_ROOT", None)
         else:
             os.environ["BUILD_LOOP_APPS_ROOT"] = self._old_apps_root
+        if self._old_internal_only is None:
+            os.environ.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        else:
+            os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = self._old_internal_only
+        _bridge.clear_cache()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _install_fake_arp(self, channel_dir: str, slug: str) -> str:
@@ -81,19 +86,15 @@ class AgentRallyWhereTests(unittest.TestCase):
             cmd, capture_output=True, text=True, check=True, env=env,
         )
 
-    def test_delegates_to_agent_rally_point_when_installed(self) -> None:
-        """When agent_rally_point is importable AND discover() returns
-        installed=true, ``where --json`` carries the discovered values
-        verbatim and reports ``resolved_via: "agent-rally-point"``.
-        """
+    def test_legacy_python_discovery_cannot_become_write_authority(self) -> None:
+        """A legacy Python discovery result cannot select the write ledger."""
         fake_channel = str(self.tmp / "discovered_channel")
         fake_slug = "slug-from-discover"
         fake_path = self._install_fake_arp(fake_channel, fake_slug)
         env = os.environ.copy()
-        # β1 follow-up: this test explicitly exercises the canonical-
-        # delegation path. setUp() sets BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
-        # for the OTHER tests; pop it for this subprocess so the bridge
-        # actually probes Python import.
+        # Let the bridge probe Python import, but remove every supported native
+        # Rally writer. The result must be Build Loop's private fallback, not
+        # an arbitrary path returned by the read-only legacy discovery API.
         env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
         env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         # Exclude the fetch-on-install tier (+ its cached binary, which would
@@ -105,9 +106,9 @@ class AgentRallyWhereTests(unittest.TestCase):
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
         r = self._run_where(env=env)
         result = json.loads(r.stdout)
-        self.assertEqual(result["resolved_via"], "agent-rally-point")
-        self.assertEqual(result["channel_dir"], fake_channel)
-        self.assertEqual(result["app_slug"], fake_slug)
+        self.assertEqual(result["resolved_via"], "build-loop-internal")
+        self.assertNotEqual(result["channel_dir"], fake_channel)
+        self.assertNotEqual(result["app_slug"], fake_slug)
 
     def test_falls_back_to_internal_when_agent_rally_point_missing(self) -> None:
         """When agent_rally_point is NOT importable, ``where --json``

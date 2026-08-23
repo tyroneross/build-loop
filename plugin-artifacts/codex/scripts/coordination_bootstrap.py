@@ -49,8 +49,11 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from rally_point import channel_paths, presence  # noqa: E402
-from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
+from rally_point import actor_identity, channel_paths  # noqa: E402
+from rally_point.backend_adapter import (  # noqa: E402
+    resolve_context,
+    write_presence as write_backend_presence,
+)
 from rally_point.post import post  # noqa: E402
 
 
@@ -200,9 +203,21 @@ def bootstrap(
 
     # β1: resolve channel via the shared discovery bridge so this writes
     # to the canonical Rally Point root when available.
-    envelope = _bridge_resolve(workdir)
+    context = resolve_context(workdir)
+    envelope = context.envelope
     slug = envelope.app_slug
     channel_dir = Path(envelope.channel_dir)
+    native_identity = (
+        actor_identity.resolve_identity(tool, session_id)
+        if context.native
+        else None
+    )
+    coordination_tool = (
+        native_identity.native_tool if native_identity is not None else tool
+    )
+    coordination_session_id = (
+        native_identity.session_id if native_identity is not None else session_id
+    )
     effective_run_id = run_id or f"bootstrap-{topic}-{session_id}"
     presence_written = False
     action: str
@@ -284,11 +299,16 @@ def bootstrap(
             errors.append(f"could not write active pointer for {target}")
 
     # Write presence (fire-and-forget; never blocks).
+    presence_result = None
     try:
-        presence.write_presence(
-            channel_dir,
-            session_id=session_id,
-            tool=tool,
+        presence_result = write_backend_presence(
+            context,
+            session_id=coordination_session_id,
+            tool=coordination_tool,
+            local_session_id=session_id,
+            local_tool=(
+                native_identity.base_tool if native_identity is not None else tool
+            ),
             model=model,
             run_id=effective_run_id,
             app_slug=slug,
@@ -296,7 +316,11 @@ def bootstrap(
             files_in_flight=[str(target.relative_to(workdir)) if str(target).startswith(str(workdir)) else str(target)],
             cwd=workdir,
         )
-        presence_written = True
+        presence_written = presence_result.ok
+        if not presence_result.ok:
+            errors.append(
+                f"presence write failed: {presence_result.reason or presence_result.status}"
+            )
     except Exception as exc:  # noqa: BLE001 — fire-and-forget
         errors.append(f"presence.write_presence failed: {exc}")
 
@@ -312,6 +336,11 @@ def bootstrap(
         "coord_file": str(target),
         "action": action,
     }
+    if native_identity is not None:
+        payload.update(
+            host_tool=native_identity.base_tool,
+            session_id=native_identity.session_id,
+        )
     if action == "bootstrapped":
         payload["ownership"] = {
             # No chunks claimed at bootstrap time; owns stays empty.
@@ -331,15 +360,32 @@ def bootstrap(
             "allowed_tools": [],
             "denied_tools": [],
         }
+    post_outcome: dict[str, Any] = {}
     channel_rev = post(
         channel_dir=channel_dir,
         kind="handoff" if action == "bootstrapped" else "phase",
-        tool=tool,
+        tool=coordination_tool,
         model=model,
         run_id=effective_run_id,
         app_slug=slug,
         payload=(payload if action == "bootstrapped" else {**payload, "phase": "joined-existing-coord"}),
         workdir=workdir,
+        outcome=post_outcome,
+        local_tool=(
+            native_identity.base_tool if native_identity is not None else tool
+        ),
+        local_session_id=session_id,
+    )
+
+    actual_backend = (
+        post_outcome.get("backend")
+        or (presence_result.backend if presence_result is not None else None)
+        or context.envelope.backend
+    )
+    actual_transport = (
+        post_outcome.get("transport")
+        or (presence_result.transport if presence_result is not None else None)
+        or context.envelope.transport
     )
 
     return {
@@ -347,8 +393,14 @@ def bootstrap(
         "action": action,
         "channel_revision": channel_rev,
         "session_id": session_id,
+        "rally_session_id": coordination_session_id,
+        "tool": tool,
+        "rally_tool": coordination_tool,
         "presence_written": presence_written,
         "active_pointer_written": active_pointer_written,
+        "backend": actual_backend,
+        "transport": actual_transport,
+        "post_status": post_outcome.get("status"),
         "errors": errors,
     }
 

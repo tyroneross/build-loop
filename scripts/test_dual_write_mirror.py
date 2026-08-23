@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Test suite: β1.2 dual-write mirror in post.py + inbox.py.
+"""Test suite: Build Loop-local migration mirror in post.py + inbox.py.
 
-Covers the migration-window dual-write contract: while the discovery
-bridge reports ``policy: "migration"`` with a populated
-``legacy_channel_dir``, every canonical write is mirrored to the legacy
-channel so non-upgraded peers (Codex's LaunchAgent poller still on the
-legacy channel) stay visible.
+Covers the migration-window dual-write contract inside Build Loop's private
+fallback namespace. The fixture deliberately identifies the primary writer as
+``build-loop-internal``: legacy Python discovery is read-only and cannot
+authorize writes, while healthy standalone Rally receives no Build Loop
+sidecars.
 
 Acceptance criteria (matches β1.2 brief):
   AC-B1.2-1: post(channel_dir=canonical, workdir=W, kind=handoff, ...)
@@ -110,11 +110,11 @@ def _good_handoff_payload() -> dict:
 
 
 class DualWriteMirrorBase(unittest.TestCase):
-    """Shared fixture: tmp canonical + legacy channels, fake discover envelope.
+    """Shared fixture: tmp Build Loop primary + legacy channels.
 
     Each test patches ``discovery_bridge.resolve`` so the bridge returns a
-    chosen ``DiscoveryEnvelope`` (migration vs canonical vs no-legacy)
-    without needing a real ``agent-rally-discover`` binary on PATH.
+    chosen fallback ``DiscoveryEnvelope`` (migration vs non-migration vs
+    no-legacy) without needing a Rally binary on PATH.
     """
 
     def setUp(self) -> None:
@@ -154,11 +154,11 @@ class DualWriteMirrorBase(unittest.TestCase):
             channel_dir=str(self.canonical),
             app_slug="test-app",
             repo_id="test-app",
-            channel_layout="canonical",
+            channel_layout="build-loop-private",
             policy=policy,
             protocol_version="1.0",
             last_resolved_at="2026-05-25T00:00:00Z",
-            resolved_via="python-import",
+            resolved_via="build-loop-internal",
             legacy_channel_dir=resolved_legacy,
             merged_view=(policy == "migration"),
             coordination_unavailable=coordination_unavailable,

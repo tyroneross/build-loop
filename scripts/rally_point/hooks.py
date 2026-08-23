@@ -26,17 +26,33 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from rally_point import channel_paths, checkpoint, presence, revision
-    from rally_point.discovery_bridge import resolve as _bridge_resolve
+    from rally_point import actor_identity, channel_paths, checkpoint, presence, revision
+    from rally_point.backend_adapter import (
+        acknowledge,
+        audit_next,
+        native_room_summary,
+        resolve_context,
+        room_snapshot,
+        write_presence as write_backend_presence,
+    )
 except ImportError:
-    from . import channel_paths, checkpoint, presence, revision
-    from .discovery_bridge import resolve as _bridge_resolve
+    from . import actor_identity, channel_paths, checkpoint, presence, revision
+    from .backend_adapter import (
+        acknowledge,
+        audit_next,
+        native_room_summary,
+        resolve_context,
+        room_snapshot,
+        write_presence as write_backend_presence,
+    )
 
 
 # Throttle window — skip presence write when a fresh record for THIS
 # session/tool/repo room already exists within this many seconds. Cheap
 # stat+read, no flock. Single env override for tests; 60s default.
 _PRE_EDIT_THROTTLE_SECONDS = 60.0
+_NATIVE_THROTTLE_RETENTION_SECONDS = 24 * 60 * 60
+_NATIVE_THROTTLE_MAX_ENTRIES = 128
 
 
 def _throttle_seconds() -> float:
@@ -179,15 +195,13 @@ def resolve_operative_repo(
 
 
 def _heartbeat_session_id(slug: str) -> str:
-    """Return a stable session id for the heartbeat record.
+    """Return a stable local-fallback id for the shared advisory heartbeat.
 
     Stable per host+slug (NO PID component). Each tool-use fires a fresh
     ``python3`` subprocess with a different PID, so a PID in the id would
     yield a different presence file every invocation and defeat the
-    throttle. Multiple concurrent Claude Code sessions on the same
-    host+repo share one heartbeat record — that is the correct cardinality
-    for "an agent is editing this repo" at this advisory layer; per-session
-    attribution belongs to the SessionStart probe's presence record.
+    throttle. Native Rally does not use this shared id because its status,
+    claims, and handoffs require one actor per live session.
     """
     host = socket.gethostname() or "host"
     safe_host = "".join(c if c.isalnum() or c in "-_." else "-" for c in host)[:40]
@@ -215,19 +229,148 @@ def _fresh_presence_exists(
     return age < throttle_s
 
 
+def _native_throttle_path(workdir: Path, session_id: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id).strip("._") or "unknown"
+    return workdir / ".build-loop" / "rally-hook-throttle" / f"{safe}.stamp"
+
+
+def _fresh_native_throttle(
+    workdir: Path,
+    session_id: str,
+    *,
+    throttle_s: float,
+    now: float,
+) -> bool:
+    try:
+        return now - _native_throttle_path(workdir, session_id).stat().st_mtime < throttle_s
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _touch_native_throttle(workdir: Path, session_id: str, *, now: float) -> None:
+    path = _native_throttle_path(workdir, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=True)
+    os.utime(path, (now, now))
+    _prune_native_throttles(
+        workdir,
+        current_session_id=session_id,
+        throttle_s=_throttle_seconds(),
+        now=now,
+    )
+
+
+def _prune_native_throttles(
+    workdir: Path,
+    *,
+    current_session_id: str,
+    throttle_s: float,
+    now: float,
+) -> None:
+    """Bound stale per-session hook stamps without deleting live throttles."""
+    directory = _native_throttle_path(workdir, current_session_id).parent
+    current = _native_throttle_path(workdir, current_session_id)
+    try:
+        entries = [path for path in directory.glob("*.stamp") if path.is_file()]
+    except OSError:
+        return
+
+    fresh_cutoff = now - max(0.0, throttle_s)
+    retention_cutoff = now - max(
+        _NATIVE_THROTTLE_RETENTION_SECONDS,
+        max(0.0, throttle_s) * 4,
+    )
+    observed: list[tuple[Path, float]] = []
+    for path in entries:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if path != current and mtime < retention_cutoff:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            continue
+        observed.append((path, mtime))
+
+    overflow = len(observed) - _NATIVE_THROTTLE_MAX_ENTRIES
+    if overflow <= 0:
+        return
+    removable = sorted(
+        (
+            (path, mtime)
+            for path, mtime in observed
+            if path != current and mtime <= fresh_cutoff
+        ),
+        key=lambda item: (item[1], item[0].name),
+    )
+    for path, _mtime in removable[:overflow]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def _session_start_id(slug: str) -> str:
     return f"sessionstart-{slug.replace('/', '_')}"
 
 
+def _surface_coordination_refusal(context, operation: str) -> None:
+    """Expose a loud refusal without consulting Build Loop private state."""
+    envelope = context.envelope
+    reason = envelope.refusal_reason or "no coordination authority is available"
+    remedy = envelope.refusal_remedy or "restore coordination, then retry"
+    print(
+        f"rally: {operation} refused: {reason}; remedy: {remedy}",
+        file=sys.stderr,
+    )
+
+
 def _resolve_existing_channel(workdir: Path) -> tuple[str, Path] | None:
-    envelope = _bridge_resolve(workdir)
-    channel_dir = Path(envelope.channel_dir)
+    context = resolve_context(workdir)
+    if context.native or context.envelope.backend != "build-loop-local":
+        return None
+    channel_dir = context.local_channel_dir
     if not channel_dir.exists():
         return None
-    return envelope.app_slug, channel_dir
+    return context.envelope.app_slug, channel_dir
 
 
-def session_start_restore(workdir: Path, *, verbose: bool = True) -> int:
+def session_start_restore(
+    workdir: Path,
+    *,
+    verbose: bool = True,
+    tool: str = "claude_code",
+    session_id: str | None = None,
+) -> int:
+    context = resolve_context(workdir)
+    if context.native:
+        native_identity = actor_identity.resolve_identity(tool, session_id)
+        result = room_snapshot(
+            context,
+            actor=native_identity.native_tool,
+            readers=True,
+        )
+        if not result.ok or not verbose:
+            return 0
+        summary = native_room_summary(result)
+        squads = summary.get("squads") if isinstance(summary, dict) else []
+        peers = [
+            item for item in (squads if isinstance(squads, list) else [])
+            if isinstance(item, dict)
+            and item.get("tool") != native_identity.native_tool
+            and item.get("status") == "active"
+        ]
+        if peers:
+            print(
+                f"Rally Point: {context.envelope.app_slug} - "
+                f"{len(peers)} live peer(s)"
+            )
+        return 0
+    if context.envelope.backend != "build-loop-local":
+        _surface_coordination_refusal(context, "session checkpoint read")
+        return 0
     resolved = _resolve_existing_channel(workdir)
     if resolved is None:
         return 0
@@ -254,7 +397,24 @@ def session_start_restore(workdir: Path, *, verbose: bool = True) -> int:
     return 0
 
 
-def session_start_advance(workdir: Path) -> int:
+def session_start_advance(
+    workdir: Path,
+    *,
+    tool: str = "claude_code",
+    session_id: str | None = None,
+) -> int:
+    context = resolve_context(workdir)
+    if context.native:
+        native_identity = actor_identity.resolve_identity(tool, session_id)
+        acknowledge(
+            context,
+            tool=native_identity.native_tool,
+            session_id=native_identity.session_id,
+        )
+        return 0
+    if context.envelope.backend != "build-loop-local":
+        _surface_coordination_refusal(context, "session checkpoint advance")
+        return 0
     resolved = _resolve_existing_channel(workdir)
     if resolved is None:
         return 0
@@ -272,7 +432,26 @@ def _rally_quiet() -> bool:
     return os.environ.get("BUILD_LOOP_RALLY_QUIET", "0") == "1"
 
 
-def pre_edit_hint(workdir: Path) -> int:
+def pre_edit_hint(
+    workdir: Path,
+    *,
+    tool: str = "claude_code",
+    session_id: str | None = None,
+) -> int:
+    context = resolve_context(workdir)
+    if context.native:
+        native_identity = actor_identity.resolve_identity(tool, session_id)
+        result = audit_next(context, tool=native_identity.native_tool)
+        if result.ok and not _rally_quiet():
+            data = result.payload.get("data") if isinstance(result.payload, dict) else {}
+            next_data = data.get("next") if isinstance(data, dict) else {}
+            actionable = next_data.get("actionable") if isinstance(next_data, dict) else None
+            if actionable:
+                print(f"rally: native coordination pending ({context.envelope.app_slug})")
+        return 0
+    if context.envelope.backend != "build-loop-local":
+        _surface_coordination_refusal(context, "pre-tool coordination read")
+        return 0
     resolved = _resolve_existing_channel(workdir)
     if resolved is None:
         return 0
@@ -291,6 +470,7 @@ def pre_edit_join(
     file_path: str | None = None,
     command: str | None = None,
     tool: str = "claude_code",
+    session_id: str | None = None,
     model: str = "unknown",
     now: float | None = None,
 ) -> int:
@@ -321,27 +501,67 @@ def pre_edit_join(
     if op is None:
         return 0
     try:
-        slug = channel_paths.app_slug(op)
+        context = resolve_context(op)
+        slug = context.envelope.app_slug
     except Exception:
         return 0
     if not slug or slug == "_unscoped":
         return 0
-    # Lazy-create the channel dir. ``ensure_channel_dir`` is idempotent
-    # and only creates ``apps_root()/<slug>/`` — never touches existing
-    # files. It does NOT create ``.rally`` rooms under arbitrary host dirs.
-    try:
-        channel_dir = channel_paths.ensure_channel_dir(slug)
-    except Exception:
+    if context.native:
+        native_identity = actor_identity.resolve_identity(tool, session_id)
+        resolved_session_id = native_identity.session_id
+        t = now if now is not None else time.time()
+        if _fresh_native_throttle(
+            op,
+            resolved_session_id,
+            throttle_s=_throttle_seconds(),
+            now=t,
+        ):
+            return 0
+        try:
+            result = write_backend_presence(
+                context,
+                session_id=resolved_session_id,
+                tool=native_identity.native_tool,
+                local_session_id=resolved_session_id,
+                local_tool=native_identity.base_tool,
+                model=model,
+                run_id="pre-edit",
+                app_slug=slug,
+                phase="pre-edit-join",
+                files_in_flight=[],
+                cwd=str(op),
+                tier="executing",
+            )
+        except Exception:
+            return 0
+        if result.ok:
+            try:
+                _touch_native_throttle(op, resolved_session_id, now=t)
+            except Exception:
+                pass
+            if not _rally_quiet():
+                print(f"rally: joined {slug} room")
         return 0
 
+    if context.envelope.backend != "build-loop-local":
+        _surface_coordination_refusal(context, "pre-tool presence join")
+        return 0
+
+    # Local fallback owns its own apps-root channel.
     session_id = _heartbeat_session_id(slug)
+    try:
+        channel_dir = context.local_channel_dir
+        channel_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return 0
     t = now if now is not None else time.time()
     if _fresh_presence_exists(
         channel_dir, session_id, throttle_s=_throttle_seconds(), now=t
     ):
         return 0
     try:
-        presence.write_presence(
+        written = presence.write_presence(
             channel_dir,
             session_id=session_id,
             tool=tool,
@@ -354,6 +574,8 @@ def pre_edit_join(
         )
     except Exception:
         return 0
+    if not written:
+        return 0
     # Print a concise status line on every real write (not throttled).
     # Gate behind BUILD_LOOP_RALLY_QUIET=1 to suppress if desired.
     if not _rally_quiet():
@@ -361,7 +583,13 @@ def pre_edit_join(
     return 0
 
 
-def session_start_safe(workdir: Path, *, verbose: bool = True) -> int:
+def session_start_safe(
+    workdir: Path,
+    *,
+    verbose: bool = True,
+    tool: str = "claude_code",
+    session_id: str | None = None,
+) -> int:
     """SessionStart restore wrapper that no-ops outside a git repo.
 
     Codex-parity: when ``CLAUDE_PROJECT_DIR`` is unset and the launch cwd
@@ -375,7 +603,12 @@ def session_start_safe(workdir: Path, *, verbose: bool = True) -> int:
     """
     if not _is_git_repo(workdir):
         return 0
-    return session_start_restore(workdir, verbose=verbose)
+    return session_start_restore(
+        workdir,
+        verbose=verbose,
+        tool=tool,
+        session_id=session_id,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -389,6 +622,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ):
         sp = sub.add_parser(name)
         sp.add_argument("--workdir", default=".")
+        if name.startswith("session-start"):
+            sp.add_argument("--tool", default="claude_code")
+            sp.add_argument("--session-id", default=None)
         if name in ("session-start-restore", "session-start-safe"):
             sp.add_argument("--verbose", action="store_true")
         if name == "pre-edit":
@@ -397,6 +633,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             # so it does not shadow the subparser ``dest="subcommand"``.
             sp.add_argument("--command", default=None, dest="bash_command")
             sp.add_argument("--tool", default="claude_code")
+            sp.add_argument("--session-id", default=None)
             sp.add_argument("--model", default="unknown")
             sp.add_argument(
                 "--skip-join",
@@ -415,15 +652,33 @@ def main(argv: list[str] | None = None) -> int:
     workdir = raw_workdir if not raw_workdir.exists() else raw_workdir.resolve()
     try:
         if args.subcommand == "session-start-restore":
-            return session_start_restore(workdir, verbose=args.verbose)
+            return session_start_restore(
+                workdir,
+                verbose=args.verbose,
+                tool=args.tool,
+                session_id=args.session_id,
+            )
         if args.subcommand == "session-start-advance":
-            return session_start_advance(workdir)
+            return session_start_advance(
+                workdir,
+                tool=args.tool,
+                session_id=args.session_id,
+            )
         if args.subcommand == "session-start-safe":
-            return session_start_safe(workdir, verbose=args.verbose)
+            return session_start_safe(
+                workdir,
+                verbose=args.verbose,
+                tool=args.tool,
+                session_id=args.session_id,
+            )
         if args.subcommand == "pre-edit":
             # Legacy revision-advanced hint (workdir's existing channel).
             try:
-                pre_edit_hint(workdir)
+                pre_edit_hint(
+                    workdir,
+                    tool=args.tool,
+                    session_id=args.session_id,
+                )
             except Exception:
                 pass
             # New: throttled operative-repo join.
@@ -433,6 +688,7 @@ def main(argv: list[str] | None = None) -> int:
                     file_path=args.file_path,
                     command=args.bash_command,
                     tool=args.tool,
+                    session_id=args.session_id,
                     model=args.model,
                 )
             return 0

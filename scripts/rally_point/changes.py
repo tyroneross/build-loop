@@ -88,9 +88,11 @@ def _int_or_zero(value) -> int:
 
 try:  # package import
     from .fact_v1 import FACT_SCHEMA
+    from .payload_codec import decode_event
     from .retraction import apply as apply_retractions
 except ImportError:  # script import (sys.path-inserted, no parent package)
     from fact_v1 import FACT_SCHEMA  # type: ignore
+    from payload_codec import decode_event  # type: ignore
     from retraction import apply as apply_retractions  # type: ignore
 
 # Single source of truth: the schema string lives in fact_v1.FACT_SCHEMA (the
@@ -149,7 +151,21 @@ def _normalize_repo_local_record(record: dict) -> dict:
     fact = record.get("payload") or {}
     if not isinstance(fact, dict):
         fact = {}
-    payload = {
+    event = decode_event(fact.get("evidence") if isinstance(fact.get("evidence"), list) else [])
+    source_record = event.get("source_record") if isinstance(event, dict) else None
+    if isinstance(source_record, dict):
+        # Legacy fallback rows are replayed as authenticated fact.v1 companions.
+        # Preserve their complete original shape while adopting Rally's local
+        # sequence/event identity for incremental native readers.
+        normalized = dict(source_record)
+        normalized["source_revision"] = source_record.get("revision")
+        normalized["revision"] = _int_or_zero(record.get("seq") or fact.get("seq"))
+        normalized["event_id"] = fact.get("event_id")
+        normalized["_legacy_source_record"] = dict(source_record)
+        normalized["_source_format"] = "repo-local-rally-migrated-legacy"
+        return normalized
+    decoded_payload = event.get("payload") if isinstance(event, dict) else None
+    payload = decoded_payload if isinstance(decoded_payload, dict) else {
         "subject": fact.get("subject"),
         "scope": fact.get("scope"),
         "status": fact.get("status"),
@@ -158,13 +174,26 @@ def _normalize_repo_local_record(record: dict) -> dict:
         "to_tool": fact.get("target"),
         "run_id": fact.get("run_id"),
     }
+    scope = fact.get("scope") if isinstance(fact.get("scope"), list) else []
+    run_marker = next(
+        (str(item)[4:] for item in scope if isinstance(item, str) and item.startswith("run:")),
+        None,
+    )
     normalized = {
         "ts": record.get("occurred_at") or fact.get("created_at") or record.get("ts"),
-        "kind": record.get("event_type") or fact.get("kind") or "unknown",
+        "kind": (
+            event.get("kind") if isinstance(event, dict) else None
+        ) or record.get("event_type") or fact.get("kind") or "unknown",
         "tool": fact.get("tool") or "unknown",
-        "model": fact.get("model") or "unknown",
-        "run_id": fact.get("run_id") or "unknown",
-        "app_slug": record.get("engagement") or "",
+        "model": (
+            event.get("model") if isinstance(event, dict) else None
+        ) or fact.get("model") or "unknown",
+        "run_id": (
+            event.get("run_id") if isinstance(event, dict) else None
+        ) or run_marker or fact.get("thread_id") or "unknown",
+        "app_slug": (
+            event.get("app_slug") if isinstance(event, dict) else None
+        ) or record.get("engagement") or "",
         "payload": {k: v for k, v in payload.items() if v is not None},
         "revision": _int_or_zero(record.get("seq") or fact.get("seq")),
         "event_id": fact.get("event_id"),
@@ -188,7 +217,12 @@ def _normalize_fact_v1_record(record: dict) -> dict:
     comes from the private ``bl_kind`` (the original build-loop kind) when present,
     falling back to the fact.v1 wire kind.
     """
-    payload = record.get("bl_payload")
+    event = decode_event(
+        record.get("evidence") if isinstance(record.get("evidence"), list) else []
+    )
+    payload = event.get("payload") if isinstance(event, dict) else None
+    if not isinstance(payload, dict):
+        payload = record.get("bl_payload")
     if not isinstance(payload, dict):
         # Reconstruct a minimal payload from the fact fields so readers that
         # inspect payload (e.g. subject/status/target) still work.
@@ -202,11 +236,19 @@ def _normalize_fact_v1_record(record: dict) -> dict:
         }
     normalized = {
         "ts": record.get("created_at") or record.get("ts"),
-        "kind": record.get("bl_kind") or record.get("kind") or "unknown",
+        "kind": (
+            event.get("kind") if isinstance(event, dict) else None
+        ) or record.get("bl_kind") or record.get("kind") or "unknown",
         "tool": record.get("tool") or "unknown",
-        "model": record.get("bl_model") or "unknown",
-        "run_id": record.get("thread_id") or (payload.get("run_id") if isinstance(payload, dict) else None) or "unknown",
-        "app_slug": record.get("bl_app_slug") or "",
+        "model": (
+            event.get("model") if isinstance(event, dict) else None
+        ) or record.get("bl_model") or "unknown",
+        "run_id": (
+            event.get("run_id") if isinstance(event, dict) else None
+        ) or record.get("thread_id") or (payload.get("run_id") if isinstance(payload, dict) else None) or "unknown",
+        "app_slug": (
+            event.get("app_slug") if isinstance(event, dict) else None
+        ) or record.get("bl_app_slug") or "",
         "payload": payload,
         "revision": _int_or_zero(record.get("bl_revision")),
         "subject": record.get("subject"),
@@ -299,6 +341,16 @@ def append_change(channel_dir: Path, record: dict) -> None:
         return
 
 
+def _is_local_migration_companion(record: dict) -> bool:
+    """Return whether a fact.v1 row only mirrors an earlier local legacy row."""
+    if not isinstance(record, dict) or record.get("schema") != FACT_V1_SCHEMA:
+        return False
+    event = decode_event(
+        record.get("evidence") if isinstance(record.get("evidence"), list) else []
+    )
+    return isinstance(event, dict) and isinstance(event.get("source_record"), dict)
+
+
 def read_changes_since(
     channel_dir: Path, offset: int, *, resolve_retractions: bool = True
 ) -> tuple[list, int]:
@@ -340,7 +392,10 @@ def read_changes_since(
                     break  # partial trailing line — re-read next poll
                 new_offset += len(raw)
                 try:
-                    records.append(normalize_record(json.loads(raw.decode("utf-8"))))
+                    decoded = json.loads(raw.decode("utf-8"))
+                    if _is_local_migration_companion(decoded):
+                        continue
+                    records.append(normalize_record(decoded))
                 except (ValueError, UnicodeDecodeError):
                     continue  # skip a corrupt line, keep offset advancing
     except OSError:
@@ -380,7 +435,10 @@ def read_archived_changes(
                     if not line.strip():
                         continue
                     try:
-                        records.append(normalize_record(json.loads(line)))
+                        decoded = json.loads(line)
+                        if _is_local_migration_companion(decoded):
+                            continue
+                        records.append(normalize_record(decoded))
                     except (ValueError, UnicodeDecodeError):
                         continue
         except OSError:

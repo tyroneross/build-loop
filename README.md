@@ -145,9 +145,12 @@ Surface counts in this release: one command (`/build-loop:run`), 44 skills, 28 a
 Start every build-loop repo session by checking Rally for coordination state: peers, claims, handoffs, and soft file conflicts. Rally verifies nothing on its own, so confirm code, package, version, and release truth from git, tests, manifests, registries, or GitHub directly.
 
 ```bash
-rally enter --tool claude_code --json
-rally next --tool claude_code --json
-rally check before-write --tool claude_code --path README.md --strict --json
+BASE_TOOL="${BUILD_LOOP_RALLY_TOOL:-claude_code}" # choose this host family
+RALLY_SESSION_ID="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --field session-id)"
+RALLY_TOOL="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --session-id "$RALLY_SESSION_ID")"
+rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --json
+rally next --tool "$RALLY_TOOL" --json
+rally check before-write --tool "$RALLY_TOOL" --path README.md --strict --json
 ```
 
 If the Rally binary is not installed, proceed without it. Full coordination rules: [`references/coordination-rules.md`](references/coordination-rules.md).

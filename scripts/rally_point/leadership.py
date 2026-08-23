@@ -124,6 +124,8 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def _atomic_write(path: Path, obj: dict[str, Any]) -> None:
+    if ".rally" in Path(path).expanduser().resolve(strict=False).parts:
+        raise ValueError("Build Loop leadership sidecars are forbidden inside .rally")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / f".{path.name}.tmp.{os.getpid()}"
     tmp.write_text(

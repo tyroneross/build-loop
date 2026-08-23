@@ -2,12 +2,13 @@
 
 # Rally Point — orchestrator presence/phase protocol (Stage 1)
 
-The per-app shared channel carries what concurrent build-loop sessions
-(Claude **and** Codex, any checkout) are doing and how the app just changed.
-Resolve it with `scripts/rally_point/discovery_bridge.py` before writing:
-native `agent-rally-point` installs use `~/.agent-rally-point/apps/<repo-id>/`;
-the embedded build-loop fallback now uses the same root with a local
-`<slug>` when native discovery is unavailable.
+The per-app shared channel carries what concurrent Build Loop sessions
+(Claude, Codex, and Cursor, any checkout) are doing and how the app changed.
+Resolve it with `scripts/rally_point/discovery_bridge.py` before writing.
+Operational standalone Rally is canonical (`backend=rally`,
+`transport=rally-cli`). When Rally is absent or unhealthy, the embedded
+`backend=build-loop-local` fact-v1 spool is visible only to other Build Loop
+sessions. Host names remain event identity, not separate fallback products.
 The orchestrator is one of three tool-agnostic capture mechanisms (the other
 two: the git post-commit hook, and — Stage 2 — the enriched arch scan).
 Checkpoint-poll only, no daemon (D3). Awareness only, never a lock (D4).
@@ -46,15 +47,13 @@ Outside a git repo, fallback slug derivation delegates to memory's
 | Runtime-changing dogfood stage | create `scripts/dogfood_reload_checkpoint.py` checkpoint, post Rally handoff with checkpoint path/instructions, and wait for ACKs or recorded fallback before the next stage |
 | Run complete | last presence write (the reaper clears it after the heartbeat window — no explicit unregister needed) |
 
-All writes are fire-and-forget (atomic JSON tmp+rename / JSONL
-O_APPEND, errors swallowed). The `revision` bump is the only locked
-write (short-timeout `fcntl`, skip-on-timeout). None can block or fail a
-host action.
+All writes are fire-and-forget. Native writes use `rally say`; local writes use
+atomic JSON tmp+rename / JSONL `O_APPEND`, with a short-timeout revision lock.
+None can block or fail a host action.
 
-Use `scripts/rally_point/post.py` for all new change records. It wraps the
-revision bump and `changes.jsonl` append in the canonical order; do not call
-`changes.append_change(...)` directly from new orchestration code unless the
-caller has already handled the revision bump.
+Use `scripts/rally_point/post.py` for all new change records. It is the adapter
+that delegates to standalone Rally or the Build Loop fallback. Never write a
+Build Loop `changes.jsonl` directly inside `.rally`.
 
 ## Reading & surfacing
 

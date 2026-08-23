@@ -33,6 +33,7 @@ if str(_HERE.parent) not in sys.path:
 # earlier test could leave the wrong `lifecycle` cached (symptom:
 # AttributeError: module 'lifecycle' has no attribute 'reap_stale_sessions').
 from rally_point import capability as cap  # noqa: E402
+from rally_point import discovery_bridge as _bridge  # noqa: E402
 from rally_point import lifecycle as lc  # noqa: E402
 from rally_point import presence as pr  # noqa: E402
 import coordination_status as cs  # noqa: E402
@@ -216,12 +217,17 @@ def _write_stale_presence(channel: Path, session_id: str, *, age_seconds: int) -
     return p
 
 
-def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path: Path, monkeypatch):
+def test_stale_presence_regression_across_presence_status_and_lifecycle(
+    tmp_path: Path, monkeypatch, request
+):
     """R4: stale heartbeats must not surface as active peers."""
     apps_root = tmp_path / "apps"
     workdir = tmp_path / "repo"
     workdir.mkdir()
     monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(apps_root))
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    _bridge.clear_cache()
+    request.addfinalizer(_bridge.clear_cache)
     slug = cs.channel_paths.app_slug(workdir)
     channel = cs.channel_paths.ensure_channel_dir(slug)
 

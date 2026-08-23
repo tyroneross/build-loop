@@ -57,12 +57,11 @@ if str(_SCRIPTS) not in sys.path:
 try:
     from . import capability as _cap
     from . import hook_budget as _budget
-    from .discovery_bridge import resolve as _resolve, rust_rally_binary as _rust_binary
+    from .discovery_bridge import resolve as _resolve
 except ImportError:  # script-mode
     import capability as _cap  # type: ignore
     import hook_budget as _budget  # type: ignore
     from discovery_bridge import resolve as _resolve  # type: ignore
-    from discovery_bridge import rust_rally_binary as _rust_binary  # type: ignore
 
 
 def _child_timeout() -> float:
@@ -161,7 +160,8 @@ def reap_channel(
         )
         return _cap.mark(base, level, reason)
 
-    binary = _rust_binary(workdir)
+    binary_value = env.raw.get("rally_binary")
+    binary = str(binary_value) if binary_value else None
     if not binary:
         # Resolved full but binary path vanished between resolve and now.
         base["detail"] = "rally binary disappeared after resolution; refusing to reap"

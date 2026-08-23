@@ -39,6 +39,7 @@ sys.path.insert(0, str(HERE))
 
 from rally_point import discovery_bridge as bridge  # noqa: E402
 from rally_point import channel_paths  # noqa: E402
+from rally_point.post import post  # noqa: E402
 
 
 def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -136,9 +137,8 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
         return path
 
-    def test_path_binary_wins_when_available(self) -> None:
-        """When ``agent-rally-discover`` resolves on PATH, the bridge
-        consumes its envelope and reports ``path-binary``."""
+    def test_path_discovery_never_becomes_a_write_authority(self) -> None:
+        """A legacy discovery helper cannot authorize direct channel writes."""
         canonical_dir = str(self.tmp / "canonical-channel")
         fake = self._write_fake_discover_script(
             channel_dir=canonical_dir, app_slug="fake-slug"
@@ -153,14 +153,13 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         env = _clean_env({"PATH": f"{path_dir}:/usr/bin:/bin"})
         with self._patched_env(env):
             envelope = bridge.resolve(self.workdir)
-        self.assertEqual(envelope.resolved_via, "path-binary")
-        self.assertEqual(envelope.channel_dir, canonical_dir)
-        self.assertEqual(envelope.app_slug, "fake-slug")
-        self.assertEqual(envelope.policy, "canonical")
+        self.assertEqual(envelope.resolved_via, "build-loop-internal")
+        self.assertEqual(envelope.backend, "build-loop-local")
+        self.assertNotEqual(envelope.channel_dir, canonical_dir)
         self.assertIsNone(envelope.coordination_unavailable)
 
-    def test_env_override_beats_path_binary(self) -> None:
-        """``$AGENT_RALLY_DISCOVER`` wins even when PATH has a binary."""
+    def test_legacy_discovery_overrides_remain_read_only(self) -> None:
+        """Neither legacy discovery source may become a writable backend."""
         canonical_dir = str(self.tmp / "env-channel")
         path_canonical = str(self.tmp / "path-channel")
         env_script = self._write_fake_discover_script(
@@ -184,8 +183,9 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         })
         with self._patched_env(env):
             envelope = bridge.resolve(self.workdir)
-        self.assertEqual(envelope.resolved_via, "env-override")
-        self.assertEqual(envelope.app_slug, "env-slug")
+        self.assertEqual(envelope.resolved_via, "build-loop-internal")
+        self.assertEqual(envelope.backend, "build-loop-local")
+        self.assertNotIn(envelope.app_slug, {"env-slug", "path-slug"})
 
     def test_internal_fallback_when_nothing_available(self) -> None:
         """No env, no PATH binary, no importable package → internal fallback."""
@@ -231,6 +231,18 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         env = _clean_env({"AGENT_RALLY_DISCOVER": str(env_script)})
         with self._patched_env(env):
             envelope = bridge.resolve(self.workdir)
+            outcome: dict = {}
+            revision = post(
+                channel_dir=Path(envelope.channel_dir),
+                kind="artifact",
+                tool="build_loop:test",
+                model="test",
+                run_id="protocol-mismatch",
+                app_slug=envelope.app_slug,
+                payload={"subject": "must not write"},
+                workdir=self.workdir,
+                outcome=outcome,
+            )
         self.assertEqual(envelope.resolved_via, "env-override")
         self.assertEqual(
             envelope.coordination_unavailable, "incompatible_protocol"
@@ -238,9 +250,17 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         # The bridge surfaces the envelope; it did NOT silently flip to
         # internal-fallback (which would have policy="legacy-only").
         self.assertNotEqual(envelope.policy, "legacy-only")
+        self.assertIsNone(revision)
+        self.assertEqual(outcome["status"], "refused")
+        self.assertEqual(outcome["backend"], "unavailable")
+        self.assertFalse((Path(canonical_dir) / "changes.jsonl").exists())
+        fallback = channel_paths.app_channel_dir(
+            channel_paths.app_slug(self.workdir)
+        )
+        self.assertFalse((fallback / "changes.jsonl").exists())
 
-    def test_protocol_above_lower_bound_inclusive(self) -> None:
-        """Protocol 1.5 (inside the pinned band) is accepted normally."""
+    def test_compatible_legacy_protocol_uses_private_fallback(self) -> None:
+        """A compatible legacy reader does not override writer selection."""
         canonical_dir = str(self.tmp / "ok-channel")
         env_script = self._write_fake_discover_script(
             channel_dir=canonical_dir,
@@ -251,10 +271,11 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         with self._patched_env(env):
             envelope = bridge.resolve(self.workdir)
         self.assertIsNone(envelope.coordination_unavailable)
-        self.assertEqual(envelope.protocol_version, "1.5")
+        self.assertEqual(envelope.resolved_via, "build-loop-internal")
+        self.assertEqual(envelope.backend, "build-loop-local")
 
-    def test_protocol_two_zero_is_accepted_for_rust_hash_chain(self) -> None:
-        """Protocol 2.0 is the Rust hash-chain bridge band."""
+    def test_compatible_hash_chain_discovery_remains_read_only(self) -> None:
+        """Protocol compatibility alone does not make a CLI writable."""
         canonical_dir = str(self.tmp / "rust-channel")
         env_script = self._write_fake_discover_script(
             channel_dir=canonical_dir,
@@ -266,8 +287,8 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         with self._patched_env(env):
             envelope = bridge.resolve(self.workdir)
         self.assertIsNone(envelope.coordination_unavailable)
-        self.assertEqual(envelope.protocol_version, "2.0")
-        self.assertEqual(envelope.channel_layout, "hash-chain")
+        self.assertEqual(envelope.resolved_via, "build-loop-internal")
+        self.assertEqual(envelope.backend, "build-loop-local")
 
     def test_stale_rally_binary_is_skipped_for_current_surface(self) -> None:
         """A binary missing a real surface fragment must not be accepted.
@@ -388,12 +409,16 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         """
         whoami_payload = json.dumps({
             "ok": True,
+            "product": "rally",
+            "schema": "agent-rally.command.whoami.v1",
             "data": {"whoami": {
                 "repo_root": str(channel_dir.parent),
                 "repo_id": channel_dir.parent.name,
+                "room_id": f"{channel_dir.parent.name}-room",
                 "worktree": str(channel_dir.parent),
                 "cwd": str(channel_dir.parent),
                 "build_id": "test-fake",
+                "host_runtime": {"ambiguous": False},
             }},
         })
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,6 +431,16 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             "    print('       rally say <kind> --tool <tool> --subject <subject>')\n"
             "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(2)\n"
+            "if args == ['version', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.version.v1',\n"
+            "      'data': {'version': {'version': 'test', 'build_id': 'test-fake'}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['status', '--json', 'read', '--tool', 'build_loop:discovery']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.status_read.v1',\n"
+            "      'data': {'status_read': {'states': []}}}))\n"
+            "    raise SystemExit(0)\n"
             "if args == ['whoami', '--json']:\n"
             f"    print({whoami_payload!r})\n"
             "    raise SystemExit(0)\n"
@@ -426,11 +461,23 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(0)\n"
             "repo = pathlib.Path.cwd()\n"
+            "if args == ['version', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.version.v1',\n"
+            "      'data': {'version': {'version': 'test', 'build_id': 'test-local'}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['status', '--json', 'read', '--tool', 'build_loop:discovery']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.status_read.v1',\n"
+            "      'data': {'status_read': {'states': []}}}))\n"
+            "    raise SystemExit(0)\n"
             "if args == ['whoami', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'data': {'whoami': {\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.whoami.v1', 'data': {'whoami': {\n"
             "        'repo_root': str(repo), 'repo_id': repo.name,\n"
-            "        'worktree': str(repo), 'cwd': str(repo),\n"
-            "        'build_id': 'test-local'}}}))\n"
+            "        'room_id': repo.name + '-room', 'worktree': str(repo),\n"
+            "        'cwd': str(repo), 'build_id': 'test-local',\n"
+            "        'host_runtime': {'ambiguous': False}}}}))\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",
@@ -503,15 +550,29 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertIn(
             result["resolved_via"],
-            {"repo-local-rally-cli", "fetched-binary", "path-binary"},
+            {
+                "repo-local-rally-cli",
+                "fetched-binary",
+                "path-binary",
+                "build-loop-internal",
+            },
         )
-        # Native rally owns a repo-local ``.rally`` ledger; the Python
-        # ``agent-rally-discover`` path resolves the canonical apps root.
-        self.assertTrue(
-            result["channel_dir"].endswith(".rally")
-            or ".agent-rally-point" in result["channel_dir"],
-            msg=result["channel_dir"],
-        )
+        if result["resolved_via"] == "build-loop-internal":
+            self.assertEqual(result["backend"], "build-loop-local")
+            self.assertEqual(
+                result["raw"].get("fallback_reason"), "rally_unhealthy"
+            )
+        # Native Rally owns ``.rally``. When it is installed but unhealthy,
+        # Build Loop selects its identity-keyed private fallback instead of the
+        # historical shared ``.agent-rally-point`` namespace.
+        if result["resolved_via"] == "build-loop-internal":
+            self.assertIn("/.build-loop/apps/", result["channel_dir"])
+            self.assertNotIn("/.agent-rally-point/apps/", result["channel_dir"])
+        else:
+            self.assertTrue(
+                result["channel_dir"].endswith(".rally"),
+                msg=result["channel_dir"],
+            )
 
 
 class DiscoveryBridgeWorktreeCanonicalizationTests(unittest.TestCase):
@@ -574,6 +635,53 @@ class DiscoveryBridgeWorktreeCanonicalizationTests(unittest.TestCase):
         self.assertEqual(main_env.app_slug, wt_env.app_slug)
         self.assertEqual(main_env.channel_dir, wt_env.channel_dir)
         self.assertEqual(main_env.app_slug, "split-repo")
+
+
+class DiscoveryBridgeCacheBoundsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        bridge.clear_cache()
+
+    def tearDown(self) -> None:
+        bridge.clear_cache()
+
+    @staticmethod
+    def _envelope(index: int) -> bridge.DiscoveryEnvelope:
+        return bridge.DiscoveryEnvelope(
+            channel_dir=f"/tmp/channel-{index}",
+            app_slug=f"app-{index}",
+            repo_id=f"repo-{index}",
+            channel_layout="legacy",
+            policy="legacy-only",
+            protocol_version="1.0",
+            last_resolved_at="2026-08-14T08:00:00Z",
+            resolved_via="build-loop-internal",
+        )
+
+    def test_distinct_workdir_cache_is_bounded(self) -> None:
+        with mock.patch.object(bridge.time, "time", return_value=100.0):
+            for index in range(bridge._CACHE_MAX_ENTRIES + 25):
+                bridge._cache_put(
+                    f"/tmp/repo-{index}", "build-loop-internal", self._envelope(index)
+                )
+
+        self.assertEqual(len(bridge._CACHE), bridge._CACHE_MAX_ENTRIES)
+        self.assertNotIn(("/tmp/repo-0", "build-loop-internal"), bridge._CACHE)
+        self.assertIn(
+            (f"/tmp/repo-{bridge._CACHE_MAX_ENTRIES + 24}", "build-loop-internal"),
+            bridge._CACHE,
+        )
+
+    def test_any_cache_lookup_prunes_expired_distinct_keys(self) -> None:
+        with mock.patch.object(bridge.time, "time", return_value=100.0):
+            bridge._cache_put("/tmp/expired-a", "source", self._envelope(1))
+            bridge._cache_put("/tmp/expired-b", "source", self._envelope(2))
+        with mock.patch.object(
+            bridge.time,
+            "time",
+            return_value=100.0 + bridge.CACHE_TTL_SECONDS + 1,
+        ):
+            self.assertIsNone(bridge._cache_get("/tmp/missing", "source"))
+        self.assertEqual(bridge._CACHE, {})
 
 
 class RequiredSurfacePinnedToRealRallyTests(unittest.TestCase):

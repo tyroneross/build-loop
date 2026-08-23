@@ -4,7 +4,7 @@
 
 _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 
-Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
+Multiple Build Loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Cursor, and Gemini CLI). They MUST coordinate so they do not clobber each other's working trees or commit races. Standalone Rally is canonical when operational; otherwise only Build Loop sessions consume the local fallback.
 
 - **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/discovery_bridge.py`: the single concurrent-presence source of truth. One file per live session at `<resolved-channel>/sessions/<session-id>.json`; native `agent-rally-point` installs resolve under `~/.agent-rally-point/apps/<repo-id>/`, and the embedded build-loop fallback uses the same root with a local `<slug>`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
 - **Rally Point task heartbeat** — `scripts/rally_point/task_heartbeat.py`: append-only long-running task check-ins at `<resolved-channel>/task-heartbeats/<tool>.jsonl`. This is not process liveness; it records whether a session is still on the expected task, what changed since the prior check-in, and when the next check-in is due.
@@ -22,7 +22,7 @@ This section defines the Rally Point presence integration plus the M5 trigger fa
 
 ### Rally Point presence — channel resolution (D1, worktree-aware)
 
-Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` for the channel directory before every direct Rally Point write or read. It delegates to native `agent-rally-point` discovery when available, then falls back to `channel_paths.app_slug(cwd=<repo>)` + `channel_paths.app_channel_dir(...)`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Outside a git repo, fallback slug derivation delegates to memory's `derive_slug_from_cwd`. Use this resolver; never reimplement channel or slug derivation.
+Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` before every coordination write or read. A valid Rally binary is insufficient by itself: the resolver verifies identity and a read-only room projection before selecting `backend=rally`. Otherwise it selects `backend=build-loop-local`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one Build Loop channel**. Use this resolver; never reimplement backend, channel, or slug selection.
 
 ### Rally Point presence — On Phase 1 Assess preamble (before any Rally Point write, BEFORE any planning):
 
@@ -65,10 +65,12 @@ archive/delete. During high-overlap work, run `coordination_watch.py --interval
 prints only state transitions plus inbox unread count and task-heartbeat
 health.
 
-For long-running tasks, write the task heartbeat separately from presence:
+For long-running tasks, set `RUNTIME_PLUGIN_ROOT` to the active Build Loop
+package root (the directory containing `scripts/`) and write the task heartbeat
+separately from presence:
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+python3 "$RUNTIME_PLUGIN_ROOT/scripts/agent_rally.py" heartbeat \
   --workdir "$PWD" \
   --session-id "$SESSION_ID" \
   --tool "$TOOL_NAME" \
@@ -80,17 +82,23 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
   --json
 ```
 
-Use the same rule for every coding host. Claude Code uses `claude_code`, Codex
-uses `codex`, Cursor can use `cursor`, and future agents should pick a stable
-tool id before writing presence or inbox messages.
+Use the same rule for every coding host: choose a stable base tool
+(`claude_code`, `codex`, `cursor`) and a stable session id. Build Loop qualifies
+that pair into a session-unique native Rally actor while local fallback retains
+the base tool plus its session scope. Pass both values on every read, ACK, and
+write; do not reuse a bare native host id across concurrent sessions.
 
-Inbox routing has two wake paths. Targeted messages append to
-`inbox/<tool>.jsonl`; broadcast messages append to `inbox/all.jsonl`. Agents
-read both their direct inbox and `all`, while still mirroring important
-messages to `changes.jsonl` for durable channel polling.
+Inbox routing has two wake paths. Native Rally stores targeted and broadcast
+messages in its ledger and reader checkpoints; it creates no Build Loop inbox
+sidecar. Build Loop local fallback appends targeted messages to
+`inbox/<base-tool>.jsonl`, broadcasts to `inbox/all.jsonl`, and mirrors important
+messages to `changes.jsonl` for durable polling.
 ### Rally Point presence — On clean completion:
 
-No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.
+Run `python3 "$RUNTIME_PLUGIN_ROOT/scripts/agent_rally.py" stop --workdir "$PWD" --tool "$TOOL_NAME"
+--session-id "$SESSION_ID" --json`. The facade closes only that exact native
+actor, or removes only that session's base-tool local presence. Stale reaping is
+the crash backstop, not the normal closeout path.
 
 ### M5 — Between phases, scan for new sibling learnings:
 

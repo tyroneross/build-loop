@@ -31,7 +31,7 @@ emit_empty() {
 INPUT=$(cat)
 export _BL_INPUT="$INPUT"
 
-# Step 1: skip re-entered Stop hooks, subagent stops, then extract session_id/cwd
+# Step 1: extract the exact hook session and refuse recursive Stop re-entry.
 read -r STOP_HOOK_ACTIVE AGENT_ID SESSION_ID CWD <<EOF_VARS
 $(python3 <<'PY'
 import json, os, sys
@@ -67,12 +67,26 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
     exit 0
 fi
 
+WORKDIR="${CWD:-.}"
+
+# Release the exact session before every ordinary early-return path. Stop fires
+# outside Build Loop runs too, and stale Rally claims must not depend on a
+# state.json/report-phase marker. The re-entry guard above remains first so the
+# facade cannot recursively invoke itself.
+FACADE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent_rally.py"
+if [ -n "$SESSION_ID" ] && [ -f "$FACADE" ]; then
+    python3 "$FACADE" stop \
+        --workdir "$WORKDIR" \
+        --tool claude_code \
+        --session-id "$SESSION_ID" \
+        --json >/dev/null 2>&1 || true
+fi
+
 if [ -n "$AGENT_ID" ]; then
     emit_empty
     exit 0
 fi
 
-WORKDIR="${CWD:-.}"
 STATE_FILE="${WORKDIR}/.build-loop/state.json"
 export _BL_STATE_FILE="$STATE_FILE"
 export _BL_SESSION_ID="$SESSION_ID"
@@ -248,9 +262,5 @@ else:
         }
     }))
 PY
-
-# Fire-and-forget self-release: frees claude_code's presence + claims so peers
-# see the stop immediately. Guarded — never blocks, exit 0 preserved.
-command -v rally >/dev/null 2>&1 && rally stop claude_code --json >/dev/null 2>&1 || true
 
 exit 0

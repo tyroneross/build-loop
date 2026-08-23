@@ -28,7 +28,7 @@
           },
           {
             "type": "command",
-            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --mode hook --start-watch --watch-parent-pid \"$host_parent\" >/dev/null 2>&1 || printf '{}'",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; rally_session=\"${BUILD_LOOP_RALLY_SESSION_ID:-${CODEX_THREAD_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-codex-${host_parent}}}}}\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --session-id \"$rally_session\" --mode hook --start-watch --watch-parent-pid \"$host_parent\" >/dev/null 2>&1 || printf '{}'",
             "timeout": 4000
           },
           {
@@ -80,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v rally >/dev/null 2>&1 && rally stop codex --json >/dev/null 2>&1 || true",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; rally_session=\"${BUILD_LOOP_RALLY_SESSION_ID:-${CODEX_THREAD_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-codex-${host_parent}}}}}\"; actor=\"$(python3 \"$pkg/actor_identity.py\" --tool codex --session-id \"$rally_session\" 2>/dev/null || true)\"; [ -n \"$actor\" ] && python3 \"$root/scripts/agent_rally.py\" stop --workdir \"$root\" --tool \"$actor\" --session-id \"$rally_session\" --json >/dev/null 2>&1 || true",
             "timeout": 3000
           }
         ]

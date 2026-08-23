@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
+# capability:
+#   purpose: Report observed production flag and environment state during Phase 1.
+#   application: observability
+#   status: active
 """Operational-state probe: what is actually ON, OFF, CORRUPT, or UNKNOWN.
 
 Grep-bait (so a future agent hunting for this finds it): feature flag status,

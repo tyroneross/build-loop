@@ -15,6 +15,36 @@ W="${CLAUDE_PROJECT_DIR:-$PWD}"
 PKG="$(dirname "$D")/scripts/rally_point"
 [ -d "$PKG" ] || exit 0
 
+# Claude's hook event is the authoritative session identity. Do not depend on
+# CLAUDE_SESSION_ID being exported: plugin hooks receive the same session_id on
+# stdin at SessionStart, PreToolUse, and Stop. The shared Python resolver keeps
+# explicit/event, environment, and process fallbacks identical for every path.
+STDIN_JSON=""
+if [ ! -t 0 ]; then
+    STDIN_JSON=$(head -c 65536 2>/dev/null || true)
+fi
+EVENT_SESSION_ID=""
+if [ -n "$STDIN_JSON" ]; then
+    EVENT_SESSION_ID=$(STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
+import json, os
+try:
+    event = json.loads(os.environ.get("STDIN_JSON") or "{}")
+except (TypeError, ValueError):
+    event = {}
+value = event.get("session_id") if isinstance(event, dict) else ""
+print(str(value or "").replace("\n", " ").replace("\t", " "), end="")
+PYEOF
+    ) || EVENT_SESSION_ID=""
+fi
+RALLY_HOOK_SESSION_ID=""
+if [ -f "$PKG/actor_identity.py" ]; then
+    RALLY_HOOK_SESSION_ID=$(RALLY_OBSERVER_PID="${PPID:-0}" \
+        python3 "$PKG/actor_identity.py" --tool claude_code \
+        --session-id "$EVENT_SESSION_ID" --field session-id 2>/dev/null || true)
+fi
+[ -n "$RALLY_HOOK_SESSION_ID" ] || \
+    RALLY_HOOK_SESSION_ID="${EVENT_SESSION_ID:-${BUILD_LOOP_RALLY_SESSION_ID:-${CLAUDE_SESSION_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-claude-${PPID}}}}}}"
+
 # Guard: if CLAUDE_PROJECT_DIR is unset and $PWD is not a git repo, the
 # launch cwd is not a rally room — defer the join to pre-edit (operative
 # repo resolution from the first Edit/Write/Bash). This is the no-op path.
@@ -27,15 +57,19 @@ fi
 # Step 1: checkpoint_read restore line (verbose: surface delta if any).
 # ``session-start-safe`` no-ops cleanly when the resolved workdir is not a
 # git repo (belt-and-braces — the shell guard above already filters).
-python3 "$PKG/hooks.py" session-start-safe --workdir "$W" --verbose 2>/dev/null || true
+python3 "$PKG/hooks.py" session-start-safe --workdir "$W" --verbose \
+    --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
 
 # Step 2: probe announce + listen (fully detached watcher).
 if [ "${BUILD_LOOP_RALLY_POINT_SKIP_WATCH:-}" = "1" ]; then
     [ -f "$PKG/session_probe.py" ] && WORKDIR="$W" python3 "$PKG/session_probe.py" \
-        --workdir "$W" --tool claude_code --mode hook >/dev/null 2>&1 || true
+        --workdir "$W" --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" \
+        --mode hook >/dev/null 2>&1 || true
 else
     [ -f "$PKG/session_probe.py" ] && WORKDIR="$W" python3 "$PKG/session_probe.py" \
-        --workdir "$W" --tool claude_code --mode hook --start-watch >/dev/null 2>&1 || true
+        --workdir "$W" --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" \
+        --mode hook --start-watch \
+        --watch-parent-pid "${PPID}" >/dev/null 2>&1 || true
 fi
 
 # Step 3: opportunistic reaper sweep — physical cleanup of over-TTL presence/claims/lead.
@@ -43,7 +77,8 @@ fi
 [ -f "$PKG/reaper.py" ] && python3 "$PKG/reaper.py" --workdir "$W" --apply >/dev/null 2>&1 || true
 
 # Step 4: advance cursor past probe's own writes (silent; same script, no VERBOSE).
-python3 "$PKG/hooks.py" session-start-advance --workdir "$W" 2>/dev/null || true
+python3 "$PKG/hooks.py" session-start-advance --workdir "$W" \
+    --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
 
 # Step 5: on-PATH-vs-pin rally version staleness guard (lane E-a). This is
 # the control that would have caught the rally version-mismatch incident:

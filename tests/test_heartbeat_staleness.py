@@ -35,12 +35,13 @@ def _start_incomplete(tmp_path: Path, *, run_id="run_stale_test", started_at=Non
     return state_path, started_at
 
 
-def test_path_c_fresh_heartbeat_no_prompt(tmp_path):
-    """Re-dispatch ~30s after crash: heartbeat is still fresh; no prompt."""
+def test_path_c_fresh_heartbeat_without_owner_aborts(tmp_path):
+    """A fresh heartbeat may belong to another invocation; never infer ownership."""
     state_path, started = _start_incomplete(tmp_path)
     now = started + timedelta(seconds=30)
     env = resolve(tmp_path, "", now=now)
-    assert env["decision"] == "fresh"
+    assert env["decision"] == "abort"
+    assert env["ownership_verified"] is False
 
 
 def test_path_c_stale_heartbeat_prompts_user(tmp_path):
@@ -56,10 +57,10 @@ def test_path_c_stale_heartbeat_prompts_user(tmp_path):
 
 
 def test_path_c_default_threshold_is_5_minutes(tmp_path):
-    """Right at 4 minutes: still fresh. Right at 6 minutes: stale."""
+    """At 4 minutes refuse as active; at 6 minutes offer crash recovery."""
     state_path, started = _start_incomplete(tmp_path)
     fresh = resolve(tmp_path, "", now=started + timedelta(minutes=4))
-    assert fresh["decision"] == "fresh"
+    assert fresh["decision"] == "abort"
     stale = resolve(tmp_path, "", now=started + timedelta(minutes=6))
     assert stale["decision"] == "prompt_user"
 

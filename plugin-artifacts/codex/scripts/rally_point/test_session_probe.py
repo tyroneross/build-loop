@@ -22,10 +22,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS_DIR = HERE.parent
@@ -178,6 +180,15 @@ class _ProbeTestBase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class FreshRepoTests(_ProbeTestBase):
+
+    def test_post_receives_workdir_for_backend_resolution(self):
+        """The announce path must give post enough context to select Rally."""
+        with patch.object(sp._post_mod, "post", return_value=1) as mocked_post:
+            self._run_probe()
+
+        self.assertEqual(
+            mocked_post.call_args.kwargs.get("workdir"), self.repo.resolve()
+        )
 
     def test_creates_channel_writes_presence_posts_rally_start(self):
         """Fresh repo: channel created, presence written, rally-start posted, coord_file=None."""
@@ -389,6 +400,34 @@ class ErrorResilienceTests(_ProbeTestBase):
             len(result["errors"]) >= 1,
             f"Expected errors to be captured; got: {result['errors']}",
         )
+        self.assertEqual(result["status"], "warn")
+        self.assertTrue(result["coordination_write_failed"])
+
+    def test_nonraising_post_refusal_cannot_report_clear(self):
+        def _refused_post(**kwargs):
+            kwargs["outcome"].update(
+                status="rejected",
+                backend="rally",
+                transport="rally-cli",
+                reason="invalid native phase",
+            )
+            return None
+
+        with patch.object(sp._post_mod, "post", side_effect=_refused_post):
+            result = sp.probe(
+                workdir=str(self.repo),
+                tool="claude_code",
+                mode="interactive",
+                start_watch=False,
+                model="test-model",
+                run_id="test-run-id",
+            )
+
+        self.assertEqual(result["status"], "warn")
+        self.assertTrue(result["coordination_write_failed"])
+        self.assertTrue(
+            any("rally-start post not committed" in item for item in result["errors"])
+        )
 
     def test_probe_never_raises_on_watcher_failure(self):
         """Even when the watcher launcher raises, probe() returns a valid dict."""
@@ -576,6 +615,26 @@ class _CapturingWatcherLauncher:
         return self.pid
 
 
+class WatcherLifetimeConfigTests(unittest.TestCase):
+    def test_positive_finite_env_value_is_used(self):
+        with patch.dict(
+            os.environ,
+            {"BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS": "60.5"},
+        ):
+            self.assertEqual(sp._watcher_max_lifetime(), 60.5)
+
+    def test_invalid_env_values_fall_back_to_safe_default(self):
+        for raw in ("nan", "inf", "-inf", "0", "-1", "not-a-number"):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ,
+                {"BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS": raw},
+            ):
+                self.assertEqual(
+                    sp._watcher_max_lifetime(),
+                    sp._WATCHER_DEFAULT_MAX_LIFETIME_SECONDS,
+                )
+
+
 class LaunchWatcherPersistsParentPidTests(unittest.TestCase):
     """The watcher_launcher injection point sees parent_pid and the pid file
     persists parent_pid + started_at + max_lifetime_seconds for the reaper."""
@@ -589,12 +648,12 @@ class LaunchWatcherPersistsParentPidTests(unittest.TestCase):
     def _run_launch(self, parent_pid=None):
         errors: list[str] = []
         launcher = _CapturingWatcherLauncher()
-        with patch.object(sp, "_bridge_resolve") as mock_resolve:
-            # Force the apps_root fallback path so the pid_dir lives in our
-            # tmpdir for assertion.
+        with patch.object(sp, "resolve_context") as mock_resolve:
+            # Force the direct private-fallback path so the pid_dir lives in
+            # our tmpdir for assertion.
             mock_resolve.side_effect = RuntimeError("forced fallback")
             with patch.object(sp.channel_paths, "apps_root",
-                              return_value=str(self.tmpdir)):
+                              return_value=self.tmpdir):
                 pid_file = sp._launch_watcher(
                     workdir=str(self.tmpdir),
                     session_id="sess-c2",
@@ -629,6 +688,218 @@ class LaunchWatcherPersistsParentPidTests(unittest.TestCase):
         self.assertGreater(meta["started_at"], 0)
         self.assertGreater(meta["max_lifetime_seconds"], 0)
 
+    def test_pid_and_log_paths_stay_inside_watcher_directory(self):
+        watcher_root = self.tmpdir / "watchers"
+        for suffix in (".json", ".log"):
+            path = sp._watcher_artifact_path(
+                watcher_root,
+                "../../outside/" + ("x" * 200),
+                suffix,
+            )
+            self.assertEqual(path.parent, watcher_root.resolve())
+            self.assertLessEqual(len(path.stem), 96)
+            self.assertNotIn("..", path.name)
+
+    def test_generated_session_id_sanitizes_untrusted_tool(self):
+        session_id = sp._generate_session_id("../../outside/tool")
+        self.assertNotIn("/", session_id)
+        self.assertNotIn("..", session_id)
+        self.assertLessEqual(len(session_id), 96)
+
+
+class DetachedWatcherCleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="watcher-cleanup-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _identity(session_id):
+        return {
+            "start_token": "test:99101",
+            "command": (
+                f"{sys.executable} coordination_watch.py "
+                f"--session-id {session_id}"
+            ),
+        }
+
+    def test_detached_spawn_persists_verified_process_identity(self):
+        proc = MagicMock()
+        proc.pid = 99101
+        identity = self._identity("identity-persisted")
+        errors: list[str] = []
+        with patch.object(sp, "resolve_context", return_value=object()), \
+                patch.object(sp, "watcher_dir", return_value=self.tmpdir), \
+                patch.object(
+                    sp.subprocess, "Popen", return_value=proc
+                ) as mocked_popen, \
+                patch.object(sp, "_process_identity", return_value=identity):
+            result = sp._launch_watcher(
+                workdir=str(self.tmpdir),
+                session_id="identity-persisted",
+                tool="claude_code",
+                slug="test-slug",
+                watcher_launcher=None,
+                errors=errors,
+            )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result)
+        metadata = json.loads(Path(result).read_text(encoding="utf-8"))
+        self.assertEqual(metadata["process_identity"], identity)
+        command = mocked_popen.call_args.args[0]
+        self.assertIn("--snapshot-file", command)
+        self.assertEqual(
+            mocked_popen.call_args.kwargs["stdout"], subprocess.DEVNULL
+        )
+        self.assertEqual(
+            mocked_popen.call_args.kwargs["stderr"], subprocess.DEVNULL
+        )
+        proc.terminate.assert_not_called()
+
+    def test_same_session_concurrent_launch_is_idempotent(self):
+        identity = self._identity("same-session")
+        calls: list[int] = []
+        calls_lock = threading.Lock()
+
+        def launcher(**_kwargs):
+            with calls_lock:
+                calls.append(1)
+            time.sleep(0.05)
+            return 99101
+
+        def launch_once():
+            errors: list[str] = []
+            result = sp._launch_watcher(
+                workdir=str(self.tmpdir),
+                session_id="same-session",
+                tool="claude_code",
+                slug="test-slug",
+                watcher_launcher=launcher,
+                errors=errors,
+            )
+            return result, errors
+
+        with patch.object(sp, "resolve_context", return_value=object()), \
+                patch.object(sp, "watcher_dir", return_value=self.tmpdir), \
+                patch.object(sp, "_process_identity", return_value=identity), \
+                patch.object(sp, "_pid_alive", return_value=True):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _index: launch_once(), range(2)))
+
+        self.assertEqual(calls, [1])
+        self.assertTrue(all(result is not None for result, _errors in results))
+        self.assertTrue(all(not errors for _result, errors in results))
+
+    def test_identity_capture_waits_for_post_exec_command_to_stabilize(self):
+        before_exec = self._identity("stable") | {
+            "command": "/symlink/python coordination_watch.py --session-id stable"
+        }
+        after_exec = self._identity("stable")
+        with patch.object(
+            sp,
+            "_process_identity",
+            side_effect=[before_exec, after_exec, after_exec],
+        ):
+            identity = sp._capture_stable_watcher_identity(99101, "stable")
+
+        self.assertEqual(identity, after_exec)
+
+    def test_metadata_write_failure_terminates_reaps_and_cleans_child(self):
+        proc = MagicMock()
+        proc.pid = 99101
+        proc.wait.return_value = 0
+        identity = self._identity("metadata-failure")
+        real_atomic_write = sp._atomic_write_watcher_artifact
+
+        def metadata_write_fails(path, data):
+            if Path(path).suffix == ".json":
+                raise OSError("simulated metadata write failure")
+            return real_atomic_write(path, data)
+
+        errors: list[str] = []
+        with patch.object(sp, "resolve_context", return_value=object()), \
+                patch.object(sp, "watcher_dir", return_value=self.tmpdir), \
+                patch.object(sp.subprocess, "Popen", return_value=proc), \
+                patch.object(sp, "_process_identity", return_value=identity), \
+                patch.object(
+                    sp,
+                    "_atomic_write_watcher_artifact",
+                    side_effect=metadata_write_fails,
+                ):
+            result = sp._launch_watcher(
+                workdir=str(self.tmpdir),
+                session_id="metadata-failure",
+                tool="claude_code",
+                slug="test-slug",
+                watcher_launcher=None,
+                errors=errors,
+            )
+
+        self.assertIsNone(result)
+        proc.terminate.assert_called_once_with()
+        proc.wait.assert_called_once_with(timeout=0.2)
+        proc.kill.assert_not_called()
+        self.assertFalse((self.tmpdir / "metadata-failure.json").exists())
+        self.assertFalse((self.tmpdir / "metadata-failure.log").exists())
+        self.assertTrue(any("metadata write failure" in error for error in errors))
+
+    def test_failed_cleanup_preserves_verified_retry_metadata_and_log(self):
+        proc = MagicMock()
+        proc.pid = 99101
+        proc.poll.return_value = None
+        proc.wait.side_effect = [
+            subprocess.TimeoutExpired("watcher", 0.2),
+            subprocess.TimeoutExpired("watcher", 0.2),
+        ]
+        identity = self._identity("cleanup-unconfirmed")
+        real_atomic_write = sp._atomic_write_watcher_artifact
+        metadata_attempts = 0
+
+        def first_metadata_write_fails(path, data):
+            nonlocal metadata_attempts
+            if Path(path).suffix == ".json":
+                metadata_attempts += 1
+                if metadata_attempts == 1:
+                    raise OSError("simulated metadata write failure")
+            return real_atomic_write(path, data)
+
+        errors: list[str] = []
+        with patch.object(sp, "resolve_context", return_value=object()), \
+                patch.object(sp, "watcher_dir", return_value=self.tmpdir), \
+                patch.object(sp.subprocess, "Popen", return_value=proc), \
+                patch.object(sp, "_process_identity", return_value=identity), \
+                patch.object(
+                    sp,
+                    "_atomic_write_watcher_artifact",
+                    side_effect=first_metadata_write_fails,
+                ):
+            result = sp._launch_watcher(
+                workdir=str(self.tmpdir),
+                session_id="cleanup-unconfirmed",
+                tool="claude_code",
+                slug="test-slug",
+                watcher_launcher=None,
+                errors=errors,
+            )
+
+        self.assertIsNone(result)
+        proc.terminate.assert_called_once_with()
+        proc.kill.assert_called_once_with()
+        self.assertEqual(proc.wait.call_count, 2)
+        pid_file = self.tmpdir / "cleanup-unconfirmed.json"
+        log_file = self.tmpdir / "cleanup-unconfirmed.log"
+        self.assertTrue(pid_file.exists())
+        self.assertTrue(log_file.exists())
+        metadata = json.loads(pid_file.read_text(encoding="utf-8"))
+        self.assertEqual(metadata["process_identity"], identity)
+        self.assertEqual(
+            metadata["launch_state"],
+            "metadata_persist_failed_cleanup_unconfirmed",
+        )
+        self.assertTrue(any("metadata write failure" in error for error in errors))
+
 
 class ReapStaleWatchersTests(unittest.TestCase):
     """The reaper deletes dead-pid files and SIGTERMs over-age or
@@ -657,6 +928,16 @@ class ReapStaleWatchersTests(unittest.TestCase):
         log.write_text("")
         return path, log
 
+    @staticmethod
+    def _identity(session_id, start_token="test:start"):
+        return {
+            "start_token": start_token,
+            "command": (
+                f"{sys.executable} coordination_watch.py "
+                f"--session-id {session_id}"
+            ),
+        }
+
     def test_returns_empty_stats_when_dir_missing(self):
         missing = self.tmpdir / "nope"
         stats = sp._reap_stale_watchers(missing, now=time.time(),
@@ -681,6 +962,117 @@ class ReapStaleWatchersTests(unittest.TestCase):
                                         max_lifetime=14400.0)
         self.assertEqual(stats["deleted_files"], 1)
         self.assertFalse(path.exists())
+
+    def test_malformed_json_metadata_is_cleaned_and_sweep_continues(self):
+        bad_pid, bad_pid_log = self._write_pid_file(
+            "a-bad-pid", pid={"unexpected": "object"}
+        )
+        bad_start, bad_start_log = self._write_pid_file(
+            "b-bad-start", pid=2222, started_at=["not", "numeric"]
+        )
+        huge_pid, huge_pid_log = self._write_pid_file(
+            "c-huge-pid", pid=1 << 80
+        )
+        identity = self._identity("z-stale")
+        stale, stale_log = self._write_pid_file(
+            "z-stale",
+            pid=3333,
+            started_at=1.0,
+            process_identity=identity,
+        )
+
+        alive = {3333: True}
+
+        def _alive(pid):
+            return alive.get(pid, True)
+
+        def _terminate(pid, **_kwargs):
+            alive[pid] = False
+            return (True, False)
+
+        with patch.object(sp, "_pid_alive", side_effect=_alive), \
+                patch.object(sp, "_process_identity", return_value=identity), \
+                patch.object(sp, "_terminate_watcher", side_effect=_terminate) as terminate:
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=100.0, max_lifetime=1.0
+            )
+
+        self.assertEqual(stats["scanned"], 4)
+        self.assertEqual(stats["deleted_files"], 4)
+        terminate.assert_called_once()
+        self.assertEqual(terminate.call_args.args, (3333,))
+        self.assertTrue(callable(terminate.call_args.kwargs["identity_check"]))
+        for path in (
+            bad_pid,
+            bad_pid_log,
+            bad_start,
+            bad_start_log,
+            huge_pid,
+            huge_pid_log,
+            stale,
+            stale_log,
+        ):
+            self.assertFalse(path.exists())
+
+    def test_failed_termination_preserves_live_watcher_metadata(self):
+        for signal_result in ((False, False), (True, False), (True, True)):
+            with self.subTest(signal_result=signal_result):
+                session_id = f"retry-{int(signal_result[0])}-{int(signal_result[1])}"
+                identity = self._identity(session_id)
+                path, log = self._write_pid_file(
+                    session_id,
+                    pid=3434,
+                    started_at=1.0,
+                    process_identity=identity,
+                )
+                with patch.object(sp, "_pid_alive", return_value=True), \
+                        patch.object(sp, "_process_identity", return_value=identity), \
+                        patch.object(
+                            sp, "_terminate_watcher", return_value=signal_result
+                        ):
+                    stats = sp._reap_stale_watchers(
+                        self.tmpdir, now=100.0, max_lifetime=1.0
+                    )
+
+                self.assertEqual(stats["deleted_files"], 0)
+                self.assertTrue(path.exists())
+                self.assertTrue(log.exists())
+                path.unlink()
+                log.unlink()
+
+    def test_reused_pid_identity_mismatch_is_never_signaled(self):
+        stored = self._identity("reused", start_token="test:old-start")
+        current = self._identity("reused", start_token="test:new-start")
+        path, log = self._write_pid_file(
+            "reused",
+            pid=4444,
+            started_at=1.0,
+            process_identity=stored,
+        )
+
+        with patch.object(sp, "_pid_alive", return_value=True), \
+                patch.object(sp, "_process_identity", return_value=current), \
+                patch.object(sp, "_terminate_watcher") as terminate:
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=100.0, max_lifetime=1.0
+            )
+
+        terminate.assert_not_called()
+        self.assertEqual(stats["deleted_files"], 1)
+        self.assertFalse(path.exists())
+        self.assertFalse(log.exists())
+
+    def test_identity_is_rechecked_before_sigkill(self):
+        identity_check = MagicMock(side_effect=[True, False])
+        with patch.object(sp.os, "kill") as kill, \
+                patch.object(sp.time, "monotonic", side_effect=[10.0, 11.0]):
+            result = sp._terminate_watcher(
+                5555,
+                identity_check=identity_check,
+            )
+
+        self.assertEqual(result, (True, False))
+        kill.assert_called_once_with(5555, sp.signal.SIGTERM)
 
     def test_leaves_live_in_window_watcher_alone(self):
         # Use our own pid (alive) + recent started_at + live parent.
@@ -707,18 +1099,28 @@ class ReapStaleWatchersTests(unittest.TestCase):
                 "overage", pid=proc.pid, parent_pid=os.getpid(),
                 started_at=time.time() - 3600.0,
                 max_lifetime_seconds=1.0,
+                process_identity=self._identity("overage"),
             )
-            stats = sp._reap_stale_watchers(
-                self.tmpdir, now=time.time(), max_lifetime=1.0,
-            )
+            with patch.object(
+                sp, "_process_identity", return_value=self._identity("overage")
+            ):
+                stats = sp._reap_stale_watchers(
+                    self.tmpdir, now=time.time(), max_lifetime=1.0,
+                )
             self.assertEqual(stats["scanned"], 1)
-            self.assertEqual(stats["deleted_files"], 1)
             self.assertGreaterEqual(stats["sigtermed"], 1)
-            # Process should be gone now.
+            # The child can remain as a zombie until this test process waits.
+            # Its metadata must remain while kill(0) still reports it alive.
+            self.assertEqual(stats["deleted_files"], 0)
+            self.assertTrue(path.exists())
             try:
                 proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 self.fail("reaper did not actually terminate the watcher")
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=time.time(), max_lifetime=1.0,
+            )
+            self.assertEqual(stats["deleted_files"], 1)
             self.assertFalse(path.exists())
             self.assertFalse(log.exists())
         finally:
@@ -738,16 +1140,27 @@ class ReapStaleWatchersTests(unittest.TestCase):
                 "parent-gone", pid=proc.pid, parent_pid=987654321,
                 started_at=time.time() - 5.0,
                 max_lifetime_seconds=14400.0,
+                process_identity=self._identity("parent-gone"),
             )
-            stats = sp._reap_stale_watchers(
-                self.tmpdir, now=time.time(), max_lifetime=14400.0,
-            )
-            self.assertEqual(stats["deleted_files"], 1)
+            with patch.object(
+                sp,
+                "_process_identity",
+                return_value=self._identity("parent-gone"),
+            ):
+                stats = sp._reap_stale_watchers(
+                    self.tmpdir, now=time.time(), max_lifetime=14400.0,
+                )
             self.assertGreaterEqual(stats["sigtermed"], 1)
+            self.assertEqual(stats["deleted_files"], 0)
+            self.assertTrue(path.exists())
             try:
                 proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 self.fail("reaper did not terminate dead-parent watcher")
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=time.time(), max_lifetime=14400.0,
+            )
+            self.assertEqual(stats["deleted_files"], 1)
             self.assertFalse(path.exists())
         finally:
             if proc.poll() is None:

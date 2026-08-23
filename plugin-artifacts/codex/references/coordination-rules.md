@@ -167,12 +167,12 @@ Each participating terminal must ACK runtime root + commit, or
 the live agent must record a fallback (`reassign`, `defer`, or
 `continue_solo`) before continuing.
 
-Use stable tool ids (`claude_code`, `codex`, `cursor`, etc.) so targeted
-`inbox/<tool>.jsonl` messages route cleanly. Broadcast messages live in
-`inbox/all.jsonl`; every tool's read path includes that file in addition to
-its direct inbox. Unread counts are session-ack aware: after reading and acting
-on current inbox payloads, run `agent_rally.py ack-inbox --session-id <id>
---tool <tool>` so resolved notes stop appearing as new doorbells. Status
+Use a stable base tool (`claude_code`, `codex`, `cursor`, etc.) plus a stable
+session id. Build Loop turns that pair into an exact actor only for native
+Rally; local fallback keeps the base tool and session-scoped cursor. Broadcast
+messages use `all`. After reading and acting on current inbox payloads, run
+`agent_rally.py ack-inbox --session-id <id> --tool <base-tool>` so the facade
+ACKs the exact native actor or the base-tool local cursor. Status
 `clear` → proceed; status `warn` → review peer
 overlap + dirty files; status `blocked` → resolve unresolved verdicts before
 any of the above. Memory citation:
@@ -298,25 +298,13 @@ the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
 codex`, so it ages and decays identically — now enforced by the single Rust
 reaper both tools share, not by a cross-language golden fixture.
 
-**Session-end self-release (primary).** Both tool hooks release the agent's Rally
-file-claims at turn completion (`Stop` event) so peers immediately see the agent's
-absence and the claims do not leak past Stop. The two hosts reach this differently
-because their session models differ:
-
-- **Codex** emits `rally stop codex` (`.codex/hooks.json` Stop). `codex` resolves to
-  Codex's managed `rally-*` tmux session, so that one call both self-kills the
-  session (it can never become a detached orphan) AND releases the session's claims.
-- **Claude Code** is normally NOT a `rally run`-managed session, so `rally stop
-  claude_code` fails (`unknown managed session`). The Claude Stop hook therefore
-  releases claims via the portable primitive instead: `scripts/stop_closeout.py`
-  (`release_my_claims`, called from `hooks/closeout.sh stop`) enumerates this tool's
-  open claims with `rally room --tool claude_code --json` and releases each by event
-  id with `rally say release --tool claude_code --ref <event-id>`. It fires on EVERY
-  Stop (a stopped session is no longer editing), is advisory + fail-open (`command -v
-  rally` guarded; swallows all errors; exit 0 always), and is capped per Stop so a
-  backlog can't make the hook run long. History: before this, the Claude hook
-  released only the run IDENTITY, never the file claims, so `claude_code` auto-claims
-  accreted unbounded (112→127 observed). Added 2026-06-29.
+**Session-end self-release (primary).** Every host Stop hook passes its base tool
+and stable session id to `scripts/agent_rally.py stop`. The facade resolves the
+exact native actor, releases only that session's claims, posts its `state=done`
+fact, and refuses when bounded Rally history cannot prove the session. Local
+fallback removes only the raw session's presence and claims under the base tool.
+Never run `rally stop <bare-host>` or enumerate/release claims with a generic host
+id: concurrent Codex, Claude Code, and Cursor sessions share that host family.
 
 **Reaper = backstop, not primary (NON-DEFAULT).** The reaper that expires abandoned
 claims/presence (`rally sessions --reap`, faced by `scripts/rally_point/reaper.py`)

@@ -13,6 +13,8 @@ import tempfile
 import unittest
 import stat
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -195,7 +197,9 @@ class CoordinationRallyTests(unittest.TestCase):
         )
         self.assertTrue(result["presence_written"])
         self.assertTrue(result["posted"])
-        self.assertEqual(result["channel_revision"], 1)
+        # Native Rally may append presence/tier facts before the handoff; the
+        # receipt must report the positive revision of the requested write.
+        self.assertGreater(result["channel_revision"], 0)
         self.assertTrue((self.workdir / ".rally" / "log" / "repo.jsonl").exists())
         self.assertFalse(
             (self.workdir / ".rally" / "changes.jsonl").exists(),
@@ -205,6 +209,56 @@ class CoordinationRallyTests(unittest.TestCase):
             self.apps.exists(),
             "repo-local native mode must not write to ~/.agent-rally-point/apps fallback",
         )
+
+    def test_native_rally_uses_session_actor_but_keeps_host_metadata(self):
+        native = SimpleNamespace(
+            app_slug="example-ios-app",
+            channel_dir=str(self.workdir / ".rally"),
+            resolved_via="repo-local-rally-cli",
+            backend="rally",
+            transport="rally-cli",
+        )
+        context = SimpleNamespace(
+            envelope=native,
+            local_channel_dir=channel_paths.app_channel_dir("example-ios-app"),
+            native=True,
+        )
+        presence_result = SimpleNamespace(
+            ok=True,
+            precommit_unavailable=False,
+            status="ok",
+            reason=None,
+            backend="rally",
+        )
+
+        def native_post(**kwargs):
+            kwargs["outcome"].update(
+                status="posted", backend="rally", transport="rally-cli", revision=7
+            )
+            return 7
+
+        with patch.object(cr, "resolve_context", return_value=context):
+            with patch.object(
+                cr, "write_backend_presence", return_value=presence_result
+            ) as write_presence:
+                with patch.object(cr, "post", side_effect=native_post) as write_post:
+                    result = cr.rally(
+                        workdir=self.workdir,
+                        session_id="thread-a",
+                        message="native actor identity",
+                        tool="codex",
+                        owns=["src/app.py"],
+                    )
+
+        self.assertEqual(write_presence.call_args.kwargs["tool"], "codex:thread-a")
+        self.assertEqual(write_presence.call_args.kwargs["session_id"], "thread-a")
+        posted = write_post.call_args.kwargs
+        self.assertEqual(posted["tool"], "codex:thread-a")
+        self.assertEqual(posted["payload"]["from"], "codex")
+        self.assertEqual(posted["payload"]["host_tool"], "codex")
+        self.assertEqual(posted["payload"]["session_id"], "thread-a")
+        self.assertEqual(result["tool"], "codex")
+        self.assertEqual(result["rally_tool"], "codex:thread-a")
 
     def test_post_routes_repo_local_channel_through_native_rally(self):
         fake = self.tmp / "bin" / "rally"
@@ -227,6 +281,8 @@ class CoordinationRallyTests(unittest.TestCase):
                 "ownership": {
                     "owns": ["src/app.py"],
                     "does_not_own": [],
+                    "allowed_tools": [],
+                    "denied_tools": [],
                     "interface_contract": "native handoff is visible in .rally",
                     "integration_checkpoint": "read .rally/log",
                 },
@@ -234,18 +290,94 @@ class CoordinationRallyTests(unittest.TestCase):
             workdir=self.workdir,
         )
 
-        self.assertEqual(seq, 1)
+        self.assertIsNotNone(seq)
+        self.assertGreater(seq, 0)
         self.assertTrue((channel / "log" / "repo.jsonl").exists())
         self.assertFalse(
             (channel / "changes.jsonl").exists(),
             "post() must not create a build-loop-only side channel in native mode",
         )
 
+    def test_result_reports_actual_backend_after_native_post_failover(self):
+        native_log = self.workdir / ".rally" / "log" / "repo.jsonl"
+        native_log.parent.mkdir(parents=True)
+        native_log.write_text(
+            json.dumps(
+                {
+                    "seq": 100,
+                    "occurred_at": "2026-08-14T00:00:00Z",
+                    "event_type": "artifact",
+                    "payload": {"kind": "artifact", "tool": "peer", "seq": 100},
+                }
+            )
+            + "\n"
+        )
+        native = SimpleNamespace(
+            app_slug="example-ios-app",
+            channel_dir=str(self.workdir / ".rally"),
+            resolved_via="repo-local-rally-cli",
+            backend="rally",
+            transport="rally-cli",
+            coordination_unavailable=None,
+        )
+
+        def fallback_post(**kwargs):
+            fallback = channel_paths.app_channel_dir("example-ios-app")
+            local_revision = post(
+                channel_dir=fallback,
+                kind=kwargs["kind"],
+                tool=kwargs["tool"],
+                model=kwargs["model"],
+                run_id=kwargs["run_id"],
+                app_slug=kwargs["app_slug"],
+                payload=kwargs["payload"],
+            )
+            kwargs["outcome"].update(
+                {
+                    "status": "posted",
+                    "backend": "build-loop-local",
+                    "transport": "fact-v1",
+                    "revision": local_revision,
+                }
+            )
+            return local_revision
+
+        context = SimpleNamespace(
+            envelope=native,
+            local_channel_dir=channel_paths.app_channel_dir("example-ios-app"),
+            native=True,
+        )
+        presence_result = SimpleNamespace(
+            ok=True,
+            precommit_unavailable=False,
+            status="ok",
+            reason=None,
+        )
+        with patch.object(cr, "resolve_context", return_value=context):
+            with patch.object(cr, "write_backend_presence", return_value=presence_result):
+                with patch.object(cr, "post", side_effect=fallback_post):
+                    result = cr.rally(
+                        workdir=self.workdir,
+                        session_id="codex-native-failover",
+                        message="preserve this handoff",
+                        tool="codex",
+                        model="gpt-5",
+                        owns=["src/app.py"],
+                        verify=True,
+                    )
+
+        self.assertEqual(result["backend"], "build-loop-local")
+        self.assertEqual(result["transport"], "fact-v1")
+        self.assertEqual(result["resolved_via"], "build-loop-internal")
+        self.assertTrue(result["posted"])
+        self.assertEqual(result["verify"]["before_revision"], 0)
+        self.assertEqual(result["verify"]["after_revision"], 1)
+
     def _write_fake_repo_local_rally(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             f"#!{sys.executable}\n"
-            "import json, pathlib, sys, datetime\n"
+            "import json, os, pathlib, sys, datetime\n"
             "args = sys.argv[1:]\n"
             "if not args:\n"
             "    print('Usage: rally enter --tool <tool>')\n"
@@ -261,6 +393,8 @@ class CoordinationRallyTests(unittest.TestCase):
             "        if i + 1 < len(args):\n"
             "            return args[i + 1]\n"
             "    return default\n"
+            "def opts(name):\n"
+            "    return [args[i + 1] for i, value in enumerate(args[:-1]) if value == name]\n"
             "def append(kind):\n"
             "    log.parent.mkdir(parents=True, exist_ok=True)\n"
             "    seq = 1\n"
@@ -271,25 +405,60 @@ class CoordinationRallyTests(unittest.TestCase):
             "        'kind': kind, 'tool': opt('--tool', 'unknown'),\n"
             "        'target': opt('--to'), 'subject': opt('--subject'),\n"
             "        'summary': opt('--summary'), 'status': opt('--status'),\n"
-            "        'scope': [], 'seq': 0, 'schema': 'agent-rally.fact.v1'}\n"
+            "        'scope': ['file:' + p.removeprefix('file:').removeprefix('./') for p in opts('--path')],\n"
+            "        'evidence': opts('--evidence'), 'ref': opt('--ref'), 'ref_id': opt('--ref'),\n"
+            "        'from_session_id': os.environ.get('RALLY_SESSION_ID'),\n"
+            "        'seq': 0, 'schema': 'agent-rally.fact.v1'}\n"
             "    row = {'seq': seq, 'occurred_at': '2026-06-01T00:00:00Z',\n"
             "           'event_type': kind, 'payload': fact, 'engagement': repo.name}\n"
             "    with log.open('a', encoding='utf-8') as fh:\n"
             "        fh.write(json.dumps(row, separators=(',', ':')) + '\\n')\n"
             "    return seq, fact\n"
+            "if args == ['version', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.version.v1',\n"
+            "      'data': {'version': {'version': 'test', 'build_id': 'test-local'}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['status', '--json', 'read', '--tool', 'build_loop:discovery']:\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.status_read.v1',\n"
+            "      'data': {'status_read': {'states': []}}}))\n"
+            "    raise SystemExit(0)\n"
             "if args == ['whoami', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'data': {'whoami': {\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.whoami.v1', 'data': {'whoami': {\n"
             "        'repo_root': str(repo), 'repo_id': repo.name,\n"
-            "        'worktree': str(repo), 'cwd': str(repo), 'build_id': 'test-local'}}}))\n"
+            "        'room_id': repo.name + '-room', 'worktree': str(repo),\n"
+            "        'cwd': str(repo), 'build_id': 'test-local',\n"
+            "        'host_runtime': {'ambiguous': False}}}}))\n"
+            "    raise SystemExit(0)\n"
+            "if args == ['room', '--json']:\n"
+            "    facts = []\n"
+            "    if log.exists():\n"
+            "        facts = [json.loads(line)['payload'] for line in log.read_text().splitlines() if line.strip()]\n"
+            "    closed = {f.get('ref') or f.get('ref_id') for f in facts if f.get('kind') in {'release', 'resolve', 'receipt'}}\n"
+            "    active = [f for f in facts if f.get('kind') == 'claim' and f.get('event_id') not in closed]\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.room.v1',\n"
+            "      'data': {'room': {'active_claims': active}}}))\n"
             "    raise SystemExit(0)\n"
             "if args and args[0] == 'enter':\n"
             "    rally.mkdir(parents=True, exist_ok=True)\n"
-            "    print(json.dumps({'ok': True, 'data': {'enter': {'session_id': opt('--session-id')}}}))\n"
+            "    presence = {'kind': 'presence', 'tool': opt('--tool'),\n"
+            "        'from_session_id': os.environ.get('RALLY_SESSION_ID'),\n"
+            "        'subject': 'presence: ' + opt('--tool', 'unknown'),\n"
+            "        'seq': 1, 'event_id': 'presence_1'}\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.enter.v1',\n"
+            "      'data': {'enter': {'tool': opt('--tool'), 'session_id': opt('--session-id')},\n"
+            "               'append_outcomes': [{'fact': presence}]}}))\n"
             "    raise SystemExit(0)\n"
             "if len(args) >= 2 and args[0] == 'say':\n"
             "    seq, fact = append(args[1])\n"
             "    fact['seq'] = seq\n"
-            "    print(json.dumps({'ok': True, 'data': {'say': {'fact': fact}, 'verified': {'seq': seq}}}))\n"
+            "    print(json.dumps({'ok': True, 'product': 'rally',\n"
+            "      'schema': 'agent-rally.command.say.v1',\n"
+            "      'data': {'say': {'fact': fact}, 'verified': {'seq': seq}}}))\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",

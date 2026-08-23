@@ -24,14 +24,32 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from rally_point import build_loop_id as bli  # noqa: E402
+from rally_point import channel_paths  # noqa: E402
 from rally_point import changes as ch  # noqa: E402
+from rally_point import discovery_bridge  # noqa: E402
 from rally_point import inbox  # noqa: E402
 from rally_point import post as post_mod  # noqa: E402
 from rally_point import presence  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _use_local_coordination_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """These assertions exercise Build Loop's local ledger envelope."""
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    monkeypatch.setenv("AGENT_RALLY_APPS_ROOT", str(tmp_path / "apps"))
+    discovery_bridge.clear_cache()
+    yield
+    discovery_bridge.clear_cache()
+
+
 def _state_path(workdir: Path) -> Path:
     return workdir / ".build-loop" / "state.json"
+
+
+def _channel(workdir: Path) -> Path:
+    return channel_paths.app_channel_dir(channel_paths.app_slug(workdir))
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +229,7 @@ def test_post_record_carries_top_level_build_loop_id_fields(
     workdir = tmp_path / "repo"
     workdir.mkdir()
     exec_block = _seed_run(workdir)
-    channel = tmp_path / "channel"
+    channel = _channel(workdir)
 
     new_rev = post_mod.post(
         channel_dir=channel,
@@ -241,8 +259,8 @@ def test_inbox_write_message_carries_top_level_build_loop_id_fields(
     workdir = tmp_path / "repo"
     workdir.mkdir()
     exec_block = _seed_run(workdir)
-    channel = tmp_path / "channel"
-    channel.mkdir()
+    channel = _channel(workdir)
+    channel.mkdir(parents=True)
 
     inbox.write_message(
         channel,
@@ -267,8 +285,8 @@ def test_inbox_send_to_tool_carries_top_level_build_loop_id_fields_in_inbox_and_
     workdir = tmp_path / "repo"
     workdir.mkdir()
     exec_block = _seed_run(workdir)
-    channel = tmp_path / "channel"
-    channel.mkdir()
+    channel = _channel(workdir)
+    channel.mkdir(parents=True)
 
     inbox.send_to_tool(
         channel,
@@ -300,8 +318,8 @@ def test_presence_write_carries_top_level_build_loop_id_fields(
     workdir = tmp_path / "repo"
     workdir.mkdir()
     exec_block = _seed_run(workdir)
-    channel = tmp_path / "channel"
-    channel.mkdir()
+    channel = _channel(workdir)
+    channel.mkdir(parents=True)
 
     presence.write_presence(
         channel,
@@ -327,7 +345,7 @@ def test_build_loop_id_NOT_in_producer_metadata(tmp_path: Path):
     workdir = tmp_path / "repo"
     workdir.mkdir()
     _seed_run(workdir)
-    channel = tmp_path / "channel"
+    channel = _channel(workdir)
 
     post_mod.post(
         channel_dir=channel,
@@ -362,7 +380,7 @@ def test_post_without_state_execution_omits_build_loop_id_fields(
 ):
     workdir = tmp_path / "repo"
     workdir.mkdir()
-    channel = tmp_path / "channel"
+    channel = _channel(workdir)
     # No state.json — no build_loop_id available.
     new_rev = post_mod.post(
         channel_dir=channel,

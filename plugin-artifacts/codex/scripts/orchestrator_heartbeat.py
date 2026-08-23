@@ -38,12 +38,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))                    # scripts/ on path
 sys.path.insert(0, str(HERE / "rally_point"))    # rally_point flat imports
+
+from rally_point import actor_identity  # noqa: E402
 
 
 def _load_execution(workdir: Path) -> dict | None:
@@ -58,6 +61,23 @@ def _load_execution(workdir: Path) -> dict | None:
     return execution if isinstance(execution, dict) else None
 
 
+def _active_execution(workdir: Path) -> tuple[dict | None, str]:
+    """Return only a live schema-v1 execution that is safe to heartbeat."""
+    execution = _load_execution(workdir)
+    if not execution:
+        return None, "no active execution block"
+    run_id = execution.get("run_id")
+    if (
+        execution.get("schema_version") != 1
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+    ):
+        return None, "execution identity is missing or incompatible"
+    if execution.get("phase") == "report" or execution.get("crashed_at"):
+        return None, "execution is terminal"
+    return execution, "active"
+
+
 def _refresh_state_heartbeat(workdir: Path) -> dict:
     """Touch state.execution.last_heartbeat_at via the 'heartbeat' action. Fail-open."""
     state_path = workdir / ".build-loop" / "state.json"
@@ -69,39 +89,104 @@ def _refresh_state_heartbeat(workdir: Path) -> dict:
         return {"state_heartbeat": "skipped", "error": str(exc)}
 
 
-def _write_presence_beat(workdir: Path, phase: str, label: str | None, files: list[str]) -> dict:
+def _write_presence_beat(
+    workdir: Path,
+    phase: str,
+    label: str | None,
+    files: list[str],
+    *,
+    execution: dict | None = None,
+) -> dict:
     """Write a rally presence beat from the run's identity. Fail-open."""
-    execution = _load_execution(workdir)
     if execution is None:
-        return {"presence_beat": "skipped", "reason": "no execution block"}
-    run_id = execution.get("run_id") or "unknown"
+        execution, reason = _active_execution(workdir)
+    else:
+        reason = "active"
+    if execution is None:
+        return {"presence_beat": "skipped", "reason": reason}
+    run_id = execution["run_id"]
     session_id = (
         execution.get("current_session_id")
         or execution.get("started_by_session_id")
         or f"orchestrator-{run_id}"
     )
     try:
-        from discovery_bridge import resolve  # type: ignore
-        envelope = resolve(workdir)
+        from backend_adapter import (  # type: ignore
+            resolve_context,
+            write_heartbeat_presence,
+            write_presence,
+        )
+        context = resolve_context(workdir)
+        envelope = context.envelope
         channel_dir = Path(envelope.channel_dir)
         app_slug = envelope.app_slug
     except Exception as exc:  # noqa: BLE001 — fail-open
         return {"presence_beat": "skipped", "reason": f"channel resolve failed: {exc}"}
     try:
-        from presence import write_presence  # type: ignore
-        write_presence(
-            channel_dir,
-            session_id=str(session_id),
-            tool="build-orchestrator",
-            model="orchestrator",
-            run_id=str(run_id),
-            app_slug=app_slug,
-            phase=phase,
-            files_in_flight=list(files),
-            cwd=workdir,
-            task=label or phase,
-        )
-        return {"presence_beat": "ok", "channel_dir": str(channel_dir), "session_id": str(session_id)}
+        tool = os.environ.get("BUILD_LOOP_RALLY_TOOL", "").strip()
+        if not tool and context.native:
+            from host_capabilities import detect_host  # type: ignore
+
+            host = detect_host(None)
+            if host == "unknown":
+                return {
+                    "presence_beat": "skipped",
+                    "reason": "native Rally heartbeat requires a real host actor",
+                }
+            tool = host
+        elif not tool:
+            tool = "build-orchestrator"
+        if context.native:
+            native_identity = actor_identity.resolve_identity(tool)
+            result = write_heartbeat_presence(
+                context,
+                session_id=native_identity.session_id,
+                tool=native_identity.native_tool,
+                local_session_id=str(session_id),
+                local_tool=native_identity.base_tool,
+                phase=phase,
+                intent=label or phase,
+                files_in_flight=list(files),
+                model="orchestrator",
+                run_id=str(run_id),
+                app_slug=app_slug,
+                cwd=workdir,
+            )
+        else:
+            result = write_presence(
+                context,
+                session_id=str(session_id),
+                tool=tool,
+                model="orchestrator",
+                run_id=str(run_id),
+                app_slug=app_slug,
+                phase=phase,
+                files_in_flight=list(files),
+                cwd=workdir,
+                task=label or phase,
+            )
+        if not result.ok:
+            raise RuntimeError(result.reason or result.status)
+        return {
+            "presence_beat": "ok",
+            "channel_dir": str(
+                context.local_channel_dir
+                if result.backend == "build-loop-local"
+                else channel_dir
+            ),
+            "session_id": str(session_id),
+            "rally_session_id": (
+                native_identity.session_id if context.native else str(session_id)
+            ),
+            "tool": (
+                native_identity.base_tool if context.native else tool
+            ),
+            "rally_tool": (
+                native_identity.native_tool if context.native else tool
+            ),
+            "backend": result.backend or envelope.backend,
+            "transport": result.transport or envelope.transport,
+        }
     except Exception as exc:  # noqa: BLE001 — fail-open
         return {"presence_beat": "skipped", "reason": f"write_presence failed: {exc}"}
 
@@ -110,8 +195,20 @@ def beat(workdir: Path, *, phase: str, label: str | None = None, files: list[str
     """Do both beats in one fail-open call. Returns a combined envelope; never raises."""
     files = files or []
     env: dict = {"phase": phase}
+    execution, inactive_reason = _active_execution(workdir)
+    if execution is None:
+        env.update(
+            state_heartbeat="skipped",
+            presence_beat="skipped",
+            reason=inactive_reason,
+        )
+        return env
     env.update(_refresh_state_heartbeat(workdir))
-    env.update(_write_presence_beat(workdir, phase, label, files))
+    env.update(
+        _write_presence_beat(
+            workdir, phase, label, files, execution=execution
+        )
+    )
     return env
 
 

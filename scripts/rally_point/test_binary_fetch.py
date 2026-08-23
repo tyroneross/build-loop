@@ -147,8 +147,8 @@ class PrintPinTests(unittest.TestCase):
         mock_http.assert_not_called()
 
 
-class UnsupportedHostLoudTests(unittest.TestCase):
-    """An unsupported host yields LOUD coordination_unavailable, never a mirror."""
+class UnsupportedHostFallbackTests(unittest.TestCase):
+    """An unsupported native host uses Build Loop's private fallback."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="unsupported-host-"))
@@ -172,8 +172,8 @@ class UnsupportedHostLoudTests(unittest.TestCase):
         discovery_bridge.clear_cache()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_unsupported_host_resolves_loud_unavailable(self) -> None:
-        # FreeBSD has no published asset → unsupported → loud. (Intel macOS is
+    def test_unsupported_host_resolves_private_fallback(self) -> None:
+        # FreeBSD has no published asset → local fallback. (Intel macOS is
         # SUPPORTED as of v0.1.5, so use a host genuinely absent from the map.)
         # Isolate XDG_CACHE_HOME so no real previously-fetched binary leaks in
         # as a repo-local candidate (an unsupported host would have no cache).
@@ -187,8 +187,9 @@ class UnsupportedHostLoudTests(unittest.TestCase):
              }):
             env = discovery_bridge.resolve(self.repo)
         self.assertEqual(env.resolved_via, "build-loop-internal")
-        self.assertEqual(env.coordination_unavailable, "unsupported_host")
-        self.assertEqual(env.capability_level, capability.UNAVAILABLE)
+        self.assertIsNone(env.coordination_unavailable)
+        self.assertEqual(env.raw["fallback_reason"], "unsupported_host")
+        self.assertEqual(env.capability_level, capability.DEGRADED_BREADCRUMB)
 
 
 def _asset_reachable_for_host() -> bool:

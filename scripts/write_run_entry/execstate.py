@@ -148,8 +148,18 @@ def _mutate_item_iteration(
 
 def _dispatch_action(action: str, execution: Any, chunk_id: str | None, status: str | None, phase: str | None, ts: str) -> dict:
     """Apply a non-start, non-review_e_pass action. Returns the mutated execution block."""
-    if not isinstance(execution, dict):
+    if not isinstance(execution, dict) or not execution:
         raise ValueError(f"action={action!r} requires an existing execution block (run start first)")
+    if action == "heartbeat" and (
+        execution.get("schema_version") != EXECUTION_SCHEMA_VERSION
+        or not isinstance(execution.get("run_id"), str)
+        or not execution["run_id"].strip()
+        or execution.get("phase") == "report"
+        or bool(execution.get("crashed_at"))
+    ):
+        raise ValueError(
+            "action='heartbeat' requires an active schema-v1 execution with a run_id"
+        )
     _ACTION_TABLE[action](execution, chunk_id, status, phase, ts)
     return execution
 

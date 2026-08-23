@@ -8,13 +8,32 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from branch_closeout_gate import check_branch_closeout  # noqa: E402
 import data_plane as dp  # noqa: E402
+from rally_point import channel_paths, discovery_bridge  # noqa: E402
 from rally_point.post import post  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _use_local_coordination_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """These assertions exercise the Build Loop-local fallback contract."""
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    monkeypatch.setenv("AGENT_RALLY_APPS_ROOT", str(tmp_path / "apps"))
+    discovery_bridge.clear_cache()
+    yield
+    discovery_bridge.clear_cache()
+
+
+def _channel(repo: Path) -> Path:
+    return channel_paths.app_channel_dir(channel_paths.app_slug(repo))
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -54,7 +73,7 @@ def _post_closeout(repo: Path, channel: Path, run_id: str) -> int | None:
 
 def test_terminal_post_rejects_missing_or_incomplete_state(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    channel = tmp_path / "channel"
+    channel = _channel(repo)
     run_id = "bl-gate-incomplete"
 
     assert check_branch_closeout(repo, run_id)["ready"] is False
@@ -89,7 +108,7 @@ def test_terminal_post_rejects_missing_or_incomplete_state(tmp_path: Path) -> No
 
 def test_solo_main_run_can_post_without_receipt(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    channel = tmp_path / "channel"
+    channel = _channel(repo)
     run_id = "bl-gate-solo"
     state = {"execution": {}, "runs": [{"run_id": run_id, "createdRefs": []}]}
     (repo / ".build-loop/state.json").write_text(json.dumps(state, indent=2))
@@ -101,7 +120,7 @@ def test_solo_main_run_can_post_without_receipt(tmp_path: Path) -> None:
 
 def test_data_manifest_blocks_terminal_post_until_owned_surface_is_terminal(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    channel = tmp_path / "channel"
+    channel = _channel(repo)
     run_id = "bl-gate-data"
     worktree = repo / ".build-loop/worktrees/data"
     worktree.mkdir(parents=True)
@@ -141,7 +160,7 @@ def test_data_manifest_blocks_terminal_post_until_owned_surface_is_terminal(tmp_
 
 def test_verified_terminal_receipt_unlocks_run_closeout_post(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    channel = tmp_path / "channel"
+    channel = _channel(repo)
     run_id = "bl-gate-closed"
     branch = "bl/run-gate-closed"
     absent_path = repo / ".build-loop/worktrees/run-gate-closed"

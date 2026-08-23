@@ -52,7 +52,12 @@ def _hash_chain_revision(channel_dir: Path) -> int:
                     continue
                 try:
                     row = json.loads(line)
-                    seq = int(row.get("local_seq", 0))
+                    seq = int(
+                        row.get("local_seq")
+                        or row.get("bl_revision")
+                        or row.get("revision")
+                        or 0
+                    )
                 except (ValueError, TypeError, json.JSONDecodeError):
                     continue
                 if seq > latest:

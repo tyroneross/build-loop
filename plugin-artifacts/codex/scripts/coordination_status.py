@@ -29,6 +29,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import (  # noqa: E402
+    actor_identity,
     changes,
     channel_paths,
     decay,
@@ -39,6 +40,15 @@ from rally_point import (  # noqa: E402
     task_heartbeat,
 )
 from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
+from rally_point.backend_adapter import (  # noqa: E402
+    NativeResult,
+    native_inbox_snapshot,
+    native_room_summary,
+    recent as _native_recent,
+    resolve_context,
+    room_snapshot,
+    status_read,
+)
 from rally_point.coordination_policy import load_policy as _load_coord_policy  # noqa: E402
 from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 
@@ -163,6 +173,271 @@ def _read_task_heartbeat(args: argparse.Namespace, channel_dir: Path, tool: str)
             task_heartbeat.DEFAULT_GRACE_SECONDS,
         ),
     )
+
+
+def _require_native(result: NativeResult, operation: str) -> None:
+    """Refuse a shadow read when the selected native authority cannot answer."""
+    if not result.ok:
+        detail = result.reason or result.status
+        raise RuntimeError(f"native Rally {operation} failed: {detail}")
+
+
+def _coordination_refusal_status(
+    args: argparse.Namespace,
+    *,
+    context: Any,
+    workdir: Path,
+) -> dict[str, Any]:
+    """Return a useful warning without reading any private fallback store."""
+    envelope = context.envelope
+    identity = actor_identity.resolve_identity(
+        getattr(args, "tool", None) or "claude_code",
+        args.session_id,
+    )
+    counts = {"direct": 0, "broadcast": 0, "total": 0}
+    return {
+        "schema_version": "1.0",
+        "status": "warn",
+        "required_action": "restore_coordination_authority",
+        "coordination_refused": True,
+        "coordination_unavailable": envelope.coordination_unavailable,
+        "reason": envelope.refusal_reason,
+        "remedy": envelope.refusal_remedy,
+        "workdir": str(workdir),
+        "app_slug": envelope.app_slug,
+        "channel_dir": str(envelope.channel_dir),
+        "resolved_via": envelope.resolved_via,
+        "backend": envelope.backend,
+        "transport": envelope.transport,
+        "session_id": args.session_id,
+        "tool": identity.base_tool,
+        "rally_tool": identity.native_tool,
+        "revision": 0,
+        "active_peers": [],
+        "overlaps": [],
+        "peer_overlap_files": [],
+        "direct_inbox_unread_count": 0,
+        "broadcast_inbox_unread_count": 0,
+        "inbox_unread_count": 0,
+        "inbox_unread_counts": counts,
+        "inbox_latest_messages": [],
+        "inbox_coverage_incomplete": True,
+        "inbox_coverage": {"repo_recent_available": False, "reasons": ["coordination_refused"]},
+        "task_heartbeat": {"health": "unknown", "reason": "coordination_refused"},
+        "rejection_count": 0,
+        "escalation_count": 0,
+        "blocked_verdict_count": 0,
+        "latest_escalation": None,
+        "open_escalations": [],
+        "coordination_file": None,
+        "latest_verdicts": [],
+        "unresolved": [],
+        "dirty_files": [],
+        "dirty_files_unknown": True,
+        "dirty_outside_owned": [],
+        "new_changes": [],
+    }
+
+
+def _native_status_states(result: NativeResult) -> dict[str, dict[str, Any]]:
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    status = data.get("status_read")
+    status = status if isinstance(status, dict) else {}
+    rows = status.get("states")
+    rows = rows if isinstance(rows, list) else []
+    return {
+        str(row["tool"]): row
+        for row in rows
+        if isinstance(row, dict) and row.get("tool")
+    }
+
+
+def _claim_owned_paths(claim: dict[str, Any]) -> list[str]:
+    """Project path ownership from canonical Rally claim scope/evidence."""
+    owned: list[str] = []
+    for raw_scope in claim.get("scope") or []:
+        if not isinstance(raw_scope, str):
+            continue
+        scope = raw_scope.strip()
+        for prefix in (
+            "exclusive:",
+            "shared_read:",
+            "shared-read:",
+            "advisory:",
+            "namespace:",
+        ):
+            if scope.startswith(prefix):
+                scope = scope[len(prefix):]
+                break
+        kind, separator, identifier = scope.partition(":")
+        if separator and kind in {"file", "dir"} and identifier.strip():
+            owned.append(identifier.strip())
+    # Older claims may expose only source-grounding evidence. Preserve that
+    # compatibility without treating arbitrary evidence strings as paths.
+    for evidence in claim.get("evidence") or []:
+        if not isinstance(evidence, str) or not evidence.startswith("claimhash:"):
+            continue
+        path = evidence[len("claimhash:"):].split("=", 1)[0].strip()
+        if path.startswith("file:"):
+            path = path[len("file:"):]
+        if path:
+            owned.append(path)
+    return list(dict.fromkeys(owned))
+
+
+def _native_active_peers(
+    room_result: NativeResult,
+    status_result: NativeResult,
+    *,
+    requesting_tool: str,
+) -> list[dict[str, Any]]:
+    """Merge live squads, typed status, and active claim ownership."""
+    summary = native_room_summary(room_result)
+    states = _native_status_states(status_result)
+    claims = summary.get("active_claims")
+    claims = claims if isinstance(claims, list) else []
+    owns_by_tool: dict[str, list[str]] = {}
+    for item in claims:
+        if not isinstance(item, dict):
+            continue
+        fact = item.get("fact") if isinstance(item.get("fact"), dict) else item
+        owner = fact.get("tool")
+        if not owner:
+            continue
+        current = owns_by_tool.setdefault(str(owner), [])
+        current.extend(
+            path for path in _claim_owned_paths(fact) if path not in current
+        )
+
+    squads = summary.get("squads")
+    squads = squads if isinstance(squads, list) else []
+    peers: list[dict[str, Any]] = []
+    for squad in squads:
+        if not isinstance(squad, dict) or not squad.get("tool"):
+            continue
+        tool = str(squad["tool"])
+        state = states.get(tool, {})
+        if (
+            tool == requesting_tool
+            or squad.get("status") != "active"
+            or state.get("stale") is True
+            or state.get("state") == "done"
+        ):
+            continue
+        state_name = str(state.get("state") or "active")
+        working_file = state.get("file") if state_name == "working" else None
+        peers.append(
+            {
+                # Native Rally identities are already session-unique tool ids.
+                "session_id": tool,
+                "tool": tool,
+                "phase": state_name,
+                "files_in_flight": [str(working_file)] if working_file else [],
+                "owns": owns_by_tool.get(tool, []),
+            }
+        )
+    return peers
+
+
+def _native_recent_rows(result: NativeResult) -> list[dict[str, Any]]:
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    recent = data.get("recent")
+    recent = recent if isinstance(recent, dict) else {}
+    rows = recent.get("rows")
+    return rows if isinstance(rows, list) else []
+
+
+def _native_recent_coverage(result: NativeResult) -> dict[str, Any]:
+    """Describe whether the bounded native recent window proves absence."""
+    rows = _native_recent_rows(result)
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    recent = data.get("recent") if isinstance(data.get("recent"), dict) else {}
+    limit = recent.get("limit")
+    if type(limit) is not int or limit <= 0:
+        limit = 500
+    saturated = len(rows) >= limit
+    return {
+        "coverage_incomplete": saturated,
+        "rows_inspected": len(rows),
+        "limit": limit,
+        "reasons": ["native_recent_limit_saturated"] if saturated else [],
+    }
+
+
+def _same_canonical_path(left: Any, right: Path) -> bool:
+    if not isinstance(left, (str, os.PathLike)):
+        return False
+    try:
+        return Path(left).expanduser().resolve(strict=False) == right
+    except OSError:
+        return False
+
+
+def _normalize_native_recent(
+    result: NativeResult,
+    *,
+    repo_root: Path,
+    app_slug: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Normalize only the current repo's native recent facts, oldest-first."""
+    normalized: list[dict[str, Any]] = []
+    for row in _native_recent_rows(result):
+        if not isinstance(row, dict) or not _same_canonical_path(
+            row.get("repo_root"), repo_root
+        ):
+            continue
+        fact = row.get("fact")
+        record = row.get("record")
+        if isinstance(fact, dict):
+            source = {
+                "seq": row.get("seq") or fact.get("seq"),
+                "occurred_at": row.get("created_at") or fact.get("created_at"),
+                "event_type": fact.get("kind") or "unknown",
+                "payload": fact,
+                "engagement": app_slug,
+            }
+        elif isinstance(record, dict):
+            source = dict(record)
+        else:
+            continue
+        change = changes.normalize_record(source)
+        if not isinstance(change, dict):
+            continue
+        if not change.get("app_slug"):
+            change["app_slug"] = app_slug
+        revision_value = row.get("seq") or row.get("local_seq")
+        if not change.get("revision") and type(revision_value) is int:
+            change["revision"] = max(0, revision_value)
+        normalized.append(change)
+    normalized.sort(
+        key=lambda record: (
+            int(record.get("revision") or 0),
+            str(record.get("event_id") or ""),
+        )
+    )
+    if limit <= 0:
+        return []
+    return normalized[-limit:]
+
+
+def _heartbeat_records_from_changes(
+    recent_changes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for change in recent_changes:
+        payload = change.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        candidate = payload.get("task_heartbeat")
+        if not isinstance(candidate, dict) and payload.get("kind") == "task-heartbeat":
+            candidate = payload
+        if isinstance(candidate, dict):
+            records.append(candidate)
+    return records
 
 
 def _read_rejection_count(channel_dir: Path) -> int:
@@ -345,7 +620,17 @@ def _git_dirty_files(workdir: Path) -> tuple[list[str], bool]:
 def build_status(args: argparse.Namespace) -> dict[str, Any]:
     workdir = Path(args.workdir).expanduser().resolve()
     session_id = args.session_id
-    slug, channel_dir, resolved_via = _resolve_channel_dir(workdir)
+    context = resolve_context(workdir)
+    envelope = context.envelope
+    slug = envelope.app_slug
+    channel_dir = Path(envelope.channel_dir)
+    resolved_via = envelope.resolved_via
+    if not context.native and envelope.backend != "build-loop-local":
+        return _coordination_refusal_status(
+            args,
+            context=context,
+            workdir=workdir,
+        )
     owned_files = _load_owned_files(args, workdir)
     owned_key_map = {f: _path_keys(f, workdir) for f in owned_files}
     owned_keys = set().union(*owned_key_map.values()) if owned_key_map else set()
@@ -358,12 +643,41 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     fif_key_map = {f: _path_keys(f, workdir) for f in this_session_files_in_flight}
     fif_keys = set().union(*fif_key_map.values()) if fif_key_map else set()
 
-    # Requesting tool name (default: "claude_code") used for inbox lookup.
-    requesting_tool = getattr(args, "tool", None) or "claude_code"
-
-    active_peers = presence.read_active_presence(
-        channel_dir, exclude_session=session_id
+    # Keep the CLI's user-facing host family separate from native Rally's
+    # session-unique routing actor. Local fallback inbox/presence semantics
+    # remain base-tool + session-id scoped.
+    identity = actor_identity.resolve_identity(
+        getattr(args, "tool", None) or "claude_code",
+        session_id,
     )
+    requesting_base_tool = identity.base_tool
+    requesting_tool = identity.native_tool if context.native else requesting_base_tool
+
+    native_room_result: NativeResult | None = None
+    native_recent_result: NativeResult | None = None
+    if context.native:
+        native_room_result = room_snapshot(
+            context,
+            actor=requesting_tool,
+            readers=True,
+        )
+        native_status_result = status_read(context)
+        # ``recent --all`` is workspace-wide. Fetch the bounded maximum first,
+        # then filter to this exact canonical repo root before applying the
+        # caller's requested display limit.
+        native_recent_result = _native_recent(context, limit=500)
+        _require_native(native_room_result, "room read")
+        _require_native(native_status_result, "status read")
+        _require_native(native_recent_result, "recent read")
+        active_peers = _native_active_peers(
+            native_room_result,
+            native_status_result,
+            requesting_tool=requesting_tool,
+        )
+    else:
+        active_peers = presence.read_active_presence(
+            channel_dir, exclude_session=session_id
+        )
 
     # Legacy overlap: peer's files_in_flight vs our owned_files.
     overlaps: list[dict[str, Any]] = []
@@ -422,13 +736,97 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             continue
         dirty_outside_owned.append(path)
 
-    recent_changes = _read_recent_changes(
-        channel_dir,
-        args.max_changes,
-        workdir=workdir,
-        include_archived=getattr(args, "include_archived", False),
-    )
-    current_revision = revision.read_revision(channel_dir)
+    if context.native:
+        assert native_room_result is not None
+        assert native_recent_result is not None
+        repo_root = channel_dir.expanduser().parent.resolve(strict=False)
+        native_changes = _normalize_native_recent(
+            native_recent_result,
+            repo_root=repo_root,
+            app_slug=slug,
+            limit=500,
+        )
+        recent_changes = (
+            native_changes[-args.max_changes:]
+            if args.max_changes > 0
+            else []
+        )
+        room_summary = native_room_summary(native_room_result)
+        max_seq = room_summary.get("max_seq")
+        current_revision = max_seq if type(max_seq) is int and max_seq >= 0 else 0
+        native_inbox = native_inbox_snapshot(
+            native_room_result,
+            tool=requesting_tool,
+            recent_result=native_recent_result,
+        )
+        inbox_counts = native_inbox["counts"]
+        inbox_latest_messages = native_inbox["latest"]
+        inbox_coverage_incomplete = bool(
+            native_inbox.get("coverage_incomplete")
+        )
+        inbox_coverage = dict(native_inbox.get("coverage") or {})
+        task_heartbeat_status = task_heartbeat.summarize_task_health_records(
+            _heartbeat_records_from_changes(native_changes),
+            tool=requesting_tool,
+            session_id=identity.session_id,
+            expected_ref=getattr(args, "task_ref", None),
+            now=getattr(args, "task_heartbeat_now", None),
+            grace_seconds=getattr(
+                args,
+                "task_heartbeat_grace_seconds",
+                task_heartbeat.DEFAULT_GRACE_SECONDS,
+            ),
+        )
+        heartbeat_recent_coverage = _native_recent_coverage(native_recent_result)
+        if (
+            heartbeat_recent_coverage["coverage_incomplete"]
+            and task_heartbeat_status.get("health") in {"missing", "none"}
+        ):
+            task_heartbeat_status = {
+                **task_heartbeat_status,
+                "health": "unknown",
+                "reason": "native_recent_limit_saturated",
+                "coverage_incomplete": True,
+                "coverage": heartbeat_recent_coverage,
+            }
+        else:
+            task_heartbeat_status = {
+                **task_heartbeat_status,
+                "coverage_incomplete": False,
+                "coverage": heartbeat_recent_coverage,
+            }
+        # Native Rally rejects malformed mutations before commit and exposes
+        # typed command failures; it has no Build Loop rejections sidecar.
+        rejection_count = 0
+    else:
+        recent_changes = _read_recent_changes(
+            channel_dir,
+            args.max_changes,
+            workdir=workdir,
+            include_archived=getattr(args, "include_archived", False),
+        )
+        current_revision = revision.read_revision(channel_dir)
+        inbox_counts = _read_inbox_unread_counts(
+            channel_dir,
+            requesting_tool,
+            session_id,
+        )
+        inbox_latest_messages = _read_inbox_latest_messages(
+            channel_dir,
+            requesting_tool,
+            session_id,
+        )
+        inbox_coverage_incomplete = False
+        inbox_coverage = {
+            "repo_recent_available": True,
+            "reasons": [],
+        }
+        task_heartbeat_status = _read_task_heartbeat(
+            args,
+            channel_dir,
+            requesting_tool,
+        )
+        rejection_count = _read_rejection_count(channel_dir)
     # SEC-002 — ``new_changes`` is surfaced into orchestrator LLM context.
     # changes.jsonl is unauthenticated (trusted-local-peers-only); sanitize
     # each record to known structured metadata + length-capped free text
@@ -440,11 +838,6 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         if args.since_revision is None
         or int(c.get("revision", 0)) > args.since_revision
     ]
-
-    inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool, session_id)
-    inbox_latest_messages = _read_inbox_latest_messages(channel_dir, requesting_tool, session_id)
-    task_heartbeat_status = _read_task_heartbeat(args, channel_dir, requesting_tool)
-    rejection_count = _read_rejection_count(channel_dir)
 
     # G3 — escalation salience. An `escalation`-kind change record marks
     # "needs lead or user attention now", distinct from routine phase/
@@ -475,6 +868,9 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     heartbeat_health = task_heartbeat_status.get("health")
+    heartbeat_coverage_incomplete = bool(
+        task_heartbeat_status.get("coverage_incomplete")
+    )
     heartbeat_blocking = heartbeat_health in {"blocked", "needs_attention"}
     heartbeat_warn = heartbeat_health in {
         "stale_check_in",
@@ -495,14 +891,53 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             required_action = "resolve_escalations_and_coordination_verdicts"
         else:
             required_action = "resolve_unresolved_coordination_verdicts"
-    elif peer_overlap_files or dirty_outside_owned or heartbeat_warn or dirty_unknown:
+    elif (
+        peer_overlap_files
+        or dirty_outside_owned
+        or heartbeat_warn
+        or dirty_unknown
+        or inbox_coverage_incomplete
+        or heartbeat_coverage_incomplete
+    ):
         # warn only when a peer's ``owns`` intersects our files_in_flight,
         # OR when dirty files exist outside our owned set, OR when the dirty
         # probe timed out (unknown != clean — never silently suppress).  Raw
         # peer count does NOT trigger warn (prevents false positives when
         # peers share no files with us).
         status = "warn"
-        if dirty_unknown and not (peer_overlap_files or dirty_outside_owned):
+        if (
+            heartbeat_coverage_incomplete
+            and inbox_coverage_incomplete
+            and not (
+                peer_overlap_files
+                or dirty_outside_owned
+                or heartbeat_warn
+                or dirty_unknown
+            )
+        ):
+            required_action = "inspect_native_coordination_coverage"
+        elif heartbeat_coverage_incomplete and not (
+            peer_overlap_files
+            or dirty_outside_owned
+            or heartbeat_warn
+            or dirty_unknown
+            or inbox_coverage_incomplete
+        ):
+            required_action = (
+                "inspect_native_heartbeat_coverage"
+                if task_heartbeat_status.get("reason")
+                == "native_recent_limit_saturated"
+                else "inspect_task_heartbeat_coverage"
+            )
+        elif inbox_coverage_incomplete and not (
+            peer_overlap_files
+            or dirty_outside_owned
+            or heartbeat_warn
+            or dirty_unknown
+            or heartbeat_coverage_incomplete
+        ):
+            required_action = "inspect_native_inbox_coverage"
+        elif dirty_unknown and not (peer_overlap_files or dirty_outside_owned):
             required_action = "dirty_probe_timed_out_rerun_status"
         elif heartbeat_warn and not (peer_overlap_files or dirty_outside_owned):
             required_action = "review_task_heartbeat_health"
@@ -521,6 +956,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "channel_dir": str(channel_dir),
         "resolved_via": resolved_via,
         "session_id": session_id,
+        "tool": requesting_base_tool,
+        "rally_tool": identity.native_tool,
         "revision": current_revision,
         "active_peers": [
             {
@@ -538,6 +975,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
         "inbox_latest_messages": inbox_latest_messages,
+        "inbox_coverage_incomplete": inbox_coverage_incomplete,
+        "inbox_coverage": inbox_coverage,
         "task_heartbeat": task_heartbeat_status,
         "rejection_count": rejection_count,
         "escalation_count": escalation_count,
