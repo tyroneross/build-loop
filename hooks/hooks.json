@@ -60,6 +60,15 @@
             "timeout": 2000
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-codex-hook-trust.sh\" </dev/null 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
