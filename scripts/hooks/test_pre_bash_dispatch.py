@@ -150,15 +150,36 @@ class DispatchRoutingTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
         self.assertNotIn("Audit packet", r.stderr)
 
-    def test_direct_background_inspection_explains_the_coordinator(self) -> None:
-        """A direct potentially privileged inspection receives the wrapper hint.
+    def test_direct_background_inspection_is_denied_and_routed_to_the_broker(self) -> None:
+        """A registry-listed privileged inspection is DENIED, not merely hinted.
 
-        The hook stays advisory: Codex cannot convert the hint into a reliable
-        command denial, while the wrapper records dispatch and handles waiting.
+        Until 2026-08-23 this asserted an advisory `system_access_request.py`
+        hint on stderr, and its own docstring named the weakness: "Codex cannot
+        convert the hint into a reliable command denial." Merging the privileged
+        request broker (oc/d713…) removed that limitation — `sfltool` is in
+        scripts/privileged_commands.json, so the gate now returns a structured
+        deny on STDOUT carrying the exact broker command to re-issue, with a
+        required purpose sentence that appears beside the macOS password dialog.
+
+        Asserting the deny rather than the hint is the point: a hint an agent may
+        ignore is not a control.
         """
         r = run_dispatch(self.repo, "sfltool dumpbtm")
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
-        self.assertIn("system_access_request.py", r.stderr)
+        self.assertIn("deny", r.stdout)
+        self.assertIn("privileged_broker.py", r.stdout)
+        self.assertIn("--purpose", r.stdout)
+
+    def test_a_command_outside_the_privileged_registry_is_not_denied(self) -> None:
+        """False-positive guard: the broker must claim only what it registers.
+
+        `launchctl list` is a read-only enumeration absent from
+        privileged_commands.json. A gate that denied it would wedge sessions on
+        an ordinary command, which is worse than the hint it replaced.
+        """
+        r = run_dispatch(self.repo, "launchctl list")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+        self.assertNotIn("deny", r.stdout)
 
     def test_staged_secret_hard_blocks_with_exit_2(self) -> None:
         """F1 CLOSURE PROOF: a staged id_rsa.pem with credential-shaped content
