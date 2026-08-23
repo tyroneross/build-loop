@@ -1,26 +1,9 @@
 {
   "hooks": {
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark precompact 2>/dev/null || printf '{}'",
-            "timeout": 10000
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": "",
         "hooks": [
-          {
-            "type": "command",
-            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark restore 2>/dev/null || printf '{}'",
-            "timeout": 5000
-          },
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" session-start </dev/null 2>/dev/null || printf '{}'",
@@ -46,15 +29,6 @@
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; python3 \"$root/scripts/tool_trace.py\" --workdir \"$root\" ingest >/dev/null 2>&1 || true; printf '{}'",
             "timeout": 5000
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark stop 2>/dev/null || printf '{\"decision\": \"approve\"}'",
-            "timeout": 10000
           }
         ]
       },
