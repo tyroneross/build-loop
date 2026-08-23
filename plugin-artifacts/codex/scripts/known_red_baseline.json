@@ -26,5 +26,12 @@
     "days away, not weeks.",
     "'expires' is YYYY-MM-DD (UTC date). Past that date the gate blocks."
   ],
-  "entries": []
+  "entries": [
+    {
+      "test": "scripts/test_embed_backend.py::EmbedBackendTests::test_cross_backend_cosine_above_threshold",
+      "reason": "Red BY DESIGN and correctly so \u2014 do not skip it. MLX_DEFAULT_MODEL is mxbai-embed-large-v1 while OLLAMA_DEFAULT_MODEL is bge-m3. Both emit 1024 dims so every shape check passes, but measured cosine on identical text is -0.0487: they are orthogonal embedding spaces. This assertion is the only thing surfacing that a backend fallback moves a caller between embedding spaces mid-run. Blocked on a user decision, not on engineering work: BUIL-MEMORY-m0hcg9vzf60y895rj3vt9 picks which model MLX uses.",
+      "owner": "tyroneross",
+      "expires": "2026-09-22"
+    }
+  ]
 }

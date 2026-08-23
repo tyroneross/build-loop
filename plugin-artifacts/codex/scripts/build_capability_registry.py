@@ -184,6 +184,13 @@ CATEGORY_KEYWORDS = [
                       "prompt-submit", "skill-routing", "skill routing",
                       # Privacy/secret scanners are validation gates.
                       "privacy", "secret", "pii",
+                      # Privileged-command surfaces (broker + audit), merged
+                      # 2026-08-23. The broker decides whether an
+                      # admin-password command may proceed and the audit reads
+                      # that traffic back; neither changes the build. Same
+                      # shape as the privacy/secret scanners above: gates that
+                      # decide whether something may stand.
+                      "privileged", "admin-password", "admin password",
                       # Commit/dispatch-boundary gates landed 2026-08-07, each
                       # grounded in an observed failure. They are validation
                       # infrastructure, not execution: none of them changes the
