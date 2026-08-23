@@ -86,6 +86,20 @@ def detect_format(path: Path) -> str:
     return UNKNOWN
 
 
+_CWD_EVENT_TYPES = {"session_meta", "turn_context"}
+
+
+def _event_cwd(obj: dict | None) -> str | None:
+    """``cwd`` carried by one cwd-bearing event, or None for every other event."""
+    if not obj or obj.get("type") not in _CWD_EVENT_TYPES:
+        return None
+    payload = obj.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    cwd = payload.get("cwd")
+    return str(cwd) if cwd else None
+
+
 def session_cwd(path: Path) -> str | None:
     """Repo the session ran in.
 
@@ -93,20 +107,14 @@ def session_cwd(path: Path) -> str | None:
     in ``session_meta`` and refreshes it per turn in ``turn_context``. Returning
     it here is what lets a Codex retro resolve its project at all.
     """
-    fmt = detect_format(path)
-    if fmt != CODEX:
+    if detect_format(path) != CODEX:
         return None
     try:
         with Path(path).open(errors="replace") as fh:
             for line in fh:
-                obj = _loads(line)
-                if obj is None:
-                    continue
-                if obj.get("type") in {"session_meta", "turn_context"}:
-                    payload = obj.get("payload") or {}
-                    cwd = payload.get("cwd") if isinstance(payload, dict) else None
-                    if cwd:
-                        return str(cwd)
+                cwd = _event_cwd(_loads(line))
+                if cwd:
+                    return cwd
     except OSError:
         return None
     return None
