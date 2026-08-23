@@ -121,10 +121,33 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Deep mode with auto-apply: check for claude CLI
 # ---------------------------------------------------------------------------
-if ! command -v claude > /dev/null 2>&1; then
-    log "deep apply skipped — claude CLI not found; $QUEUED_COUNT items queued for manual /build-loop:run"
+# Resolve the CLI explicitly. Under launchd, PATH is the bare
+# /usr/bin:/bin:/usr/sbin:/sbin — the user's shell profile is never sourced —
+# so `command -v claude` ALWAYS failed here and this job skipped its actual
+# work on every scheduled run since it was installed. Every entry in
+# launchd-deep.log says "deep apply skipped — claude CLI not found": the job
+# looked healthy, exited 0, and did nothing but queue.
+#
+# Search the usual install locations before giving up, and say WHERE we looked
+# when we do, so the next failure is diagnosable instead of just "not found".
+CLAUDE_BIN=""
+for candidate in \
+    "${CLAUDE_CLI:-}" \
+    "$(command -v claude 2>/dev/null || true)" \
+    "$HOME/.local/bin/claude" \
+    "/opt/homebrew/bin/claude" \
+    "/usr/local/bin/claude"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+        CLAUDE_BIN="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$CLAUDE_BIN" ]]; then
+    log "deep apply skipped — claude CLI not found on PATH ($PATH) or in \$CLAUDE_CLI, ~/.local/bin, /opt/homebrew/bin, /usr/local/bin; $QUEUED_COUNT items queued for manual /build-loop:run"
     exit 0
 fi
+log "using claude at $CLAUDE_BIN"
 
 # ---------------------------------------------------------------------------
 # 8. Extract the APPLY PROMPT from the reference doc (single source)
@@ -154,7 +177,7 @@ fi
 log "invoking claude headless apply"
 
 CLAUDE_EXIT=0
-claude -p "$APPLY_PROMPT" >> "$REVIEW_DIR/apply-deep.log" 2>&1 || CLAUDE_EXIT=$?
+"$CLAUDE_BIN" -p "$APPLY_PROMPT" >> "$REVIEW_DIR/apply-deep.log" 2>&1 || CLAUDE_EXIT=$?
 
 log "claude exited with status $CLAUDE_EXIT"
 
