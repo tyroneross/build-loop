@@ -37,8 +37,35 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
    - Document what was searched and what was found
    - If search is unavailable, document what SHOULD be searched
 5. **Assess completeness** — does the investigation explain ALL reported symptoms? Check for multi-causal bugs (2+ independent root causes)
+6. **Qualify every observation before it becomes evidence** — the gate below. Run it on each number and each instrument reading, INCLUDING the ones that agree with you
 
 **Output**: Causal tree (with confirmed and pruned branches), reproduction steps, evidence gathered, research performed
+
+### Evidence qualification gate (run per observation, before it enters the report)
+
+Three questions. They take seconds and they catch the failure class that survives every
+other check — a *correct* instrument, read correctly, generalized one step too far.
+
+| # | Question | Catches |
+|---|---|---|
+| 1 | **Unit** — one unit of this number is one *what*? | `zcard(queue:prioritized)=20,823` quoted as "20,823 articles". Job ids were `<entity>-<retry-bucket>`, so each retry minted a new id for the same entity: 4.17x duplication, real work ≈2,704. **Overstated 7x** |
+| 2 | **Instance** — is the thing I checked the only one of its kind? Enumerate before generalizing. | "Redis is healthy" from one connection, when the code built **two** — the healthy singleton, and a separate BullMQ-owned connection that the hanging call path actually used |
+| 3 | **Second source** — what else can answer this same question? Run it and diff. | Queue said 20,823, database said 3,531. Both were queried; neither was reconciled until a human asked |
+
+**Disagreement between two sources is not noise to resolve — it IS the finding.** Write the
+reconciliation as a script so it stays runnable and re-runnable, not as a one-off query.
+
+**The gate has a known hole: it fires on conclusions, not on narration.** Observations that
+merely *support* the current hypothesis slip through unexamined, because they never feel like
+claims. Apply the gate hardest to the numbers that agree with you — a measurement that
+confirms the story is exactly the one nobody re-derives. Any number crossing from an
+instrument into a sentence is a claim, whatever its grammatical role.
+
+Corollary for tools: a listing/introspection API returning empty is not proof of absence
+(`Queue.getWorkers()` returned `[]` for a worker that was provably alive and heartbeating).
+Confirm absence against a second, independent observation channel — see
+`build-loop:references/verify-dispatch.md` and the `verify_the_instrument_before_the_finding`
+lesson.
 
 ### Root-Cause Frameworks
 
@@ -278,3 +305,7 @@ MEMORY SEARCH → INVESTIGATE → HYPOTHESIZE → FIX → VERIFY → SCORE
 | Declaring victory without evidence | Every claim needs a ✅/⚠️/❓ marker |
 | Skipping research when stuck | If you don't know why something behaves this way, search for it |
 | Hiding uncertainty | ⚠️ and ❓ are not failures — they're honest. Hiding them is the failure |
+| Quoting a counter without its unit | Name the unit before the magnitude. "20,823 *what*?" A queue depth is jobs; a composite job id defeats dedup and inflates it |
+| Scrutinizing only the evidence that challenges you | Run the qualification gate on confirming observations too — those are the ones that ship wrong |
+| Treating an empty listing as proof of absence | Absence needs a second observation channel; introspection APIs return `[]` for live things |
+| Two sources, pick the convenient one | Diff them. The gap is the finding, and the diff belongs in a script |
