@@ -36,7 +36,12 @@ def _hermetic_git(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _g(wd: Path, *args: str, check=True) -> str:
-    r = subprocess.run(["git", "-C", str(wd), *args], capture_output=True, text=True, check=check)
+    r = subprocess.run(
+        ["git", "-c", "tag.gpgSign=false", "-C", str(wd), *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
     return r.stdout.strip()
 
 

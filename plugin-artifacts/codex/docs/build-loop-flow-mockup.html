@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "626c03bc9c7b4f04c8857852e0ec0f25a43b5bad9c9544df7c30649511501daf"
+    "content_sha256": "d1200b42f252ee91090df52b9d9e321da98d68509c06c2829ec7cd412b552d86"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1786,7 +1786,9 @@
       "scripts/audit_git.py": "audit_git.py — Read-only git front door for read-only agents (e.g. independent-auditor).",
       "scripts/audit_memory_invocation.py": "Runtime probe for build-loop memory call sites.",
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
+      "scripts/autonomy_dashboard.py": "Loopback-only dashboard for durable Build Loop autonomy decisions.\"\"\"",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
+      "scripts/autonomy_supervisor.py": "Deterministic control plane for outcome-based Build Loop autonomy.",
       "scripts/backend_health.py": "Phase 1 backend health-check surface.",
       "scripts/background_item_identity.py": "Audit and repair opaque macOS LaunchAgent identities.",
       "scripts/backlog/__init__.py": "scripts/backlog/ — capture-time product-impact triage + causal-tree assessment.",
@@ -2107,6 +2109,7 @@
       "scripts/task_surface.py": "Derived active task surface for build-loop.\"\"\"",
       "scripts/temporal_membership.py": "temporal_membership.py — gate attaching an external record to a run by time + host overlap.",
       "scripts/token_efficiency_benchmark.py": "Compare exact-repeat Build Loop runs using measured tokens and quality outcomes.\"\"\"",
+      "scripts/tool_trace.py": "OTel-shaped, redacted tool-call traces for supervision and learning.",
       "scripts/transcript-pattern-miner.py": "transcript-pattern-miner.py — thin shim; implementation lives in transcript_pattern_miner/.",
       "scripts/transcript_adapter.py": "transcript_adapter.py — one transcript shape for every host.",
       "scripts/transcript_pattern_miner/__init__.py": "transcript_pattern_miner — folder-per-capability package.",

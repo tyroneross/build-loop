@@ -30,11 +30,31 @@ Resolve the concrete model first. Then run:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parallelism.py" \
   --workdir "$PWD" --model "$MODEL" --provider "$PROVIDER" \
   --execution-location "$LOCATION" --output-size "$OUTPUT_SIZE" \
-  --effort "$EFFORT" --agent implementer --describe --json
+  --effort "$EFFORT" --agent implementer \
+  --independent-items "$READY_CHUNKS" --shared-capacity "$SHARED_CAPACITY" \
+  --active-elsewhere "$ACTIVE_ELSEWHERE" --describe --json
 ```
 
-Persist the envelope at `state.json.execution.fanout`. Dispatch no more than
-`effective_max`, and only across a MECE partition.
+Persist the envelope at `state.json.execution.fanout`. `effective_max` is
+capacity, not a dispatch target. Pass it to `autonomy_supervisor.py fanout`;
+the supervisor applies provider/host/cost/failure backpressure and chooses the
+next wave. Dispatch only across a MECE partition. The absolute safety ceiling
+is 150, while every lower live cap remains binding.
+
+### Adaptive backpressure
+
+- Start with a bounded ramp of at most four workers.
+- Reduce admissions after repeated 429s, worker errors, memory pressure,
+  serious thermal state, low disk, or 80% cost use.
+- Pause new work at critical thermal/memory/disk pressure or the cost ceiling.
+- Recover one worker only after two stable telemetry windows.
+- External cooling changes measured thermal stability; it does not bypass CPU,
+  token, cost, ownership, or provider limits.
+
+Every tool call and result reconciles into
+`.build-loop/telemetry/tool-traces.jsonl` as an OTel-shaped, bounded, redacted
+span. The supervisor consumes error, retry, 429, and latency summaries; Phase 6
+consumes the same signals for recursive learning.
 
 ### Cloud inference: token-led
 

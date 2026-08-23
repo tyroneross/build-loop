@@ -30,6 +30,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from tool_trace import summarize_path as summarize_tool_trace
+
 # ---------------------------------------------------------------------------
 # Transcript reading + user-prompt extraction.
 # ---------------------------------------------------------------------------
@@ -698,6 +700,7 @@ def build(
     *,
     prompted_threshold: int = 2,
     transcript_note: str | None = None,
+    trace_jsonl: Path | None = None,
 ) -> dict[str, Any]:
     """Build the 9 named sections.
 
@@ -734,11 +737,38 @@ def build(
     usage = extract_tool_usage(transcript_jsonl)
     automation = extract_tool_sequences(transcript_jsonl)
     issue_signals = extract_issue_signals(transcript_jsonl)
+    trace_summary = summarize_tool_trace(trace_jsonl, run_id) if trace_jsonl else {
+        "tool_calls": 0, "tool_errors": 0, "error_rate": 0.0,
+        "repeated_calls": 0, "provider_429s": 0, "p95_duration_ms": None,
+        "tools": {},
+    }
+    if not usage.get("total_uses") and trace_summary.get("tool_calls"):
+        usage = {
+            "tools": trace_summary.get("tools") or {},
+            "plugins": {},
+            "subagents": {},
+            "errored": {},
+            "total_uses": trace_summary["tool_calls"],
+        }
+    if trace_summary.get("tool_errors"):
+        issue_signals.append(
+            f"tool telemetry recorded {trace_summary['tool_errors']} errors "
+            f"across {trace_summary['tool_calls']} calls"
+        )
+    if trace_summary.get("provider_429s"):
+        issue_signals.append(
+            f"tool telemetry recorded {trace_summary['provider_429s']} provider rate limits"
+        )
     # Automation candidates ARE enforce-candidates — route them into the
     # existing enforce-from-retro → Phase 6 pipeline (kind: automation).
     for c in automation:
         seq = " → ".join(c.get("sequence", []))
         enforce.append(f"Automate recurring ritual (×{c.get('count')}): {seq} — draft a script/hook")
+    if trace_summary.get("repeated_calls", 0) >= 3:
+        enforce.append(
+            f"Reduce repeated identical tool calls (×{trace_summary['repeated_calls']}) "
+            "with evidence-aware retry routing"
+        )
 
     sections: dict[str, Any] = {}
 
@@ -869,5 +899,11 @@ def build(
         "automation_candidate_count": len(automation),
         "issue_signal_count": len(issue_signals),
         "transcript_absence_reason": transcript_note,
+        "trace_present": bool(trace_jsonl and trace_jsonl.exists()),
+        "trace_tool_calls": trace_summary.get("tool_calls", 0),
+        "trace_tool_errors": trace_summary.get("tool_errors", 0),
+        "trace_repeated_calls": trace_summary.get("repeated_calls", 0),
+        "trace_provider_429s": trace_summary.get("provider_429s", 0),
+        "trace_p95_duration_ms": trace_summary.get("p95_duration_ms"),
     }
     return sections

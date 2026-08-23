@@ -997,6 +997,10 @@ class TestTokenUniquenessAtVolume(unittest.TestCase):
 
     def test_token_is_lowercase_crockford(self):
         tok = bl.mint_id_token()
+        self.assertEqual(bl._TOKEN_RAND_BYTES, 8)
+        self.assertEqual(bl._TOKEN_RAND_WIDTH, 13)
+        self.assertEqual(len(tok), 21)
+        self.assertEqual(len(tok[bl._TOKEN_TIME_WIDTH:]), 13)
         self.assertRegex(tok, r"^[0-9a-z]+$")
         # No ambiguous Crockford-excluded letters (i, l, o, u).
         for bad in ("i", "l", "o", "u"):
@@ -1008,7 +1012,7 @@ class TestTokenUniquenessAtVolume(unittest.TestCase):
         fixed = 1_700_000_000_000
         tails = {bl.mint_id_token(now_ms=fixed)[bl._TOKEN_TIME_WIDTH:]
                  for _ in range(200)}
-        # With 25 random bits, 200 draws are essentially always distinct.
+        # With 64 random bits, 200 draws are effectively always distinct.
         self.assertGreater(len(tails), 190,
                            "random tail must vary within one millisecond")
 

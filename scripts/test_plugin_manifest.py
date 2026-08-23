@@ -175,7 +175,11 @@ class McpServersReferenceTests(unittest.TestCase):
         data = load_json(PLUGIN_JSON)
         ref = data.get("mcpServers")
         if ref is None:
-            self.skipTest("plugin.json has no mcpServers field")
+            self.assertFalse(
+                (REPO_ROOT / ".mcp.json").exists(),
+                "orphan .mcp.json exists but plugin.json does not declare mcpServers",
+            )
+            return
         if isinstance(ref, str):
             # Path reference — must resolve to an existing JSON file.
             mcp_path = (REPO_ROOT / ref).resolve()
