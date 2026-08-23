@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Privileged-command broker: a macOS administrator-password request is now named before the dialog appears, coalesced with any identical read-only request already in flight, and appended to a hash-chained ledger. `scripts/privileged_broker.py` (coordinator + CLI), `scripts/privileged_commands.json` (registry data), `scripts/hooks/pre_bash_privileged.py` (PreToolUse:Bash redirect), `scripts/privileged_audit.py` (read-only forensics + before/after counts). Mutating requests never coalesce and never inherit another task's approval; a denial is remembered for a bounded window so a retry cannot open a second dialog; the password is never read, stored, or replayed. Earned by the 2026-08-20 incident where one Codex turn produced two anonymous `sfltool` dialogs 14 seconds apart. Contract: `skills/build-loop/references/privileged-request-broker.md`.
 - Groundwork BuildRequest v1 intake and digest-bound ImplementationMap v1 output connect intended product architecture to verified repository implementation evidence.
 - Claude and Codex artifacts ship the same stdlib-only exchange adapter and prove checksum plus execution parity in isolated caches.
 

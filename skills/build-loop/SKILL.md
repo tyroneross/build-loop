@@ -417,6 +417,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-3-execute.md` — Full Phase 3 Execute protocol
 - `references/verify-dispatch.md` — Post-dispatch 5-step git/test ground-truth checklist; walk after any dispatched agent claims commits landed / tests passed (a solicited peer agreeing is not independent verification)
 - `references/dogfood-reload-checkpoint.md` — Self-recursive stop/reload/resume checkpoint and ACK/fallback protocol
+- `references/privileged-request-broker.md` — Naming, coalescing, and recording macOS administrator-password requests across concurrent tasks. Load when a build touches a command that asks for an admin password, when a user reports unexplained password dialogs, or when editing `scripts/privileged_commands.json`.
 - `references/phase-4-review.md` — Full Phase 4 Review protocol (sub-steps A–G, including Sub-step F Auto-Resolve with all 4 verdict arms)
 - `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol

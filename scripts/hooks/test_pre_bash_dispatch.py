@@ -932,5 +932,69 @@ class ClassifierCannotRunBoundedFailureTests(unittest.TestCase):
         self.assertIn("security scan found HIGH", r.stderr)
 
 
+class PrivilegedGateTests(unittest.TestCase):
+    """The privileged-command gate is the one gate that ignores the scope guard.
+
+    Every other gate polices repository work, so confining it to opted-in repos
+    is right. An administrator-password dialog is not repository work — the same
+    `sfltool dumpbtm` opens the same anonymous dialog from any directory — so a
+    scope guard here would be a silent hole in the control.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="privdispatch-"))
+        self.store = self.tmp / "privstore"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def dispatch(self, repo: Path, command: str) -> subprocess.CompletedProcess:
+        env_backup = os.environ.get("BUILD_LOOP_PRIVILEGED_ROOT")
+        os.environ["BUILD_LOOP_PRIVILEGED_ROOT"] = str(self.store)
+        try:
+            return run_dispatch(repo, command)
+        finally:
+            if env_backup is None:
+                os.environ.pop("BUILD_LOOP_PRIVILEGED_ROOT", None)
+            else:
+                os.environ["BUILD_LOOP_PRIVILEGED_ROOT"] = env_backup
+
+    def decision(self, result: subprocess.CompletedProcess) -> str | None:
+        try:
+            return json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def test_a_privileged_command_is_redirected_in_a_buildloop_repo(self):
+        repo = make_buildloop_repo(self.tmp, "opted-in")
+        result = self.dispatch(repo, "sfltool dumpbtm")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(self.decision(result), "deny")
+        self.assertIn("privileged_broker.py", result.stdout)
+
+    def test_a_privileged_command_is_redirected_even_outside_a_buildloop_repo(self):
+        repo = make_plain_repo(self.tmp, "never-opted-in")
+        result = self.dispatch(repo, "sfltool dumpbtm")
+        self.assertEqual(self.decision(result), "deny",
+                         "privilege escalation must be gated regardless of repo opt-in")
+
+    def test_an_unprivileged_lookalike_is_not_redirected(self):
+        repo = make_plain_repo(self.tmp, "plain")
+        for command in ("csrutil status", "spctl -a -vv -t exec /Applications/X.app",
+                        "rg security scripts/", "ls -la"):
+            self.assertNotEqual(self.decision(self.dispatch(repo, command)), "deny", command)
+
+    def test_the_kill_switch_disables_the_privileged_gate(self):
+        repo = make_plain_repo(self.tmp, "plain2")
+        env = dict(os.environ, BUILD_LOOP_HOOKS="off", CLAUDE_PLUGIN_ROOT=str(PLUGIN_ROOT))
+        result = subprocess.run(
+            ["bash", str(DISPATCH)],
+            cwd=repo, env=env, text=True, capture_output=True,
+            input=json.dumps({"tool_input": {"command": "sfltool dumpbtm"}, "cwd": str(repo)}),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "{}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
