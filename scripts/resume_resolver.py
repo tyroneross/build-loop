@@ -125,7 +125,13 @@ def _validate_execution_v1(execution: dict) -> str | None:
     heartbeat = execution.get("last_heartbeat_at")
     if not isinstance(heartbeat, str) or _parse_iso(heartbeat) is None:
         return "execution.last_heartbeat_at is missing or unparseable"
-    iterate_attempt = execution.get("iterate_attempt")
+    # ABSENT is valid and means zero. The consumer below already reads this as
+    # `int(execution.get("iterate_attempt", 0))`, so demanding the key here made
+    # the validator stricter than the code it guards — it rejected states the
+    # resolver could read perfectly well, including every state written before
+    # the key existed. A PRESENT value must still be a nonnegative int; bools are
+    # rejected on purpose (`type(...) is not int`), since True would read as 1.
+    iterate_attempt = execution.get("iterate_attempt", 0)
     if type(iterate_attempt) is not int or iterate_attempt < 0:
         return "execution.iterate_attempt must be a nonnegative integer"
     for key in ("queued_chunks", "in_flight_chunks"):
