@@ -118,6 +118,21 @@ def _correlation_id() -> str:
     return f"mt-{secrets.token_hex(4)}"
 
 
+def _write_all(fd: int, payload: bytes) -> None:
+    """Write every byte of ``payload`` to ``fd``.
+
+    os.write may write short. Under O_APPEND a partial write leaves a truncated
+    JSONL row that no reader can parse, so the retry loop is load-bearing rather
+    than defensive.
+    """
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written == 0:
+            raise OSError("telemetry append wrote zero bytes")
+        remaining = remaining[written:]
+
+
 def _append_row(path: Path, row: dict[str, Any]) -> None:
     """Append one row under a sidecar lock. Fire-and-forget — swallows errors.
 
@@ -132,12 +147,7 @@ def _append_row(path: Path, row: dict[str, Any]) -> None:
         with LockedFile(path, timeout_s=LOCK_TIMEOUT_S):
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
             try:
-                remaining = memoryview(line)
-                while remaining:
-                    written = os.write(fd, remaining)
-                    if written == 0:
-                        raise OSError("telemetry append wrote zero bytes")
-                    remaining = remaining[written:]
+                _write_all(fd, line)
             finally:
                 os.close(fd)
     except Exception as exc:  # noqa: BLE001 — fire-and-forget by contract
