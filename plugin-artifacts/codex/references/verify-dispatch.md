@@ -15,7 +15,7 @@ Walk this after any dispatched Agent, Task, or orchestrator sub-agent (including
 
 Ground truth comes from commands you run yourself, not from prose the agent returned.
 
-## 5-Step Verification Checklist
+## 6-Step Verification Checklist
 
 Run these yourself. Do not echo the agent's report back as your own finding.
 
@@ -99,6 +99,24 @@ The safety layer is an **allowlist, not a deny-list**, because the commands come
 Carry the `executed:` / `contradicted:` / `cited:` label into the report for every relayed claim. An unlabeled claim is `cited:` by default — you read it, you did not verify it.
 
 **Why this step exists.** 2026-08-07: four subagent reports arrived with the safety classifier unavailable. One reported a security fix as *"Fixed — guard refuses the live store; verified by reproducing the auditor's exact attack (exit 2, store still 0)."* Running that exact command against the shipped code gave **exit 0 and 49 entries written into the user's live store**. The guard required its flag only on the branch where the path was omitted; naming the path explicitly walked straight past it. Steps 1–3 would all have passed — the commits existed, the tree was clean, the suite was green. Only re-running the claim's own command caught it.
+
+### 7 — Confirm the run record landed in the workdir you dispatched into
+
+A dispatched orchestrator that returns a polished report has not necessarily closed its run. Assert the `runs[]` mutation yourself, against the workdir you dispatched INTO (not your own session's cwd — they differ whenever you dispatch into a sibling repo, a plugin subdirectory, or a worktree):
+
+```bash
+# The envelope named a run_id — assert that exact record:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
+  --workdir <dispatch-target-workdir> --run-id <run_id> --require-orchestrator --json
+
+# No run_id in the envelope (the common shape when Review-G was skipped entirely):
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
+  --workdir <dispatch-target-workdir> --expect-recent-minutes --require-orchestrator --json
+```
+
+Exit 1 means the run is not closed and Phase 6 Learn cannot see it. Do not accept the completion: either re-dispatch the orchestrator's Review-G run-close step, or write the record yourself from the envelope's own contents using the printed `remediation` command. A `no_state` status is the loudest case — the target workdir has no `.build-loop/state.json` at all, so that run produced no durable artifact of any kind (check whether the orchestrator actually worked in the workdir you think it did).
+
+Worked evidence (2026-07-16): six sequential dispatched `build-orchestrator` agents in `ObsidianVault/.obsidian/plugins/daily-planner` each completed with a high-quality report and wrote no `runs[]` entry, retrospective, milestone, or feedback line; the only rows in the vault's `state.json` came from Stop hooks. Every report read as success, so nothing surfaced until a retrospective counted the missing records a day later. Step 6 is a single command that would have caught the first one. The orchestrator-side half of this contract is the Review-G assertion in `references/phase-4-review.md` §"Run-close assertion" — that one catches a write that was attempted and failed; this one catches a run that never reached Review-G.
 
 ## Auditing verdict / classification claims (DONE · PASS · verified)
 

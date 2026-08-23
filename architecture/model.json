@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f04491d3bd29b44a3241a7c964f31c2ab81fe9e3414a46070b523a3fceecb56c"
+    "content_sha256": "343727db5181bcb21ff506241dddb15309425bcb96a18d6136f67cad74765b3a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1820,6 +1820,7 @@
       "scripts/revoke_decision.py": "Explicit revoke for a decision (Scenario 8 — different from supersede).",
       "scripts/route_decision.py": "",
       "scripts/rrf.py": "Reciprocal Rank Fusion for hybrid retrieval.",
+      "scripts/run_close_lint.py": "run_close_lint.py — assert the run-close mutation actually landed.",
       "scripts/run_loc_delta.py": "run_loc_delta.py — net-LOC delta for a build-loop run report (observability, no gate).",
       "scripts/run_provenance.py": "run_provenance — corroborate a run record's commit + goal before it is written.",
       "scripts/runtime_smoke.py": "Runtime smoke gate entry point for the build-loop plugin.",
