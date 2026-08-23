@@ -48,7 +48,7 @@ other check — a *correct* instrument, read correctly, generalized one step too
 
 | # | Question | Catches |
 |---|---|---|
-| 1 | **Unit** — one unit of this number is one *what*? | `zcard(queue:prioritized)=20,823` quoted as "20,823 articles". Job ids were `<entity>-<retry-bucket>`, so each retry minted a new id for the same entity: 4.17x duplication, real work ≈2,704. **Overstated 7x** |
+| 1 | **Unit** — one unit of this number is one *what*? | `zcard(queue:prioritized)=20,823` quoted as "20,823 articles". Job ids were `<entity>-<retry-bucket>`, so each retry minted a new id for the same entity. Walk it: 20,823 jobs ÷ **5,001 distinct ids** = 4.17x duplication; of those 5,001, **2,178 were already deleted** from the DB, leaving real work ≈2,704. **Overstated 7x** (20,823 ÷ 2,704). The two ratios measure different things — keep the distinct count between them or they read as contradictory |
 | 2 | **Instance** — is the thing I checked the only one of its kind? Enumerate before generalizing. | "Redis is healthy" from one connection, when the code built **two** — the healthy singleton, and a separate BullMQ-owned connection that the hanging call path actually used |
 | 3 | **Second source** — what else can answer this same question? Run it and diff. | Queue said 20,823, database said 3,531. Both were queried; neither was reconciled until a human asked |
 
@@ -64,7 +64,7 @@ instrument into a sentence is a claim, whatever its grammatical role.
 Corollary for tools: a listing/introspection API returning empty is not proof of absence
 (`Queue.getWorkers()` returned `[]` for a worker that was provably alive and heartbeating).
 Confirm absence against a second, independent observation channel — see
-`build-loop:references/verify-dispatch.md` and the `verify_the_instrument_before_the_finding`
+`skills/build-loop/references/verify-dispatch.md` and the `verify_the_instrument_before_the_finding`
 lesson.
 
 ### Root-Cause Frameworks
