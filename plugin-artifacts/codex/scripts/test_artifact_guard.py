@@ -17,6 +17,7 @@ because regen is a manual step caught only by a late CI gate):
 """
 from __future__ import annotations
 
+import builtins
 import hashlib
 import importlib.util
 import sys
@@ -31,6 +32,17 @@ _REPO = _SCRIPT.parent.parent
 
 def _load():
     spec = importlib.util.spec_from_file_location("artifact_guard", _SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_builder():
+    """The Codex bundle builder, loaded the same way as the guard under test."""
+    path = _SCRIPT.parent / "build_codex_plugin_artifact.py"
+    spec = importlib.util.spec_from_file_location("build_codex_plugin_artifact", path)
     mod = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     sys.modules[spec.name] = mod
@@ -319,3 +331,48 @@ def test_fallback_inplace_when_isolation_unavailable_and_clean(synth, monkeypatc
     (repo / "src.txt").write_text("b"); _git(repo, "add", "src.txt")
     assert ag.mode_staged(repo) == 0
     assert (repo / "out.txt").read_text() == hashlib.sha256(b"b").hexdigest()
+
+
+# --- watch derivation (regression: the two-list drift) --------------------
+
+
+def test_codex_watch_covers_everything_the_builder_mirrors():
+    """The guard must watch every path the Codex builder actually mirrors.
+
+    Named failure: the watch list was a hand-written literal naming 5 paths
+    while the builder mirrored ~42. A commit touching `scripts/`, `agents/`,
+    or `architecture/` intersected nothing, so the pre-commit guard skipped
+    the check and the bundle shipped stale -- surfacing later as a manual
+    `chore(artifact): regenerate the ... mirror` commit (ecd4273). Deriving
+    the list closes it; this asserts it stays derived.
+    """
+    builder = _load_builder()
+    entries = set(next(a.watch for a in ag.ARTIFACTS if a.name == "codex-plugin-artifact"))
+
+    for d in builder.RUNTIME_DIRS:
+        assert f"{d}/" in entries, f"builder mirrors {d}/ but the guard does not watch it"
+    for f in builder.TOP_LEVEL_FILES:
+        assert f in entries, f"builder mirrors {f} but the guard does not watch it"
+    for f in builder.RUNTIME_FILES:
+        assert str(f) in entries, f"builder mirrors {f} but the guard does not watch it"
+
+
+def test_codex_watch_excludes_the_bundle_it_generates():
+    """Watching its own output would make every regen look like fresh drift."""
+    entries = next(a.watch for a in ag.ARTIFACTS if a.name == "codex-plugin-artifact")
+    assert not any(e.startswith("plugin-artifacts") for e in entries)
+
+
+def test_codex_watch_falls_back_when_the_builder_is_absent(monkeypatch):
+    """A guard that raises blocks every commit, so an unimportable builder
+    degrades to the narrow literal rather than propagating."""
+    sys.modules.pop("build_codex_plugin_artifact", None)
+    real_import = builtins.__import__
+
+    def _boom(name, *a, **kw):
+        if name == "build_codex_plugin_artifact":
+            raise ImportError("simulated: builder not shipped")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    assert ag._codex_watch() == ag._CODEX_WATCH_FALLBACK
