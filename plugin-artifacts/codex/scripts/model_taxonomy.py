@@ -342,6 +342,25 @@ def prompting_profile(tier: str | None) -> dict[str, Any] | None:
     return dict(entry) if isinstance(entry, dict) else None
 
 
+def preferred_effort(segment: str | None, tier: str | None) -> str | None:
+    """Return the advisory effort for a ``(segment, tier)`` role, if set.
+
+    Explicit dispatch effort remains authoritative. The taxonomy intentionally
+    keeps this map sparse so an absent entry preserves the caller's existing
+    default instead of inventing a global effort policy.
+    """
+    if not segment or not tier:
+        return None
+    try:
+        rung = normalize_tier(tier)
+    except ValueError:
+        return None
+    by_segment = _load().get("execution_profiles", {}).get("preferred_effort", {})
+    segment_map = by_segment.get(segment, {}) if isinstance(by_segment, dict) else {}
+    value = segment_map.get(rung) if isinstance(segment_map, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
 def unprofiled_tiers(taxonomy: dict[str, Any] | None = None) -> list[str]:
     """Ladder rungs (excluding T-S) present in ``tiers.order`` but absent from
     (or null in) ``prompting_profiles.by_tier``.

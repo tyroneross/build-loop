@@ -74,6 +74,7 @@ try:
 except ImportError:  # pragma: no cover - covered out-of-process by ImportShimTests
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import model_overrides  # type: ignore[no-redefine]
+import model_taxonomy
 
 # Reuse the existing resolver — do not reimplement the tier taxonomy or floor.
 import model_availability_store as availability_store
@@ -344,7 +345,13 @@ def resolve(
             configured["registered"] = is_registered(tier, override)
             configured["resolution_path"] = resolution_path
             configured["unavailable_considered"] = sorted(unavailable)
-            return configured
+            return _with_preferences(
+                configured,
+                segment="generative_reasoning",
+                tier=tier,
+                host_providers=host_providers,
+                unavailable=unavailable,
+            )
 
     candidates = in_tier_candidates(tier, tier_cache, host_providers)
 
@@ -353,14 +360,15 @@ def resolve(
             resolution_path.append({"model": mid, "tier": tier, "skipped": "unavailable"})
             continue
         resolution_path.append({"model": mid, "tier": tier, "selected": True})
-        return {
+        return _with_preferences({
             "tier": tier,
             "model": mid,
             "source": "in-tier-chain",
             "registered": is_registered(tier, mid),
             "resolution_path": resolution_path,
             "unavailable_considered": sorted(unavailable),
-        }
+        }, segment="generative_reasoning", tier=tier,
+            host_providers=host_providers, unavailable=unavailable)
 
     # Every same-tier candidate is unavailable — hand off to the floor walk.
     # The floor invariant (frontier never resolves below thinking) is enforced AT
@@ -376,19 +384,28 @@ def resolve(
         config_path=config_path,
         state_path=state_path,
     )
-    resolution_path.append(
-        {
+    floor_model = model_overrides.normalize_model_id(base.get("model"))
+    floor_dispatchable = bool(floor_model) and floor_model not in unavailable
+    floor_step = {
             "model": base.get("model"),
             # Report the model's TRUE registry tier when known (so the audit trail
             # never mislabels a fallback model's tier).
             "tier": tier_of_model(base.get("model")) or base.get("fallback_tier", tier),
-            "selected": True,
+            "selected": floor_dispatchable,
             "via": base.get("source"),
         }
-    )
+    if not floor_dispatchable:
+        floor_step["skipped"] = "unavailable-floor-marker"
+    resolution_path.append(floor_step)
     base["resolution_path"] = resolution_path
     base["unavailable_considered"] = sorted(unavailable)
-    return base
+    return _with_preferences(
+        base,
+        segment="generative_reasoning",
+        tier=tier,
+        host_providers=host_providers,
+        unavailable=unavailable,
+    )
 
 
 def host_ram_gb() -> float | None:
@@ -436,6 +453,48 @@ def _too_large_for_host() -> set[str]:
     return out
 
 
+def _preferred_models(
+    *,
+    segment: str,
+    tier: str,
+    host_providers: set[str] | frozenset[str] | None,
+) -> list[str]:
+    """Return the durable preference order filtered to models this host fits.
+
+    Temporary outages stay in this list because they do not change preference;
+    ``resolved`` and ``resolution_path`` report current dispatchability.
+    """
+    too_large = _too_large_for_host()
+    out: list[str] = []
+    for model_id in model_taxonomy.preferred(segment, tier):
+        meta = model_taxonomy.model_meta(model_id) or {}
+        provider = str(meta.get("provider") or "").strip().lower()
+        if host_providers is not None and provider and provider not in host_providers:
+            continue
+        if model_id in too_large:
+            continue
+        out.append(model_id)
+    return out
+
+
+def _with_preferences(
+    env: dict[str, Any],
+    *,
+    segment: str,
+    tier: str,
+    host_providers: set[str] | frozenset[str] | None,
+    unavailable: set[str],
+) -> dict[str, Any]:
+    """Add the advisory preference contract without changing selection."""
+    selected = model_overrides.normalize_model_id(env.get("model"))
+    env["preferred_models"] = _preferred_models(
+        segment=segment, tier=tier, host_providers=host_providers
+    )
+    env["preferred_effort"] = model_taxonomy.preferred_effort(segment, tier)
+    env["resolved"] = bool(selected) and selected not in unavailable
+    return env
+
+
 def resolve_role(
     *,
     segment: str,
@@ -470,8 +529,6 @@ def resolve_role(
     # Fold host-unreachable seed models into unavailable so the preferred walk
     # skips them. A model with an unknown provider is kept (fail-open).
     if host_providers is not None:
-        models = MODEL_REGISTRY  # legacy view; also check taxonomy seeds
-        import model_taxonomy
         for mid in (model_taxonomy.taxonomy().get("models") or {}):
             if mid.startswith("_"):
                 continue
@@ -489,8 +546,18 @@ def resolve_role(
     # not evidence that a model is too big.
     unavailable |= _too_large_for_host()
 
-    return model_overrides.resolve_role(
-        segment=segment, tier=tier, workdir=wd, unavailable=unavailable,
+    env = model_overrides.resolve_role(
+        segment=segment,
+        tier=tier,
+        workdir=wd,
+        unavailable=unavailable,
+    )
+    return _with_preferences(
+        env,
+        segment=segment,
+        tier=tier,
+        host_providers=host_providers,
+        unavailable=unavailable,
     )
 
 
@@ -578,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
             config_path=Path(args.config) if args.config else None,
             state_path=Path(args.state) if args.state else None,
         )
-    if args.require and not result.get("model"):
+    if args.require and not result.get("resolved", bool(result.get("model"))):
         print(json.dumps(result, indent=2), file=sys.stderr)
         return 1
     if args.plain and not args.json:

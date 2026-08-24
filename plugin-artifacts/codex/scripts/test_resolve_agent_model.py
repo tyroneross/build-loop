@@ -222,6 +222,22 @@ class PromptingProfileEnvelope(unittest.TestCase):
         self.assertEqual(env["prompting_profile"], model_taxonomy.prompting_profile(env["tier"]))
         self.assertIsNotNone(env["prompting_profile"])
 
+    def test_implementer_exposes_host_specific_preferences_and_effort(self):
+        anthropic = ram.resolve(
+            agent="implementer", workdir=HERE.parent, host_providers={"anthropic"}
+        )
+        openai = ram.resolve(
+            agent="implementer", workdir=HERE.parent, host_providers={"openai"}
+        )
+        self.assertEqual(anthropic["model"], "sonnet")
+        self.assertEqual(anthropic["preferred_models"], ["sonnet"])
+        self.assertEqual(openai["model"], "gpt-5.6-terra")
+        self.assertEqual(openai["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+        self.assertEqual(anthropic["preferred_effort"], "high")
+        self.assertEqual(openai["preferred_effort"], "high")
+        self.assertTrue(anthropic["resolved"])
+        self.assertTrue(openai["resolved"])
+
     def test_inherit_agent_carries_no_profile(self):
         env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
         self.assertEqual(env["source"], "inherit")
@@ -260,6 +276,9 @@ class EnvelopeRegression(unittest.TestCase):
         env = ram.resolve(agent="implementer", workdir=HERE.parent, host_providers={"anthropic"})
         self.assertTrue(self.OLD_KEYS.issubset(env.keys()))
         self.assertIn("prompting_profile", env)
+        self.assertIn("preferred_models", env)
+        self.assertIn("preferred_effort", env)
+        self.assertIn("resolved", env)
 
     def test_plain_output_is_still_only_the_model_id(self):
         cp = run("implementer", "--workdir", str(HERE.parent), "--plain")

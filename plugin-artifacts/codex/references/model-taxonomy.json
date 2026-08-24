@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.1.0",
+  "schema_version": "2.2.0",
   "_comment": "Single source of truth for build-loop's two-axis model taxonomy. SEGMENT axis = work role / primary output; CAPABILITY-TIER axis = a 7-rung ladder. Read by scripts/model_taxonomy.py (the loader every other script imports). Anthropic/OpenAI ids are EXAMPLE SEEDS held as data, NOT hard-codes — classification appends new models to the runtime cache, never to this file. Provider names are illustrative. KISS/DRY: nothing here is duplicated in code.",
   "tiers": {
     "order": [
@@ -215,6 +215,14 @@
         "evidence_note": "WEAKLY EVIDENCED PLACEHOLDER, same basis as T4."
       },
       "T-S": null
+    }
+  },
+  "execution_profiles": {
+    "_comment": "Advisory dispatch preferences keyed by role. Explicit per-dispatch effort still wins. Keep this sparse: only encode defaults backed by an intentional policy decision.",
+    "preferred_effort": {
+      "agentic_execution": {
+        "T3": "high"
+      }
     }
   },
   "preferred": {

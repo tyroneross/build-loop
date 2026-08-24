@@ -511,6 +511,8 @@ def resolve_role(
     workdir: Path,
     unavailable: set[str] | frozenset[str] | None = None,
     recency_tiebreak: bool = True,  # accepted and ignored; rank always wins
+    config_path: Path | None = None,
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     """Two-axis entrypoint: resolve a ``(segment, tier)`` ROLE to a model.
 
@@ -539,6 +541,45 @@ def resolve_role(
     rung = model_taxonomy.normalize_tier(tier)
     wd = workdir.expanduser().resolve()
     unavail = expand_unavailable(unavailable)
+    legacy_token = {v: k for k, v in model_taxonomy.legacy_aliases().items()}.get(rung)
+
+    resolution_path: list[dict[str, Any]] = []
+
+    # A project-level tier override applies to every role on that capability
+    # rung. Treat it as a preference, not a lock: a known-below-floor or
+    # unavailable choice falls through to the ordered role list.
+    if legacy_token:
+        configured = resolve_model(
+            tier=legacy_token,
+            workdir=wd,
+            config_path=config_path,
+            state_path=state_path,
+        )
+        if configured.get("source") in {"config", "state"}:
+            override = normalize_model_id(configured.get("model"))
+            floor_tier = TIER_FALLBACK.get(legacy_token) or legacy_token
+            if is_below_floor(override, floor_tier):
+                resolution_path.append(
+                    {"model": override, "skipped": "below-floor", "via": configured["source"]}
+                )
+            elif override in unavail:
+                resolution_path.append(
+                    {"model": override, "skipped": "unavailable", "via": configured["source"]}
+                )
+            else:
+                resolution_path.append(
+                    {"model": override, "selected": True, "via": configured["source"]}
+                )
+                return {
+                    "segment": segment,
+                    "tier": rung,
+                    "model": override,
+                    "source": configured["source"],
+                    "path": configured.get("path"),
+                    "configured": True,
+                    "released": model_taxonomy.released(override),
+                    "resolution_path": resolution_path,
+                }
 
     # RANK IS THE ONLY KEY. The preferred list order encodes capability rank, so
     # it is already the answer. This previously date-sorted the whole list, which
@@ -548,7 +589,6 @@ def resolve_role(
     # no longer changes the result. See model_taxonomy.break_ties_by_recency.
     candidates = model_taxonomy.preferred(segment, rung)
 
-    resolution_path: list[dict[str, Any]] = []
     for mid in candidates:
         alias = normalize_model_id(mid)
         if alias in unavail or mid in unavail:
@@ -566,10 +606,13 @@ def resolve_role(
 
     # Every preferred candidate is unavailable (or the cell is empty).
     # Generative-Reasoning roles inherit the legacy ladder floor walk.
-    legacy_token = {v: k for k, v in model_taxonomy.legacy_aliases().items()}.get(rung)
     if segment == "generative_reasoning" and legacy_token:
         base = resolve_with_tier_fallback(
-            tier=legacy_token, workdir=wd, unavailable=unavail
+            tier=legacy_token,
+            workdir=wd,
+            unavailable=unavail,
+            config_path=config_path,
+            state_path=state_path,
         )
         base["segment"] = segment
         base["resolution_path"] = resolution_path + [

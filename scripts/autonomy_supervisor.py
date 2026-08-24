@@ -800,7 +800,7 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         key: request[key]
         for key in (
             "execution_location", "provider", "model", "model_size", "output_size",
-            "effort", "token_budget", "measured_tokens", "agent", "shared_capacity",
+            "effort", "segment", "tier", "token_budget", "measured_tokens", "agent", "shared_capacity",
             "active_elsewhere",
         )
         if request.get(key) is not None

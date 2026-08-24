@@ -68,7 +68,7 @@ Keep this separate from host-agent reachability. A Groq catalog entry does not b
 - **Sol** is approved for planning synthesis and gating verification agents: `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, and `promotion-reviewer`.
 - **Terra** is approved for ordinary orchestration, bounded implementation, domain assessment, advisory review, and Learn drafting. It is the Codex default for `build-orchestrator`, `assessment-orchestrator`, and `implementer`.
 - **Luna** is approved for bounded recognition agents: `mock-scanner`, `recurring-pattern-detector`, and `transcript-pattern-miner`. Prefer a deterministic script when the rule is fully expressible.
-- Start at the lowest effort that passes the real verifier: Luna `low|medium`, Terra `medium` (`high` for complex bounded work or first retry), Sol `medium` (`high` for adversarial/security verdicts). Use `xhigh` only after evidence of a miss; reserve `max` and Ultra for rare cases with justified consequence or meaningful independent streams.
+- Start bounded coding and execution at Terra `high`; this is an advisory default and explicit per-dispatch effort remains valid. Start Luna at `low|medium` and Sol at `medium` (`high` for adversarial/security verdicts). Use `xhigh` only after evidence of a miss; reserve `max` and Ultra for rare cases with justified consequence or meaningful independent streams.
 - Escalate Luna→Terra when rule application appears; Terra→Sol when ambiguity, high consequence, or repeated verified failure appears. Model size never weakens least privilege, confirmation, sandboxing, or independent verification.
 
 Source: OpenAI GPT-5.6 System Card (2026-07-09), retained in build-loop-memory with the full PDF and routing extract.
@@ -136,7 +136,7 @@ Before consulting the role table, classify the task by reasoning shape. The MECE
 | Plan-verify deterministic checklist | Recognition | (script) | — | No model; runs `plan_verify.py` |
 | Plan-critic adversarial review against rubric+checklist | Verification synthesis | Opus | high | Verification verdict — separation drives quality; verdict gates Phase 3 dispatch |
 | Scope auditor (Plan→Execute boundary): trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Bounded verification synthesis | Opus | medium | Read-only caller tracing has a strong grep/plan oracle; Codex resolves Sol through Governance/Evaluation T2 |
-| Code execution — bounded chunk, spec clear | Application | Sonnet | medium | Default workhorse. Spec is settled; apply the rule |
+| Code execution — bounded chunk, spec clear | Application | Sonnet | high | Default workhorse. First-pass correctness reduces rework; explicit effort may override this preference. |
 | Code execution — ambiguous spec or cross-file surprise mid-execution | Coordination synthesis | Opus | medium | Escalation target; interpretation cost cheaper than rework |
 | Independent-auditor adversarial pass (read-only diff vs rubric at chunk + build scope) | Verification synthesis | Opus | high | Verdict gates the build's outcome line; a missed regression in production-impacting work is the most expensive miss in the loop |
 | Severity ranking + recommendation order (given findings) | Coordination synthesis | Opus | medium | Cross-finding routing; no per-finding verdict being rendered, the verdicts are upstream |

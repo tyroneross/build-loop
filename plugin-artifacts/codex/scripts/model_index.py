@@ -307,14 +307,17 @@ def do_resolve(args: argparse.Namespace) -> int:
 
     # Route to the SAME entrypoint the dispatcher uses, so answers agree:
     #   segment given            -> two-axis resolve_role
-    #   legacy-mappable rung     -> single-axis resolve (the legacy default path)
-    #   off-legacy rung (T0/T5/T-S) -> resolve_role with the implicit segment
+    #   literal legacy token     -> single-axis resolve (the legacy default path)
+    #   canonical ladder rung    -> resolve_role with the implicit segment
+    #
+    # A canonical T2 is not the legacy token ``thinking``. Keeping that
+    # distinction makes per-tier resolve agree with the canonical export map.
     if segment:
         env = model_resolver.resolve_role(
             segment=segment, tier=rung, workdir=workdir, host_providers=host
         )
         axis = "role"
-    elif legacy_token:
+    elif model_taxonomy.is_legacy_tier(args.tier):
         env = model_resolver.resolve(
             tier=legacy_token, workdir=workdir, host_providers=host
         )
@@ -363,6 +366,9 @@ def do_resolve(args: argparse.Namespace) -> int:
         "fallback_chain": chain,
         "resolution_path": env.get("resolution_path", []),
         "prompting_profile": model_taxonomy.prompting_profile(rung),
+        "preferred_models": env.get("preferred_models", []),
+        "preferred_effort": env.get("preferred_effort"),
+        "resolved": env.get("resolved", bool(model)),
         "why": why,
     }
 
@@ -387,7 +393,7 @@ def do_resolve(args: argparse.Namespace) -> int:
                 f"  {mark} {entry['model']:<24} {str(entry['provider'] or '-'):<10}"
                 f" {entry['via']}{suffix}"
             )
-    return EXIT_OK if model else EXIT_NOT_FOUND
+    return EXIT_OK if payload["resolved"] else EXIT_NOT_FOUND
 
 
 # --------------------------------------------------------------------------
@@ -553,6 +559,9 @@ def build_export_map(workdir: Path, host: Any) -> list[dict[str, Any]]:
                 "model": env.get("model"),
                 "provider": _provider_of(env.get("model") or "") if env.get("model") else None,
                 "source": env.get("source"),
+                "preferred_models": env.get("preferred_models", []),
+                "preferred_effort": env.get("preferred_effort"),
+                "resolved": env.get("resolved", bool(env.get("model"))),
                 "env_var": env_var_name(token),
             }
         )
@@ -571,6 +580,9 @@ def build_export_map(workdir: Path, host: Any) -> list[dict[str, Any]]:
                 "model": env.get("model"),
                 "provider": _provider_of(env.get("model") or "") if env.get("model") else None,
                 "source": env.get("source"),
+                "preferred_models": env.get("preferred_models", []),
+                "preferred_effort": env.get("preferred_effort"),
+                "resolved": env.get("resolved", bool(env.get("model"))),
                 "env_var": env_var_name(rung),
             }
         )

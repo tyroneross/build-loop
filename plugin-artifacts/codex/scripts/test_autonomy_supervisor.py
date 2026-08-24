@@ -250,6 +250,18 @@ def test_supervisor_selects_initial_fanout_from_independent_work_and_capacity(re
     assert result["admission"]["next_concurrency"] == 4
 
 
+def test_supervisor_passes_role_effort_preferences_to_capacity(repo: Path) -> None:
+    result = supervisor.select_fanout(repo, {
+        "independent_items": 2,
+        "segment": "agentic_execution",
+        "tier": "code",
+        "model": "gpt-5.6-terra",
+        "signals": {"current_concurrency": 0},
+    })
+    assert result["capacity"]["effort"] == "high"
+    assert result["capacity"]["effort_source"] == "role-preferred"
+
+
 def test_supervisor_does_not_initially_admit_under_critical_thermal_pressure(repo: Path) -> None:
     result = supervisor.select_fanout(repo, {
         "independent_items": 20,

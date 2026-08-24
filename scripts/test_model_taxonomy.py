@@ -133,6 +133,22 @@ class TaxonomyTests(unittest.TestCase):
         # A dormant segment's non-specialist tier is empty, not an error.
         self.assertEqual(self.mt.preferred("realtime_interaction", "T1"), [])
 
+    def test_agentic_code_prefers_high_effort(self) -> None:
+        self.assertEqual(
+            self.mt.preferred_effort("agentic_execution", "code"), "high"
+        )
+        self.assertEqual(
+            self.mt.preferred_effort("agentic_execution", "T3"), "high"
+        )
+
+    def test_effort_policy_is_sparse_and_fail_open(self) -> None:
+        self.assertIsNone(
+            self.mt.preferred_effort("governance_evaluation", "code")
+        )
+        self.assertIsNone(
+            self.mt.preferred_effort("agentic_execution", "bogus")
+        )
+
     # --- Model metadata + recency ----------------------------------------
     def test_model_meta_by_id_and_alias(self) -> None:
         m = self.mt.model_meta("fable")

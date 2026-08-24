@@ -124,8 +124,9 @@ def resolve(
 ) -> dict[str, Any]:
     """Resolve ``agent``'s frontmatter role to a dispatch model.
 
-    Returns ``{agent, segment, tier, model, source, resolution_path,
-    prompting_profile}``. ``source`` is one of: ``inherit``, ``role-preferred`` /
+    Returns ``{agent, segment, tier, model, preferred_models,
+    preferred_effort, resolved, source, resolution_path, prompting_profile}``.
+    ``source`` is one of: ``inherit``, ``role-preferred`` /
     ``role-tier-fallback`` (passed through from ``resolve_role``),
     ``frontmatter-fallback``, ``tier-default-fallback``, ``unresolved``.
     ``prompting_profile`` is the tier-keyed posture from
@@ -149,6 +150,9 @@ def resolve(
             "source": "inherit",
             "resolution_path": [{"model": INHERIT, "selected": True, "via": "inherit"}],
             "prompting_profile": None,
+            "preferred_models": [],
+            "preferred_effort": None,
+            "resolved": True,
         }
 
     resolution_path: list[dict[str, Any]] = []
@@ -180,6 +184,9 @@ def resolve(
                     "source": env.get("source", "role-preferred"),
                     "resolution_path": resolution_path,
                     "prompting_profile": model_taxonomy.prompting_profile(tier),
+                    "preferred_models": env.get("preferred_models", []),
+                    "preferred_effort": env.get("preferred_effort"),
+                    "resolved": env.get("resolved", True),
                 }
     else:
         resolution_path.append({"role": f"{segment}/{tier}", "skipped": "missing segment or tier"})
@@ -195,6 +202,9 @@ def resolve(
             "source": "frontmatter-fallback",
             "resolution_path": resolution_path,
             "prompting_profile": model_taxonomy.prompting_profile(tier),
+            "preferred_models": [fm_model],
+            "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+            "resolved": True,
         }
 
     # Fallback 2: the tier default (legacy token), if the tier is a known legacy token.
@@ -210,6 +220,9 @@ def resolve(
                 "source": "tier-default-fallback",
                 "resolution_path": resolution_path,
                 "prompting_profile": model_taxonomy.prompting_profile(tier),
+                "preferred_models": [default],
+                "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+                "resolved": True,
             }
 
     # Nothing resolvable.
@@ -221,6 +234,9 @@ def resolve(
         "source": "unresolved",
         "resolution_path": resolution_path,
         "prompting_profile": model_taxonomy.prompting_profile(tier),
+        "preferred_models": [],
+        "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+        "resolved": False,
     }
 
 
@@ -252,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"agent": args.agent, "model": None, "source": "error", "error": str(exc)}), file=sys.stderr)
         return 1
 
-    if args.require and not result.get("model"):
+    if args.require and not result.get("resolved", bool(result.get("model"))):
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return 1
     if args.plain and not args.json:

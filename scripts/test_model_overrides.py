@@ -643,6 +643,40 @@ class TwoAxisRoleTests(unittest.TestCase):
             )
             self.assertEqual(r["model"], "gpt-5.5")
 
+    def test_resolve_role_honors_valid_project_override(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            wd = Path(td)
+            cfg = wd / ".build-loop" / "config.json"
+            cfg.parent.mkdir()
+            cfg.write_text(
+                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                encoding="utf-8",
+            )
+            r = self.mo.resolve_role(
+                segment="agentic_execution", tier="code", workdir=wd,
+            )
+            self.assertEqual(r["model"], "gpt-5.6-terra")
+            self.assertEqual(r["source"], "config")
+
+    def test_resolve_role_unavailable_override_falls_to_preferred_list(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            wd = Path(td)
+            cfg = wd / ".build-loop" / "config.json"
+            cfg.parent.mkdir()
+            cfg.write_text(
+                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                encoding="utf-8",
+            )
+            r = self.mo.resolve_role(
+                segment="agentic_execution",
+                tier="code",
+                workdir=wd,
+                unavailable={"gpt-5.6-terra"},
+            )
+            self.assertEqual(r["model"], "sonnet")
+            self.assertEqual(r["source"], "role-preferred")
+            self.assertEqual(r["resolution_path"][0]["skipped"], "unavailable")
+
     def test_resolve_role_floor_inherited_for_generative(self) -> None:
         # GR/T1 = [opus, fable, Sol]. ALL THREE must be down for the cell to be
         # exhausted — taking only fable+Sol down now leaves opus available and

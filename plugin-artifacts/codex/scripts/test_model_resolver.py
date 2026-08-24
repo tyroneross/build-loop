@@ -107,12 +107,31 @@ class FloorInvariantTests(unittest.TestCase):
         # includes opus, the thinking tier's default as well as frontier's.
         with tempfile.TemporaryDirectory() as td:
             _write_availability(
-                Path(td), ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
+                Path(td), [
+                    "opus", "fable", "gpt-5.6-sol", "gpt-5.6-terra",
+                    "gpt-5.5", "gpt-5.4",
+                ]
             )
             payload = resolve(td, "frontier")
             self.assertIsNotNone(payload["model"])
             self.assertNotEqual(payload["model"], "sonnet")
             self.assertNotEqual(payload["model"], "haiku")
+            self.assertFalse(payload["resolved"])
+            self.assertEqual(
+                payload["resolution_path"][-1]["skipped"],
+                "unavailable-floor-marker",
+            )
+
+    def test_require_rejects_unavailable_floor_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_resolver(
+                "--workdir", td,
+                "--tier", "frontier",
+                "--unavailable",
+                "opus,fable,gpt-5.6-sol,gpt-5.6-terra,gpt-5.5,gpt-5.4",
+                "--require",
+            )
+            self.assertEqual(result.returncode, 1)
 
     def test_in_tier_alternate_preferred_over_cross_tier_descent(self) -> None:
         # When BOTH Anthropic frontier models are down but a verified frontier
@@ -644,6 +663,24 @@ class ResolveRoleTests(unittest.TestCase):
                 workdir=Path(td), host_providers={"anthropic"},
             )
             self.assertEqual(r["model"], "sonnet")
+            self.assertEqual(r["preferred_models"], ["sonnet"])
+            self.assertEqual(r["preferred_effort"], None)
+            self.assertTrue(r["resolved"])
+
+    def test_agentic_code_preferences_are_host_filtered_and_high_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            claude = self.mr.resolve_role(
+                segment="agentic_execution", tier="code",
+                workdir=Path(td), host_providers={"anthropic"},
+            )
+            codex = self.mr.resolve_role(
+                segment="agentic_execution", tier="code",
+                workdir=Path(td), host_providers={"openai"},
+            )
+            self.assertEqual(claude["preferred_models"], ["sonnet"])
+            self.assertEqual(codex["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+            self.assertEqual(claude["preferred_effort"], "high")
+            self.assertEqual(codex["preferred_effort"], "high")
 
     def test_host_neutral_still_picks_by_rank_not_recency(self) -> None:
         """With the host filter off, rank still decides — not release date.
@@ -670,6 +707,22 @@ class ResolveRoleTests(unittest.TestCase):
             )
             # opus down + gpt-5.5 unreachable -> ladder floor walk -> sonnet (code)
             self.assertEqual(r["model"], "sonnet")
+
+    def test_host_unreachable_project_override_falls_through(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            wd = Path(td)
+            cfg = wd / ".build-loop" / "config.json"
+            cfg.parent.mkdir()
+            cfg.write_text(
+                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                encoding="utf-8",
+            )
+            r = self.mr.resolve_role(
+                segment="agentic_execution", tier="code", workdir=wd,
+                host_providers={"anthropic"},
+            )
+            self.assertEqual(r["model"], "sonnet")
+            self.assertEqual(r["source"], "role-preferred")
 
     def test_cli_segment_flag_agrees_with_the_legacy_path(self) -> None:
         """--segment and no --segment must return the SAME model for a tier.

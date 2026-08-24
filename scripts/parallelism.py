@@ -32,6 +32,8 @@ import statistics
 import sys
 from pathlib import Path
 
+import model_taxonomy
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -193,7 +195,9 @@ def resolve_fanout(
     model: str | None = None,
     model_size: str | None = None,
     output_size: str = "medium",
-    effort: str = "medium",
+    effort: str | None = None,
+    segment: str | None = None,
+    tier: str | None = None,
     token_budget: int | None = None,
     measured_tokens: int | None = None,
     agent: str | None = None,
@@ -211,7 +215,16 @@ def resolve_fanout(
     location = classify_execution_location(model, provider, execution_location)
     size = classify_model_size(model, model_size)
     output = output_size if output_size in OUTPUT_SIZES else "medium"
-    effort_level = effort if effort in EFFORT_LEVELS else "medium"
+    preferred_effort = model_taxonomy.preferred_effort(segment, tier)
+    if effort in EFFORT_LEVELS:
+        effort_level = str(effort)
+        effort_source = "explicit"
+    elif preferred_effort in EFFORT_LEVELS:
+        effort_level = str(preferred_effort)
+        effort_source = "role-preferred"
+    else:
+        effort_level = "medium"
+        effort_source = "fallback"
 
     cpu_per_worker = LOCAL_CPU_PER_WORKER[size] if location == "local" else 1
     cpu_cap = max(1, cpu_budget // cpu_per_worker)
@@ -264,9 +277,12 @@ def resolve_fanout(
         "active_elsewhere": max(0, active_elsewhere),
         "available_shared_capacity": available_shared_capacity,
         "model": model,
+        "segment": segment,
+        "tier": tier,
         "model_size": size,
         "output_size": output,
         "effort": effort_level,
+        "effort_source": effort_source,
         "token_budget": applied_token_budget,
         "tokens_per_worker": tokens_per_worker,
         "token_estimate_source": token_source,
@@ -354,7 +370,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default=None)
     p.add_argument("--model-size", choices=MODEL_SIZES, default=None)
     p.add_argument("--output-size", choices=OUTPUT_SIZES, default="medium")
-    p.add_argument("--effort", choices=EFFORT_LEVELS, default="medium")
+    p.add_argument("--effort", choices=EFFORT_LEVELS, default=None)
+    p.add_argument("--segment", choices=model_taxonomy.segments(), default=None)
+    p.add_argument(
+        "--tier",
+        choices=tuple(model_taxonomy.legacy_aliases()) + model_taxonomy.tier_ladder(),
+        default=None,
+    )
     p.add_argument("--token-budget", type=int, default=None)
     p.add_argument("--measured-tokens-per-worker", type=int, default=None)
     p.add_argument("--agent", default=None)
@@ -396,6 +418,8 @@ def main(argv: list[str] | None = None) -> None:
         "model_size": args.model_size,
         "output_size": args.output_size,
         "effort": args.effort,
+        "segment": args.segment,
+        "tier": args.tier,
         "token_budget": args.token_budget,
         "measured_tokens": args.measured_tokens_per_worker,
         "agent": args.agent,

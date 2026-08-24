@@ -256,6 +256,34 @@ class TestResourceAwareFanout:
         assert profile["tokens_per_worker"] == 49_000
         assert profile["effective_max"] == 2
 
+    def test_agentic_code_uses_high_effort_when_unspecified(self, tmp_workdir: Path) -> None:
+        profile = resolve_fanout(
+            tmp_workdir,
+            execution_location="cloud",
+            model="gpt-5.6-terra",
+            segment="agentic_execution",
+            tier="code",
+            token_budget=100_000,
+        )
+        assert profile["effort"] == "high"
+        assert profile["effort_source"] == "role-preferred"
+
+    def test_explicit_effort_preserves_dispatch_flexibility(self, tmp_workdir: Path) -> None:
+        profile = resolve_fanout(
+            tmp_workdir,
+            model="sonnet",
+            segment="agentic_execution",
+            tier="code",
+            effort="medium",
+        )
+        assert profile["effort"] == "medium"
+        assert profile["effort_source"] == "explicit"
+
+    def test_missing_role_preserves_medium_fallback(self, tmp_workdir: Path) -> None:
+        profile = resolve_fanout(tmp_workdir, model="sonnet")
+        assert profile["effort"] == "medium"
+        assert profile["effort_source"] == "fallback"
+
     def test_sol_high_is_more_conservative_than_terra_medium(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=16):
             terra = resolve_fanout(

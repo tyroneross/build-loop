@@ -29,8 +29,9 @@ Resolve the concrete model first. Then run:
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parallelism.py" \
   --workdir "$PWD" --model "$MODEL" --provider "$PROVIDER" \
+  --segment "$SEGMENT" --tier "$TIER" \
   --execution-location "$LOCATION" --output-size "$OUTPUT_SIZE" \
-  --effort "$EFFORT" --agent implementer \
+  --agent implementer \
   --independent-items "$READY_CHUNKS" --shared-capacity "$SHARED_CAPACITY" \
   --active-elsewhere "$ACTIVE_ELSEWHERE" --describe --json
 ```
@@ -40,6 +41,27 @@ capacity, not a dispatch target. Pass it to `autonomy_supervisor.py fanout`;
 the supervisor applies provider/host/cost/failure backpressure and chooses the
 next wave. Dispatch only across a MECE partition. The absolute safety ceiling
 is 150, while every lower live cap remains binding.
+
+The role supplies an advisory effort when `--effort` is omitted. Today
+`agentic_execution/T3` prefers `high`, so Codex execution resolves to Terra-high
+and Claude execution resolves to Sonnet-high. Passing `--effort` remains an
+explicit override.
+
+## Accuracy-first token efficiency
+
+Minimize tokens only among approaches expected to meet the same acceptance
+criteria. Use this order:
+
+1. Run deterministic scripts for repeatable checks, transforms, inventories,
+   and schema validation.
+2. Use keyword or semantic retrieval to narrow source context before any model
+   reads it.
+3. Route bounded scanning and classification to Pattern-tier or local models
+   when a deterministic verifier can judge the output.
+4. Read the relevant implementation and tests before proposing complex code.
+   Early source grounding is cheaper than rework and repeated troubleshooting.
+5. Use measured ledger rows to tune prompts, effort, and fan-out after quality
+   passes. Never count an unmatched or lower-quality run as a token win.
 
 ### Adaptive backpressure
 

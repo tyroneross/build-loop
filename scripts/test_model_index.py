@@ -103,6 +103,21 @@ class AgreementTests(unittest.TestCase):
                 one = index_json("resolve", "--tier", tier)["model"]
                 self.assertEqual(one, model)
 
+    def test_canonical_and_legacy_inputs_keep_distinct_axes(self):
+        canonical = index_json("resolve", "--tier", "T2")
+        legacy = index_json("resolve", "--tier", "thinking")
+        self.assertEqual(canonical["axis"], "role-implicit-segment")
+        self.assertEqual(legacy["axis"], "tier")
+
+    def test_resolve_exposes_advisory_preference_contract(self):
+        payload = index_json(
+            "resolve", "--tier", "code", "--segment", "agentic_execution",
+            "--host", "openai",
+        )
+        self.assertEqual(payload["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+        self.assertEqual(payload["preferred_effort"], "high")
+        self.assertTrue(payload["resolved"])
+
     def test_tiers_match_the_taxonomy_loader(self):
         payload = index_json("tiers")
         self.assertEqual(payload["tier_ladder"], list(model_taxonomy.tier_ladder()))
