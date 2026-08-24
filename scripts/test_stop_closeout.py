@@ -466,7 +466,7 @@ def test_reviewg_replace_preserves_stakes_evidence(tmp_path):
         "outcome": "pass", "phases": {}, "auditor_status": "ran:dispatched-agent",
     })
     runs = _runs(tmp_path)
-    assert len(runs) == 1                                          # replaced, not duplicated
+    assert len(runs) == 1                                          # merged, not duplicated
     assert runs[0]["synthesisDensity"]["count"] == 9              # stakes evidence preserved
     assert runs[0]["auditor_status"] == "ran:dispatched-agent"    # judgment status owned by Review-G
     res = judgment_gate.evaluate(

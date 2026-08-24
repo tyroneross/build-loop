@@ -249,9 +249,9 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
     mid-run snapshot on a multi-turn inline run):
       * A non-``append_run`` record for this run already exists → Review-G owns
         it; skip and never touch it.
-      * Otherwise record. ``append_run`` REPLACES its own prior ``append_run``
-        record, so re-recording on each later Stop converges the outcome to the
-        run's terminal state (the final Stop wins) without double-counting.
+      * Otherwise record. ``append_run`` MERGES into its own prior ``append_run``
+        record, so later Stops can add evidence and improve the outcome without
+        downgrading an already-terminal row or double-counting.
       * Skip-if-unchanged: a Stop fires at EVERY turn boundary; once our record
         already carries the current outcome there is nothing to converge, so
         skip rather than re-acquire the lock and rewrite state.json + marker
@@ -797,8 +797,8 @@ def run_stop(workdir: Path, session_id: str) -> dict:
         if decision.get("outcome") == "done" and decision.get("run_id"):
             _release_identity(workdir, decision["run_id"])
         return {}
-    # action == "record" — append_run appends the first time, replaces on later
-    # Stops (outcome converges to the run's terminal state).
+    # action == "record" — append_run appends the first time, merges on later
+    # Stops (evidence accumulates and outcome can only improve).
     write_result = _record_run(workdir, decision, state)
     verdict = _run_gate(workdir, decision["run_id"])
     _write_marker(workdir, decision, verdict)  # refreshed each Stop → tracks current outcome
@@ -808,7 +808,7 @@ def run_stop(workdir: Path, session_id: str) -> dict:
         # effort mints a fresh build_loop_id instead of resuming this one.
         _release_identity(workdir, decision["run_id"])
     # Surface the WARN advisory ONCE — on the first record only ("appended").
-    # Later Stops re-record silently ("replaced") so the advisory doesn't repeat
+    # Later Stops re-record silently ("merged") so the advisory doesn't repeat
     # every turn of a multi-turn inline run.
     if write_result.get("action") == "appended" and str(verdict.get("verdict")) in ("warn", "fail"):
         return {"systemMessage": _stop_message(decision, verdict, write_result)}
