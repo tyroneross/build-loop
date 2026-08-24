@@ -10,6 +10,8 @@ from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import resume_resolver  # noqa: E402
+import state_finalize  # noqa: E402
 import stop_closeout  # noqa: E402
 
 SCRIPT = Path(__file__).parent / "stop_closeout.py"
@@ -382,6 +384,26 @@ def test_skip_path_releases_richer_terminal_record(tmp_path):
     st2 = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
     assert st2["execution"] == {}
     assert st2["historicalExecutions"][-1]["build_loop_id"] == "bl-test-001"
+
+
+def test_second_stop_preserves_terminal_execution_tombstone(tmp_path):
+    # Review-G can record pass before the inline top-level phase advances. The
+    # first Stop still releases identity; the next Stop's crash annotator must
+    # preserve that empty execution tombstone so resume resolves fresh.
+    st = _base_state(phase="execute")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "pass",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    state_path = _write_state(tmp_path, st)
+
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+    assert json.loads(state_path.read_text())["execution"] == {}
+    before = state_path.read_bytes()
+
+    assert state_finalize.annotate_if_incomplete(tmp_path) is False
+    assert state_path.read_bytes() == before
+    resolved = resume_resolver.resolve(tmp_path, "")
+    assert resolved["decision"] == "fresh"
+    assert resolved["reason"] == "no incomplete run"
 
 
 def test_already_recorded_nonterminal_keeps_identity(tmp_path):

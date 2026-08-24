@@ -56,6 +56,10 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
     execution = state.get("execution")
     if not isinstance(execution, dict):
         return False
+    if not execution:
+        # stop_closeout clears terminal identity to this tombstone. A later
+        # Stop must not turn it into a schema-less crash marker.
+        return False
     # Two legitimate phase conventions: the orchestrator (M2 execstate) writes
     # `execution.phase` and finishes at "report"; inline runs (skill-as-
     # methodology) write TOP-LEVEL `state.phase` and finish at "done". Honoring

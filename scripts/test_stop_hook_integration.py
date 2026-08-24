@@ -101,7 +101,7 @@ def _seed_transcript_with_explicit_decision() -> list[dict]:
 
 
 def _extract_scan_command_from_hooks_json() -> str:
-    """Pull the decisions-sweep command string out of hooks/hooks.json.
+    """Pull the consolidated sweep command string out of hooks/hooks.json.
 
     We don't reconstruct the full hook environment; we just verify the
     same command line the hook runs works end-to-end.
@@ -110,9 +110,9 @@ def _extract_scan_command_from_hooks_json() -> str:
     for stop_hook in data["hooks"]["Stop"]:
         for h in stop_hook["hooks"]:
             cmd = h.get("command", "")
-            if 'stop-transcript-sweep.sh" decisions' in cmd:
+            if 'stop-transcript-sweep.sh" all' in cmd:
                 return cmd
-    raise AssertionError("decisions transcript-sweep hook not found in hooks.json")
+    raise AssertionError("consolidated transcript-sweep hook not found in hooks.json")
 
 
 def _stop_payload(transcript: Path, cwd: Path) -> str:

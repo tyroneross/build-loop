@@ -28,6 +28,16 @@ def test_state_without_execution_block_no_annotation(tmp_path):
     assert json.loads(state_path.read_text()) == {"runs": []}
 
 
+def test_empty_execution_tombstone_no_annotation(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"phase": "execute", "execution": {}}))
+    before = state_path.read_bytes()
+
+    assert annotate_if_incomplete(tmp_path) is False
+    assert state_path.read_bytes() == before
+
+
 def test_phase_report_no_annotation(tmp_path):
     state_path = tmp_path / ".build-loop" / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
