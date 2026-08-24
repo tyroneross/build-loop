@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f805cbd00bcc0c29457b9e48b32743499599955a9ef48338a76248d8ae543210"
+    "content_sha256": "9247bb01ed7c2809d5fc320e428c5fe1981da3f4536241380ec7bd5c974fbc93"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1824,6 +1824,7 @@
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
+      "scripts/codex_hook_trust_check.py": "codex_hook_trust_check.py — is every registered Codex hook actually trusted?",
       "scripts/codex_preflight.py": "Codex preflight checker for the build-loop plugin.",
       "scripts/collapse_run.py": "collapse_run.py — End-of-run branch/worktree cleanup for build-loop.",
       "scripts/collision_scan.py": "",
@@ -2176,7 +2177,8 @@
         "session-start-memory.sh",
         "session-start-closeout.sh",
         "closeout.sh",
-        "session-start-extensions.sh"
+        "session-start-extensions.sh",
+        "session-start-codex-hook-trust.sh"
       ],
       "UserPromptSubmit": [
         "route-guard.sh"
@@ -2194,9 +2196,6 @@
       "Stop": [
         "stop_finalize.sh",
         "closeout.sh",
-        "stop-transcript-sweep.sh",
-        "stop-transcript-sweep.sh",
-        "stop-transcript-sweep.sh",
         "stop-transcript-sweep.sh"
       ],
       "SessionEnd": [

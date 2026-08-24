@@ -147,6 +147,57 @@ def _git(repo: Path, *args: str,
                           capture_output=True, text=True, env=env)
 
 
+# A hard kill (SIGKILL, crashed session, machine sleep) runs no `finally`, so
+# the try/finally below cannot be the only cleanup. Observed 2026-08-22: an
+# artifact-guard worktree survived a killed run and was still registered three
+# days later, holding a stale checkout of two SKILL.md files. Registered
+# worktrees are not free -- they pin objects and show up in every
+# `git worktree list` a human or agent reads.
+#
+# So: reap on entry as well. Age-gated so a CONCURRENT guard run (which holds a
+# fresh worktree) is never removed out from under itself.
+STALE_WORKTREE_AGE_S = 2 * 3600
+
+
+def _reap_stale_worktrees(repo: Path, env: dict[str, str] | None = None,
+                          max_age_s: int = STALE_WORKTREE_AGE_S) -> int:
+    """Remove abandoned artifact-guard worktrees. Returns how many were freed.
+
+    Fail-soft: this is hygiene running inside a pre-commit gate, so a failure
+    here must never block a commit.
+    """
+    import time
+
+    freed = 0
+    try:
+        listing = _git(repo, "worktree", "list", "--porcelain", env=env)
+        if listing.returncode != 0:
+            return 0
+        for line in listing.stdout.splitlines():
+            if not line.startswith("worktree "):
+                continue
+            path = Path(line[len("worktree "):].strip())
+            if "artifact-guard-" not in str(path):
+                continue
+            try:
+                age = time.time() - path.stat().st_mtime
+            except OSError:
+                # Directory already gone; the registration is just stale.
+                _git(repo, "worktree", "prune", env=env)
+                freed += 1
+                continue
+            if age < max_age_s:
+                continue
+            _git(repo, "worktree", "remove", "--force", str(path), env=env)
+            shutil.rmtree(path.parent, ignore_errors=True)
+            freed += 1
+        if freed:
+            _git(repo, "worktree", "prune", env=env)
+    except Exception:
+        return freed
+    return freed
+
+
 def _clean_git_env() -> dict[str, str]:
     """Environment with git's hook-injected location vars removed. During a
     ``git commit`` the pre-commit hook inherits ``GIT_DIR`` / ``GIT_INDEX_FILE``
@@ -230,6 +281,7 @@ def _regen_isolated(repo: Path, artifact: Artifact) -> tuple[bool, str] | None:
     # Everything below must bind to the throwaway worktree, not the committing
     # repo — run it with git's hook-injected location vars stripped.
     env = _clean_git_env()
+    _reap_stale_worktrees(repo, env)
     tmp = Path(tempfile.mkdtemp(prefix="artifact-guard-"))
     wt = tmp / "wt"
     try:

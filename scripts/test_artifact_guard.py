@@ -376,3 +376,81 @@ def test_codex_watch_falls_back_when_the_builder_is_absent(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", _boom)
     assert ag._codex_watch() == ag._CODEX_WATCH_FALLBACK
+
+
+# --- stale worktree reaper -------------------------------------------------
+# A hard kill runs no `finally`. On 2026-08-22 an artifact-guard worktree
+# survived a killed run and was still registered three days later.
+
+def _init_repo(tmp_path):
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in (["init", "-q"], ["config", "user.email", "t@e.st"],
+                ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True,
+                       capture_output=True)
+    (repo / "f.txt").write_text("x\n")
+    subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True,
+                   capture_output=True)
+    return repo
+
+
+def test_reaper_frees_an_abandoned_worktree(tmp_path):
+    import os
+    import subprocess
+    import artifact_guard as ag
+
+    repo = _init_repo(tmp_path)
+    stale = tmp_path / "artifact-guard-abandoned" / "wt"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", "-q",
+                    str(stale), "HEAD"], check=True, capture_output=True)
+    old = 1_000_000
+    os.utime(stale, (old, old))
+
+    assert "artifact-guard-abandoned" in subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list"],
+        capture_output=True, text=True).stdout
+
+    assert ag._reap_stale_worktrees(repo) == 1
+    assert "artifact-guard-abandoned" not in subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list"],
+        capture_output=True, text=True).stdout
+
+
+def test_reaper_never_removes_a_concurrent_run(tmp_path):
+    """A guard running right now holds a FRESH worktree. Killing it would make
+    the hygiene fix worse than the leak."""
+    import subprocess
+    import artifact_guard as ag
+
+    repo = _init_repo(tmp_path)
+    live = tmp_path / "artifact-guard-live" / "wt"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", "-q",
+                    str(live), "HEAD"], check=True, capture_output=True)
+
+    assert ag._reap_stale_worktrees(repo) == 0
+    assert live.is_dir()
+
+
+def test_reaper_ignores_worktrees_that_are_not_ours(tmp_path):
+    import os
+    import subprocess
+    import artifact_guard as ag
+
+    repo = _init_repo(tmp_path)
+    other = tmp_path / "someone-elses-worktree"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", "-q",
+                    str(other), "HEAD"], check=True, capture_output=True)
+    os.utime(other, (1_000_000, 1_000_000))
+
+    assert ag._reap_stale_worktrees(repo) == 0
+    assert other.is_dir()
+
+
+def test_reaper_never_raises_into_the_commit_path(tmp_path):
+    """It runs inside a pre-commit gate; hygiene must not block a commit."""
+    import artifact_guard as ag
+
+    assert ag._reap_stale_worktrees(tmp_path / "not-a-repo") == 0
