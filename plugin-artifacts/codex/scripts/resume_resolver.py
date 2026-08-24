@@ -402,7 +402,27 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
         "archive_safe": False,
         "evidence": [],
     }
-    if execution.get("schema_version") is not None or run_id is None or crashed_at is None:
+    if execution.get("schema_version") is not None or crashed_at is None:
+        return result
+
+    if run_id is None:
+        # Identity-less residue (a stop_hook marker that recorded only
+        # crashed_at/crash_signal) names no run: without an id there are no
+        # chunks, no envelopes, and no worktree to continue, so resume is
+        # impossible by construction rather than merely unproven. Terminal only
+        # when it also references no surviving worktree/branch, so a
+        # partially-written block still pointing at live resources stays
+        # ambiguous. Without this arm such residue is unarchivable forever and
+        # permanently blocks every fresh run in the repo.
+        if execution.get("run_worktree_path") or execution.get("run_worktree_branch"):
+            return result
+        result.update(
+            classification="terminal_legacy_crash",
+            archive_safe=True,
+            evidence=[
+                "identity-less crash residue: no run id and no worktree/branch reference"
+            ],
+        )
         return result
 
     heartbeat = _parse_iso(execution.get("last_heartbeat_at", ""))

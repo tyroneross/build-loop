@@ -239,6 +239,62 @@ def test_schema_less_crash_with_absent_managed_worktree_is_archivable(tmp_path):
     assert "absent or dead" in " ".join(env["legacy_crash"]["evidence"])
 
 
+def _write_identity_less_crash(tmp_path: Path, **extra) -> Path:
+    """A stop_hook marker that recorded no run identity at all."""
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({
+        "execution": {"crashed_at": "2026-08-11T06:57:59Z", "crash_signal": "stop_hook", **extra},
+        "runs": [],
+    }))
+    return state_path
+
+
+def test_identity_less_crash_residue_is_archivable(tmp_path):
+    """No run id means no chunks to resume, so the residue is terminal by construction.
+
+    Without this arm the block is unarchivable forever and permanently blocks
+    every fresh run in the repo.
+    """
+    _write_identity_less_crash(tmp_path)
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert env["required_action"] == "archive_legacy_crash"
+    assert env["legacy_crash"]["classification"] == "terminal_legacy_crash"
+    assert env["legacy_crash"]["archive_safe"] is True
+    assert "identity-less" in " ".join(env["legacy_crash"]["evidence"])
+
+
+def test_archiving_identity_less_residue_yields_fresh(tmp_path):
+    state_path = _write_identity_less_crash(tmp_path)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "fresh"
+    assert env["archive_applied"] is True
+    assert env["fresh_ready"] is True
+    state = json.loads(state_path.read_text())
+    assert not state["execution"]
+    assert state["historicalExecutions"][-1]["crash_signal"] == "stop_hook"
+
+
+@pytest.mark.parametrize("ref", [
+    {"run_worktree_path": "/tmp/some/run-1"},
+    {"run_worktree_branch": "bl/run-1"},
+])
+def test_identity_less_residue_referencing_resources_stays_refused(tmp_path, ref):
+    """A partially-written block still naming live resources must not auto-archive."""
+    _write_identity_less_crash(tmp_path, **ref)
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["classification"] == "ambiguous_or_potentially_active"
+    assert env["legacy_crash"]["archive_safe"] is False
+
+
 def test_no_resume_fresh_heartbeat_without_owner_aborts(tmp_path):
     _setup_started_run(tmp_path)
     # Heartbeat is fresh-ish — call resolve with a "now" only 30s after start
