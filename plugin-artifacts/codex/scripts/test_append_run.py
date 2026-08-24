@@ -54,9 +54,51 @@ def test_phases_dict_and_manual_intervention(tmp_path):
 def test_idempotent_on_run_id(tmp_path):
     _run(tmp_path, "--run-id", "r1", "--goal", "v1", "--outcome", "done")
     out = _run(tmp_path, "--run-id", "r1", "--goal", "v2", "--outcome", "partial")
-    assert out["action"] == "replaced" and out["runs_count"] == 1
+    assert out["action"] == "merged" and out["runs_count"] == 1
     runs = _state(tmp_path)["runs"]
-    assert len(runs) == 1 and runs[0]["goal"] == "v2" and runs[0]["outcome"] == "partial"
+    assert len(runs) == 1 and runs[0]["goal"] == "v1" and runs[0]["outcome"] == "pass"
+
+
+def test_thin_repeat_write_preserves_rich_terminal_evidence(tmp_path):
+    rich = {
+        "run_id": "r-rich",
+        "date": "2026-08-24T08:00:00Z",
+        "goal": "deploy-ready candidate",
+        "outcome": "pass",
+        "host": "codex",
+        "commit": "52616ea12e6e4d7095ff3e0c21286898a43fe62c",
+        "phases": {"review-g": {"status": "pass"}},
+        "manualInterventions": [],
+        "diagnosticCommands": ["npm run build"],
+        "filesTouched": ["app/page.tsx", "lib/brief-data.ts"],
+        "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}],
+        "security_findings": [],
+        "active_experimental_artifacts": [],
+        "branch_closeout": {"status": "complete"},
+        "source": "append_run",
+    }
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"runs": [rich]}))
+
+    out = _run(
+        tmp_path,
+        "--run-id", "r-rich",
+        "--goal", "thin stop snapshot",
+        "--outcome", "partial",
+        "--commit", "52616ea12",
+        "--manual-intervention", "closeout:fired-by-stop-hook",
+    )
+
+    record = _state(tmp_path)["runs"][0]
+    assert out["action"] == "merged"
+    assert record["goal"] == rich["goal"]
+    assert record["outcome"] == "pass"
+    assert record["commit"] == rich["commit"]
+    assert record["filesTouched"] == rich["filesTouched"]
+    assert record["judge_decisions"] == rich["judge_decisions"]
+    assert record["branch_closeout"] == {"status": "complete"}
+    assert {m["note"] for m in record["manualInterventions"]} == {"fired-by-stop-hook"}
 
 
 def test_preserves_other_state_keys(tmp_path):

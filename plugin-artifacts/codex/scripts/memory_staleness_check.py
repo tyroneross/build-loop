@@ -31,6 +31,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import memory_update_ledger as mul  # type: ignore  # noqa: E402
+from closeout.status import run_evidence  # type: ignore  # noqa: E402
 
 DEFAULT_COMMITS_THRESHOLD = 5
 # Resolved lazily via _paths.memory_store_root(); no literal default (see
@@ -67,6 +68,16 @@ def _commits_since(workdir: Path, commit_hash: str) -> int | None:
         return int(r.stdout.strip())
     except ValueError:
         return None
+
+
+def _is_ancestor(workdir: Path, commit_hash: str) -> bool | None:
+    """Return whether candidate is reachable from HEAD; None means git error."""
+    r = _run_git(["merge-base", "--is-ancestor", commit_hash, "HEAD"], workdir)
+    if r.returncode == 0:
+        return True
+    if r.returncode == 1:
+        return False
+    return None
 
 
 def _is_git_repo(workdir: Path) -> bool:
@@ -115,6 +126,37 @@ def _baseline_candidates(memory_root: Path, slug: str) -> list[tuple[str, str]]:
     if milestone_commit and ("milestones", milestone_commit) not in candidates:
         candidates.append(("milestones", milestone_commit))
     return candidates
+
+
+def _latest_run_evidence(workdir: Path) -> dict[str, Any] | None:
+    """Explain which terminal run should have refreshed memory, if observable."""
+    state_path = workdir / ".build-loop" / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    runs = state.get("runs") if isinstance(state, dict) else None
+    if not isinstance(runs, list):
+        return None
+    for row in reversed(runs):
+        if not isinstance(row, dict):
+            continue
+        evidence = run_evidence(row)
+        if not evidence["shipped"]:
+            continue
+        run_id = str(row.get("run_id") or row.get("build_loop_id") or row.get("id") or "")
+        marker = workdir / ".build-loop" / "closeout-pending" / f"milestone-owed-{run_id}.md"
+        return {
+            "run_id": run_id or None,
+            "date": row.get("date"),
+            "outcome": row.get("outcome"),
+            "commit": evidence["commit"],
+            "commit_source": evidence["commit_source"],
+            "run_commit_present": evidence["run_commit_present"],
+            "branch_closeout_status": evidence["branch_closeout_status"],
+            "milestone_owed_marker": str(marker) if marker.exists() else None,
+        }
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -167,15 +209,34 @@ def check(
 
     baseline_source = baselines[0][0]
     memory_as_of_commit = baselines[0][1]
-    commits_stale: int | None = None
+    reachable: list[tuple[int, str, str]] = []
+    candidate_evidence: list[dict[str, Any]] = []
     for candidate_source, candidate_commit in baselines:
+        ancestor = _is_ancestor(workdir, candidate_commit)
+        if ancestor is not True:
+            candidate_evidence.append({
+                "source": candidate_source,
+                "commit": candidate_commit,
+                "reachable_from_head": ancestor,
+                "commits_stale": None,
+                "excluded_reason": (
+                    "candidate is not an ancestor of HEAD"
+                    if ancestor is False
+                    else "candidate reachability could not be verified"
+                ),
+            })
+            continue
         candidate_count = _commits_since(workdir, candidate_commit)
         if candidate_count is not None:
-            baseline_source = candidate_source
-            memory_as_of_commit = candidate_commit
-            commits_stale = candidate_count
-            break
-    if commits_stale is None:
+            reachable.append((candidate_count, candidate_source, candidate_commit))
+            candidate_evidence.append({
+                "source": candidate_source,
+                "commit": candidate_commit,
+                "reachable_from_head": True,
+                "commits_stale": candidate_count,
+                "excluded_reason": None,
+            })
+    if not reachable:
         return {
             "slug": slug,
             "memory_as_of_commit": memory_as_of_commit,
@@ -184,9 +245,20 @@ def check(
             "commits_stale": 0,
             "stale": False,
             "reason": f"could not count commits since {memory_as_of_commit[:8]} (shallow clone or unknown sha)",
+            "baseline_candidates": candidate_evidence,
         }
 
+    # The ledger and milestone append are separate durability steps. If ledger
+    # telemetry degrades after the milestone lands, both candidates can exist
+    # with the ledger older. Choose the freshest reachable evidence (fewest
+    # commits behind), retaining candidate order as the deterministic tie-break.
+    commits_stale, baseline_source, memory_as_of_commit = min(
+        reachable,
+        key=lambda candidate: candidate[0],
+    )
+
     stale = commits_stale >= commits_threshold
+    latest_run_evidence = _latest_run_evidence(workdir) if stale else None
     message = (
         f"{slug} memory is {commits_stale} commits behind HEAD — append a milestone/decision"
         if stale
@@ -201,6 +273,8 @@ def check(
         "commits_stale": commits_stale,
         "stale": stale,
         "message": message,
+        "latest_run_evidence": latest_run_evidence,
+        "baseline_candidates": candidate_evidence,
     }
 
 

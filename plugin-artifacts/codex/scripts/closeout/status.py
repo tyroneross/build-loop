@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -228,12 +229,56 @@ def _git_head(workdir: Path) -> str | None:
     return None
 
 
-def _row_shipped(r: dict) -> tuple[bool, str | None, str]:
-    commit = str(r.get("commit") or "").strip() or None
-    files = r.get("files_touched") or r.get("files_changed") or r.get("files")
+def run_evidence(r: dict) -> dict[str, Any]:
+    """Return normalized shipped-run evidence across canonical and legacy rows.
+
+    ``write_run_entry`` uses ``filesTouched``. Older closeout code read only
+    snake_case aliases, so a real code-touching pass could look unshipped. Some
+    orchestrator rows also predate the additive ``commit`` field; strict branch
+    collapse preserves their exact candidate SHA under
+    ``createdRefs[].expected_oid``. Recover that value only when it is unique so
+    ambiguous multi-ref runs stay explicit rather than acquiring a guessed SHA.
+    """
+    explicit = str(r.get("commit") or "").strip()
+    if explicit.lower() in ("", "pending"):
+        explicit = ""
+
+    recovered = {
+        str(ref.get("expected_oid") or "").strip()
+        for ref in (r.get("createdRefs") or [])
+        if isinstance(ref, dict)
+        and str(ref.get("status") or "").lower() == "closed"
+        and str(ref.get("expected_oid") or "").strip()
+    }
+    commit = explicit or (next(iter(recovered)) if len(recovered) == 1 else None)
+    commit_source = (
+        "runs[].commit" if explicit
+        else "runs[].createdRefs[].expected_oid" if commit
+        else None
+    )
+    files = (
+        r.get("filesTouched")
+        or r.get("files_touched")
+        or r.get("files_changed")
+        or r.get("files")
+    )
     has_files = bool(files) and str(files).strip() not in ("", "0", "[]")
+    closeout = r.get("branch_closeout") if isinstance(r.get("branch_closeout"), dict) else {}
+    terminal_closeout = closeout.get("status") == "complete"
+    return {
+        "shipped": bool(commit) or has_files or terminal_closeout,
+        "commit": commit,
+        "commit_source": commit_source,
+        "run_commit_present": bool(explicit),
+        "has_files": has_files,
+        "branch_closeout_status": closeout.get("status"),
+    }
+
+
+def _row_shipped(r: dict) -> tuple[bool, str | None, str]:
+    evidence = run_evidence(r)
     summary = str(r.get("goal") or r.get("summary") or r.get("run_label") or "").strip()
-    return (bool(commit) or has_files, commit, summary[:300])
+    return (bool(evidence["shipped"]), evidence["commit"], summary[:300])
 
 
 def _resolve_shipped_run(workdir: Path, run_id: str) -> dict[str, Any]:
@@ -358,6 +403,15 @@ def _write_milestone_owed_marker(workdir: Path, run_id: str, commit: str | None,
     """
     marker = workdir / ".build-loop" / CLOSEOUT_PENDING_DIRNAME / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
     marker.parent.mkdir(parents=True, exist_ok=True)
+    writer = Path(__file__).resolve().parent.parent / "append_milestone.py"
+    action = (
+        f"python3 {shlex.quote(str(writer))} --workdir . "
+        f"--summary {shlex.quote(summary or '(what shipped)')} \\\n"
+        f"  --commit {shlex.quote(commit)} --run-id {shlex.quote(run_id)}\n"
+        if commit
+        else "Reconcile the exact shipped commit into `runs[].commit`, then rerun strict closeout.\n"
+             "Do not substitute the repository's current HEAD.\n"
+    )
     body = (
         "---\n"
         f"run_id: {run_id}\n"
@@ -372,8 +426,7 @@ def _write_milestone_owed_marker(workdir: Path, run_id: str, commit: str | None,
         "milestone line was appended to `build-loop-memory/projects/<slug>/milestones.jsonl`.\n"
         "The permanent progress record must not be skipped. Append it now:\n\n"
         "```\n"
-        f"python3 scripts/append_milestone.py --workdir . --summary {json.dumps(summary or '(what shipped)')} \\\n"
-        f"  --commit {commit or '<HEAD>'} --run-id {run_id}\n"
+        f"{action}"
         "```\n\n"
         "A peer-held store will QUEUE the append (drained at the next closeout); this\n"
         "marker clears once the milestone is recorded.\n"
@@ -382,6 +435,15 @@ def _write_milestone_owed_marker(workdir: Path, run_id: str, commit: str | None,
     tmp.write_text(body, encoding="utf-8")
     os.replace(tmp, marker)
     return marker
+
+
+def _clear_milestone_owed_marker(workdir: Path, run_id: str) -> None:
+    """Remove exact residual debt once the milestone is recorded or queued."""
+    marker = workdir / ".build-loop" / CLOSEOUT_PENDING_DIRNAME / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def ensure_milestone(
@@ -394,7 +456,9 @@ def ensure_milestone(
     1. Drain any queued durable promotions (writes previously-queued milestones
        now that the store may be free).
     2. If the run shipped and no milestone is recorded (and none is queued),
-       write a blocking owed-item marker.
+       append it directly through the canonical writer. A peer-held store queues
+       the exact payload.
+    3. Only a real append/queue failure writes a persistent owed-item marker.
 
     Deterministic + fail-soft. Returns a status block for the envelope.
     """
@@ -415,6 +479,20 @@ def ensure_milestone(
     commit = resolved["commit"]
     summary = resolved["summary"]
 
+    # Never let the downstream writer replace missing/ambiguous run evidence
+    # with the repository's current HEAD. Strict closeout needs the exact
+    # candidate commit, not a temporally convenient guess.
+    if not commit:
+        marker = _write_milestone_owed_marker(workdir, eff_run_id, None, summary)
+        return {
+            "status": "owed",
+            "run_id": eff_run_id,
+            "commit": None,
+            "marker": str(marker),
+            "reason": "shipped run has no unique exact commit evidence",
+            "drain": drain_result,
+        }
+
     try:
         from _paths import derive_slug_from_cwd  # noqa: PLC0415
         slug = derive_slug_from_cwd(workdir)
@@ -422,13 +500,34 @@ def ensure_milestone(
         slug = workdir.name
 
     if _milestone_recorded(mem_root, slug, eff_run_id, commit):
+        _clear_milestone_owed_marker(workdir, eff_run_id)
         return {"status": "recorded", "run_id": eff_run_id, "commit": commit, "drain": drain_result}
     if _milestone_queued(workdir, eff_run_id, commit):
+        _clear_milestone_owed_marker(workdir, eff_run_id)
         return {"status": "queued", "run_id": eff_run_id, "commit": commit, "drain": drain_result}
+
+    import append_milestone  # noqa: PLC0415
+    append_result = append_milestone.append_milestone(
+        workdir=str(workdir),
+        summary=summary or "(what shipped)",
+        project=slug,
+        commit=commit,
+        run_id=eff_run_id,
+        memory_root=str(mem_root),
+        on_busy="queue",
+    )
+    if append_result.get("appended"):
+        _clear_milestone_owed_marker(workdir, eff_run_id)
+        return {"status": "recorded", "run_id": eff_run_id, "commit": commit,
+                "append": append_result, "drain": drain_result}
+    if append_result.get("queued"):
+        _clear_milestone_owed_marker(workdir, eff_run_id)
+        return {"status": "queued", "run_id": eff_run_id, "commit": commit,
+                "append": append_result, "drain": drain_result}
 
     marker = _write_milestone_owed_marker(workdir, eff_run_id, commit, summary)
     return {"status": "owed", "run_id": eff_run_id, "commit": commit,
-            "marker": str(marker), "drain": drain_result}
+            "marker": str(marker), "append": append_result, "drain": drain_result}
 
 
 def run(

@@ -173,6 +173,19 @@ def files_touched_from_git(workdir: Path, pre_sha: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def _head_commit(workdir: Path) -> str | None:
+    """Return the exact candidate SHA represented by this Review-G record."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(workdir), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return out or None
+
+
 def _load_optional_payloads(args: argparse.Namespace) -> dict:
     """Parse phases, manual_interventions, and optional JSON sources into a dict.
 
@@ -233,6 +246,9 @@ def _build_entry(
         "manualInterventions": payloads["manual_interventions"],
         "active_experimental_artifacts": active,
     }
+    commit = _head_commit(Path(args.workdir).resolve())
+    if commit:
+        entry["commit"] = commit
     # Optional additive blocks — written only when supplied (never break older readers).
     for key in ("security_findings", "judge_decisions", "budget_summary", "models", "harness"):
         if payloads.get(key) is not None:

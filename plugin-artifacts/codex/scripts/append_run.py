@@ -176,6 +176,51 @@ def _enforce_owed_verification(workdir: Path, record: dict) -> dict | None:
         return None
 
 
+def _merge_run_record(existing: dict, incoming: dict) -> dict:
+    """Merge repeat inline writes without erasing stronger terminal evidence.
+
+    Stop hooks can observe an in-progress top-level phase after an explicit rich
+    run record has already landed. Replacing that row makes the last, thinnest
+    writer win. This merge is monotonic: non-empty evidence accumulates, exact
+    commits beat pending/shorter prefixes, and outcomes can improve but never
+    regress from pass to partial/fail.
+    """
+    merged = dict(existing)
+    outcome_rank = {"fail": 0, "partial": 1, "pass": 2}
+
+    for key, value in incoming.items():
+        current = merged.get(key)
+        if key in ("run_id", "source", "date"):
+            continue
+        if key == "outcome":
+            if outcome_rank.get(str(value), -1) > outcome_rank.get(str(current), -1):
+                merged[key] = value
+            continue
+        if key == "commit":
+            current_text = str(current or "").strip()
+            value_text = str(value or "").strip()
+            if current_text.lower() in ("", _PENDING) or (
+                value_text.startswith(current_text) and len(value_text) > len(current_text)
+            ):
+                merged[key] = value
+            continue
+        if isinstance(current, list) and isinstance(value, list):
+            seen = {json.dumps(item, sort_keys=True, default=str) for item in current}
+            merged[key] = list(current)
+            for item in value:
+                identity = json.dumps(item, sort_keys=True, default=str)
+                if identity not in seen:
+                    seen.add(identity)
+                    merged[key].append(item)
+            continue
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**value, **current}
+            continue
+        if current in (None, "", [], {}) and value not in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
 def append_run(state_path: Path, record: dict) -> dict:
     # One writer contract: lock + atomic replace, never a bare read/write race.
     with LockedFile(state_path):
@@ -208,8 +253,8 @@ def append_run(state_path: Path, record: dict) -> dict:
                         f"run_id {record['run_id']!r} already written by "
                         f"{r.get('source', 'the orchestrator')}; refusing to overwrite a richer record"
                     )
-                runs[i] = record
-                action = "replaced"
+                runs[i] = _merge_run_record(r, record)
+                action = "merged"
                 break
         else:
             runs.append(record)

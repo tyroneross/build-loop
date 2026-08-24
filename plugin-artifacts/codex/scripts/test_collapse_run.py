@@ -401,6 +401,8 @@ class TestCLI:
             "--branch",
             "feat-strict-cli",
             "--strict",
+            "--memory-root",
+            str(tmp_path / "memory"),
             "--json",
         ]
 
@@ -418,6 +420,11 @@ class TestCLI:
         payload = json.loads(allowed.stdout)
         assert payload["strict_success"] is True
         assert payload["receipt_status"] == "complete"
+        assert payload["memory_closeout"]["milestone"]["status"] == "recorded"
+        milestone_path = Path(payload["memory_closeout"]["milestone"]["append"]["path"])
+        record = json.loads(milestone_path.read_text(encoding="utf-8"))
+        assert record["run_id"] == "run_strict_cli"
+        assert record["commit"] == payload["memory_closeout"]["milestone"]["commit"]
 
     def test_cli_missing_state_exits_1(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)

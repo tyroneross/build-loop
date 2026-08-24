@@ -81,6 +81,9 @@ def _write_state(
     }
     row = {
         "run_id": run_id,
+        "outcome": "pass",
+        "summary": f"Completed {run_id}",
+        "filesTouched": ["README.md"],
         "createdRefs": [{
             "kind": "worktree",
             "branch": branch,
@@ -150,6 +153,7 @@ def test_explicit_owner_released_act_delegates_to_strict_collapse(tmp_path: Path
         dry_run=False,
         act=True,
         owner_released=True,
+        memory_root=tmp_path / "memory",
     )
 
     assert result.errors == []
@@ -157,6 +161,10 @@ def test_explicit_owner_released_act_delegates_to_strict_collapse(tmp_path: Path
     finalized = result.bundled_and_removed[0]
     assert Path(finalized["bundle"]).is_file()
     assert Path(finalized["receipt"]).is_file()
+    assert finalized["memory_closeout"]["milestone"]["status"] == "recorded"
+    milestone_path = Path(finalized["memory_closeout"]["milestone"]["append"]["path"])
+    record = json.loads(milestone_path.read_text(encoding="utf-8"))
+    assert record["run_id"] == run_id
     assert not path.exists()
     assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode != 0
 

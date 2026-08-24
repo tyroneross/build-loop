@@ -71,6 +71,34 @@ def test_records_inline_run_and_warns_when_stakes_gated(tmp_path):
     assert (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
 
 
+def test_stop_preserves_rich_terminal_append_run_and_releases_identity(tmp_path):
+    rich = {
+        "run_id": "bl-test-001",
+        "source": "append_run",
+        "outcome": "pass",
+        "commit": "52616ea12e6e4d7095ff3e0c21286898a43fe62c",
+        "filesTouched": ["app/page.tsx", "lib/brief-data.ts"],
+        "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}],
+        "branch_closeout": {"status": "complete"},
+    }
+    state = _base_state(phase="execute", runs=[rich])
+    state["execution"]["run_worktree_branch"] = "bl/run-001"
+    state["execution"]["run_worktree_path"] = str(
+        tmp_path / ".build-loop" / "worktrees" / "run-001"
+    )
+    _write_state(tmp_path, state)
+
+    out = stop_closeout.run_stop(tmp_path, SESSION)
+
+    stored = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert out == {}
+    assert stored["runs"][0]["commit"] == rich["commit"]
+    assert stored["runs"][0]["filesTouched"] == rich["filesTouched"]
+    assert stored["runs"][0]["judge_decisions"] == rich["judge_decisions"]
+    assert stored["runs"][0]["branch_closeout"]["status"] == "complete"
+    assert stored["execution"] == {}
+
+
 def test_warns_on_production_synthesisdensity_dict_shape(tmp_path):
     # Phase 1 Assess writes synthesisDensity as {count, escalated, reason} — the
     # signal the INLINE path actually produces (riskSurfaceChange is orchestrator-
@@ -577,6 +605,46 @@ def test_session_start_prompts_action_for_owed_marker(tmp_path):
     assert "--run-id bl-owed-1" in ctx                  # actionable command
     assert "memory_writer.py" in ctx                    # names the memory-closeout step
     assert [p.name for p in to_archive] == ["bl-owed-1.md"]
+
+
+def test_session_start_keeps_milestone_debt_and_uses_frontmatter_run_id(tmp_path):
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    marker = pending / "milestone-owed-bl-real-1.md"
+    marker.write_text(
+        "---\nrun_id: bl-real-1\ntopic: milestone-owed\ncommit: abc123\n"
+        "closeout_incomplete: true\nsource: closeout.status\n---\n\n# milestone owed\n"
+    )
+
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "--run-id bl-real-1" in ctx
+    assert "--commit abc123" in ctx
+    writer = Path(stop_closeout.__file__).resolve().parent / "append_milestone.py"
+    assert writer.is_file()
+    assert str(writer) in ctx
+    assert "milestone-owed-bl-real-1" not in ctx.split("--run-id ", 1)[1]
+    assert to_archive == []
+    stop_closeout._archive_markers(tmp_path, to_archive)
+    assert marker.exists()
+
+
+def test_session_start_does_not_guess_head_for_commitless_milestone_debt(tmp_path):
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "milestone-owed-bl-ambiguous.md").write_text(
+        "---\nrun_id: bl-ambiguous\ntopic: milestone-owed\ncommit: \n"
+        "closeout_incomplete: true\nsource: closeout.status\n---\n"
+    )
+
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "reconcile the exact shipped commit" in ctx
+    assert "Do not substitute" in ctx
+    assert "--commit <HEAD>" not in ctx
+    assert to_archive == []
 
 
 def test_session_start_archives_complete_marker_without_nagging(tmp_path):

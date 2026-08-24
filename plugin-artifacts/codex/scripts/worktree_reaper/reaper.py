@@ -196,6 +196,7 @@ def reap_worktrees(
     act: bool = False,
     owner_released: bool = False,
     now: float | None = None,
+    memory_root: Path | str | None = None,
 ) -> ReapResult:
     """Discover stale run worktrees; delegate only after explicit owner release."""
     workdir = Path(workdir).resolve()
@@ -324,12 +325,18 @@ def reap_worktrees(
             release_source="worktree-reaper-explicit",
             expected_path=resolved,
         )
+        collapse_run.enforce_terminal_memory_closeout(
+            workdir,
+            finalized,
+            memory_root=memory_root,
+        )
         if finalized.get("strict_success"):
             result.bundled_and_removed.append(
                 {
                     **candidate,
                     "bundle": finalized.get("bundle_path"),
                     "receipt": finalized.get("receipt_path"),
+                    "memory_closeout": finalized.get("memory_closeout"),
                 }
             )
         else:

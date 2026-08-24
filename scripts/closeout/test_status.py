@@ -340,7 +340,12 @@ def test_run_source_is_normalized(tmp_path: Path) -> None:
 # produce a blocking owed-item marker (the detectable-failure contract).
 # ---------------------------------------------------------------------------
 
-from closeout.status import ensure_milestone, MILESTONE_OWED_PREFIX  # noqa: E402
+from closeout.status import (  # noqa: E402
+    _resolve_shipped_run,
+    ensure_milestone,
+    MILESTONE_OWED_PREFIX,
+    run_evidence,
+)
 
 
 def _shipped_state(workdir: Path, run_id: str, commit: str = "abc123") -> None:
@@ -358,20 +363,41 @@ def _slug(workdir: Path) -> str:
     return derive_slug_from_cwd(workdir)
 
 
-def test_shipped_run_without_milestone_produces_owed_marker(tmp_path):
+def test_shipped_run_without_milestone_appends_exact_record(tmp_path):
     run_id = "bl-run-1"
     _shipped_state(tmp_path, run_id, commit="deadbeef")
     mem = tmp_path / "mem"
     mem.mkdir()
 
     env = run(tmp_path, run_id=run_id, source="post-push", memory_root=str(mem))
-    assert env["milestone"]["status"] == "owed"
+    assert env["milestone"]["status"] == "recorded"
 
     marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    assert not marker.exists()
+    mpath = mem / "projects" / _slug(tmp_path) / "milestones.jsonl"
+    record = json.loads(mpath.read_text(encoding="utf-8"))
+    assert record["run_id"] == run_id
+    assert record["commit"] == "deadbeef"
+
+
+def test_failed_append_produces_persistent_owed_marker(tmp_path, monkeypatch):
+    run_id = "bl-run-failed-append"
+    _shipped_state(tmp_path, run_id, commit="badc0de")
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    import append_milestone
+    monkeypatch.setattr(
+        append_milestone,
+        "append_milestone",
+        lambda **_: {"appended": False, "reason": "simulated failure"},
+    )
+
+    env = run(tmp_path, run_id=run_id, source="post-push", memory_root=str(mem))
+
+    assert env["milestone"]["status"] == "owed"
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
     assert marker.exists()
-    text = marker.read_text()
-    assert "closeout_incomplete: true" in text
-    assert run_id in text
+    assert "closeout_incomplete: true" in marker.read_text(encoding="utf-8")
 
 
 def test_recorded_milestone_no_owed_marker(tmp_path):
@@ -471,11 +497,13 @@ def test_synthetic_hook_rid_falls_back_to_latest_shipped_run(tmp_path):
 
     # The post-push hook passes a synthetic id that matches no runs[] row.
     res = ensure_milestone(tmp_path, "postpush-20260711T120000Z", memory_root=str(mem))
-    assert res["status"] == "owed"
-    # Owed marker keyed on the RESOLVED real run id, not the synthetic one.
+    assert res["status"] == "recorded"
+    # Durable record keyed on the RESOLVED real run id, not the synthetic one.
     assert res["run_id"] == real_run
     marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{real_run}.md"
-    assert marker.exists()
+    assert not marker.exists()
+    mpath = mem / "projects" / _slug(tmp_path) / "milestones.jsonl"
+    assert json.loads(mpath.read_text(encoding="utf-8"))["run_id"] == real_run
     synthetic_marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}postpush-20260711T120000Z.md"
     assert not synthetic_marker.exists()
 
@@ -487,6 +515,70 @@ def test_synthetic_rid_no_shipped_run_stays_noop(tmp_path):
     (bl / "state.json").write_text(json.dumps({"runs": [{"run_id": "wip", "goal": "x"}]}))
     res = ensure_milestone(tmp_path, "postpush-20260711T120000Z", memory_root=str(tmp_path / "mem"))
     assert res["status"] == "not_shipped"
+
+
+def test_canonical_camel_case_run_recovers_strict_closeout_commit(tmp_path):
+    """Regression: reproduce the Atomize 157924 run-record shape exactly."""
+    run_id = "bl-atomize-157924"
+    commit = "030c4ac9f07aa4e4f7e7d2f768da14741b00d283"
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(parents=True)
+    (bl / "state.json").write_text(json.dumps({"runs": [{
+        "run_id": run_id,
+        "outcome": "pass",
+        "filesTouched": ["lib/brief-data.ts"],
+        "branch_closeout": {"status": "complete"},
+        "createdRefs": [{
+            "status": "closed",
+            "expected_oid": commit,
+            "branch": "bl/run-157924",
+        }],
+        "goal": "Fix the AI Brief Prisma column mismatch locally",
+    }]}))
+
+    resolved = _resolve_shipped_run(tmp_path, run_id)
+
+    assert resolved == {
+        "shipped": True,
+        "run_id": run_id,
+        "commit": commit,
+        "summary": "Fix the AI Brief Prisma column mismatch locally",
+    }
+
+
+def test_retained_ref_is_not_treated_as_shipped_commit():
+    evidence = run_evidence({
+        "outcome": "pass",
+        "filesTouched": ["lib/brief-data.ts"],
+        "createdRefs": [{"status": "retained", "expected_oid": "not-shipped"}],
+    })
+
+    assert evidence["shipped"] is True
+    assert evidence["commit"] is None
+    assert evidence["commit_source"] is None
+
+
+def test_ambiguous_closed_refs_do_not_fall_back_to_current_head(tmp_path):
+    run_id = "bl-ambiguous-refs"
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(parents=True)
+    (bl / "state.json").write_text(json.dumps({"runs": [{
+        "run_id": run_id,
+        "outcome": "pass",
+        "filesTouched": ["a.py", "b.py"],
+        "createdRefs": [
+            {"status": "closed", "expected_oid": "commit-a"},
+            {"status": "closed", "expected_oid": "commit-b"},
+        ],
+    }]}))
+    mem = tmp_path / "memory"
+
+    result = ensure_milestone(tmp_path, run_id, memory_root=mem)
+
+    assert result["status"] == "owed"
+    assert result["commit"] is None
+    assert result["reason"] == "shipped run has no unique exact commit evidence"
+    assert not list(mem.glob("projects/**/milestones.jsonl"))
 
 
 def test_candidate_aging_surfaced_in_envelope(tmp_path):

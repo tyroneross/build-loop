@@ -1953,6 +1953,44 @@ def collapse(
 # CLI
 # ---------------------------------------------------------------------------
 
+def enforce_terminal_memory_closeout(
+    workdir: Path,
+    result: dict[str, Any],
+    *,
+    memory_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Make a successful strict ref closeout prove or owe its milestone.
+
+    Strict collapse has two production entry points: this module's CLI and the
+    worktree reaper. Keeping the enforcement in one callable prevents either
+    terminal path from deleting the last run worktree without emitting the
+    closeout record and milestone evidence.
+    """
+    result["memory_closeout"] = None
+    if not result.get("strict_success") or result.get("dry_run"):
+        return result
+
+    try:
+        from closeout.status import run as run_memory_closeout  # noqa: PLC0415
+
+        result["memory_closeout"] = run_memory_closeout(
+            Path(workdir).resolve(),
+            run_id=str(result["run_id"]),
+            source="phase-6-learn",
+            memory_root=str(memory_root) if memory_root is not None else None,
+        )
+        milestone_status = (result["memory_closeout"].get("milestone") or {}).get("status")
+        if milestone_status not in ("recorded", "queued"):
+            result["errors"].append(
+                "strict branch closeout did not record or durably queue the run milestone "
+                f"(status={milestone_status or 'missing'})"
+            )
+            result["strict_success"] = False
+    except Exception as exc:  # noqa: BLE001 — strict lifecycle converts failure to evidence
+        result["errors"].append(f"strict memory closeout failed: {type(exc).__name__}: {exc}")
+        result["strict_success"] = False
+    return result
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workdir", default=".", help="Repo root (must contain .build-loop/state.json)")
@@ -2001,6 +2039,10 @@ def main(argv: list[str] | None = None) -> int:
             "selected execution.started_by_tool, never the current host"
         ),
     )
+    parser.add_argument(
+        "--memory-root",
+        help="Override the canonical memory root for strict terminal closeout/testing",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Classify refs but perform no git operations")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Print result JSON to stdout")
     args = parser.parse_args(argv)
@@ -2025,6 +2067,15 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    if args.strict and result["strict_success"] and not args.dry_run:
+        enforce_terminal_memory_closeout(
+            workdir,
+            result,
+            memory_root=args.memory_root,
+        )
+    else:
+        result["memory_closeout"] = None
 
     # Human summary to stderr
     dr_tag = " [DRY RUN]" if result["dry_run"] else ""

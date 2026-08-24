@@ -60,6 +60,26 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual(state["runs"][0]["run_id"], run_id)
         self.assertEqual(state["runs"][0]["outcome"], "pass")
 
+    def test_git_run_records_exact_head_commit(self) -> None:
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.workdir, check=True,
+                       capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"],
+                       cwd=self.workdir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"],
+                       cwd=self.workdir, check=True)
+        (self.workdir / "README.md").write_text("candidate\n")
+        subprocess.run(["git", "add", "README.md"], cwd=self.workdir, check=True)
+        subprocess.run(["git", "commit", "-m", "candidate"], cwd=self.workdir,
+                       check=True, capture_output=True, text=True)
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.workdir, text=True).strip()
+
+        result = run(self._base_args())
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        record = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(record["commit"], head)
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

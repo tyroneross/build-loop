@@ -134,6 +134,44 @@ def test_stale_after_six_commits(tmp_path: Path) -> None:
     assert "6 commits behind HEAD" in result["message"]
 
 
+def test_stale_output_exposes_missing_run_commit_and_marker(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mem = tmp_path / "memory"
+    _init_repo(repo)
+    baseline = _head_sha(repo)
+    _write_milestone(mem, "repo", baseline)
+    _add_commits(repo, 6)
+    candidate = _head_sha(repo)
+    state = repo / ".build-loop" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"runs": [{
+        "run_id": "bl-run-missing-memory",
+        "date": "2026-08-24T07:45:49Z",
+        "outcome": "pass",
+        "filesTouched": ["lib/brief-data.ts"],
+        "branch_closeout": {"status": "complete"},
+        "createdRefs": [{"status": "closed", "expected_oid": candidate}],
+    }]}))
+
+    result = msc.check(
+        workdir=repo,
+        slug="repo",
+        memory_root=mem,
+        commits_threshold=5,
+    )
+
+    assert result["latest_run_evidence"] == {
+        "run_id": "bl-run-missing-memory",
+        "date": "2026-08-24T07:45:49Z",
+        "outcome": "pass",
+        "commit": candidate,
+        "commit_source": "runs[].createdRefs[].expected_oid",
+        "run_commit_present": False,
+        "branch_closeout_status": "complete",
+        "milestone_owed_marker": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Test: update ledger at HEAD beats older milestone baseline
 # ---------------------------------------------------------------------------
@@ -173,6 +211,83 @@ def test_update_ledger_refreshes_staleness_baseline(tmp_path: Path) -> None:
     assert result["commits_stale"] == 0
     assert result["memory_as_of_commit"] == fresh_sha
     assert result["baseline_source"] == "updates_ledger"
+
+
+def test_fresh_milestone_beats_older_update_ledger(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mem = tmp_path / "memory"
+    _init_repo(repo)
+
+    old_sha = _head_sha(repo)
+    decision_path = mem / "projects" / "repo" / "decisions" / "0001-test.md"
+    decision_path.parent.mkdir(parents=True, exist_ok=True)
+    decision_path.write_text("body\n")
+    mul.append_update(
+        memory_root=mem,
+        project="repo",
+        lane="decisions",
+        action="write",
+        path=decision_path,
+        writer="test",
+        source_workdir=repo,
+        source_commit=old_sha,
+    )
+    _add_commits(repo, 6)
+    fresh_sha = _head_sha(repo)
+    _write_milestone(mem, "repo", fresh_sha)
+
+    result = msc.check(
+        workdir=repo,
+        slug="repo",
+        memory_root=mem,
+        commits_threshold=5,
+    )
+
+    assert result["stale"] is False
+    assert result["commits_stale"] == 0
+    assert result["memory_as_of_commit"] == fresh_sha
+    assert result["baseline_source"] == "milestones"
+
+
+def test_unmerged_descendant_milestone_cannot_mask_reachable_staleness(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mem = tmp_path / "memory"
+    _init_repo(repo)
+    old_main = _head_sha(repo)
+    decision_path = mem / "projects" / "repo" / "decisions" / "0001-test.md"
+    decision_path.parent.mkdir(parents=True, exist_ok=True)
+    decision_path.write_text("body\n")
+    mul.append_update(
+        memory_root=mem,
+        project="repo",
+        lane="decisions",
+        action="write",
+        path=decision_path,
+        writer="test",
+        source_workdir=repo,
+        source_commit=old_main,
+    )
+
+    _git(["checkout", "-b", "feature"], repo)
+    _add_commits(repo, 1)
+    feature_commit = _head_sha(repo)
+    _git(["checkout", "main"], repo)
+    _add_commits(repo, 1)
+    _write_milestone(mem, "repo", feature_commit)
+
+    result = msc.check(
+        workdir=repo,
+        slug="repo",
+        memory_root=mem,
+        commits_threshold=5,
+    )
+
+    assert result["baseline_source"] == "updates_ledger"
+    assert result["memory_as_of_commit"] == old_main
+    assert result["commits_stale"] == 1
+    excluded = next(row for row in result["baseline_candidates"] if row["source"] == "milestones")
+    assert excluded["reachable_from_head"] is False
+    assert excluded["excluded_reason"] == "candidate is not an ancestor of HEAD"
 
 
 # ---------------------------------------------------------------------------

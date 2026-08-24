@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -275,6 +276,16 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
                 if r.get("outcome") == "pass":
                     d["outcome"] = "done"
                 return d
+            if r.get("outcome") == "pass":
+                # An explicit rich append_run record already proved terminal.
+                # A stale top-level phase must not make the Stop hook downgrade
+                # it to a thin partial snapshot; release the identity instead.
+                return {
+                    "action": "skip",
+                    "reason": "terminal append_run record already exists",
+                    "run_id": run_id,
+                    "outcome": "done",
+                }
             if r.get("outcome") == append_run._OUTCOME_MAP[outcome]:
                 # outcome included so run_stop can still release identity when
                 # the already-current record is terminal (e.g. an explicit
@@ -846,19 +857,33 @@ def _sweep_orphan_run(workdir: Path) -> str | None:
     return run_id
 
 
+def _marker_frontmatter(marker: Path) -> dict[str, str]:
+    """Read the small scalar frontmatter used by closeout markers."""
+    fields: dict[str, str] = {}
+    try:
+        lines = marker.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return fields
+    if not lines or lines[0].strip() != "---":
+        return fields
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, sep, value = line.partition(":")
+        if sep and key.strip():
+            fields[key.strip()] = value.strip()
+    return fields
+
+
 def _marker_incomplete(marker: Path) -> bool:
     """Read the marker's ``closeout_incomplete`` frontmatter flag.
 
     f6: an inline run's closeout is OWED until both artifacts exist. Default to
     True (owed) when the flag is absent/unreadable — an older marker predates the
     flag, so treat it as still owed rather than silently complete. Fail-open."""
-    try:
-        for line in marker.read_text(encoding="utf-8", errors="ignore").splitlines():
-            s = line.strip()
-            if s.startswith("closeout_incomplete:"):
-                return s.split(":", 1)[1].strip().lower() != "false"
-    except OSError:
-        return True
+    value = _marker_frontmatter(marker).get("closeout_incomplete")
+    if value is not None:
+        return value.lower() != "false"
     return True
 
 
@@ -897,24 +922,45 @@ def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
         "now in-session (this is the owed judgment the Stop path could not make happen):",
         "",
     ]
+    persistent_owed: set[Path] = set()
     for m in owed:
-        rid = m.stem
+        metadata = _marker_frontmatter(m)
+        rid = metadata.get("run_id") or m.stem
         lines.append(f"  - {rid} (marker: {m.relative_to(workdir)})")
-        lines.append(
-            f"      ACTION: dispatch the `retrospective-synthesizer` agent for {rid} "
-            f"(or run `python3 -m retrospective --workdir . --run-id {rid}` from scripts/), "
-            "then extract durable lessons via `scripts/memory_writer.py`."
-        )
+        if metadata.get("topic") == "milestone-owed":
+            persistent_owed.add(m)
+            commit = metadata.get("commit")
+            if commit:
+                writer = Path(__file__).resolve().parent / "append_milestone.py"
+                lines.append(
+                    "      ACTION: append the missing milestone with "
+                    f"`python3 {shlex.quote(str(writer))} --workdir . --summary '(what shipped)' "
+                    f"--commit {shlex.quote(commit)} --run-id {shlex.quote(rid)}`. "
+                    "This marker remains active until "
+                    "closeout verifies the record or durable queue entry."
+                )
+            else:
+                lines.append(
+                    f"      ACTION: reconcile the exact shipped commit into `runs[].commit` for {rid}, "
+                    "then rerun strict closeout. Do not substitute the repository's current HEAD. "
+                    "This marker remains active until exact record/queue evidence exists."
+                )
+        else:
+            lines.append(
+                f"      ACTION: dispatch the `retrospective-synthesizer` agent for {rid} "
+                f"(or run `python3 -m retrospective --workdir . --run-id {rid}` from scripts/), "
+                "then extract durable lessons via `scripts/memory_writer.py`."
+            )
     out = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n".join(lines),
         }
     }
-    # Archive ALL surfaced markers (owed + complete): the owed ones have now been
-    # prompted; a still-owed run re-marks on its NEXT Stop, so the reminder is not
-    # lost, and completed markers should not linger.
-    return out, all_markers
+    # Inline Stop markers re-mark on the next Stop and can be archived after a
+    # successful prompt. Milestone debt is terminal-run debt: no later Stop will
+    # recreate it, so keep it live until closeout verifies record/queue evidence.
+    return out, [m for m in all_markers if m not in persistent_owed]
 
 
 def _archive_markers(workdir: Path, markers: list[Path]) -> None:
