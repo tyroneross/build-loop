@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Any
 
 from atomic_io import LockedFile, atomic_write_bytes
+from collapse_run import inspect_worktree_safety
+from data_plane import DataPlaneError, check_terminal_manifest
 
 EXPECTED_SCHEMA_VERSION = 1
 MAX_RESULT_FILES = 1_024
@@ -392,6 +394,85 @@ def _branch_is_absent(workdir: Path, raw_branch: Any) -> bool | None:
     return None
 
 
+def _matching_pass_evidence(state: dict, run_id: str, source: str) -> list[str]:
+    runs = state.get("runs")
+    for row in runs if isinstance(runs, list) else []:
+        if (
+            isinstance(row, dict)
+            and _execution_identity(row) == run_id
+            and row.get("outcome") == "pass"
+        ):
+            return [f"{source}.runs records outcome=pass"]
+    return []
+
+
+def _referenced_manifest_is_terminal(workdir: Path, execution: dict) -> bool:
+    if "data_manifest_path" not in execution:
+        return True
+    manifest_value = execution.get("data_manifest_path")
+    if not isinstance(manifest_value, str) or not manifest_value.strip():
+        return False
+    try:
+        manifest = check_terminal_manifest(
+            workdir,
+            manifest_value,
+            expected_run_id=_execution_identity(execution) or "",
+        )
+    except (DataPlaneError, OSError, TypeError, ValueError):
+        return False
+    return bool(manifest.get("ok"))
+
+
+def _run_resources_are_clean_and_integrated(
+    workdir: Path,
+    managed_path: Path | None,
+    raw_branch: Any,
+) -> bool:
+    """Prove surviving source resources contain no work absent from main."""
+    if managed_path is None or _worktree_is_dead(managed_path):
+        return False
+    if not isinstance(raw_branch, str) or not raw_branch.strip():
+        return False
+    branch = raw_branch.strip()
+    safety = inspect_worktree_safety(workdir, str(managed_path), branch)
+    if not safety.get("safe"):
+        return False
+    commands = {
+        "valid_branch": ["git", "check-ref-format", f"refs/heads/{branch}"],
+        "worktree_head": ["git", "-C", str(managed_path), "rev-parse", "HEAD"],
+        "branch_head": ["git", "-C", str(workdir), "rev-parse", f"refs/heads/{branch}"],
+        "main_head": ["git", "-C", str(workdir), "rev-parse", "refs/heads/main"],
+    }
+    results: dict[str, subprocess.CompletedProcess[str]] = {}
+    try:
+        for name, command in commands.items():
+            results[name] = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if any(result.returncode != 0 for result in results.values()):
+        return False
+    worktree_head = results["worktree_head"].stdout.strip()
+    branch_head = results["branch_head"].stdout.strip()
+    main_head = results["main_head"].stdout.strip()
+    if not worktree_head or worktree_head != branch_head or not main_head:
+        return False
+    try:
+        integrated = subprocess.run(
+            ["git", "-C", str(workdir), "merge-base", "--is-ancestor", branch_head, main_head],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return integrated.returncode == 0
+
+
 def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
     """Classify a schema-less crash residue without assuming that old means dead."""
     run_id = _execution_identity(execution)
@@ -402,7 +483,13 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
         "archive_safe": False,
         "evidence": [],
     }
-    if execution.get("schema_version") is not None or crashed_at is None:
+    crash_signal = execution.get("crash_signal")
+    if (
+        execution.get("schema_version") is not None
+        or crashed_at is None
+        or not isinstance(crash_signal, str)
+        or not crash_signal.strip()
+    ):
         return result
 
     if run_id is None:
@@ -435,6 +522,7 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
             return result
 
     evidence = _matching_terminal_evidence(state, run_id, "state")
+    pass_evidence = _matching_pass_evidence(state, run_id, "state")
     path_value = execution.get("run_worktree_path")
     branch_value = execution.get("run_worktree_branch")
     managed_path = _managed_worktree_path(workdir, path_value)
@@ -446,16 +534,30 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
             child_state = None
         if isinstance(child_state, dict):
             evidence.extend(_matching_terminal_evidence(child_state, run_id, "run_worktree.state"))
+            pass_evidence.extend(_matching_pass_evidence(child_state, run_id, "run_worktree.state"))
 
     referenced: list[tuple[str, bool | None]] = []
     if path_value:
         referenced.append(("run worktree", _worktree_is_dead(managed_path) if managed_path else None))
     if branch_value:
         referenced.append(("run branch", _branch_is_absent(workdir, branch_value)))
+    resources_terminal = not referenced
     if referenced and all(is_dead is True for _, is_dead in referenced):
         evidence.append("all referenced run worktree/branch resources are absent or dead")
+        resources_terminal = True
+    elif _run_resources_are_clean_and_integrated(
+        workdir,
+        managed_path,
+        branch_value,
+    ):
+        evidence.append(
+            "durable pass outcome, terminal data manifest, and registered unlocked "
+            "clean worktree at an exact branch tip integrated into main"
+        )
+        resources_terminal = True
 
-    if evidence:
+    manifest_terminal = _referenced_manifest_is_terminal(workdir, execution)
+    if pass_evidence and manifest_terminal and evidence and resources_terminal:
         result.update(
             classification="terminal_legacy_crash",
             archive_safe=True,

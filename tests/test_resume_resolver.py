@@ -40,6 +40,7 @@ def _setup_started_run(tmp_path: Path, *, run_id="run_test_001", queued=("c1", "
 
 def _write_terminal_legacy_crash(tmp_path: Path) -> tuple[Path, dict]:
     """Reproduce the schema-less July crash whose run worktree recorded pass."""
+    _make_git_repo(tmp_path)
     run_id = "bl-20260728T233835Z-codex-092307"
     run_worktree = tmp_path / ".build-loop" / "worktrees" / "run-092307"
     execution = {
@@ -228,8 +229,10 @@ def test_schema_less_crash_with_absent_managed_worktree_is_archivable(tmp_path):
         "execution": {
             "build_loop_id": "bl-dead-legacy",
             "crashed_at": "2026-07-29T01:06:26Z",
+            "crash_signal": "stop_hook",
             "run_worktree_path": str(tmp_path / ".build-loop" / "worktrees" / "gone"),
-        }
+        },
+        "runs": [{"run_id": "bl-dead-legacy", "outcome": "pass"}],
     }))
 
     env = resolve(tmp_path, "")
@@ -237,6 +240,285 @@ def test_schema_less_crash_with_absent_managed_worktree_is_archivable(tmp_path):
     assert env["decision"] == "abort"
     assert env["required_action"] == "archive_legacy_crash"
     assert "absent or dead" in " ".join(env["legacy_crash"]["evidence"])
+
+
+def test_absent_legacy_resources_without_pass_remain_refused(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"execution": {
+        "build_loop_id": "bl-dead-no-pass",
+        "crashed_at": "2026-07-29T01:06:26Z",
+        "crash_signal": "stop_hook",
+        "run_worktree_path": str(tmp_path / ".build-loop" / "worktrees" / "gone"),
+    }}))
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+
+
+@pytest.mark.parametrize("manifest_payload", [None, "missing", "active", "mismatched"])
+def test_absent_legacy_resources_require_terminal_matching_manifest(tmp_path, manifest_payload):
+    run_id = "bl-dead-manifest"
+    manifest_path = tmp_path / ".build-loop" / "data-manifests" / "dead.json"
+    execution = {
+        "build_loop_id": run_id,
+        "crashed_at": "2026-07-29T01:06:26Z",
+        "crash_signal": "stop_hook",
+        "run_worktree_path": str(tmp_path / ".build-loop" / "worktrees" / "gone"),
+        "data_manifest_path": "" if manifest_payload is None else str(manifest_path),
+    }
+    if manifest_payload in {"active", "mismatched"}:
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(json.dumps({
+            "schema_version": 1,
+            "run_id": "another-run" if manifest_payload == "mismatched" else run_id,
+            "repository_path": str(tmp_path),
+            "worktree_path": execution["run_worktree_path"],
+            "branch": "bl/dead-manifest",
+            "data_root": str(tmp_path / ".build-loop" / "data" / run_id),
+            "created_at": "2026-07-29T00:00:00Z",
+            "surfaces": [{
+                "id": "production",
+                "kind": "postgresql",
+                "resource_key": "postgresql:production",
+                "writable": True,
+                "isolation": "shared_serialized",
+                "authority": "canonical",
+                "status": "active",
+                "writer": "fixture",
+            }],
+        }))
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{"run_id": run_id, "outcome": "pass"}],
+    }))
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+
+
+def test_identified_legacy_residue_without_crash_signal_remains_refused(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "execution": {
+            "build_loop_id": "bl-no-signal",
+            "crashed_at": "2026-07-29T01:06:26Z",
+        },
+        "runs": [{"run_id": "bl-no-signal", "outcome": "pass"}],
+    }))
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+
+
+def _write_surviving_legacy_run(
+    tmp_path: Path,
+    *,
+    merge_to_main: bool,
+    outcome: str | None = "pass",
+    manifest_status: str | None = "closed",
+) -> tuple[Path, Path, dict]:
+    """Create a real managed worktree whose run branch may be integrated."""
+    _make_git_repo(tmp_path)
+    (tmp_path / "base.txt").write_text("base\n")
+    subprocess.check_call(["git", "add", "base.txt"], cwd=tmp_path)
+    subprocess.check_call(["git", "commit", "-qm", "base"], cwd=tmp_path)
+    subprocess.check_call(["git", "branch", "-M", "main"], cwd=tmp_path)
+    run_worktree = tmp_path / ".build-loop" / "worktrees" / "run-surviving"
+    run_worktree.parent.mkdir(parents=True)
+    subprocess.check_call(
+        ["git", "worktree", "add", "-qb", "bl/run-surviving", str(run_worktree)],
+        cwd=tmp_path,
+    )
+    (run_worktree / "result.txt").write_text("done\n")
+    subprocess.check_call(["git", "add", "result.txt"], cwd=run_worktree)
+    subprocess.check_call(["git", "commit", "-qm", "run result"], cwd=run_worktree)
+    if merge_to_main:
+        subprocess.check_call(["git", "merge", "--ff-only", "bl/run-surviving"], cwd=tmp_path)
+    execution = {
+        "build_loop_id": "bl-surviving-legacy",
+        "crash_signal": "stop_hook",
+        "crashed_at": "2026-07-29T01:06:26Z",
+        "run_worktree_path": str(run_worktree),
+        "run_worktree_branch": "bl/run-surviving",
+    }
+    if manifest_status is not None:
+        manifest_path = tmp_path / ".build-loop" / "data-manifests" / "surviving.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        data_root = tmp_path / ".build-loop" / "data" / execution["build_loop_id"]
+        manifest_path.write_text(json.dumps({
+            "schema_version": 1,
+            "run_id": execution["build_loop_id"],
+            "repository_path": str(tmp_path),
+            "worktree_path": str(run_worktree),
+            "branch": execution["run_worktree_branch"],
+            "data_root": str(data_root),
+            "created_at": "2026-07-29T00:00:00Z",
+            "surfaces": [{
+                "id": "fixture",
+                "kind": "filesystem",
+                "resource_key": "fixture:surviving",
+                "writable": True,
+                "isolation": "shared_serialized",
+                "authority": "derived",
+                "status": manifest_status,
+                "writer": "fixture",
+            }],
+        }))
+        execution["data_manifest_path"] = str(manifest_path)
+    state_path = tmp_path / ".build-loop" / "state.json"
+    runs = [] if outcome is None else [{"run_id": execution["build_loop_id"], "outcome": outcome}]
+    state_path.write_text(json.dumps({"execution": execution, "runs": runs}))
+    return state_path, run_worktree, execution
+
+
+def test_schema_less_crash_with_clean_integrated_worktree_is_archivable(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+
+    env = resolve(tmp_path, "")
+    apply_env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["required_action"] == "archive_legacy_crash"
+    assert "integrated into main" in " ".join(env["legacy_crash"]["evidence"])
+    assert apply_env["decision"] == "fresh"
+    assert apply_env["archive_applied"] is True
+    assert json.loads(state_path.read_text())["historicalExecutions"][-1] == execution
+
+
+def test_schema_less_crash_with_dirty_integrated_worktree_remains_refused(tmp_path):
+    state_path, run_worktree, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    (run_worktree / "result.txt").write_text("uncommitted\n")
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_clean_unmerged_worktree_remains_refused(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=False)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+@pytest.mark.parametrize("outcome", [None, "partial", "fail"])
+def test_schema_less_crash_without_durable_pass_remains_refused(tmp_path, outcome):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome=outcome,
+    )
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+@pytest.mark.parametrize("manifest_status", ["active", "error", "deferred"])
+def test_schema_less_crash_with_nonterminal_data_manifest_remains_refused(tmp_path, manifest_status):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        manifest_status=manifest_status,
+    )
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_missing_data_manifest_remains_refused(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    Path(execution["data_manifest_path"]).unlink()
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_mismatched_data_manifest_remains_refused(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    manifest_path = Path(execution["data_manifest_path"])
+    manifest = json.loads(manifest_path.read_text())
+    manifest["run_id"] = "another-run"
+    manifest_path.write_text(json.dumps(manifest))
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_locked_worktree_remains_refused(tmp_path):
+    state_path, run_worktree, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    subprocess.check_call(["git", "worktree", "lock", str(run_worktree)], cwd=tmp_path)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_live_worktree_owner_remains_refused(tmp_path, monkeypatch):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    monkeypatch.setattr(
+        resume_resolver,
+        "inspect_worktree_safety",
+        lambda *_args, **_kwargs: {"safe": False, "reason": "live process cwd is inside worktree"},
+    )
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_integrated_only_into_non_main_head_remains_refused(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=False)
+    subprocess.check_call(["git", "checkout", "-qb", "feature-descendant"], cwd=tmp_path)
+    subprocess.check_call(["git", "merge", "--ff-only", "bl/run-surviving"], cwd=tmp_path)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_schema_less_crash_with_moved_branch_ref_remains_refused(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(tmp_path, merge_to_main=True)
+    main_head = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=tmp_path, text=True).strip()
+    subprocess.check_call(["git", "update-ref", "refs/heads/bl/run-surviving", main_head], cwd=tmp_path)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
 
 
 def _write_identity_less_crash(tmp_path: Path, **extra) -> Path:
