@@ -238,6 +238,34 @@ class PromptingProfileEnvelope(unittest.TestCase):
         self.assertTrue(anthropic["resolved"])
         self.assertTrue(openai["resolved"])
 
+    def test_openai_effort_matches_the_verified_task_shape(self):
+        cases = {
+            "implementer": ("gpt-5.6-terra", "high"),
+            "mock-scanner": ("gpt-5.6-luna", "medium"),
+            "scope-auditor": ("gpt-5.6-sol", "medium"),
+            "security-reviewer": ("gpt-5.6-sol", "high"),
+        }
+        for agent, (model, effort) in cases.items():
+            with self.subTest(agent=agent):
+                env = ram.resolve(agent=agent, workdir=HERE.parent, host_providers={"openai"})
+                self.assertEqual(env["model"], model)
+                self.assertEqual(env["preferred_effort"], effort)
+                self.assertEqual(env["effort_guidance"]["preferred"], effort)
+                self.assertIn("telemetry", env["effort_guidance"])
+
+    def test_anthropic_effort_matches_model_support(self):
+        cases = {
+            "implementer": ("sonnet", "high", True),
+            "security-reviewer": ("opus", "high", True),
+            "mock-scanner": ("haiku", None, False),
+        }
+        for agent, (model, effort, supported) in cases.items():
+            with self.subTest(agent=agent):
+                env = ram.resolve(agent=agent, workdir=HERE.parent, host_providers={"anthropic"})
+                self.assertEqual(env["model"], model)
+                self.assertEqual(env["preferred_effort"], effort)
+                self.assertEqual(env["effort_guidance"]["supported"], supported)
+
     def test_inherit_agent_carries_no_profile(self):
         env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
         self.assertEqual(env["source"], "inherit")
@@ -278,6 +306,7 @@ class EnvelopeRegression(unittest.TestCase):
         self.assertIn("prompting_profile", env)
         self.assertIn("preferred_models", env)
         self.assertIn("preferred_effort", env)
+        self.assertIn("effort_guidance", env)
         self.assertIn("resolved", env)
 
     def test_plain_output_is_still_only_the_model_id(self):

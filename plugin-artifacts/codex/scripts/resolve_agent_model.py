@@ -125,7 +125,8 @@ def resolve(
     """Resolve ``agent``'s frontmatter role to a dispatch model.
 
     Returns ``{agent, segment, tier, model, preferred_models,
-    preferred_effort, resolved, source, resolution_path, prompting_profile}``.
+    preferred_effort, effort_guidance, resolved, source, resolution_path,
+    prompting_profile}``.
     ``source`` is one of: ``inherit``, ``role-preferred`` /
     ``role-tier-fallback`` (passed through from ``resolve_role``),
     ``frontmatter-fallback``, ``tier-default-fallback``, ``unresolved``.
@@ -152,6 +153,7 @@ def resolve(
             "prompting_profile": None,
             "preferred_models": [],
             "preferred_effort": None,
+            "effort_guidance": None,
             "resolved": True,
         }
 
@@ -186,6 +188,7 @@ def resolve(
                     "prompting_profile": model_taxonomy.prompting_profile(tier),
                     "preferred_models": env.get("preferred_models", []),
                     "preferred_effort": env.get("preferred_effort"),
+                    "effort_guidance": env.get("effort_guidance"),
                     "resolved": env.get("resolved", True),
                 }
     else:
@@ -203,7 +206,8 @@ def resolve(
             "resolution_path": resolution_path,
             "prompting_profile": model_taxonomy.prompting_profile(tier),
             "preferred_models": [fm_model],
-            "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+            "preferred_effort": model_taxonomy.preferred_effort(segment, tier, fm_model),
+            "effort_guidance": model_taxonomy.effort_guidance(segment, tier, fm_model),
             "resolved": True,
         }
 
@@ -221,7 +225,8 @@ def resolve(
                 "resolution_path": resolution_path,
                 "prompting_profile": model_taxonomy.prompting_profile(tier),
                 "preferred_models": [default],
-                "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+                "preferred_effort": model_taxonomy.preferred_effort(segment, tier, default),
+                "effort_guidance": model_taxonomy.effort_guidance(segment, tier, default),
                 "resolved": True,
             }
 
@@ -236,6 +241,7 @@ def resolve(
         "prompting_profile": model_taxonomy.prompting_profile(tier),
         "preferred_models": [],
         "preferred_effort": model_taxonomy.preferred_effort(segment, tier),
+        "effort_guidance": model_taxonomy.effort_guidance(segment, tier),
         "resolved": False,
     }
 

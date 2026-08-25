@@ -342,13 +342,20 @@ def prompting_profile(tier: str | None) -> dict[str, Any] | None:
     return dict(entry) if isinstance(entry, dict) else None
 
 
-def preferred_effort(segment: str | None, tier: str | None) -> str | None:
+def preferred_effort(
+    segment: str | None, tier: str | None, model_id: str | None = None
+) -> str | None:
     """Return the advisory effort for a ``(segment, tier)`` role, if set.
 
     Explicit dispatch effort remains authoritative. The taxonomy intentionally
     keeps this map sparse so an absent entry preserves the caller's existing
     default instead of inventing a global effort policy.
     """
+    if model_id:
+        by_model = _load().get("execution_profiles", {}).get("preferred_effort_by_model", {})
+        model_value = by_model.get(model_id) if isinstance(by_model, dict) else None
+        if isinstance(model_value, str) and model_value:
+            return model_value
     if not segment or not tier:
         return None
     try:
@@ -359,6 +366,28 @@ def preferred_effort(segment: str | None, tier: str | None) -> str | None:
     segment_map = by_segment.get(segment, {}) if isinstance(by_segment, dict) else {}
     value = segment_map.get(rung) if isinstance(segment_map, dict) else None
     return value if isinstance(value, str) and value else None
+
+
+def effort_guidance(
+    segment: str | None, tier: str | None, model_id: str | None = None
+) -> dict[str, Any]:
+    """Return the advisory effort envelope for a ``(segment, tier)`` role.
+
+    The envelope carries the selected baseline plus the global escalation rules
+    consumers must preserve. It remains advisory because the dispatch host may
+    not support every effort setting; explicit per-dispatch effort still wins.
+    """
+    raw = _load().get("execution_profiles", {}).get("effort_policy", {})
+    policy = raw if isinstance(raw, dict) else {}
+    raw_support = _load().get("execution_profiles", {}).get("effort_support_by_model", {})
+    support = raw_support.get(model_id) if model_id and isinstance(raw_support, dict) else None
+    return {
+        "preferred": preferred_effort(segment, tier, model_id),
+        "supported": support if isinstance(support, bool) else None,
+        "xhigh": policy.get("xhigh") if isinstance(policy.get("xhigh"), str) else None,
+        "max": policy.get("max") if isinstance(policy.get("max"), str) else None,
+        "telemetry": policy.get("telemetry") if isinstance(policy.get("telemetry"), str) else None,
+    }
 
 
 def unprofiled_tiers(taxonomy: dict[str, Any] | None = None) -> list[str]:

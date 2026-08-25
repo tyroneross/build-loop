@@ -664,7 +664,8 @@ class ResolveRoleTests(unittest.TestCase):
             )
             self.assertEqual(r["model"], "sonnet")
             self.assertEqual(r["preferred_models"], ["sonnet"])
-            self.assertEqual(r["preferred_effort"], None)
+            self.assertEqual(r["preferred_effort"], "high")
+            self.assertEqual(r["effort_guidance"]["preferred"], "high")
             self.assertTrue(r["resolved"])
 
     def test_agentic_code_preferences_are_host_filtered_and_high_effort(self) -> None:

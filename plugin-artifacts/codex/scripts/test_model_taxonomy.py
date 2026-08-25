@@ -141,6 +141,25 @@ class TaxonomyTests(unittest.TestCase):
             self.mt.preferred_effort("agentic_execution", "T3"), "high"
         )
 
+    def test_gpt_routing_effort_policy_covers_execution_and_verification(self) -> None:
+        self.assertEqual(
+            self.mt.preferred_effort("agentic_execution", "T4", "gpt-5.6-luna"), "medium"
+        )
+        self.assertEqual(self.mt.preferred_effort("governance_evaluation", "T1"), "high")
+        self.assertEqual(self.mt.preferred_effort("governance_evaluation", "T2"), "medium")
+        guidance = self.mt.effort_guidance("governance_evaluation", "T1")
+        self.assertEqual(guidance["preferred"], "high")
+        self.assertIn("verifier", guidance["xhigh"] or "")
+        self.assertIn("controlled evaluation", guidance["max"] or "")
+
+    def test_claude_effort_policy_respects_haiku_capability(self) -> None:
+        self.assertEqual(self.mt.preferred_effort("agentic_execution", "T3", "sonnet"), "high")
+        self.assertEqual(self.mt.preferred_effort("governance_evaluation", "T1", "opus"), "high")
+        self.assertTrue(self.mt.effort_guidance("agentic_execution", "T3", "sonnet")["supported"])
+        haiku = self.mt.effort_guidance("governance_evaluation", "T4", "haiku")
+        self.assertIsNone(haiku["preferred"])
+        self.assertFalse(haiku["supported"])
+
     def test_effort_policy_is_sparse_and_fail_open(self) -> None:
         self.assertIsNone(
             self.mt.preferred_effort("governance_evaluation", "code")

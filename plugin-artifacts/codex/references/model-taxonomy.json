@@ -218,11 +218,39 @@
     }
   },
   "execution_profiles": {
-    "_comment": "Advisory dispatch preferences keyed by role. Explicit per-dispatch effort still wins. Keep this sparse: only encode defaults backed by an intentional policy decision.",
+    "_comment": "Advisory dispatch preferences keyed by role. Explicit per-dispatch effort still wins. Keep this sparse: only encode defaults backed by an intentional policy decision. The effort_policy guards against spending more reasoning tokens without a measured quality gain.",
     "preferred_effort": {
       "agentic_execution": {
+        "T2": "high",
         "T3": "high"
+      },
+      "generative_reasoning": {
+        "T3": "high"
+      },
+      "governance_evaluation": {
+        "T1": "high",
+        "T2": "medium"
       }
+    },
+    "preferred_effort_by_model": {
+      "fable": "high",
+      "opus": "high",
+      "sonnet": "high",
+      "gpt-5.6-luna": "medium"
+    },
+    "effort_support_by_model": {
+      "fable": true,
+      "opus": true,
+      "sonnet": true,
+      "haiku": false,
+      "gpt-5.6-sol": true,
+      "gpt-5.6-terra": true,
+      "gpt-5.6-luna": true
+    },
+    "effort_policy": {
+      "xhigh": "Use only after a verifier establishes that the preferred effort missed the task's quality bar; record the miss and outcome.",
+      "max": "Use only for quality-first work after a controlled evaluation shows a material gain over high or xhigh; record the comparison.",
+      "telemetry": "Capture requested and actual model, effort, token usage, timing, verifier verdict, escaped defects, and rework before changing this policy."
     }
   },
   "preferred": {

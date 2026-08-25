@@ -69,6 +69,8 @@ Keep this separate from host-agent reachability. A Groq catalog entry does not b
 - **Terra** is approved for ordinary orchestration, bounded implementation, domain assessment, advisory review, and Learn drafting. It is the Codex default for `build-orchestrator`, `assessment-orchestrator`, and `implementer`.
 - **Luna** is approved for bounded recognition agents: `mock-scanner`, `recurring-pattern-detector`, and `transcript-pattern-miner`. Prefer a deterministic script when the rule is fully expressible.
 - Start bounded coding and execution at Terra `high`; this is an advisory default and explicit per-dispatch effort remains valid. Start Luna at `low|medium` and Sol at `medium` (`high` for adversarial/security verdicts). Use `xhigh` only after evidence of a miss; reserve `max` and Ultra for rare cases with justified consequence or meaningful independent streams.
+- The live resolver returns `preferred_effort` and `effort_guidance` with every agent resolution. Dispatchers must record requested versus actual effort and the verifier result before promoting a workload to `xhigh` or `max`.
+- **Claude:** Sonnet, Opus, and Fable start at `high`; step to `xhigh` only after a verifier records a quality miss, then evaluate `max` only when the added quality warrants it. Haiku exposes no effort control, so keep it on bounded recognition work and escalate the model rather than inventing an effort retry.
 - Escalate Luna→Terra when rule application appears; Terra→Sol when ambiguity, high consequence, or repeated verified failure appears. Model size never weakens least privilege, confirmation, sandboxing, or independent verification.
 
 Source: OpenAI GPT-5.6 System Card (2026-07-09), retained in build-loop-memory with the full PDF and routing extract.

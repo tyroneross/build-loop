@@ -490,7 +490,8 @@ def _with_preferences(
     env["preferred_models"] = _preferred_models(
         segment=segment, tier=tier, host_providers=host_providers
     )
-    env["preferred_effort"] = model_taxonomy.preferred_effort(segment, tier)
+    env["preferred_effort"] = model_taxonomy.preferred_effort(segment, tier, selected)
+    env["effort_guidance"] = model_taxonomy.effort_guidance(segment, tier, selected)
     env["resolved"] = bool(selected) and selected not in unavailable
     return env
 
