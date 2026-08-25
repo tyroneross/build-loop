@@ -41,13 +41,32 @@ Claude Code enforces this through a PreToolUse hook. Codex and other hosts follo
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Rally is coordination metadata, not verification evidence: use it to discover peers, claims, handoffs, and soft file conflicts; confirm code/package/release truth from the repo, tests, manifests, registries, or GitHub directly.
 
 ```bash
-BASE_TOOL="${BUILD_LOOP_RALLY_TOOL:-codex}"  # set to this host family
-RALLY_SESSION_ID="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --field session-id)"
-export RALLY_SESSION_ID
-RALLY_TOOL="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --session-id "$RALLY_SESSION_ID")"
-rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --json
-rally next --tool "$RALLY_TOOL" --json
-rally room --tool "$RALLY_TOOL" --json
+# Rally takes an exclusive lock on .rally/direct.owner.lock for EVERY command,
+# including the read-only ones. Under a read-only sandbox (`codex exec --sandbox
+# read-only`, a hardened CI runner) that open fails EPERM and all three commands
+# below emit a JSON error. Coordination is optional, so check first and skip
+# cleanly rather than opening a session with three failures in the log.
+_rally_writable() {
+  local root="$PWD" d="$PWD/.rally"
+  if [ -d "$d" ]; then [ -w "$d" ] || return 1
+  else [ -w "$root" ] || return 1; mkdir -p "$d" 2>/dev/null || return 1
+  fi
+  ( : > "$d/.writetest.$$" ) 2>/dev/null || return 1   # mode bits lie under seatbelt; prove it
+  rm -f "$d/.writetest.$$" 2>/dev/null
+}
+
+if _rally_writable; then
+  BASE_TOOL="${BUILD_LOOP_RALLY_TOOL:-codex}"  # set to this host family
+  RALLY_SESSION_ID="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --field session-id)"
+  export RALLY_SESSION_ID
+  RALLY_TOOL="$(python3 scripts/rally_point/actor_identity.py --tool "$BASE_TOOL" --session-id "$RALLY_SESSION_ID")"
+  rally enter --tool "$RALLY_TOOL" --session-id "$RALLY_SESSION_ID" --json
+  rally next --tool "$RALLY_TOOL" --json
+  rally room --tool "$RALLY_TOOL" --json
+else
+  echo "[build-loop] rally preflight skipped: .rally is not writable (read-only sandbox)." >&2
+  echo "[build-loop] You have NO peer/claim visibility this session. Treat every file as possibly claimed by a peer, and do not assume you are alone." >&2
+fi
 ```
 
 The command surface is **host-neutral**. Set `BASE_TOOL` to the host family (`codex`, `cursor`, `gemini`, `claude_code`, or `other`); `RALLY_TOOL` is the session-qualified native actor. Never use the bare family as a native Rally actor because two same-host sessions would collapse into one squad, claim owner, and reader cursor. Build Loop's local fallback deliberately keeps the base tool plus its separate session id. If `rally --help` on the local machine disagrees with an older instruction, follow the live CLI help and record the docs drift.
