@@ -8,6 +8,39 @@
  * File-based storage for simplicity and portability.
  * Now supports configurable paths (local or shared mode).
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -50,7 +83,7 @@ exports.getOutcomeStats = getOutcomeStats;
 const promises_1 = __importDefault(require("fs/promises"));
 const path_1 = __importDefault(require("path"));
 const config_1 = require("./config");
-const interactive_verifier_1 = require("./interactive-verifier");
+const quality_1 = require("./quality");
 const logger_1 = require("./logger");
 /**
  * Store an incident in memory
@@ -60,11 +93,12 @@ async function storeIncident(incident, options = {}) {
         let finalIncident = incident;
         // Use interactive mode if requested
         if (options.interactive) {
-            finalIncident = await (0, interactive_verifier_1.buildIncidentInteractive)(incident);
+            const { buildIncidentInteractive } = await Promise.resolve().then(() => __importStar(require('./interactive-verifier')));
+            finalIncident = await buildIncidentInteractive(incident);
         }
         // Calculate quality score if not already set
         if (!finalIncident.completeness?.quality_score) {
-            const qualityScore = (0, interactive_verifier_1.calculateQualityScore)(finalIncident);
+            const qualityScore = (0, quality_1.calculateQualityScore)(finalIncident);
             if (!finalIncident.completeness) {
                 finalIncident.completeness = {
                     symptom: !!finalIncident.symptom && finalIncident.symptom.length >= 20,

@@ -1,5 +1,11 @@
 # Memory Setup
 
+Debugging incidents use a separate repo-local structured store at
+`<repo>/.claude/memory/`. Build Loop's bundled `build-loop-debugger` command
+owns both reads and writes to that location. The consolidated memory tree
+described below remains the durable lessons, decisions, and project-memory
+store; `.build-loop/issues/` remains an unresolved-work lane.
+
 Build-loop's advisory judges and the Phase 1 Assess memory-load step read from
 one consolidated tree. The root (`<memory-root>` below) is resolved by
 `scripts/_paths.memory_store_root()`:

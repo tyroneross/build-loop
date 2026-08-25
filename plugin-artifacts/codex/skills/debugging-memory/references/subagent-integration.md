@@ -64,7 +64,7 @@ Skill("build-loop:debugging-memory") with input { op: "search", symptom: "<sympt
 - Low/no match (<40%): Investigate fresh, document afterward
 
 **After fixing a bug:**
-Write an incident note to `.build-loop/issues/INC_YYYYMMDD_HHMMSS_xxxx.md`
+Return the verified incident fields to the parent. The parent invokes `build-loop:debugging-memory` with `{ op: "store", ... }`, which writes `.claude/memory/incidents/<incident-id>.json`.
 
 This ensures fixes are remembered for future similar issues.
 ```

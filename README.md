@@ -130,6 +130,8 @@ python3 scripts/install_memory.py --ensure-project build-loop
 
 Debugging is also auto-invoked by the loop itself on a review failure. The former mode and utility commands (`debug`, `research-run`, `test`, `self-improve`, `debugger*`, `assess`) are now internal, reached by intent rather than as separate commands.
 
+Build Loop includes the Coding Debugger core natively. The loop searches before investigation and stores verified fixes afterward through `bin/build-loop-debugger.js`; both operations use the existing project-local `.claude/memory/` structured store. The standalone debugger package and MCP server are not required.
+
 ## Host surfaces
 
 The repo ships three agent surfaces from one source:

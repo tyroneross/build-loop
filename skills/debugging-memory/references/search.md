@@ -1,140 +1,52 @@
-<!-- PROVENANCE: op=search reference for `build-loop:debugging-memory` (ADR-01 op-routing). Folded from skills/debugging/memory/SKILL.md (former skill name build-loop:debugging-memory-search, v0.1.0) on 2026-07-02, pool-consolidation Inc 5. Drift-check vs upstream retired (native, adapted; no canonical upstream). Former provenance for record: source=claude-code-debugger/skills/debugging-memory/SKILL.md source_hash=5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d -->
+<!-- PROVENANCE: op=search reference for build-loop:debugging-memory. Native core refreshed from @tyroneross/claude-code-debugger v1.9.0 at 74cc2cc96ce7c212a81d41b85143dc1fc9094bc3 on 2026-08-25. -->
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# Debugging Memory Workflow (Native, Sourced)
+# Native Debugging Memory Search
 
-Memory-first debugging. Core principle: **never solve the same bug twice**. Native to build-loop; initially adapted from the debugger workflow lineage. Search local `.build-loop/issues/` first, then use standalone Coding Debugger for cross-project memory only when that plugin is installed.
+Build Loop owns this debugger. It does not require the standalone Coding Debugger package or MCP server. Search and store both use the project's structured `.claude/memory/` root.
 
-> **Op-routing note**: this is the `op: "search"` reference for `build-loop:debugging-memory` — the memory LOOKUP step. Callers invoke `Skill("build-loop:debugging-memory") with input { op: "search", symptom, domain? }`; this file holds the lookup procedure the workflow delegates to (ADR-01).
+## Invoke
 
-## When to Activate
+Before investigating a bug, run:
 
-- Phase 1 Assess: pull recent project incident context for orientation (`list-recent` intent)
-- Phase 4 Review-B Validate: on every criterion failure with an error-like signal — read logs first, synthesize symptom, search memory
-- Phase 5 Iterate: at the start of every Iterate attempt, re-search with the new symptom (failure may have shifted shape after a fix)
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/build-loop-debugger.js" search "<symptom>" \
+  --threshold 0.6 --workdir "$PWD"
+```
 
-## Memory-First Approach
+The command returns JSON with `memory_root`, `debugger_core_version`, and a verdict:
 
-Before investigating any bug, check debugging memory with the symptom description.
+- `KNOWN_FIX`: direct-apply only if the strict gate passes.
+- `LIKELY_MATCH`: use the incident as a hypothesis and run the normal fix loop.
+- `WEAK_SIGNAL`: consider the result, but investigate fresh.
+- `NO_MATCH`: investigate fresh and store the verified result afterward.
 
-The search returns a **verdict** with matching incidents and patterns when structured memory is available. File-backed fallback returns a degraded local verdict with the same action shape.
+## Strict direct-apply gate
 
-**Verdict-based decision tree:**
+All three checks must pass:
 
-1. **KNOWN_FIX**: Apply the documented fix directly only when the strict direct-apply gate (below) passes; otherwise adapt the prior incident as a hypothesis and route to the standard fix flow
-2. **LIKELY_MATCH**: Review the past incident, use it as a starting point — never direct-apply
-3. **WEAK_SIGNAL**: Consider loosely related incidents, but investigate fresh
-4. **NO_MATCH**: Proceed with standard debugging via `build-loop:debug-loop`, then document the solution after
+1. At least one recorded file exists at the same relative path.
+2. Recorded dependency versions match the current project within minor version. Missing version evidence fails this check.
+3. A second signal matches: error class, callsite, or a corroborating log entry.
 
-### Direct-apply gate (KNOWN_FIX only)
+React-hook, performance, and "increase a limit" fixes never direct-apply because they are context-sensitive.
 
-All three must pass — otherwise downgrade to adapted-plan routing and record `direct_apply_blocked_by`:
+## Retrieval depth
 
-1. **file_match**: at least one file in the prior incident's `files_changed` exists in current repo at same relative path
-2. **version_match**: dependency versions in the prior incident match current within minor (semver). If the prior incident's `tags` include a version, compare it to current `package.json`/`requirements.txt`/etc.
-3. **second_signal**: at least one secondary signal — same error class, same callsite line range, or same component layer
+The initial search returns compact matches. Load a full incident only when needed:
 
-Skip direct-apply for any pattern with category `react-hooks`, `performance`, or anything where the fix is "increase value X" — those are context-sensitive.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/build-loop-debugger.js" detail <INC_ID> --workdir "$PWD"
+```
 
-## Progressive Depth Retrieval
+Announce the search and report whether it found a match. Store the verified outcome through the same native command described in `store.md`.
 
-1. **Initial search**: local build-loop incident lookup; if standalone Coding Debugger is available, use its `search` tool for cross-project matches
-2. **Drill down**: read the local issue file or, for Coding Debugger matches, use `detail` with the ID
-3. **Outcome tracking**: for Coding Debugger matches, use `outcome` to record whether the fix worked
+## Lifecycle
 
-## Visibility
+- Phase 1 Assess: search for relevant project incidents.
+- Review-B failure: search the exact current error before changing code.
+- Each Iterate attempt: search again if the symptom changes.
+- Review-F: store every newly resolved, verified incident.
 
-When this skill activates, always announce it to the user:
-
-1. **Before searching**: "Checking debugging memory for similar issues..."
-2. **After search**: "Found X matching incident(s) from past debugging sessions" or "No matching incidents — starting fresh investigation"
-
-## Deep Investigation Mode
-
-For non-trivial issues, escalate to the `build-loop:debug-loop` skill. Trigger is the **verdict category**, not a numeric confidence score:
-
-- **`KNOWN_FIX`** → apply directly, skip the loop
-- **`LIKELY_MATCH`** → enter debug loop (past incidents need verification against current context)
-- **`WEAK_SIGNAL`** → enter debug loop (loosely related, fresh investigation needed)
-- **`NO_MATCH`** → enter debug loop (no prior knowledge)
-
-Also enter the debug loop when:
-- Initial diagnosis feels superficial
-- Previous fix didn't hold
-- User explicitly asks for root-cause analysis
-- Multiple symptoms suggest a shared cause
-
-## Basic Steps (simple, clear-cut issues)
-
-1. **Reproduce** — exact steps, environmental factors, minimal repro
-2. **Isolate** — binary search recent changes, disable components, check logs
-3. **Diagnose** — trace execution, examine state, identify offending code
-4. **Fix** — minimal, targeted, no side effects
-5. **Verify** — original repro, related tests, regression check
-
-## Incident Documentation
-
-After fixing a bug, store via `build-loop:debugging-memory` `{op:"store"}`. Required fields: `symptom`, `root_cause`, `fix`. Optional: `category`, `tags`, `files_changed`, `file`.
-
-## Quality Indicators
-
-The memory system scores incidents on:
-- Root cause analysis depth (30%)
-- Fix documentation completeness (30%)
-- Verification status (20%)
-- Tags and metadata (20%)
-
-Target 75%+ quality score for effective future retrieval.
-
-## Tagging Strategy
-
-- Technology: `react`, `typescript`, `api`, `database`
-- Category: `logic`, `config`, `dependency`, `performance`
-- Symptom type: `crash`, `render`, `timeout`, `validation`
-
-## Pattern Recognition
-
-The memory system extracts patterns when 3+ similar incidents exist. Patterns have higher reliability than individual incidents. When a pattern matches, trust the solution template (90%+ confidence), apply the recommended approach, note caveats.
-
-## Optional Coding Debugger Tools
-
-| Tool | Purpose |
-|------|---------|
-| `search` | Search memory for similar bugs (returns verdict) |
-| `store` | Store a new debugging incident |
-| `detail` | Get full incident or pattern details |
-| `status` | Show memory statistics |
-| `list` | List recent incidents |
-| `patterns` | List known fix patterns |
-| `outcome` | Record whether a fix worked |
-
-Use these only when standalone Coding Debugger is installed. Build-loop does not register these MCP tools itself.
-
-## Review-F Outcome Feedback
-
-Closes the memory-first gate's feedback loop. Both required:
-
-- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-memory` `{op:"store"}` with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
-- For each Review-B memory gate where standalone Coding Debugger supplied a prior `KNOWN_FIX` or `LIKELY_MATCH`: invoke its `outcome` tool with `{incident_id, result: "worked"|"failed"|"modified", notes}` — this trains the optional verdict classifier
-
-Skipping `outcome` means the optional verdict classifier never improves.
-
-## Subagent Integration
-
-When debugging involves subagents:
-
-1. **Pre-query memory once** through `build-loop:debugging-memory` before spawning agents
-2. **Distribute context** — each agent gets relevant subset
-3. **Aggregate findings** — collect insights from all agents
-4. **Store unified incident** — single `build-loop:debugging-memory` `{op:"store"}` call to document combined diagnosis
-
-Subagents do not inherit Skill or MCP access — pre-load context into their prompt.
-
-## Sibling Skills
-
-- `build-loop:debugging-memory` `{op:"store"}` — write incident after fix
-- `build-loop:debugging-memory` `{op:"assess"}` — parallel domain assessment for multi-domain symptoms
-- `build-loop:debug-loop` — iterative root-cause analysis with causal-tree investigation
-
-*Source: adapted from the debugger workflow lineage and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*
+`.build-loop/issues/` remains the executable/open-issue lane. Do not write resolved debugger history there.

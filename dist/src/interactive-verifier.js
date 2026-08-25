@@ -11,10 +11,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateQualityFeedback = exports.calculateQualityScore = void 0;
 exports.buildIncidentInteractive = buildIncidentInteractive;
-exports.calculateQualityScore = calculateQualityScore;
-exports.generateQualityFeedback = generateQualityFeedback;
 const prompts_1 = __importDefault(require("prompts"));
+const quality_1 = require("./quality");
+var quality_2 = require("./quality");
+Object.defineProperty(exports, "calculateQualityScore", { enumerable: true, get: function () { return quality_2.calculateQualityScore; } });
+Object.defineProperty(exports, "generateQualityFeedback", { enumerable: true, get: function () { return quality_2.generateQualityFeedback; } });
 /**
  * Build a complete incident using interactive prompts
  */
@@ -36,7 +39,7 @@ async function buildIncidentInteractive(baseIncident) {
         incident.files_changed = await collectFilesChanged();
     }
     // 6. Calculate quality score
-    const qualityScore = calculateQualityScore(incident);
+    const qualityScore = (0, quality_1.calculateQualityScore)(incident);
     // Update completeness
     incident.completeness = {
         symptom: !!incident.symptom && incident.symptom.length >= 20,
@@ -321,115 +324,5 @@ async function collectFilesChanged() {
         format: (val) => val.split(',').map((f) => f.trim()).filter(Boolean)
     });
     return files || [];
-}
-/**
- * Calculate overall quality score for an incident
- *
- * Scoring rubric:
- * - Root cause analysis: 30% (description length + confidence)
- * - Fix details: 30% (approach + changes documented)
- * - Verification: 20% (verification status)
- * - Documentation: 20% (tags + prevention advice)
- */
-function calculateQualityScore(incident) {
-    let score = 0.0;
-    // Root cause analysis (0.3 max)
-    if (incident.root_cause) {
-        // Description quality (0.15 max)
-        const descLength = incident.root_cause.description?.length || 0;
-        if (descLength >= 50)
-            score += 0.10;
-        if (descLength >= 100)
-            score += 0.05;
-        // Confidence (0.15 max)
-        const confidence = incident.root_cause.confidence || 0;
-        if (confidence >= 0.7)
-            score += 0.10;
-        if (confidence >= 0.9)
-            score += 0.05;
-    }
-    // Fix details (0.3 max)
-    if (incident.fix) {
-        // Approach documented (0.15 max)
-        if (incident.fix.approach && incident.fix.approach.length >= 20) {
-            score += 0.15;
-        }
-        // Changes documented (0.15 max)
-        const changesCount = incident.fix.changes?.length || 0;
-        if (changesCount >= 1)
-            score += 0.10;
-        if (changesCount >= 3)
-            score += 0.05;
-    }
-    // Verification (0.2 max)
-    if (incident.verification) {
-        if (incident.verification.status === 'verified')
-            score += 0.15;
-        else if (incident.verification.status === 'partial')
-            score += 0.08;
-        // Additional verification details (0.05 max)
-        if (incident.verification.regression_tests_passed)
-            score += 0.025;
-        if (incident.verification.user_journey_tested)
-            score += 0.025;
-    }
-    // Documentation (0.2 max)
-    const tagsCount = incident.tags?.length || 0;
-    if (tagsCount >= 2)
-        score += 0.05;
-    if (tagsCount >= 3)
-        score += 0.05;
-    if (tagsCount >= 5)
-        score += 0.05;
-    // Prevention advice
-    if (incident.prevention)
-        score += 0.05;
-    return Math.min(score, 1.0); // Cap at 1.0
-}
-/**
- * Generate quality feedback text
- */
-function generateQualityFeedback(incident) {
-    const score = calculateQualityScore(incident);
-    const percentage = (score * 100).toFixed(0);
-    const feedback = [];
-    feedback.push(`Overall Quality: ${percentage}%`);
-    if (score >= 0.9) {
-        feedback.push('✅ Excellent - This incident is well documented and highly reusable.');
-    }
-    else if (score >= 0.75) {
-        feedback.push('✅ Good - This incident has sufficient detail for future reference.');
-    }
-    else if (score >= 0.5) {
-        feedback.push('⚠️  Fair - Consider adding more details to improve reusability.');
-    }
-    else {
-        feedback.push('❌ Poor - This incident needs more detail to be useful.');
-    }
-    // Specific improvement suggestions
-    const suggestions = [];
-    if (!incident.root_cause?.description || incident.root_cause.description.length < 50) {
-        suggestions.push('- Add more detail to root cause analysis');
-    }
-    if ((incident.root_cause?.confidence || 0) < 0.7) {
-        suggestions.push('- Increase confidence score if diagnosis is clear');
-    }
-    if (!incident.fix?.approach || incident.fix.approach.length < 20) {
-        suggestions.push('- Document the fix approach more thoroughly');
-    }
-    if ((incident.fix?.changes?.length || 0) === 0) {
-        suggestions.push('- Document specific file changes');
-    }
-    if (incident.verification?.status !== 'verified') {
-        suggestions.push('- Verify the fix works before storing');
-    }
-    if ((incident.tags?.length || 0) < 3) {
-        suggestions.push('- Add more tags for better categorization');
-    }
-    if (suggestions.length > 0) {
-        feedback.push('\nSuggestions for improvement:');
-        feedback.push(...suggestions);
-    }
-    return feedback.join('\n');
 }
 //# sourceMappingURL=interactive-verifier.js.map

@@ -218,18 +218,18 @@ def probe_decision_canonical(workdir: Path) -> dict[str, Any]:
 
 def probe_debugger_mcp(workdir: Path, query: str = "memory") -> dict[str, Any]:
     """Probe build-loop native debugging memory. Name kept for report compatibility."""
-    issues_dir = workdir / ".build-loop" / "issues"
-    if not issues_dir.is_dir():
+    incidents_dir = workdir / ".claude" / "memory" / "incidents"
+    if not incidents_dir.is_dir():
         return {
             "invoked": True,
             "result_count": 0,
             "result_sample": None,
             "verdict": "graceful_degradation",
-            "error": f"debugger_unavailable: local issue dir absent: {issues_dir}",
+            "error": f"debugger_unavailable: structured incident dir absent: {incidents_dir}",
         }
     incidents = []
     query_l = query.lower()
-    for note in sorted(issues_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for note in sorted(incidents_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             text = note.read_text(encoding="utf-8")
         except OSError:

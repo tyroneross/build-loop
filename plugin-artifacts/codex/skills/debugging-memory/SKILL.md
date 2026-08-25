@@ -1,452 +1,54 @@
 ---
 name: debugging-memory
-description: Check whether this bug was already diagnosed before investigating fresh; also stores new incidents. Use when the user says "debug this", "fix this bug", "investigate error", or reports a crash — the FIRST step, before any live fix. Not for the fix itself (use `debug-loop`) or post-fix analysis (use `root-cause-analysis`).
-version: 1.6.0
+description: Search Build Loop's native debugging memory before investigating a bug and store verified fixes afterward. Use first for crashes, errors, regressions, and broken behavior. Not for implementing the fix itself; use debug-loop.
+version: 2.0.0
 user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# Debugging Memory Workflow
+# Debugging Memory
 
-This skill integrates build-loop's native debugging memory into debugging workflows. The core principle: **never solve the same bug twice**.
+Build Loop embeds the Coding Debugger core natively. Search and store use the same project-local structured root: `.claude/memory/`. No standalone debugger package, plugin, or MCP server is required.
 
-## Op-routing interface (ADR-01)
+## Op routing
 
-This skill accepts an `op` selector. Callers invoke `Skill("build-loop:debugging-memory") with input { op, ... }`:
-
-| `op` | Purpose | Detail reference |
+| `op` | Purpose | Reference |
 |---|---|---|
-| `"search"` | Memory LOOKUP — search local `.build-loop/issues/` (+ optional standalone Coding Debugger), return a verdict + compact matches. Default op for the memory-first gate and the domain assessors. | `references/search.md` |
-| `"store"` | Incident WRITE — persist a resolved bug as a native incident note (Review-F storage path). | `references/store.md` |
-| `"assess"` | Parallel domain ASSESSMENT — fan out api/database/frontend/performance assessors and rank findings. | `references/assess.md` |
+| `search` | Return a verdict and compact incident matches before investigation. | `references/search.md` |
+| `store` | Persist a verified incident to the same store searched above. | `references/store.md` |
+| `assess` | Run parallel domain assessment for a multi-domain symptom. | `references/assess.md` |
 
-Omitting `op` runs the memory-first workflow below (equivalent to `op: "search"` followed by verdict-based routing). The three former skills `debugging-memory-search`, `debugging-store`, `debugging-assess` were folded into these ops (2026-07, pool-consolidation Inc 5); their bodies are the reference files above.
+Omitting `op` means `search`.
 
-## Memory-First Approach
+## Required workflow
 
-Before investigating any bug, always check build-loop's native debugging memory:
+1. Announce: “Checking debugging memory for similar issues...”
+2. Run the native search command from `references/search.md` with the exact symptom.
+3. Report the verdict and match count.
+4. Route the live diagnosis and fix to `build-loop:debug-loop` unless a `KNOWN_FIX` passes every direct-apply check.
+5. After verification, run the native store command from `references/store.md`.
+6. Search again to prove the newly stored incident is discoverable.
 
-```
-Search `.build-loop/issues/` and invoke `build-loop:debugging-memory` `{op:"search"}` with the symptom description.
-```
+## Verdict handling
 
-The search returns a **verdict** with matching incidents and patterns.
+- `KNOWN_FIX`: direct-apply only after file, version, and second-signal checks all pass.
+- `LIKELY_MATCH`: treat as a grounded hypothesis; verify in the current code.
+- `WEAK_SIGNAL`: do not anchor; investigate fresh.
+- `NO_MATCH`: investigate fresh and store the verified resolution.
 
-**Verdict-based decision tree:**
+## Storage boundary
 
-1. **KNOWN_FIX**: Apply the documented fix directly only when the strict direct-apply gate (below) passes; otherwise adapt the prior incident as a hypothesis and route to the standard fix flow
-2. **LIKELY_MATCH**: Review the past incident, use it as a starting point — never direct-apply
-3. **WEAK_SIGNAL**: Consider loosely related incidents, but investigate fresh
-4. **NO_MATCH**: Proceed with standard debugging, document the solution afterward
+- `.claude/memory/incidents/*.json`: durable structured debugger history.
+- `.claude/memory/patterns/*.json`: extracted reusable patterns.
+- `.build-loop/issues/`: unresolved or executable work only; do not store resolved debugger history there.
 
-## Direct-apply gate (strict)
+## Quality gate
 
-Compressing a failure to a single-line symptom and then applying a historical fix directly can overfit on superficially similar incidents (same error string, different root cause, version, or layer). Direct-apply on a `KNOWN_FIX` is gated behind three independent checks. **All three must hold** or the verdict falls back to "adapted plan, route through the normal fix flow":
+Every stored incident needs an exact symptom, causal root cause, implemented fix, verification evidence, relevant tags, and changed files. Never label an untested diagnosis `verified`.
 
-1. **File match**: at least one of the incident's `files[]` exists at the same path in the current project (suffix match is acceptable — `src/auth/session.ts` matches even if relative vs absolute).
-2. **Version match**: if the incident records a framework/library version (e.g. `next@14`, `prisma@5.8`), the current project's equivalent version must be within the same major (and same minor for libraries with pre-1.0 semver). If no version metadata on the incident, this check defaults to **fail** — no direct-apply.
-3. **Second validation signal**: a non-symptom-string match must also agree. At least one of:
-   - An exact stack-frame match (same function name + same file) between current failure and incident
-   - A matching error class/type hierarchy (not just the message text)
-   - A matching log entry from `read_logs` that ran earlier in the gate
+## Sibling skills
 
-If any of the three fails, downgrade to adapted-plan routing and record the downgrade with `direct_apply_blocked_by: "version_mismatch" | "no_file_overlap" | "no_secondary_signal"`.
-
-**Why this is strict**: a bad direct-apply mutates the codebase on a lossy match and then Review-F stores the (wrong) outcome back to memory, reinforcing the false association. The cost of occasionally skipping a legitimate direct-apply is small; the cost of one overfit mutation compounding across sessions is large.
-
-When `KNOWN_FIX` direct-apply is blocked, the caller should treat the verdict as `LIKELY_MATCH` for routing purposes — load the top incident's detail, adapt the fix to current context, and run it through whatever fix flow the caller normally uses (in build-loop, that's Iterate as an adapted plan).
-
-## Progressive Depth Retrieval
-
-Results are returned as compact summaries. Drill into matches on demand:
-
-1. **Initial search**: Use `build-loop:debugging-memory` `{op:"search"}` — returns verdict + compact matches when structured memory exists
-2. **Drill down**: Read the matching `.build-loop/issues/<id>.md` incident note for full context
-3. **Outcome tracking**: Use `build-loop:debugging-memory` `{op:"store"}` after verification to record whether the fix worked, failed, or was modified
-
-## Visibility
-
-When this skill activates, always announce it to the user:
-
-1. **Before searching**: Output "Checking debugging memory for similar issues..."
-2. **After search**: Report result briefly:
-   - Found match: "Found X matching incident(s) from past debugging sessions"
-   - No match: "No matching incidents in debugging memory - starting fresh investigation"
-
-This ensures users know the debugger is active and working.
-
-## Structured Debugging Process
-
-When no past solution applies, follow this systematic approach.
-
-### Deep Investigation Mode
-
-For non-trivial issues, load the `debug-loop` skill instead of the basic steps below. The trigger is the **verdict category** from memory search, not a numeric confidence score:
-
-- **`KNOWN_FIX`** → apply the fix directly, skip the loop
-- **`LIKELY_MATCH`** → enter debug loop (past incidents exist but need verification against current context)
-- **`WEAK_SIGNAL`** → enter debug loop (loosely related, needs fresh investigation)
-- **`NO_MATCH`** → enter debug loop (no prior knowledge, full investigation needed)
-
-Also enter the debug loop when:
-- The initial diagnosis feels superficial (treating a symptom as the cause)
-- A previous fix attempt didn't hold — the bug came back
-- The user explicitly asks for root cause analysis or deep investigation
-- Multiple symptoms suggest a shared underlying cause
-
-The debug loop provides: causal tree investigation, hypothesis testing, iterative fix-verify-score cycles (up to 5x), fix critique before declaring done, and transparent ✅/⚠️/❓ reporting.
-
-### Basic Steps (for simple, clear-cut issues)
-
-For straightforward bugs where the cause is immediately apparent, use these steps directly:
-
-### 1. Reproduce
-
-Establish a reliable reproduction path:
-- Identify exact steps to trigger the bug
-- Note any environmental factors (OS, dependencies, state)
-- Create a minimal reproduction if possible
-
-### 2. Isolate
-
-Narrow down the problem space:
-- Binary search through recent changes
-- Disable components to find the culprit
-- Check logs and error messages for clues
-
-### 3. Diagnose
-
-Find the root cause:
-- Trace the execution path
-- Examine state at failure point
-- Identify the specific code causing the issue
-
-### 4. Fix
-
-Implement the solution:
-- Make minimal, targeted changes
-- Avoid side effects
-- Consider edge cases
-
-### 5. Verify
-
-Confirm the fix works:
-- Test the original reproduction steps
-- Run related tests
-- Check for regressions
-
-## Review-F outcome feedback (closing the memory-first loop)
-
-When a build / debugging session completes, close the feedback loop locally. If standalone Coding Debugger supplied cross-project memory for this run, mirror the result there as an optional second step.
-
-### Step A — Store resolved incidents (write new knowledge)
-
-For each failure resolved during this run, write a native Build Loop incident note:
-
-```bash
-mkdir -p .build-loop/issues
-```
-
-```markdown
-# <short incident title>
-
-## Symptom
-<original failure string>
-
-## Root Cause
-<what was wrong>
-
-## Fix
-<diff or description>
-
-## Verification
-<tests or reproduction checks that passed>
-
-## Tags
-build-loop, <project>, <layer>
-```
-
-Use `.build-loop/issues/<stable-slug>.md` as the path. Keep each note concise enough for future local search to surface the symptom, root cause, and verified fix.
-
-### Step B — Report outcomes on applied optional memory
-
-For each prior gate where standalone Coding Debugger supplied a `KNOWN_FIX` or `LIKELY_MATCH`, report back whether the suggested fix actually worked through that plugin's outcome tool:
-
-- `worked`: applied as-is, resolved the criterion on first attempt
-- `modified`: applied the suggested approach but had to adapt substantially (Iterate attempt count > 1 on that criterion)
-- `failed`: applied but criterion still failed; eventually resolved via different fix or not at all
-
-This optional training signal belongs to standalone Coding Debugger. Build Loop itself does not register an MCP outcome tool.
-
-## Incident Documentation
-
-After fixing a bug, store a local `.build-loop/issues/*.md` incident note for future retrieval.
-
-The local note should include:
-- **Symptom**: user-facing description of the bug
-- **Root Cause**: technical explanation of why the bug occurred
-- **Fix**: what was done to fix it
-- **Verification**: tests or reproduction checks that passed
-- **Tags**: search keywords for future retrieval
-- **Files Changed**: list of files that were modified
-
-### Manual Incident Storage (Alternative)
-
-Agents can write incident files directly with the Write tool.
-
-**Step 1: Generate incident ID**
-```
-INC_YYYYMMDD_HHMMSS_xxxx
-```
-Where `xxxx` is 4 random alphanumeric characters. Example: `INC_20241231_143052_a7b2`
-
-**Step 2: Write JSON file**
-```bash
-.build-loop/issues/INC_20241231_143052_a7b2.md
-```
-
-**Minimal incident structure:**
-```markdown
-# INC_20241231_143052_a7b2
-
-## Symptom
-User-facing description of the bug.
-
-## Root Cause
-Technical explanation of why the bug occurred.
-
-## Fix
-What was done to fix it.
-
-## Verification
-- Reproduction now passes
-- Related regression tests pass
-
-## Files Changed
-- path/to/file.ts
-
-## Tags
-relevant, keywords, search
-```
-
-**Step 3: Ensure directory exists**
-Before writing, create the directory if needed:
-```bash
-mkdir -p .build-loop/issues
-```
-
-### Quality Indicators
-
-The memory system scores incidents on:
-- Root cause analysis depth (30%)
-- Fix documentation completeness (30%)
-- Verification status (20%)
-- Tags and metadata (20%)
-
-Target 75%+ quality score for effective future retrieval.
-
-### Tagging Strategy
-
-Apply descriptive tags for better searchability:
-- Technology: `react`, `typescript`, `api`, `database`
-- Category: `logic`, `config`, `dependency`, `performance`
-- Symptom type: `crash`, `render`, `timeout`, `validation`
-
-## Using Past Solutions
-
-When the memory system finds a match:
-
-1. **Review the past incident** - Understand the original context
-2. **Assess applicability** - Consider differences in current situation
-3. **Adapt the fix** - Modify as needed for current codebase
-4. **Verify thoroughly** - The same symptom may have different causes
-
-## Pattern Recognition
-
-The memory system automatically extracts patterns when 3+ similar incidents exist. Patterns represent reusable solutions with higher reliability than individual incidents.
-
-When a pattern matches:
-- Trust the solution template (90%+ confidence)
-- Apply the recommended approach
-- Note any caveats mentioned
-
-## Extended capability — global-scope memory + cross-domain assessors
-
-If project-local memory misses but cross-project memory might have a hit, re-call this skill with broader scope, or escalate to the assess skill for additional domain assessor coverage:
-
-```
-Skill("build-loop:debugging-memory") with input { op: "search", symptom, scope: "global", calledBy: "debugging-memory" }
-Skill("build-loop:debugging-memory") with input { op: "assess", symptom, scope: "global" }
-```
-
-Both are native build-loop skills. They search local `.build-loop/issues/` first and may use standalone Coding Debugger only when that plugin is installed and the caller explicitly requests cross-project memory.
-
-Use this for:
-- A `NO_MATCH` from project memory where cross-project history might still have a relevant incident
-- An ambiguous verdict where additional assessor input would change the routing decision
-- Coordination state that lives outside the current project and was explicitly requested
-
-Do NOT use this for: every memory call (it's escalation, not primary path), or when project memory already returned `KNOWN_FIX` (bundled is enough).
-
-## Native Memory Quick Reference
-
-| Surface | Purpose |
-|------|---------|
-| `build-loop:debugging-memory` `{op:"search"}` | Search memory for similar bugs (returns verdict when available) |
-| `build-loop:debugging-memory` `{op:"store"}` | Store a new debugging incident |
-| `.build-loop/issues/<id>.md` | Full incident or pattern detail |
-| `.build-loop/issues/` | Recent incidents and local memory corpus |
-| `build-loop:debugging-memory` `{op:"assess"}` | Parallel domain assessment (`references/assess.md`) |
-
-## Parallel Domain Assessment
-
-For complex issues that may span multiple areas (database, frontend, API, performance), use parallel assessment to diagnose all domains simultaneously.
-
-### When to Use Parallel Assessment
-
-- Symptom is vague or unclear ("app broken", "something wrong")
-- Multiple domains may be involved ("search is slow and returns wrong results")
-- Post-deploy regression with unknown scope
-- Complex issues affecting multiple layers
-
-### Domain Assessors
-
-Four specialized assessor agents are available:
-
-| Assessor | Expertise |
-|----------|-----------|
-| `database-assessor` | Prisma, PostgreSQL, queries, migrations, connection issues |
-| `frontend-assessor` | React, hooks, rendering, state, hydration, SSR |
-| `api-assessor` | Endpoints, REST/GraphQL, auth, middleware, CORS |
-| `performance-assessor` | Latency, memory, CPU, bottlenecks, optimization |
-
-### Parallel Execution
-
-Launch assessors **in parallel** using the Task tool:
-
-```
-For: "search is slow and returns wrong results"
-
-Launch simultaneously:
-- database-assessor (query performance)
-- api-assessor (endpoint correctness)
-- performance-assessor (latency analysis)
-```
-
-Each assessor returns a JSON assessment with:
-- `confidence`: 0-1 score
-- `probable_causes`: List of likely issues
-- `recommended_actions`: Steps to fix
-- `related_incidents`: Past memory matches
-
-### Domain Detection Keywords
-
-| Domain | Trigger Keywords |
-|--------|-----------------|
-| Database | query, schema, migration, prisma, sql, connection, constraint, index |
-| Frontend | react, hook, useEffect, render, component, state, hydration, browser |
-| API | endpoint, route, request, response, auth, 500, 404, cors, middleware |
-| Performance | slow, latency, timeout, memory, leak, cpu, bottleneck, optimization |
-
-### Result Aggregation
-
-After parallel assessments complete:
-1. Rank by confidence score (highest first)
-2. Consider evidence count (more related incidents = higher priority)
-3. Generate priority ranking of recommended actions
-4. Present unified diagnosis with action sequence
-
-## Trace Integration
-
-The debugger can ingest traces from multiple sources to aid diagnosis:
-
-### Supported Trace Sources
-
-- **OpenTelemetry (OTLP)**: Distributed tracing spans
-- **Sentry**: Error events and breadcrumbs
-- **Langchain/LangSmith**: LLM operation traces
-- **Browser**: Chrome DevTools, Playwright, console logs
-
-### Using Traces for Debugging
-
-When traces are available:
-1. Correlate error traces with symptoms
-2. Review performance spans for latency issues
-3. Check LLM traces for AI-related bugs
-4. Examine browser console for frontend errors
-
-Traces are summarized to minimize token usage while preserving key diagnostic information.
-
-## Token-Efficient Retrieval
-
-The memory system uses tiered retrieval to minimize context size:
-
-### Retrieval Tiers
-
-| Tier | Token Usage | Content |
-|------|-------------|---------|
-| Summary | ~100 tokens | ID, symptom preview, category |
-| Compact | ~200 tokens | Short keys, essential fields |
-| Full | ~550 tokens | Complete incident details |
-
-### Automatic Token Budgeting
-
-Default budget: 2500 tokens
-- Patterns: 30% (750 tokens)
-- Incidents: 60% (1500 tokens)
-- Metadata: 10% (250 tokens)
-
-The system automatically selects the appropriate tier based on available budget.
-
-## Subagent Integration
-
-When debugging involves subagents (your own or from other plugins), follow these guidelines to ensure debugging memory is utilized.
-
-### Automatic Behavior
-
-**Before spawning debugging-related subagents:**
-1. Search debugging memory first using `build-loop:debugging-memory` `{op:"search"}`
-2. Pass relevant context to the subagent in its prompt
-3. Include any matching incidents or patterns found
-
-**Example subagent prompt with debugging context:**
-```
-Investigate the database timeout issue.
-
-DEBUGGING MEMORY CONTEXT:
-- Found 2 similar incidents: INC_20241215_db_timeout, INC_20241201_pool_exhaust
-- Pattern PTN_connection_pool suggests checking pool size and idle timeout
-- Previous fix: Increased pool size from 10 to 25 in DATABASE_URL
-
-Start your investigation considering this prior knowledge.
-```
-
-### When Subagents Cannot Access Debugging Memory
-
-**Inform the user** when debugging memory cannot be used with subagents:
-
-1. **External MCP tools**: "Note: The debugging subagent is using external MCP tools that cannot access local debugging memory. I searched memory beforehand and found [X matching incidents / no matches]."
-
-2. **Third-party agents**: "Note: This third-party debugging agent doesn't have access to your project's debugging memory. Consider searching debugging memory first to check for similar past issues."
-
-3. **Sandboxed environments**: "Note: The subagent runs in a sandboxed environment without access to debugging memory. I've pre-loaded relevant context from [X] matching incidents."
-
-### Coordinating Multiple Debugging Subagents
-
-When using parallel assessment or multiple debugging subagents:
-
-1. **Pre-query memory once** using `build-loop:debugging-memory` `{op:"search"}` before spawning agents
-2. **Distribute context** - each agent gets relevant subset
-3. **Aggregate findings** - collect new insights from all agents
-4. **Store unified incident** - write a native `.build-loop/issues/*.md` note to document the combined diagnosis
-
-## Best Practices
-
-1. **Always check memory first** - Search local `.build-loop/issues/` before investigating any bug
-2. **Document every fix** - Write a `.build-loop/issues/*.md` note after resolving bugs
-3. **Use descriptive symptoms** - Better matching requires good descriptions
-4. **Include verification status** - Helps prioritize trusted solutions
-5. **Record outcomes** - Use standalone Coding Debugger outcomes only when that optional plugin supplied the prior incident
-6. **Pass context to subagents** - Don't let debugging knowledge stay siloed
-7. **Inform users of limitations** - Be transparent when memory can't be accessed
+- `build-loop:debug-loop`: investigate, fix, and verify the active bug.
+- `build-loop:root-cause-analysis`: post-fix systemic analysis.
+- `build-loop:debugging-memory` `{op:"assess"}`: parallel domain assessment.

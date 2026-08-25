@@ -29,7 +29,7 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
 
 **Goal**: Understand what's actually failing and why, not just what it looks like.
 
-1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Note related incidents from local build-loop memory and optional standalone Coding Debugger memory when available.
+1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Its native search reads the project's structured `.claude/memory/` store.
 2. **Reproduce the issue** — identify exact steps, commands, or conditions that trigger the bug
 3. **Deploy root-cause-investigator agent** — pass the symptom and reproduction steps for causal tree analysis. The agent explores multiple branches (not a single chain), prioritizes by evidence strength, and prunes with evidence
 4. **Research gate** — if the investigator flags unfamiliar error codes, library behavior, or version-specific issues:
@@ -197,8 +197,7 @@ Every item in the report gets one marker:
 
 > **Durable post-failure RCA:** for the blameless durable-lever pass (creation+escape paths, action-strength hierarchy, lever+actuator, regression artifact, spread check), delegate to the shared `references/root-cause-analysis/` suite. This skill/agent finds and fixes the live issue; that suite is the post-failure prevention layer.
 
-- **Store the incident** as a native `.build-loop/issues/*.md` note for future retrieval
-- **Record the outcome** through standalone Coding Debugger only if that optional plugin supplied the prior incident
+- **Store the incident** through `build-loop:debugging-memory` `{op:"store"}` so it lands in the same structured store used by search
 - **Write state** to `.build-loop/debug-loop/scorecard.md`
 
 ## Iteration Rules
@@ -247,7 +246,7 @@ If the bundled assessor coverage isn't enough (e.g., the failure crosses a domai
 Skill("build-loop:debugging-memory") with input { op: "assess", symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
 ```
 
-The native skill includes domain-specific assessors (api / database / frontend / performance). It uses build-loop local memory by default and may use standalone Coding Debugger for cross-build memory when available; otherwise it falls back to grep across `.build-loop/issues/` and `.build-loop/feedback.md` with narrower coverage.
+The native skill includes domain-specific assessors (api / database / frontend / performance) and uses Build Loop's project-local structured debugger memory.
 
 ### State Tracking
 

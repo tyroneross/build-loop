@@ -7,7 +7,7 @@ Phase 6 Learn must see signals from all stores. Today's reality:
   1. .build-loop/state.json.runs[]                — local file
   2. build-loop-memory indexes/project folders    — canonical files
   3. agent_memory.<schema>.semantic_facts         — Postgres
-  4. .build-loop/issues/*.md                     — native debugging incidents
+  4. .claude/memory/incidents/*.json             — native debugging incidents
 
 Four read paths, four discovery costs. This module collapses them behind one
 function:
@@ -26,7 +26,7 @@ Each backend degrades gracefully:
                         no DB URL is configured, psycopg is missing, or the
                         connection fails. Never raises.
   - debugger incidents → returns [] AND records reason="debugger_unavailable"
-                        when local incident notes are absent.
+                        when the structured incident store is absent.
 
 Public API (frozen — all consumers import these directly):
   recall, read_runs, read_lessons, read_decisions, read_semantic, read_debugger,
@@ -122,10 +122,9 @@ def read_debugger(
 ) -> tuple[List[Dict[str, Any]], List[str]]:
     """Best-effort native debugger incident read.
 
-    Build-loop does not register a bundled debugger MCP server. By default this
-    reads local ``.build-loop/issues/*.md`` incident notes and returns
-    ``debugger_unavailable`` when that local store is absent. Tests inject a
-    mock at ``_DEBUGGER_RUNNER_OVERRIDE`` for structured incident payloads.
+    By default this reads the same ``.claude/memory/incidents/*.json`` store
+    used by Build Loop's native debugger writer. Tests inject a mock at
+    ``_DEBUGGER_RUNNER_OVERRIDE`` for structured incident payloads.
     """
     return read_debugger_impl(
         workdir=workdir,

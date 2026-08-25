@@ -180,7 +180,7 @@ Per-criterion `gate_verdict`:
 - `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
 - `NO_MATCH` → standard Iterate fallthrough; store at sub-step G Report for future learning
 
-The memory gate is always on. Build-loop bundles native debugging-memory skills and file-backed search/store, with standalone Coding Debugger available only as an optional cross-project memory plugin when explicitly installed. If structured memory is unavailable, the orchestrator falls through to the local-grep fallback. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/SKILL.md` §"Direct-apply gate (strict)".
+The memory gate is always on. Build Loop bundles the debugger core and reads and writes the same project-local `.claude/memory/` store through `bin/build-loop-debugger.js`; no standalone package or MCP server is required. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/references/search.md`.
 
 **Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
 
@@ -386,7 +386,7 @@ Report the output digest and path. Build Loop never
 writes Groundwork convergence or mutates `spec.json`; Groundwork independently
 validates the map and calculates `groundwork.convergence/v1`.
 
-**Debugger store + outcome**: for each resolved Review-B/Iterate failure, write a native `.build-loop/issues/<incident>.md` incident note with `{symptom, root_cause, fix, tags, files}`. If `availablePlugins.codingDebugger` is true and the run explicitly requested cross-project memory, mirror the same outcome to standalone Coding Debugger. Both sides of the memory feedback loop — local store and outcome status — are required for learning.
+**Debugger store + retrieval check**: for each resolved Review-B/Iterate failure, invoke `build-loop:debugging-memory` `{op:"store"}` with `{symptom, root_cause, fix, verification, tags, files_changed}`. Then search the symptom again and confirm the stored incident is discoverable from the same `.claude/memory/` root.
 
 **Orphan scan**: invoke `Skill("build-loop:architecture-dead")` — runs `navgator dead`, diffs against the Phase 1 Assess baseline, surfaces ONLY new orphans introduced this build. No-ops cleanly when `.navgator/architecture/index.json` is absent.
 

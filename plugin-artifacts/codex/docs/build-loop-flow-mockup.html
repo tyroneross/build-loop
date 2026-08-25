@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "661f02698917e038c300b6e2614fd8a8bb140077f35859b5880aaa4ee42b6ed3"
+    "content_sha256": "9add0088661e18d8e9d2c0d7fd3fc72ffd4e4cf4ff1785318850063706d9cfd6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1498,7 +1498,7 @@
         }
       },
       "debugging-memory": {
-        "description": "Check whether this bug was already diagnosed before investigating fresh; also stores new incidents. Use when the user says \"debug this\", \"fix this bug\", \"investigate error\", or reports a crash — the FIRST step, before any live fix. Not for the fix itself (use `debug-loop`) or post-fix analysis (use `root-cause-analysis`).",
+        "description": "Search Build Loop's native debugging memory before investigating a bug and store verified fixes afterward. Use first for crashes, errors, regressions, and broken behavior. Not for implementing the fix itself; use debug-loop.",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1928,7 +1928,7 @@
       "scripts/memory_facade/__init__.py": "Unified read facade over build-loop's memory surfaces.",
       "scripts/memory_facade/backlog.py": "Recall backlog items from canonical and personal-mirror stores by ID.\"\"\"",
       "scripts/memory_facade/common.py": "Shared helpers for memory_facade sub-modules.",
-      "scripts/memory_facade/debugger.py": "Backend 4: build-loop native debugging incident reader.\"\"\"",
+      "scripts/memory_facade/debugger.py": "Backend 4: build-loop native structured debugging incident reader.\"\"\"",
       "scripts/memory_facade/decisions.py": "Backend 2: canonical decision indexes + project decisions/*.md reader.\"\"\"",
       "scripts/memory_facade/lessons.py": "Backend 2.5: lessons reader for memory_facade.",
       "scripts/memory_facade/runs.py": "Backend 1: state.json runs[] reader for memory_facade.\"\"\"",

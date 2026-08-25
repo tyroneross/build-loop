@@ -266,7 +266,7 @@ The `build-loop:debug-loop` skill is bundled with build-loop. Use this fallback 
 2. **Isolate** — binary-search the diff / commits / inputs until you find the smallest change that flips pass ↔ fail.
 3. **Hypothesize** — one specific claim about cause. Write it as a statement, not a question.
 4. **Test** — make the smallest possible change that would confirm or refute the hypothesis. Run it. Observe.
-5. **Record** — append one line to `.build-loop/issues/YYYY-MM-DD-<slug>.md` with: symptom, root cause, fix, prevention.
+5. **Record** — after verification, use the native `build-loop-debugger store` command so the incident lands in `.claude/memory/`.
 
 Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
@@ -274,7 +274,7 @@ Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
 ## bug-memory — Prior-bug lookup
 
-The `build-loop:debugging-memory` skill is bundled with build-loop. Use this fallback only if the skill cannot provide structured recall. No cross-project training — just a file-grep of this project's prior builds.
+The `build-loop:debugging-memory` skill and debugger core are bundled with Build Loop. Use this fallback only if the native CLI or compiled core cannot load.
 
 ### Query procedure
 
@@ -287,7 +287,7 @@ TOKENS=$(echo "$SYMPTOM" | tr ' ' '\n' | grep -E '^[A-Z][a-zA-Z]+$|^[a-z_]+[A-Z]
 
 # Search local project history
 for T in $TOKENS; do
-  grep -R -l "$T" .build-loop/issues/ 2>/dev/null
+  grep -R -l "$T" .claude/memory/incidents/ 2>/dev/null
   grep -R -l "$T" .build-loop/feedback.md 2>/dev/null
   grep -R -l "$T" .bookmark/ 2>/dev/null
 done | sort -u
@@ -300,25 +300,15 @@ done | sort -u
 | `LOCAL_HIT_EXACT` | At least one file contains the full symptom string (case-insensitive substring match) | Read that file; adapt its recorded fix as the Iterate plan. Not direct-apply. |
 | `LOCAL_HIT_PARTIAL` | ≥2 tokens co-occur in the same file | Reference the file in the Iterate plan; investigate normally |
 | `LOCAL_WEAK` | 1 token match only | Note reference, investigate normally |
-| `LOCAL_NO_MATCH` | No files contain any tokens | Standard Iterate; write a new `.build-loop/issues/<slug>.md` after resolution |
+| `LOCAL_NO_MATCH` | No files contain any tokens | Standard Iterate; use the native debugger store after resolution |
 
 No confidence score (no classifier). No cross-project lookup. No automatic training signal back to the source — this is strictly read-only memory for one project.
 
 ### Storage (write side)
 
-After resolving a failure, append to `.build-loop/issues/YYYY-MM-DD-<slug>.md`:
+After resolving a failure, create the JSON payload documented in `skills/debugging-memory/references/store.md` and invoke the native store command. It writes to `.claude/memory/incidents/` and updates the indexes used by search.
 
-```
-# <one-line title>
-
-**Symptom**: <error string as it appeared>
-**Root cause**: <what was actually wrong>
-**Fix**: <diff summary or description>
-**Files**: <paths touched>
-**Tags**: <layer>, <component>, <pattern>
-```
-
-Future builds will grep this file. The bundled `build-loop:debugging-memory` skill promotes this to native build-loop recall; standalone Coding Debugger can mirror it into cross-project ranked memory when installed separately.
+Do not write resolved incident history to `.build-loop/issues/`; that directory remains an executable/open-work lane.
 
 ---
 

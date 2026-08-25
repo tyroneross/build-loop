@@ -101,7 +101,7 @@ The order is the contract: row 1 short-circuits before any author runs; row 2 is
 | Recent design structures | `design-contract-specialist` reads `references/recent-design-structures.md` and selects by product/workflow/data fit | explicit design-tool artifacts passed as evidence | `fallbacks.md#web-ui` |
 | Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
 | Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
-| Deep debugging | `build-loop:debug-loop` + `build-loop:debugging-memory` native search/store | standalone Coding Debugger only when explicitly installed for cross-project memory | `fallbacks.md#debug` |
+| Deep debugging | `build-loop:debug-loop` + bundled `build-loop:debugging-memory` native search/store | — | `fallbacks.md#debug` |
 | Bug-pattern memory | `build-loop:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
 | Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
 | DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |

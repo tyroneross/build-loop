@@ -10,7 +10,7 @@ Backends:
   1. runs[]       — `state.json.runs[]` (filesystem; always probable)
   2. decisions    — `build-loop-memory/projects/<project>/decisions/*.md`
   3. semantic     — Postgres `agent_memory.<schema>.semantic_facts`
-  4. debugger     — native `.build-loop/issues/*.md` incident notes
+  4. debugger     — native `.claude/memory/incidents/*.json` incidents
 
 Budget:
   - 5s per backend
@@ -400,7 +400,7 @@ def probe_semantic(workdir: Path) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def probe_debugger(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API symmetry
-    """Probe native `.build-loop/issues` debugging memory."""
+    """Probe native structured debugging memory."""
     started = time.monotonic()
     if _DEBUGGER_RUNNER_OVERRIDE is not None:
         ok, msg = _DEBUGGER_RUNNER_OVERRIDE()
@@ -412,14 +412,14 @@ def probe_debugger(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept fo
             result["reason"] = msg or "debugger_unavailable"
         return result
 
-    issues_dir = workdir / ".build-loop" / "issues"
-    if not issues_dir.is_dir():
+    incidents_dir = workdir / ".claude" / "memory" / "incidents"
+    if not incidents_dir.is_dir():
         return {
             "ok": False,
-            "reason": "debugger_unavailable: local issue dir absent",
+            "reason": "debugger_unavailable: structured incident dir absent",
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
-    count = sum(1 for _ in issues_dir.rglob("*.md"))
+    count = sum(1 for _ in incidents_dir.glob("*.json"))
     return {
         "ok": True,
         "count": count,

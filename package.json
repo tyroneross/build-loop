@@ -9,7 +9,8 @@
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "bin": {
-    "build-loop-install": "bin/build-loop-install.js"
+    "build-loop-install": "bin/build-loop-install.js",
+    "build-loop-debugger": "bin/build-loop-debugger.js"
   },
   "exports": {
     ".": {
@@ -64,7 +65,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py scripts/test_codex_plugin_artifact.py scripts/test_groundwork_exchange.py scripts/test_groundwork_exchange_distribution.py && bash scripts/hooks/test_hooks.sh",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py scripts/test_native_debugger.py scripts/test_codex_plugin_artifact.py scripts/test_groundwork_exchange.py scripts/test_groundwork_exchange_distribution.py && bash scripts/hooks/test_hooks.sh",
     "test:groundwork-exchange": "python3 -m unittest scripts/test_groundwork_exchange.py scripts/test_groundwork_exchange_distribution.py",
     "benchmark": "node benchmark-scoring.js",
     "clean": "rm -rf dist",

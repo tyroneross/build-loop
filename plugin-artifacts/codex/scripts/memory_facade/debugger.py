@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Backend 4: build-loop native debugging incident reader."""
+"""Backend 4: build-loop native structured debugging incident reader."""
 from __future__ import annotations
 
 import json
@@ -20,56 +20,50 @@ def _score_text(text: str, query: str) -> int:
     return sum(1 for term in terms if term in lower)
 
 
-def _section(text: str, heading: str) -> Optional[str]:
-    """Extract a short Markdown section body by heading name."""
-    lines = text.splitlines()
-    start: Optional[int] = None
-    for idx, line in enumerate(lines):
-        if line.lstrip("# ").strip().lower() == heading.lower():
-            start = idx + 1
-            break
-    if start is None:
-        return None
-    body: List[str] = []
-    for line in lines[start:]:
-        if line.startswith("#"):
-            break
-        if line.strip():
-            body.append(line.strip())
-        if len(" ".join(body)) > 500:
-            break
-    return " ".join(body) or None
+def _read_structured_incidents(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read the same structured store used by the native debugger writer."""
+    incidents_dir = workdir / ".claude" / "memory" / "incidents"
+    if not incidents_dir.is_dir():
+        return [], [f"debugger_unavailable: structured incident dir absent: {incidents_dir}"]
 
-
-def _read_local_issues(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read build-loop native incident notes from .build-loop/issues."""
-    issues_dir = workdir / ".build-loop" / "issues"
-    if not issues_dir.is_dir():
-        return [], [f"debugger_unavailable: local issue dir absent: {issues_dir}"]
-
-    scored: List[Tuple[int, float, Path, str]] = []
-    for note in issues_dir.rglob("*.md"):
+    scored: List[Tuple[int, float, Path, Dict[str, Any]]] = []
+    for note in incidents_dir.glob("*.json"):
         try:
-            text = note.read_text(encoding="utf-8")
+            incident = json.loads(note.read_text(encoding="utf-8"))
             stat = note.stat()
-        except OSError:
+        except (OSError, json.JSONDecodeError):
             continue
-        score = _score_text(text, query or "*")
+        root_cause = incident.get("root_cause") or {}
+        fix = incident.get("fix") or {}
+        searchable = " ".join(
+            str(value)
+            for value in (
+                incident.get("symptom"),
+                root_cause.get("description") if isinstance(root_cause, dict) else root_cause,
+                fix.get("approach") if isinstance(fix, dict) else fix,
+                " ".join(incident.get("tags") or []),
+            )
+            if value
+        )
+        score = _score_text(searchable, query or "*")
         if score > 0:
-            scored.append((score, stat.st_mtime, note, text))
+            timestamp = incident.get("timestamp")
+            recency = float(timestamp) / 1000 if isinstance(timestamp, (int, float)) else stat.st_mtime
+            scored.append((score, recency, note, incident))
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     entries: List[Dict[str, Any]] = []
-    for _score, mtime, note, text in scored[:limit]:
-        title = next((ln.lstrip("# ").strip() for ln in text.splitlines() if ln.startswith("#")), note.stem)
+    for _score, recency, note, incident in scored[:limit]:
+        root_cause = incident.get("root_cause") or {}
+        fix = incident.get("fix") or {}
         entries.append(
             {
                 "_kind": "debugger",
-                "_recency_ts": mtime,
-                "id": note.stem,
-                "symptom": _section(text, "Symptom") or title,
-                "root_cause": _section(text, "Root Cause") or _section(text, "Root cause"),
-                "fix": _section(text, "Fix") or _section(text, "Fix approach"),
+                "_recency_ts": recency,
+                "id": incident.get("incident_id") or note.stem,
+                "symptom": incident.get("symptom"),
+                "root_cause": root_cause.get("description") if isinstance(root_cause, dict) else root_cause,
+                "fix": fix.get("approach") if isinstance(fix, dict) else fix,
                 "project": workdir.name,
                 "path": str(note),
             }
@@ -117,4 +111,4 @@ def read_debugger_impl(
         entries, parse_reasons = _parse_incidents(out_text, limit)
         return entries, reasons + parse_reasons
     else:
-        return _read_local_issues(workdir, query, limit)
+        return _read_structured_incidents(workdir, query, limit)

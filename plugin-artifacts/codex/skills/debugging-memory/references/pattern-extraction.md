@@ -63,18 +63,18 @@ Patterns are extracted automatically when conditions are met:
 
 ### Triggering Extraction
 
-Use build-loop's native incident notes to preview and extract patterns.
+Use Build Loop's native structured incidents to preview and extract patterns.
 
 Local workflow:
 
 ```bash
-find .build-loop/issues -type f -name '*.md' 2>/dev/null
+find .claude/memory/incidents -type f -name '*.json' 2>/dev/null
 ```
 
-Standalone Coding Debugger can provide richer pattern APIs when explicitly installed and requested. Programmatic examples should import that package from the standalone repo, not from build-loop.
+The debugger core is exported by Build Loop itself:
 
 ```typescript
-import { extractPatterns } from '<coding-debugger-package>';
+import { extractPatterns } from '@tyroneross/build-loop';
 
 const patterns = await extractPatterns({
   min_incidents: 3,

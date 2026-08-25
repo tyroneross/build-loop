@@ -278,6 +278,29 @@ def test_debugger_backend_unavailable_when_no_local_incidents(workdir: Path) -> 
     assert any("debugger_unavailable" in r for r in reasons)
 
 
+def test_debugger_backend_reads_native_structured_incidents(workdir: Path) -> None:
+    incidents = workdir / ".claude" / "memory" / "incidents"
+    incidents.mkdir(parents=True)
+    (incidents / "INC_LOGIC_1.json").write_text(
+        json.dumps(
+            {
+                "incident_id": "INC_LOGIC_1",
+                "timestamp": 1787673600000,
+                "symptom": "TypeError: vendor was null",
+                "root_cause": {"description": "Nullable vendor was not normalized."},
+                "fix": {"approach": "Normalize vendor before deduplication."},
+                "tags": ["typescript", "null"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out, reasons = mf.read_debugger(workdir, query="vendor null", limit=5, project=None)
+    assert reasons == []
+    assert [item["id"] for item in out] == ["INC_LOGIC_1"]
+    assert out[0]["root_cause"] == "Nullable vendor was not normalized."
+
+
 def test_debugger_backend_uses_injected_runner(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
         "incidents": [
