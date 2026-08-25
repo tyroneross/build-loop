@@ -15,7 +15,7 @@
 # (frozen; not owned by this file) whether that (product, vendor) pair may
 # dispatch without asking. Absence of a decision, a denial, a not-yet-decided
 # `ask`/`once`, and a broken hash chain are ALL "not allowed" per the contract's
-# exit-code table (1/2/3); the depth guard (BUILD_LOOP_DISPATCH_DEPTH > cap)
+# exit-code table (1/2/3); the depth guard (AGENT_DISPATCH_DEPTH > cap)
 # is checked inside the module and also comes back as one of those exit codes.
 # This hook never reimplements any of that logic — it only asks and reports.
 #

@@ -42,9 +42,9 @@ MODES = ("once", "ask", "auto", "denied")
 GRANTING_MODES = ("auto",)  # the ONLY mode that permits without asking
 SCHEMA_VERSION = 2
 
-DEPTH_ENV = "BUILD_LOOP_DISPATCH_DEPTH"
+DEPTH_ENV = "AGENT_DISPATCH_DEPTH"
 DEPTH_CAP = 2
-_TEST_STORE_ENV = "BUILD_LOOP_CLI_CONSENT_PATH"
+_TEST_STORE_ENV = "AGENT_CONSENT_STORE_PATH"
 
 # Exit codes — mirrors the autonomy-gate convention.
 EXIT_ALLOWED = 0
@@ -64,17 +64,22 @@ def key_for(product: str, vendor: str) -> str:
 
 
 def store_path() -> Path:
-    """Fixed per-operator path.
+    """Fixed per-operator path, under a VENDOR-NEUTRAL directory.
+
+    Not `~/.build-loop/`: Rally Point is independently installable and implements
+    this same contract, so a build-loop-named directory would make a standalone
+    Rally Point install write into another product's namespace — the exact boundary
+    inversion the separate-implementations decision exists to avoid.
 
     The env override is honored ONLY inside a test process. As a general override it
     is a one-line bypass of everything above it: an agent points it at a file it just
     wrote and every check passes.
     """
-    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("BUILD_LOOP_CONSENT_SELFTEST"):
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("AGENT_CONSENT_SELFTEST"):
         override = os.environ.get(_TEST_STORE_ENV)
         if override:
             return Path(override).expanduser()
-    return Path.home() / ".build-loop" / "cli-dispatch-consent.json"
+    return Path.home() / ".agent-consent" / "cli-dispatch-consent.json"
 
 
 def _now() -> str:

@@ -6,9 +6,9 @@
 WARN-ONLY rollout of the CLI dispatch consent gate (contract:
 references/cli-dispatch-consent-contract.md). Drives the real hook script
 directly (not through pre_bash_dispatch.sh) in a throwaway git repo, using
-BUILD_LOOP_CONSENT_SELFTEST + BUILD_LOOP_CLI_CONSENT_PATH to point
+AGENT_CONSENT_SELFTEST + AGENT_CONSENT_STORE_PATH to point
 cli_dispatch_consent.py at a per-test store — the real
-~/.build-loop/cli-dispatch-consent.json is never read or written by this
+~/.agent-consent/cli-dispatch-consent.json is never read or written by this
 suite (see cli_dispatch_consent.py store_path(): the env override is honored
 ONLY inside a test process).
 
@@ -66,14 +66,14 @@ def run_hook(
     consent_store: Path,
 ) -> subprocess.CompletedProcess:
     """Drive pre_bash_consent.sh exactly as the dispatcher's _run_gate would:
-    the raw PreToolUse event JSON on stdin. BUILD_LOOP_CONSENT_SELFTEST +
-    BUILD_LOOP_CLI_CONSENT_PATH isolate cli_dispatch_consent.py's store to a
+    the raw PreToolUse event JSON on stdin. AGENT_CONSENT_SELFTEST +
+    AGENT_CONSENT_STORE_PATH isolate cli_dispatch_consent.py's store to a
     per-test tmp file — see store_path()'s test-only override contract."""
     event = json.dumps({"tool_input": {"command": command}, "cwd": str(repo)})
     env = dict(os.environ)
     env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
-    env["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-    env["BUILD_LOOP_CLI_CONSENT_PATH"] = str(consent_store)
+    env["AGENT_CONSENT_SELFTEST"] = "1"
+    env["AGENT_CONSENT_STORE_PATH"] = str(consent_store)
     env.pop("BUILD_LOOP_HOOKS", None)
     return subprocess.run(
         ["bash", str(HOOK)],
@@ -90,8 +90,8 @@ def record_consent(store: Path, vendor: str, mode: str) -> None:
     """Write one decision directly via the frozen module's own CLI, isolated
     to `store` through the same test-only env override the hook uses."""
     env = dict(os.environ)
-    env["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-    env["BUILD_LOOP_CLI_CONSENT_PATH"] = str(store)
+    env["AGENT_CONSENT_SELFTEST"] = "1"
+    env["AGENT_CONSENT_STORE_PATH"] = str(store)
     r = subprocess.run(
         [sys.executable, str(CONSENT_MODULE), "--product", "build-loop",
          "--vendor", vendor, "--set", mode],
@@ -298,8 +298,8 @@ class FailOpenTests(unittest.TestCase):
         )
         env = dict(os.environ)
         env["CLAUDE_PLUGIN_ROOT"] = str(fake_root)
-        env["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-        env["BUILD_LOOP_CLI_CONSENT_PATH"] = str(self.store)
+        env["AGENT_CONSENT_SELFTEST"] = "1"
+        env["AGENT_CONSENT_STORE_PATH"] = str(self.store)
         r = subprocess.run(
             ["bash", str(HOOK)],
             cwd=self.repo,
@@ -316,8 +316,8 @@ class FailOpenTests(unittest.TestCase):
         event = json.dumps({"tool_input": {"command": ""}, "cwd": str(self.repo)})
         env = dict(os.environ)
         env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
-        env["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-        env["BUILD_LOOP_CLI_CONSENT_PATH"] = str(self.store)
+        env["AGENT_CONSENT_SELFTEST"] = "1"
+        env["AGENT_CONSENT_STORE_PATH"] = str(self.store)
         r = subprocess.run(
             ["bash", str(HOOK)],
             cwd=self.repo,

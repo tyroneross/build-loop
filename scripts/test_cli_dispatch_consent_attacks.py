@@ -24,10 +24,10 @@ section and asserts each is DETECTED or REFUSED:
   H. absence/malformation of the store (never consent)
   I. mode-string smuggling (near-miss strings/types never grant)
 
-Every test sets BUILD_LOOP_CONSENT_SELFTEST=1 and BUILD_LOOP_CLI_CONSENT_PATH
+Every test sets AGENT_CONSENT_SELFTEST=1 and AGENT_CONSENT_STORE_PATH
 to a per-test tmp file, and every direct-manipulation test additionally passes
 an explicit `path=` to the library calls so the real
-~/.build-loop/cli-dispatch-consent.json is never in the call path at all.
+~/.agent-consent/cli-dispatch-consent.json is never in the call path at all.
 setUpModule/tearDownModule stat the real store before and after the whole
 run and fail loudly if it changed.
 
@@ -48,7 +48,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import cli_dispatch_consent as cdc  # noqa: E402
 
-REAL_STORE = Path.home() / ".build-loop" / "cli-dispatch-consent.json"
+REAL_STORE = Path.home() / ".agent-consent" / "cli-dispatch-consent.json"
 
 # ---------------------------------------------------------------------------
 # Module-level guarantee: the real per-operator store is never read or
@@ -73,7 +73,7 @@ def tearDownModule() -> None:
     existed_after = REAL_STORE.exists()
     if existed_after != _real_store_existed_before:
         raise RuntimeError(
-            "REAL ~/.build-loop/cli-dispatch-consent.json existence changed "
+            "REAL ~/.agent-consent/cli-dispatch-consent.json existence changed "
             f"during this test run: before={_real_store_existed_before} "
             f"after={existed_after}. This suite must never touch the real store."
         )
@@ -82,7 +82,7 @@ def tearDownModule() -> None:
         stat_after = (st.st_mtime_ns, st.st_size)
         if stat_after != _real_store_stat_before:
             raise RuntimeError(
-                "REAL ~/.build-loop/cli-dispatch-consent.json was MODIFIED "
+                "REAL ~/.agent-consent/cli-dispatch-consent.json was MODIFIED "
                 f"during this test run: before={_real_store_stat_before} "
                 f"after={stat_after}."
             )
@@ -136,10 +136,10 @@ class ConsentAttackTestCase(unittest.TestCase):
         self.store_path = Path(self._tmp.name) / "cli-dispatch-consent.json"
         self._saved_env = {
             k: os.environ.get(k)
-            for k in ("BUILD_LOOP_CONSENT_SELFTEST", "BUILD_LOOP_CLI_CONSENT_PATH")
+            for k in ("AGENT_CONSENT_SELFTEST", "AGENT_CONSENT_STORE_PATH")
         }
-        os.environ["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-        os.environ["BUILD_LOOP_CLI_CONSENT_PATH"] = str(self.store_path)
+        os.environ["AGENT_CONSENT_SELFTEST"] = "1"
+        os.environ["AGENT_CONSENT_STORE_PATH"] = str(self.store_path)
 
     def tearDown(self) -> None:
         for k, v in self._saved_env.items():
@@ -337,8 +337,8 @@ class TestD_FullChainRecomputation(ConsentAttackTestCase):
 # ---------------------------------------------------------------------------
 
 class TestE_StorePathRedirection(unittest.TestCase):
-    """With PYTEST_CURRENT_TEST and BUILD_LOOP_CONSENT_SELFTEST both UNSET,
-    store_path() must ignore BUILD_LOOP_CLI_CONSENT_PATH entirely and return
+    """With PYTEST_CURRENT_TEST and AGENT_CONSENT_SELFTEST both UNSET,
+    store_path() must ignore AGENT_CONSENT_STORE_PATH entirely and return
     the fixed ~/.build-loop path. We never read or create the attacker
     file — we only assert on the Path object store_path() returns."""
 
@@ -354,12 +354,12 @@ class TestE_StorePathRedirection(unittest.TestCase):
         )
         self._saved_env = {
             k: os.environ.get(k)
-            for k in ("PYTEST_CURRENT_TEST", "BUILD_LOOP_CONSENT_SELFTEST",
-                      "BUILD_LOOP_CLI_CONSENT_PATH")
+            for k in ("PYTEST_CURRENT_TEST", "AGENT_CONSENT_SELFTEST",
+                      "AGENT_CONSENT_STORE_PATH")
         }
         os.environ.pop("PYTEST_CURRENT_TEST", None)
-        os.environ.pop("BUILD_LOOP_CONSENT_SELFTEST", None)
-        os.environ["BUILD_LOOP_CLI_CONSENT_PATH"] = str(self._attacker_path)
+        os.environ.pop("AGENT_CONSENT_SELFTEST", None)
+        os.environ["AGENT_CONSENT_STORE_PATH"] = str(self._attacker_path)
 
     def tearDown(self) -> None:
         for k, v in self._saved_env.items():
@@ -371,9 +371,9 @@ class TestE_StorePathRedirection(unittest.TestCase):
 
     def test_store_path_ignores_override_outside_test_process(self) -> None:
         self.assertIsNone(os.environ.get("PYTEST_CURRENT_TEST"))
-        self.assertIsNone(os.environ.get("BUILD_LOOP_CONSENT_SELFTEST"))
+        self.assertIsNone(os.environ.get("AGENT_CONSENT_SELFTEST"))
         resolved = cdc.store_path()
-        self.assertEqual(resolved, Path.home() / ".build-loop" / "cli-dispatch-consent.json")
+        self.assertEqual(resolved, Path.home() / ".agent-consent" / "cli-dispatch-consent.json")
         self.assertNotEqual(resolved, self._attacker_path)
 
 
@@ -386,19 +386,19 @@ class TestF_DepthGuard(ConsentAttackTestCase):
     def test_depth_values_behave_per_contract(self) -> None:
         cases = [
             # (env dict, expected exceeded, note)
-            ({"BUILD_LOOP_DISPATCH_DEPTH": "3"}, True, "3 > cap(2): exceeded"),
-            ({"BUILD_LOOP_DISPATCH_DEPTH": "abc"}, True,
+            ({"AGENT_DISPATCH_DEPTH": "3"}, True, "3 > cap(2): exceeded"),
+            ({"AGENT_DISPATCH_DEPTH": "abc"}, True,
              "garbage must read as EXCEEDED, not 0 — a garbage value is the "
              "shape a bypass attempt takes"),
-            ({"BUILD_LOOP_DISPATCH_DEPTH": ""}, False, "explicit empty -> unset -> 0"),
+            ({"AGENT_DISPATCH_DEPTH": ""}, False, "explicit empty -> unset -> 0"),
             ({}, False, "key absent entirely -> unset -> 0"),
-            ({"BUILD_LOOP_DISPATCH_DEPTH": "-1"}, True,
+            ({"AGENT_DISPATCH_DEPTH": "-1"}, True,
              "negative depth buys recursion headroom above the cap (-1 permits four "
              "levels, not two), so it must read as exceeded; this suite found the gap "
              "and the contract was amended to close it rather than assert it away"),
-            ({"BUILD_LOOP_DISPATCH_DEPTH": "-99"}, True,
+            ({"AGENT_DISPATCH_DEPTH": "-99"}, True,
              "any negative value, not just -1"),
-            ({"BUILD_LOOP_DISPATCH_DEPTH": "999999999999999999999"}, True,
+            ({"AGENT_DISPATCH_DEPTH": "999999999999999999999"}, True,
              "absurdly large integer must still compare > cap"),
         ]
         for env, expected_exceeded, note in cases:
@@ -418,7 +418,7 @@ class TestF_DepthGuard(ConsentAttackTestCase):
         # no consent answer the operator gave was an answer about recursion.
         attacked = cdc.check(
             "build-loop", "codex", path=self.store_path,
-            env={"BUILD_LOOP_DISPATCH_DEPTH": "3"},
+            env={"AGENT_DISPATCH_DEPTH": "3"},
         )
         self.assertFalse(attacked["allowed"], msg=attacked)
         self.assertEqual(attacked["exit"], cdc.EXIT_DENIED, msg=attacked)
@@ -426,7 +426,7 @@ class TestF_DepthGuard(ConsentAttackTestCase):
         # Also true for the garbage-depth bypass attempt.
         attacked_garbage = cdc.check(
             "build-loop", "codex", path=self.store_path,
-            env={"BUILD_LOOP_DISPATCH_DEPTH": "not-a-number"},
+            env={"AGENT_DISPATCH_DEPTH": "not-a-number"},
         )
         self.assertFalse(attacked_garbage["allowed"], msg=attacked_garbage)
         self.assertEqual(attacked_garbage["exit"], cdc.EXIT_DENIED, msg=attacked_garbage)

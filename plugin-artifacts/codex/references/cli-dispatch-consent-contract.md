@@ -70,7 +70,10 @@ reads as NO consent.
 
 ## Store
 
-Path is fixed: `~/.build-loop/cli-dispatch-consent.json`. Per-operator, not
+Path is fixed: `~/.agent-consent/cli-dispatch-consent.json`. The directory is
+vendor-neutral on purpose — Rally Point is independently installable, and a
+`~/.build-loop/` store would make a standalone Rally Point install write into
+another product's namespace. Per-operator, not
 per-repo — consent is a standing decision about the operator's own credentials and
 spend, and should not silently reset because work moved to a new checkout. Every
 entry records the repo it was decided in, so a future narrowing to per-repo scope
@@ -79,8 +82,8 @@ has the data.
 There is **no environment override of the store path** outside a test process. An
 override is a one-line bypass of everything above it: point it at an attacker-written
 file and every check passes. Implementations MAY honor an override only when the
-process is demonstrably a test runner (`PYTEST_CURRENT_TEST` set, or an explicit
-in-process argument).
+process is demonstrably a test runner (`PYTEST_CURRENT_TEST` or `AGENT_CONSENT_SELFTEST` set, redirecting via
+`AGENT_CONSENT_STORE_PATH`).
 
 ## Wire format
 
@@ -119,8 +122,10 @@ becomes visible because the operator holds the previous value.
 
 ## Depth guard
 
-Env `BUILD_LOOP_DISPATCH_DEPTH`, an integer, incremented by each dispatching process
-before it spawns a vendor CLI. Above `2`, refuse regardless of recorded consent.
+Env `AGENT_DISPATCH_DEPTH`, an integer, incremented by each dispatching process.
+Vendor-neutral by necessity: the cascade it caps crosses products, so a variable
+only one product honors caps nothing.
+Each process increments it before it spawns a vendor CLI. Above `2`, refuse regardless of recorded consent.
 
 One `auto` grant otherwise authorizes unbounded recursion: claude -> build-loop ->
 codex -> claude. Depth is the only thing that caps the cascade, and it is not

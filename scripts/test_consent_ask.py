@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for consent_ask.py. Zero deps. Run: python3 scripts/test_consent_ask.py
 
-Every test runs against a throwaway store via BUILD_LOOP_CONSENT_SELFTEST=1 +
-BUILD_LOOP_CLI_CONSENT_PATH=<tmpfile> — the real `~/.build-loop/cli-dispatch-
+Every test runs against a throwaway store via AGENT_CONSENT_SELFTEST=1 +
+AGENT_CONSENT_STORE_PATH=<tmpfile> — the real `~/.build-loop/cli-dispatch-
 consent.json` must never be touched by this suite.
 """
 from __future__ import annotations
@@ -28,10 +28,10 @@ import consent_ask  # noqa: E402
 
 def _selftest_env(store_path: Path) -> dict[str, str]:
     env = dict(os.environ)
-    env["BUILD_LOOP_CONSENT_SELFTEST"] = "1"
-    env["BUILD_LOOP_CLI_CONSENT_PATH"] = str(store_path)
+    env["AGENT_CONSENT_SELFTEST"] = "1"
+    env["AGENT_CONSENT_STORE_PATH"] = str(store_path)
     # Never inherit a real dispatch-depth value from the outer session.
-    env.pop("BUILD_LOOP_DISPATCH_DEPTH", None)
+    env.pop("AGENT_DISPATCH_DEPTH", None)
     return env
 
 
@@ -52,7 +52,7 @@ class ConsentAskTestCase(unittest.TestCase):
     resolves the path via `cli_dispatch_consent.store_path()`. That function
     reads the REAL `os.environ` directly (not any `env=` dict passed around in
     this process), so the only way to redirect in-process calls away from the
-    real `~/.build-loop/cli-dispatch-consent.json` is to patch `os.environ`
+    real `~/.agent-consent/cli-dispatch-consent.json` is to patch `os.environ`
     itself for the duration of the test — a plain `env={...}` kwarg does not
     reach it. Subprocess (CLI) tests get the same guarantee by copying this
     same patched environment into the child process.
@@ -62,8 +62,8 @@ class ConsentAskTestCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tmp.name) / "cli-dispatch-consent.json"
         self._env_overrides = {
-            "BUILD_LOOP_CONSENT_SELFTEST": "1",
-            "BUILD_LOOP_CLI_CONSENT_PATH": str(self.store_path),
+            "AGENT_CONSENT_SELFTEST": "1",
+            "AGENT_CONSENT_STORE_PATH": str(self.store_path),
         }
         self._saved_env = {k: os.environ.get(k) for k in self._env_overrides}
         os.environ.update(self._env_overrides)
@@ -71,7 +71,7 @@ class ConsentAskTestCase(unittest.TestCase):
         # actually takes effect before any test relies on it.
         assert cli_dispatch_consent.store_path() == self.store_path, (
             "test harness bug: cli_dispatch_consent.store_path() did not "
-            "honor BUILD_LOOP_CONSENT_SELFTEST + BUILD_LOOP_CLI_CONSENT_PATH"
+            "honor AGENT_CONSENT_SELFTEST + AGENT_CONSENT_STORE_PATH"
         )
 
     def tearDown(self) -> None:
@@ -202,7 +202,7 @@ class ResolveShortCircuitTests(ConsentAskTestCase):
             "codex",
             "codex exec x",
             host="claude_code",
-            env={"BUILD_LOOP_DISPATCH_DEPTH": "5"},
+            env={"AGENT_DISPATCH_DEPTH": "5"},
         )
         self.assertFalse(result["check"]["allowed"])
         self.assertFalse(result["check"]["needs_prompt"])
@@ -306,9 +306,9 @@ class CliTests(ConsentAskTestCase):
 
     def test_cli_never_touches_real_store(self) -> None:
         """Belt-and-suspenders on the CLI path specifically: even though the
-        subprocess inherits BUILD_LOOP_CONSENT_SELFTEST + the redirected path,
+        subprocess inherits AGENT_CONSENT_SELFTEST + the redirected path,
         confirm the real per-operator store path is untouched by this run."""
-        real_store = Path.home() / ".build-loop" / "cli-dispatch-consent.json"
+        real_store = Path.home() / ".agent-consent" / "cli-dispatch-consent.json"
         before = real_store.read_bytes() if real_store.exists() else None
 
         run_cli(
