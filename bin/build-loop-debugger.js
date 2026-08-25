@@ -94,8 +94,14 @@ function normalizeIncident(payload, api) {
 async function main() {
   const { command, positional, options } = parseArgs(process.argv.slice(2));
   process.chdir(options.workdir);
-  const api = require(path.resolve(__dirname, "../dist/src/index.js"));
-  const memoryRoot = api.getMemoryPaths().root;
+  // Plugin caches do not ship node_modules. Load only dependency-free debugger
+  // modules instead of the package index, which also exports interactive
+  // helpers backed by the optional `prompts` package.
+  const retrieval = require(path.resolve(__dirname, "../dist/src/retrieval.js"));
+  const storage = require(path.resolve(__dirname, "../dist/src/storage.js"));
+  const config = require(path.resolve(__dirname, "../dist/src/config.js"));
+  const api = { ...retrieval, ...storage };
+  const memoryRoot = config.getMemoryPaths().root;
   const originalLog = console.log;
   console.log = (...items) => console.error(...items);
   try {
