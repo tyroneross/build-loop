@@ -195,17 +195,21 @@ class ConsentDecisionTests(unittest.TestCase):
         self.assertNotEqual(decision, "deny")
         self.assertIn("must ask", out["hookSpecificOutput"]["permissionDecisionReason"])
 
-    def test_denied_key_still_emits_ask_never_deny(self) -> None:
-        """WARN-ONLY is unconditional: even a recorded 'denied' mode must
-        surface as 'ask' with the real verdict named in the reason, not as
-        a literal 'deny' — that is the entire point of this rollout phase."""
+    def test_denied_key_denies_now_that_the_gate_is_armed(self) -> None:
+        """An operator who recorded 'denied' gets a deny, not another prompt.
+
+        This asserted the opposite during the warn-only rollout (2026-08-21..25),
+        when every outcome surfaced as 'ask' so the fire rate could be measured
+        without blocking anything. Arming inverted it deliberately: 'ask' stays
+        the default for a key with NO record, because the operator has not been
+        asked yet and asking is the whole point — but re-asking someone who
+        already said no is how a gate teaches people to disable it."""
         record_consent(self.store, "codex", "denied")
         r = run_hook(self.repo, 'codex exec "hi"', consent_store=self.store)
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
         out = json.loads(r.stdout)
         decision = out["hookSpecificOutput"]["permissionDecision"]
-        self.assertEqual(decision, "ask")
-        self.assertNotEqual(decision, "deny")
+        self.assertEqual(decision, "deny")
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("denied", reason)
 
@@ -243,8 +247,8 @@ class WarnCounterTests(unittest.TestCase):
         entry = json.loads(lines[0])
         self.assertEqual(entry["vendor"], "codex")
         self.assertIn("timestamp", entry)
-        self.assertIn("would_be_exit", entry)
-        self.assertEqual(entry["would_be_exit"], 1)
+        self.assertIn("exit", entry)
+        self.assertEqual(entry["exit"], 1)
 
     def test_allowed_dispatch_does_not_append(self) -> None:
         record_consent(self.store, "ollama", "auto")

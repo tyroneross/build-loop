@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-# PreToolUse hook: CLI dispatch consent gate (WARN-ONLY rollout).
+# PreToolUse hook: CLI dispatch consent gate (ARMED 2026-08-25).
 #
 # Contract: references/cli-dispatch-consent-contract.md — read it before
 # changing anything here. Build Loop and Rally Point each shell out to another
@@ -179,18 +179,33 @@ try:
     LABELS = {1: "must ask", 2: "denied", 3: "chain broken (treated as not-allowed)"}
     label = LABELS.get(exit_code, "not allowed")
 
-    warn_reason = (
-        f"[WARN-ONLY — cli-dispatch-consent gate is measuring, not enforcing] "
+    # ARMED (2026-08-25). Warn-only ran 2026-08-21..25 and logged 36 would-blocks
+    # across exactly 3 distinct keys — build-loop:codex, :claude, :ollama — every
+    # one of them exit 1 "no consent recorded". The measured cost of arming is
+    # therefore THREE lifetime prompts, not 36 interruptions, because a key stops
+    # firing the moment it is answered. That is what the (product x vendor) key
+    # granularity was chosen to buy, and the rollout data is what earned the arm.
+    #
+    # `ask` is the DEFAULT, not a weaker deny: with no record, the operator has
+    # not been asked yet, and asking is the entire point. `deny` is reserved for
+    # a decision the operator actually made (`denied`) and for the depth guard,
+    # which no consent answer covers. A broken chain also denies — a store that
+    # does not verify is the one case where proceeding would launder a forged
+    # grant into a real dispatch.
+    DECISION = {1: "ask", 2: "deny", 3: "deny"}
+    decision = DECISION.get(exit_code, "ask")
+
+    armed_reason = (
         f"build-loop is about to run {vendor} ({matched}) through its command "
-        f"line. Real decision would be: {label} (exit {exit_code}) for "
-        f"{key} — {reason}"
+        f"line. This spends your API credit and runs an agent you are not "
+        f"directly watching. Decision: {label} for {key} — {reason}"
     )
 
     emit({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": warn_reason,
+            "permissionDecision": decision,
+            "permissionDecisionReason": armed_reason,
         }
     })
 
@@ -206,7 +221,8 @@ try:
                 .isoformat(timespec="seconds")
                 .replace("+00:00", "Z"),
                 "vendor": vendor,
-                "would_be_exit": exit_code,
+                "exit": exit_code,
+                "decision": decision,
                 "key": key,
                 "reason": reason,
             }

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9add0088661e18d8e9d2c0d7fd3fc72ffd4e4cf4ff1785318850063706d9cfd6"
+    "content_sha256": "bcf89a5a67c3f57a964939bca48c59364267d986db0bc7ebc6efff7797409ad3"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1265,7 +1265,7 @@
         "file": "skills/debug-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-23"
+          "date": "2026-08-25"
         }
       },
       "debugging-memory": {
@@ -1273,7 +1273,7 @@
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-25"
         }
       },
       "defenseclaw-bridge": {
