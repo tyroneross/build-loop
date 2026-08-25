@@ -25,6 +25,7 @@ Zero new dependencies. Python 3.11+.
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import subprocess
 import sys
@@ -588,6 +589,96 @@ def compose(workdir: Path, *, full_git: bool = False) -> dict:
 # CLI
 # ---------------------------------------------------------------------------
 
+def _remote_url_for(path: Path) -> str | None:
+    """
+    Best-effort browsable URL for a handoff that lives inside a git repo.
+
+    WHY: a handoff is written so someone ELSE can pick the work up, and a local
+    absolute path is useless to them — it names a file on one machine. The point
+    of emitting it is that it can be opened, pasted into a ticket, or sent to a
+    peer session on another host.
+
+    Returns None whenever a real URL cannot be established. Deliberately never
+    guesses: a wrong link sends the reader to a 404 or, worse, to a stale copy
+    of a different file.
+    """
+    try:
+        root = subprocess.run(
+            ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        remote = subprocess.run(
+            ["git", "-C", root, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+    # Branch resolution is NON-fatal on purpose. A repo with no commits yet has
+    # an unborn HEAD and `rev-parse` fails; so does a detached checkout. Neither
+    # means "no URL" — the remote and the path are both known — so fall back to
+    # the default branch rather than losing the link over it.
+    try:
+        branch = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        branch = ""
+    if not branch or branch == "HEAD":
+        branch = "main"
+    if not root or not remote:
+        return None
+
+    # git@host:owner/repo.git  and  https://host/owner/repo.git  -> https://host/owner/repo
+    m = re.match(r"^(?:git@([^:]+):|https?://(?:[^@]+@)?([^/]+)/)(.+?)(?:\.git)?$", remote)
+    if not m:
+        return None
+    host = m.group(1) or m.group(2)
+    slug = m.group(3)
+    try:
+        rel = path.resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return None
+
+    if "github" in host:
+        return f"https://{host}/{slug}/blob/{branch or 'main'}/{rel}"
+    if "gitlab" in host:
+        return f"https://{host}/{slug}/-/blob/{branch or 'main'}/{rel}"
+    return None
+
+
+def _is_pushed(path: Path) -> bool:
+    """True when the file's current content exists on the tracked upstream.
+
+    A URL for content that has not been pushed resolves to a 404 or to an older
+    revision, so the caller is told which of the two it is getting.
+    """
+    try:
+        root = subprocess.run(
+            ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        rel = path.resolve().relative_to(Path(root).resolve()).as_posix()
+        # An UNTRACKED file must not read as pushed. `git diff @{u} -- <path>`
+        # exits 0 for a path git has never seen — there is no diff to report —
+        # so diffing alone reported a brand-new file as live and handed out a
+        # URL that 404s. Confirm the upstream actually HAS the path first.
+        known = subprocess.run(
+            ["git", "-C", root, "cat-file", "-e", f"@{{u}}:{rel}"],
+            capture_output=True, timeout=5,
+        )
+        if known.returncode != 0:
+            return False
+        diff = subprocess.run(
+            ["git", "-C", root, "diff", "--quiet", "@{u}", "--", rel],
+            capture_output=True, timeout=5,
+        )
+        return diff.returncode == 0
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compose a build-loop handoff document from .build-loop/ run state."
@@ -614,7 +705,18 @@ def main() -> None:
     doc = result["document"]
     if args.output:
         args.output.write_text(doc, encoding="utf-8")
+        # ALWAYS surface a location the reader can act on. The absolute path is
+        # for whoever is at this terminal; the URL is for everyone else, which
+        # is the entire audience a handoff is written for.
         print(f"Handoff written to {args.output}", file=sys.stderr)
+        url = _remote_url_for(args.output)
+        if url:
+            state = "live" if _is_pushed(args.output) else "NOT PUSHED YET — commit and push before sharing"
+            print(f"  url: {url}", file=sys.stderr)
+            print(f"  ({state})", file=sys.stderr)
+        else:
+            print(f"  url: none — {args.output.resolve().as_uri()} is local-only "
+                  f"(no github/gitlab origin resolved for this path)", file=sys.stderr)
         if result["errors"]:
             print(f"Warnings: {'; '.join(result['errors'])}", file=sys.stderr)
     else:

@@ -16,6 +16,8 @@ import pytest
 # Add the scripts directory so we can import directly
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 from handoff.__main__ import (
+    _is_pushed,
+    _remote_url_for,
     compose,
     _queue_items,
     _landmines,
@@ -342,3 +344,55 @@ class TestNoTruncation:
         assert "non_goals" in doc
         assert "do not ship" in doc
         assert "truncated" not in doc
+
+
+# --- URL emission -----------------------------------------------------------
+# A handoff exists so someone ELSE can act on it, so the location it prints has
+# to be one they can open. These cover the two ways that goes wrong: inventing a
+# URL that does not resolve, and calling an unpushed file live.
+
+def _repo_with_remote(tmp_path: Path, remote: str) -> Path:
+    d = tmp_path / "r"
+    d.mkdir()
+    def git(*a): subprocess.run(["git", "-C", str(d), *a], capture_output=True, check=True)
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "T")
+    git("remote", "add", "origin", remote)
+    return d
+
+
+@pytest.mark.parametrize("remote", [
+    "git@github.com:owner/repo.git",
+    "https://github.com/owner/repo.git",
+])
+def test_github_remotes_resolve_to_a_blob_url(tmp_path, remote):
+    d = _repo_with_remote(tmp_path, remote)
+    f = d / "docs" / "h.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("x")
+    assert _remote_url_for(f) == "https://github.com/owner/repo/blob/main/docs/h.md"
+
+
+def test_unknown_host_returns_none_rather_than_guessing(tmp_path):
+    # A guessed URL sends the reader to a 404 or to a stale copy of another
+    # file. None is the correct answer, and the caller prints the file:// path.
+    d = _repo_with_remote(tmp_path, "git@internal.example.com:owner/repo.git")
+    f = d / "h.md"
+    f.write_text("x")
+    assert _remote_url_for(f) is None
+
+
+def test_path_outside_any_repo_returns_none(tmp_path):
+    f = tmp_path / "loose.md"
+    f.write_text("x")
+    assert _remote_url_for(f) is None
+
+
+def test_untracked_file_is_not_reported_as_pushed(tmp_path):
+    # `git diff @{u} -- <path>` exits 0 for a path git has never seen, so
+    # diffing alone called a brand-new file live and printed a URL that 404s.
+    d = _repo_with_remote(tmp_path, "git@github.com:owner/repo.git")
+    f = d / "brand-new.md"
+    f.write_text("x")
+    assert _is_pushed(f) is False

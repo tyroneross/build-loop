@@ -179,7 +179,27 @@ Prints the handoff doc to stdout. Pipe to a file or share directly.
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handoff --workdir "$PWD" --output handoff.md
 ```
 
-Writes to a file instead.
+Writes to a file instead, and prints where it landed **plus a browsable URL**:
+
+```
+Handoff written to /path/projects/<proj>/handoffs/2026-08-25-lane.md
+  url: https://github.com/<owner>/<repo>/blob/main/projects/<proj>/handoffs/2026-08-25-lane.md
+  (live)
+```
+
+A handoff is written so someone ELSE can pick the work up, and an absolute local
+path names a file on one machine — useless to a peer session, a ticket, or
+another host. The URL is the part that travels.
+
+Two states are distinguished, because a link to unpushed content is worse than
+no link: `(live)` means the upstream holds this exact content; `(NOT PUSHED YET
+— commit and push before sharing)` means it does not. An untracked file reports
+NOT PUSHED, not live — `git diff @{u} -- <path>` exits 0 for a path git has
+never seen, so the check confirms the upstream actually has the path first.
+
+When no github/gitlab origin resolves for that path, it prints the `file://` URI
+and says the doc is local-only. It never guesses a URL: a wrong link sends the
+reader to a 404 or to a stale copy of a different file.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handoff --workdir "$PWD" --json
