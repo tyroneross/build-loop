@@ -87,8 +87,18 @@ def _now() -> str:
 
 
 def _canonical(entry: dict[str, Any]) -> bytes:
+    """Canonical bytes for hashing. `ensure_ascii=False` is LOAD-BEARING, not style.
+
+    Python's default escapes non-ASCII to \\uXXXX; serde_json (Rally Point's
+    implementation) emits raw UTF-8. `decided_in_repo` is a filesystem path, so a
+    single accented character in a repo name made the two implementations compute
+    different digests for the same entry — Rally Point would read a chain written by
+    Build Loop as BROKEN and refuse every dispatch. Raw UTF-8 is the canonical form
+    (RFC 8785) and the one serde_json produces natively, so Python moves, not Rust.
+    """
     body = {k: v for k, v in entry.items() if k != "entry_sha256"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(body, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
 
 
 def entry_hash(entry: dict[str, Any]) -> str:

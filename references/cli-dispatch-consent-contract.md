@@ -112,7 +112,15 @@ key wins. There is no separate materialized map to disagree with the log.
 ### Hashing
 
 `entry_sha256` = SHA-256 over the UTF-8 canonical JSON of the entry with
-`entry_sha256` removed, keys sorted, separators `(",", ":")`, no trailing newline.
+`entry_sha256` removed, keys sorted, separators `(",", ":")`, no trailing newline,
+and **non-ASCII characters emitted raw, never escaped to `\uXXXX`**.
+
+That last clause is not stylistic. Python's `json.dumps` escapes by default and
+serde_json does not, so one accented character in a repo path — `decided_in_repo`
+is a filesystem path — makes the two implementations compute different digests for
+the same entry, and each reads the other's chain as broken. Raw UTF-8 is the
+canonical form (RFC 8785) and serde_json's native output, so Python conforms to
+Rust here rather than the reverse. Any third implementation MUST do the same.
 `prev_sha256` is the previous entry's `entry_sha256`, or `null` at `seq` 0.
 
 The chain alone is worth nothing — an agent can recompute the whole thing. It works

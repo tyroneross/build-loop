@@ -1,0 +1,699 @@
+{
+  "$schema_note": "Language-neutral conformance cases for references/cli-dispatch-consent-contract.md. Every entry_sha256 in every `store` document below was computed independently from the contract's stated hashing algorithm (SHA-256 over UTF-8 canonical JSON of the entry with entry_sha256 removed, keys sorted, separators (\",\", \":\"), no trailing newline) — NOT by calling scripts/cli_dispatch_consent.py. See scripts/consent_conformance.py header for the generator note. This file is DATA; the runner is scripts/consent_conformance.py.",
+  "version": 1,
+  "cases": [
+    {
+      "id": "auto-grants-without-asking",
+      "description": "A recorded `auto` decision allows dispatch without asking. Contract: 'auto | yes | the ONLY granting mode'.",
+      "contract_ref": "## Modes",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    },
+    {
+      "id": "once-mode-refuses",
+      "description": "A recorded `once` decision grants nothing forward — must ask again. Contract: 'once | no | approved that one invocation'.",
+      "contract_ref": "## Modes",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "once",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "ca62b1beadca84a8aaff744ea9e93c0f773e3800b76b1c458ab6916ea2d5266d"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "ask-mode-refuses",
+      "description": "A recorded `ask` decision grants nothing forward — a standing choice to be asked every time. Contract: 'ask | no | a standing choice to be asked every time'.",
+      "contract_ref": "## Modes",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "ask",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "f3370d7754f9b7cd048d1e6904f8f4d897d61e75e74e00f6123ab842e9d8b405"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "denied-mode-refuses",
+      "description": "A recorded `denied` decision refuses and keeps refusing, distinct exit code from must-ask. Contract: 'denied | no | refuse, and keep refusing'; exit code 2 = denied.",
+      "contract_ref": "## Modes / ## Exit codes",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "denied",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "a20d9d0e5757e13168eb00ba78e71ac066367a43416449654b858fc3e2a952e0"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 2
+      }
+    },
+    {
+      "id": "no-record-refuses",
+      "description": "A structurally valid but empty log has no decision for the key. Contract: 'Absence of a decision is never consent.'",
+      "contract_ref": "## Modes",
+      "store": {
+        "version": 2,
+        "log": []
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "missing-store-refuses",
+      "description": "No store file at all reads as no consent. Contract: 'An unreadable, missing, or malformed store reads as NO consent.'",
+      "contract_ref": "## Modes",
+      "store": null,
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "empty-file-refuses",
+      "description": "A zero-byte store file reads as no consent, same as missing/malformed. Contract: 'An unreadable, missing, or malformed store reads as NO consent.'",
+      "contract_ref": "## Modes",
+      "store": "",
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "malformed-json-refuses",
+      "description": "A store file containing text that is not valid JSON reads as no consent, not as a chain-verify failure. Contract: 'An unreadable, missing, or malformed store reads as NO consent.'",
+      "contract_ref": "## Modes",
+      "store": "{not valid json",
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "log-not-a-list-refuses",
+      "description": "A store whose top-level `log` field is not an array (wrong shape, but syntactically valid JSON) reads as no consent.",
+      "contract_ref": "## Wire format",
+      "store": {
+        "version": 2,
+        "log": "oops"
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "mode-wrong-case-AUTO-refuses",
+      "description": "A recorded mode of literal string \"AUTO\" (wrong case) never grants. Contract never-relax rule: 'a record whose mode is not literally auto' is refused, as its own branch, not a documentation claim.",
+      "contract_ref": "## Never-relax rule",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "AUTO",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "5dbddc7b796c011c0b3f7aedb1a9425c49673945c1294f5a6445e6f20c722a3d"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "mode-padded-refuses",
+      "description": "A recorded mode of \" auto \" (leading/trailing whitespace) never grants — near-miss strings never grant.",
+      "contract_ref": "## Never-relax rule",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": " auto ",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "5607b1c917a1a03e927ada649094f72db83221e0139f474b6bbb78dfc1d5e2f6"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "chain-valid-multientry-last-wins-grants",
+      "description": "A two-entry, correctly-linked chain (ask, then auto) is accepted and the LAST entry for the key wins. Contract: 'consent state is DERIVED by replaying log in seq order; the last entry for a key wins.'",
+      "contract_ref": "## Wire format",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "ask",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "f3370d7754f9b7cd048d1e6904f8f4d897d61e75e74e00f6123ab842e9d8b405"
+          },
+          {
+            "seq": 1,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-02T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": "f3370d7754f9b7cd048d1e6904f8f4d897d61e75e74e00f6123ab842e9d8b405",
+            "entry_sha256": "a419a77e431f83c00acb2aa3509984e5ea233bfd56d50bb6f51ec265e260f04b"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    },
+    {
+      "id": "chain-edited-entry-refused",
+      "description": "An entry edited in place after its hash was computed (decided_by flipped to 'attacker', entry_sha256 left stale) breaks the chain and must be refused with the chain-broken exit code, not silently accepted.",
+      "contract_ref": "### Hashing",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "attacker",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 3
+      }
+    },
+    {
+      "id": "chain-wrong-prevsha-refused",
+      "description": "The second entry's prev_sha256 does not match the first entry's entry_sha256 (a forged/rewritten link). Must be refused as chain-broken.",
+      "contract_ref": "### Hashing",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "denied",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "a20d9d0e5757e13168eb00ba78e71ac066367a43416449654b858fc3e2a952e0"
+          },
+          {
+            "seq": 1,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "entry_sha256": "533cb5f288e41ff32300a53210c690ba8452a603c09ae0f1ac3cec68419009db"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 3
+      }
+    },
+    {
+      "id": "chain-seq-out-of-order-refused",
+      "description": "The second entry declares seq=5 instead of its true position (index 1) in the log array. Must be refused as chain-broken.",
+      "contract_ref": "### Hashing",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "denied",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "a20d9d0e5757e13168eb00ba78e71ac066367a43416449654b858fc3e2a952e0"
+          },
+          {
+            "seq": 5,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": "a20d9d0e5757e13168eb00ba78e71ac066367a43416449654b858fc3e2a952e0",
+            "entry_sha256": "c98ab7111d31e671e81a07b678dcc601b70e8d541893989c4a7449f9b5f39d32"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 3
+      }
+    },
+    {
+      "id": "chain-entry-not-object-refused",
+      "description": "A log entry that is not a JSON object at all (a bare string) must be refused as chain-broken, not crash the checker.",
+      "contract_ref": "### Hashing",
+      "store": {
+        "version": 2,
+        "log": [
+          "not-an-object-just-a-string"
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 3
+      }
+    },
+    {
+      "id": "key-isolation-rally-point-codex-refused",
+      "description": "A grant recorded for build-loop:codex must never extend to rally-point:codex. Contract: 'A grant for one key NEVER extends to another.'",
+      "contract_ref": "## Key granularity",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "rally-point:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "key-isolation-buildloop-claude-refused",
+      "description": "A grant recorded for build-loop:codex must never extend to build-loop:claude (same product, different vendor). Contract: 'build-loop:codex says nothing about ... build-loop:claude.'",
+      "contract_ref": "## Key granularity",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:claude",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "key-isolation-buildloop-ollama-refused",
+      "description": "A grant recorded for build-loop:codex must never extend to build-loop:ollama.",
+      "contract_ref": "## Key granularity",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:ollama",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "key-isolation-buildloop-cursor-refused",
+      "description": "A grant recorded for build-loop:codex must never extend to build-loop:cursor.",
+      "contract_ref": "## Key granularity",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:cursor",
+      "expect": {
+        "allowed": false,
+        "exit": 1
+      }
+    },
+    {
+      "id": "depth-unset-allows",
+      "description": "AGENT_DISPATCH_DEPTH unset reads as 0, within cap; a recorded auto grant is honored. Contract: 'Unset reads as 0.'",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    },
+    {
+      "id": "depth-zero-allows",
+      "description": "AGENT_DISPATCH_DEPTH=0 is within cap (2); a recorded auto grant is honored.",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {
+        "AGENT_DISPATCH_DEPTH": "0"
+      },
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    },
+    {
+      "id": "depth-two-allows",
+      "description": "AGENT_DISPATCH_DEPTH=2 is exactly at the cap and still allowed. Contract: 'Above 2, refuse regardless of recorded consent.'",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {
+        "AGENT_DISPATCH_DEPTH": "2"
+      },
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    },
+    {
+      "id": "depth-three-exceeds-cap-overrides-auto-grant",
+      "description": "AGENT_DISPATCH_DEPTH=3 exceeds the cap and refuses even though a valid auto grant is recorded — depth is checked FIRST and beats any recorded consent. Contract: 'Depth is the only thing that caps the cascade, and it is not covered by any consent answer the operator can give.'",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {
+        "AGENT_DISPATCH_DEPTH": "3"
+      },
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 2
+      }
+    },
+    {
+      "id": "depth-negative-refused",
+      "description": "AGENT_DISPATCH_DEPTH=-1 reads as exceeded, not as 0, despite a valid auto grant. Contract: 'A negative value likewise reads as exceeded ... -1 would otherwise buy four levels of recursion instead of two.'",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {
+        "AGENT_DISPATCH_DEPTH": "-1"
+      },
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 2
+      }
+    },
+    {
+      "id": "depth-non-integer-refused",
+      "description": "AGENT_DISPATCH_DEPTH='abc' (garbage) reads as exceeded, not as 0, despite a valid auto grant. Contract: 'A non-integer value reads as exceeded, not as 0 — a garbage value is the shape a bypass attempt takes.'",
+      "contract_ref": "## Depth guard",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-01-01T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "test-fixture",
+            "decided_in_repo": "/tmp/conformance-fixture-repo",
+            "prev_sha256": null,
+            "entry_sha256": "d77360f4481b9c10bb539591f27cb4ed6bce5e14cd46fc573548bfc050b462ff"
+          }
+        ]
+      },
+      "env": {
+        "AGENT_DISPATCH_DEPTH": "abc"
+      },
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": false,
+        "exit": 2
+      }
+    },
+    {
+      "id": "non-ascii-repo-path-hashes-raw-utf8",
+      "description": "An entry whose decided_in_repo contains non-ASCII must hash with the character emitted RAW, not escaped to \\uXXXX. Python's json.dumps escapes by default and serde_json does not, so an escaping implementation computes a different digest, reads its own valid chain as broken, and refuses every dispatch. Found 2026-08-25 by direct cross-implementation comparison; every prior fixture was ASCII, so the suite could not have caught it.",
+      "contract_ref": "Wire format / Hashing",
+      "store": {
+        "version": 2,
+        "log": [
+          {
+            "seq": 0,
+            "key": "build-loop:codex",
+            "mode": "auto",
+            "decided_at": "2026-08-25T00:00:00Z",
+            "decided_by": "user",
+            "decided_via": "cli",
+            "decided_in_repo": "/Users/tyroneross/dev/café-app",
+            "prev_sha256": null,
+            "entry_sha256": "cbff9be797914b86fb993f10a3b3bb930e6175cd68cbba2b7a7eec8a156fdd2e"
+          }
+        ]
+      },
+      "env": {},
+      "key": "build-loop:codex",
+      "expect": {
+        "allowed": true,
+        "exit": 0
+      }
+    }
+  ]
+}
