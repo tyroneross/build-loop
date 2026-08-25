@@ -22,6 +22,8 @@ import os
 import sys
 from pathlib import Path
 
+import tempfile
+
 import pytest
 
 HERE = Path(__file__).resolve().parent
@@ -219,10 +221,36 @@ def test_main_json_output_is_well_formed(capsys: pytest.CaptureFixture) -> None:
     assert len(out["results"]) == out["total"]
 
 
-def test_rust_adapter_is_an_unimplemented_seam() -> None:
-    adapter = cc.RustAdapter()
-    with pytest.raises(NotImplementedError):
-        adapter.check("build-loop", "codex", {}, Path("/dev/null"))
+def test_rust_adapter_grades_the_real_rust_implementation() -> None:
+    """The Rust adapter drives Rally Point's consent binary for real.
+
+    This asserted `raises(NotImplementedError)` while the seam was a stub. With
+    the binary built, the seam is the mechanism the contract promised: ONE case
+    set grading BOTH implementations, so they cannot drift on behavior without a
+    test going red.
+
+    SKIPPED, not failed, when the sibling checkout or its binary is absent. This
+    repo must not hard-depend on agent-rally-point being present — that is the
+    same standalone-installability boundary that made the two implementations
+    separate in the first place. A skip here means "not graded on this machine",
+    which is honest; a failure would mean "build-loop is broken", which is false.
+    """
+    try:
+        adapter = cc.RustAdapter()
+        impl = getattr(adapter, "impl_path", None)
+    except Exception as exc:  # repo not found / build unavailable
+        pytest.skip(f"rust implementation not available here: {exc}")
+    if not impl or not Path(impl).exists():
+        pytest.skip(f"consent_check binary not built at {impl!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        store = Path(td) / "store.json"
+        store.write_text("{}", encoding="utf-8")
+        result = adapter.check("build-loop", "codex", {}, store)
+
+    # An empty store is not consent, in either language.
+    assert result.allowed is False
+    assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------

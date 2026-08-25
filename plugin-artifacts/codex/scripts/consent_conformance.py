@@ -188,28 +188,79 @@ class PythonCLIAdapter(Adapter):
 
 
 class RustAdapter(Adapter):
-    """SEAM — NOT IMPLEMENTED. Rally Point's Rust implementation
-    (crates/cockpitd/src/consent.rs, a different repo) does not exist yet.
+    """Drives Rally Point's Rust consent implementation through its dedicated
+    conformance-check binary: crates/cockpitd/src/bin/consent_check.rs, in
+    the agent-rally-point repo (a sibling checkout, not this one). That
+    binary is a thin CLI wrapper — `--key <product:vendor> --json` — over
+    `cockpitd::consent::check`; it duplicates no consent logic itself.
 
-    When it does, this adapter should shell out to the compiled `cockpitd`
-    (or a small dedicated conformance-check binary it exposes) with the same
-    contract: given --product/--vendor, AGENT_CONSENT_SELFTEST=1 and
-    AGENT_CONSENT_STORE_PATH set in its environment, it must print a JSON
-    object containing at least {"allowed": bool} to stdout and exit with the
-    contract's exit code (0/1/2/3). Implement `check` exactly like
-    PythonCLIAdapter.check above, pointing at the Rust binary instead of
-    `sys.executable`. Do not implement this until the Rust binary exists —
-    there is nothing to grade yet.
+    Repo location resolution, in order:
+      1. `AGENT_RALLY_POINT_REPO` env var, if set.
+      2. `<this repo's parent>/agent-rally-point` (sibling checkout — the
+         layout this workstation actually uses).
+
+    Binary resolution, in order:
+      1. `impl_path` constructor arg (mirrors PythonCLIAdapter's `--impl-path`).
+      2. `CONSENT_CHECK_BIN` env var — a prebuilt binary path, for CI or a
+         non-cargo environment.
+      3. Build it: `cargo build -p cockpitd --bin consent_check` in the
+         resolved repo, then use `target/debug/consent_check`.
+
+    The env contract is identical to PythonCLIAdapter: the runner's
+    `build_env()` already sets AGENT_CONSENT_SELFTEST + AGENT_CONSENT_STORE_PATH
+    (honored by the Rust store-path resolver) and AGENT_DISPATCH_DEPTH
+    per-case; this adapter passes that env straight through unmodified — it
+    never redirects the store itself, so the real ~/.agent-consent is never
+    at risk from this path either.
     """
 
     name = "rust"
 
+    REPO_ENV = "AGENT_RALLY_POINT_REPO"
+    BIN_ENV = "CONSENT_CHECK_BIN"
+
+    def __init__(self, impl_path: Path | None = None) -> None:
+        self.impl_path = impl_path or self._resolve_binary()
+
+    def _repo_root(self) -> Path:
+        override = os.environ.get(self.REPO_ENV)
+        if override:
+            return Path(override).expanduser()
+        return REPO_ROOT.parent / "agent-rally-point"
+
+    def _resolve_binary(self) -> Path:
+        prebuilt = os.environ.get(self.BIN_ENV)
+        if prebuilt:
+            return Path(prebuilt).expanduser()
+        repo = self._repo_root()
+        if not repo.is_dir():
+            raise FileNotFoundError(
+                f"agent-rally-point repo not found at {repo} (set {self.REPO_ENV} "
+                "to point at a checkout, or set CONSENT_CHECK_BIN to a prebuilt binary)"
+            )
+        bin_path = repo / "target" / "debug" / "consent_check"
+        if not bin_path.exists():
+            subprocess.run(
+                ["cargo", "build", "-p", "cockpitd", "--bin", "consent_check"],
+                cwd=repo, check=True,
+            )
+        return bin_path
+
     def check(self, product: str, vendor: str, env: dict[str, str], store_path: Path) -> AdapterResult:
-        raise NotImplementedError(
-            "RustAdapter is an unimplemented seam — Rally Point's Rust consent "
-            "implementation (crates/cockpitd/src/consent.rs) does not exist yet. "
-            "See the RustAdapter docstring for what a future implementation must satisfy."
+        key = f"{product}:{vendor}"
+        proc = subprocess.run(
+            [str(self.impl_path), "--key", key, "--json"],
+            env=env, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
         )
+        allowed: bool | None = None
+        error: str | None = None
+        try:
+            parsed = json.loads(proc.stdout)
+            allowed = parsed.get("allowed")
+        except json.JSONDecodeError as e:
+            error = f"stdout was not valid JSON: {e}"
+        return AdapterResult(exit_code=proc.returncode, allowed=allowed,
+                              raw_stdout=proc.stdout, raw_stderr=proc.stderr, error=error)
 
 
 ADAPTERS: dict[str, type[Adapter]] = {
@@ -314,7 +365,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cases", type=Path, default=DEFAULT_CASES_PATH,
                      help="path to consent-conformance-cases.json")
     ap.add_argument("--impl-path", type=Path, default=None,
-                     help="override path to the implementation under test (python adapter only)")
+                     help="override path to the implementation under test "
+                          "(python: the .py script; rust: the consent_check binary)")
     ap.add_argument("--json", action="store_true", dest="emit_json")
     a = ap.parse_args(argv)
 
@@ -322,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
     cases_by_id = {c["id"]: c for c in cases}
 
     adapter_cls = ADAPTERS[a.impl]
-    adapter = adapter_cls(a.impl_path) if a.impl_path and a.impl == "python" else adapter_cls()
+    adapter = adapter_cls(a.impl_path) if a.impl_path else adapter_cls()
 
     results = run_suite(adapter, cases)
     passed = sum(1 for r in results if r.passed)
