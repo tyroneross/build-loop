@@ -64,6 +64,7 @@ def run_hook(
     command: str,
     *,
     consent_store: Path,
+    hooks_off: bool = False,
 ) -> subprocess.CompletedProcess:
     """Drive pre_bash_consent.sh exactly as the dispatcher's _run_gate would:
     the raw PreToolUse event JSON on stdin. AGENT_CONSENT_SELFTEST +
@@ -75,6 +76,8 @@ def run_hook(
     env["AGENT_CONSENT_SELFTEST"] = "1"
     env["AGENT_CONSENT_STORE_PATH"] = str(consent_store)
     env.pop("BUILD_LOOP_HOOKS", None)
+    if hooks_off:
+        env["BUILD_LOOP_HOOKS"] = "off"
     return subprocess.run(
         ["bash", str(HOOK)],
         cwd=repo,
@@ -333,6 +336,77 @@ class FailOpenTests(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
         self.assertEqual(r.stdout.strip(), "{}")
+
+
+class KillSwitchLeavesAMarkTests(unittest.TestCase):
+    """BUILD_LOOP_HOOKS=off bypasses the gate but must not do so silently.
+
+    Contract, "Kill switch": the switch is deliberately NOT removed — a gate with
+    no escape hatch gets disabled permanently — but "every dispatch that proceeds
+    with the switch off MUST append a kill_switch_used entry to the chain."
+
+    That MUST was written on 2026-08-21 and was still unimplemented on 2026-08-26:
+    both kill-switch blocks printed '{}' and exited. This suite exists so the
+    contract cannot drift away from the code again without a test going red.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = make_buildloop_repo(Path(self.tmp.name))
+        self.store = Path(self.tmp.name) / "consent.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _log(self) -> list:
+        if not self.store.exists():
+            return []
+        return json.loads(self.store.read_text(encoding="utf-8")).get("log", [])
+
+    def test_bypassed_vendor_dispatch_is_recorded(self) -> None:
+        r = run_hook(self.repo, 'codex exec "hi"',
+                     consent_store=self.store, hooks_off=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "{}", "the switch must still bypass")
+        log = self._log()
+        self.assertEqual(len(log), 1, "a bypassed dispatch left no mark")
+        self.assertEqual(log[0]["key"], "kill_switch_used")
+        self.assertEqual(log[0]["bypassed_vendor"], "codex")
+        self.assertIn("codex exec", log[0]["bypassed_command"])
+
+    def test_bypassed_mention_is_not_recorded(self) -> None:
+        """A mention is not a dispatch. Nothing was bypassed, so the chain — which
+        is a record of real events — stays empty rather than accumulating noise."""
+        r = run_hook(self.repo, "grep codex f.txt",
+                     consent_store=self.store, hooks_off=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self._log(), [])
+
+    def test_kill_switch_entry_never_grants(self) -> None:
+        """The marker must not be mistakable for consent."""
+        run_hook(self.repo, 'codex exec "hi"',
+                 consent_store=self.store, hooks_off=True)
+        env = dict(os.environ)
+        env["AGENT_CONSENT_SELFTEST"] = "1"
+        env["AGENT_CONSENT_STORE_PATH"] = str(self.store)
+        env.pop("AGENT_DISPATCH_DEPTH", None)
+        r = subprocess.run(
+            [sys.executable, str(PLUGIN_ROOT / "scripts" / "cli_dispatch_consent.py"),
+             "--product", "build-loop", "--vendor", "codex", "--check", "--json"],
+            capture_output=True, text=True, env=env, check=False)
+        self.assertEqual(r.returncode, 1, "must still be must-ask, never allowed")
+        self.assertFalse(json.loads(r.stdout)["allowed"])
+
+    def test_chain_still_verifies_after_a_mark(self) -> None:
+        run_hook(self.repo, 'codex exec "hi"',
+                 consent_store=self.store, hooks_off=True)
+        env = dict(os.environ)
+        env["AGENT_CONSENT_SELFTEST"] = "1"
+        env["AGENT_CONSENT_STORE_PATH"] = str(self.store)
+        r = subprocess.run(
+            [sys.executable, str(PLUGIN_ROOT / "scripts" / "cli_dispatch_consent.py"),
+             "--verify-chain"], capture_output=True, text=True, env=env, check=False)
+        self.assertEqual(r.returncode, 0, f"chain broken after a mark: {r.stdout}")
 
 
 if __name__ == "__main__":

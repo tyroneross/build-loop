@@ -29,8 +29,38 @@ set -euo pipefail
 
 INPUT=$(cat)
 
+# Plugin root, resolved BEFORE the kill switch because the kill-switch path
+# needs it to write its mark. Pure shell, no subprocess, so the switch's
+# "do no work" property survives. (It used to be defined ~230 lines below;
+# referencing it up here under `set -u` aborted the hook — caught by an
+# end-to-end run, not by any unit test, because the hook still fail-opened to
+# `{}` and exit 0 exactly like a healthy no-op.)
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$PLUGIN_ROOT" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+fi
+
 # Honor the global kill switch before doing any work.
+#
+# ONE exception, and it is contractual: the cli-dispatch-consent gate is allowed
+# to be bypassed, but not SILENTLY (references/cli-dispatch-consent-contract.md,
+# "Kill switch" — "Every dispatch that proceeds with the switch off MUST append a
+# kill_switch_used entry to the chain"). The switch stays, because a gate with no
+# escape hatch gets disabled forever; what changes is that the escape leaves a
+# mark.
+#
+# Cost discipline: a cheap substring test on the RAW event gates the spawn, so a
+# hooks-off shell pays nothing unless the command even mentions a vendor binary.
+# The spawned helper then does the precise leading-token check itself and appends
+# nothing when the mention is not an invocation.
 if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
+    case "$INPUT" in
+        *codex*|*claude*|*cursor-agent*|*ollama*)
+            printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/cli_dispatch_consent.py" \
+                --note-kill-switch --from-event >/dev/null 2>&1 || true
+            ;;
+    esac
     printf '{}'
     exit 0
 fi
@@ -258,11 +288,6 @@ case "$CMD" in
 esac
 
 # Resolve plugin root for locating sub-scripts.
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$PLUGIN_ROOT" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-fi
 
 # ── Unbounded-wait gate ──────────────────────────────────────────────────────
 # Runs FIRST and cheap: a wait with no exit condition is wrong regardless of what

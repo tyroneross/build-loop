@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import json
 import os
 import sys
@@ -214,7 +215,30 @@ def record(product: str, vendor: str, mode: str, *, path: Path | None = None,
     return entry
 
 
-def note_kill_switch(*, path: Path | None = None, repo: str | None = None) -> dict[str, Any]:
+VENDOR_BINARIES = {"claude": "claude", "codex": "codex",
+                   "cursor-agent": "cursor", "ollama": "ollama"}
+
+
+def detect_vendor(command: str) -> str | None:
+    """The vendor a shell command actually INVOKES, or None.
+
+    Leading-token match per segment, so `grep codex f.txt` and `echo "use codex"`
+    do not count — a mention is not a dispatch. Mirrors pre_bash_consent.sh's
+    detection; kept here so the kill-switch logger can be precise without the
+    hook having to extract anything first.
+    """
+    for seg in re.split(r"[;|&\n]+", command or ""):
+        tok = seg.strip().split()
+        if not tok:
+            continue
+        base = os.path.basename(tok[0])
+        if base in VENDOR_BINARIES:
+            return VENDOR_BINARIES[base]
+    return None
+
+
+def note_kill_switch(*, path: Path | None = None, repo: str | None = None,
+                     command: str | None = None, vendor: str | None = None) -> dict[str, Any]:
     """Record that a dispatch proceeded with BUILD_LOOP_HOOKS=off.
 
     The switch is not removed — the hook's own history records that misfiring gates
@@ -233,6 +257,11 @@ def note_kill_switch(*, path: Path | None = None, repo: str | None = None) -> di
             "decided_by": "environment",
             "decided_via": "BUILD_LOOP_HOOKS=off",
             "decided_in_repo": repo or os.getcwd(),
+            # The command is recorded so a reader can tell a real bypassed
+            # dispatch from a false positive without re-deriving it. Truncated:
+            # this is an audit marker, not a shell history.
+            "bypassed_command": (command or "")[:200],
+            "bypassed_vendor": vendor or detect_vendor(command or ""),
             "prev_sha256": prev,
         }
         entry["entry_sha256"] = entry_hash(entry)
@@ -317,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verify-chain", action="store_true")
     ap.add_argument("--head", action="store_true", help="print the chain head hash")
     ap.add_argument("--note-kill-switch", action="store_true")
+    ap.add_argument("--from-event", action="store_true",
+                    help="read the raw PreToolUse event on stdin")
+    ap.add_argument("--command", default="", help="command being bypassed")
     ap.add_argument("--json", action="store_true", dest="emit_json")
     a = ap.parse_args(argv)
 
@@ -329,7 +361,25 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ALLOWED if v["ok"] else EXIT_CHAIN_BROKEN
 
     if a.note_kill_switch:
-        e = note_kill_switch()
+        cmd, cwd = a.command, None
+        if a.from_event:
+            # One spawn does parse + detect + append. The hook cannot afford an
+            # extraction pass before the kill switch — that is the one place it
+            # is contractually required to do no work.
+            try:
+                ev = json.load(sys.stdin)
+                cmd = (ev.get("tool_input") or {}).get("command", "")
+                cwd = ev.get("cwd") or None
+            except Exception:
+                cmd, cwd = cmd or "", None
+        v = detect_vendor(cmd or "")
+        if a.from_event and not v:
+            # A mention is not a dispatch. Nothing bypassed the gate, so nothing
+            # is appended — the chain stays a record of real events.
+            print(json.dumps({"logged": False, "reason": "no vendor invocation in command"})
+                  if a.emit_json else "no vendor invocation; nothing logged")
+            return EXIT_ALLOWED
+        e = note_kill_switch(repo=cwd, command=cmd, vendor=v)
         print(json.dumps(e, indent=2) if a.emit_json else f"logged kill-switch use at seq {e['seq']}")
         return EXIT_MUST_ASK
 

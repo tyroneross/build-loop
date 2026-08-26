@@ -45,7 +45,22 @@ INPUT=$(cat)
 # checks this before spawning ANY sub-gate, but this hook can also be invoked
 # directly (tests, a future standalone caller), so it re-checks rather than
 # relying on a caller it cannot see.
+# Resolved BEFORE the kill switch, because the kill-switch path now needs it to
+# write its mark. Pure shell — no subprocess — so the "do no work" property of
+# the switch is preserved.
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$PLUGIN_ROOT" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+fi
+CONSENT_SCRIPT="$PLUGIN_ROOT/scripts/cli_dispatch_consent.py"
+
 if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
+    # Bypassable, but not silently — see the contract's "Kill switch" section and
+    # the matching block in pre_bash_dispatch.sh. Direct invocation reaches here
+    # without passing through the dispatcher, so the mark is written here too.
+    printf '%s' "$INPUT" | python3 "$CONSENT_SCRIPT" \
+        --note-kill-switch --from-event >/dev/null 2>&1 || true
     printf '{}'
     exit 0
 fi
@@ -102,13 +117,7 @@ if [ -z "$VENDOR" ]; then
     exit 0
 fi
 
-# ── Step 2: resolve the consent module + the repo the dispatch acts in ──────
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$PLUGIN_ROOT" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-fi
-CONSENT_SCRIPT="$PLUGIN_ROOT/scripts/cli_dispatch_consent.py"
+# ── Step 2: resolve the repo the dispatch acts in ───────────────────────────
 if [ ! -f "$CONSENT_SCRIPT" ]; then
     # Frozen module missing from this install — fail open, not blocked.
     printf '{}'

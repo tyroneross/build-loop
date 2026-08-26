@@ -546,5 +546,53 @@ class TestI_ModeStringSmuggling(ConsentAttackTestCase):
                 self.assertEqual(result["exit"], cdc.EXIT_MUST_ASK, msg=(mode, result))
 
 
+class TestJ_ConcurrentWriters(unittest.TestCase):
+    """record() under simultaneous writers — two terminals answering at once.
+
+    Verified load-bearing by mutation on 2026-08-26: with LockedFile neutered and
+    atomic_write left intact, 12 concurrent writers produced 2 surviving entries.
+    Ten answers silently vanished.
+
+    Note what the chain does NOT do here. With ten writes lost, verify_chain still
+    returned ok and the seq values were still contiguous 0..1 — a lost write is
+    indistinguishable from a chain that was always shorter. Same blind spot as the
+    truncation case in TestC: only the head hash the operator holds reveals it.
+    """
+
+    def test_no_answer_is_lost_under_concurrent_writers(self) -> None:
+        import itertools
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as td:
+            store = os.path.join(td, "store.json")
+            env = {**os.environ, "AGENT_CONSENT_SELFTEST": "1",
+                   "AGENT_CONSENT_STORE_PATH": store}
+            env.pop("AGENT_DISPATCH_DEPTH", None)
+
+            combos = list(itertools.product(["build-loop", "rally-point"],
+                                            ["codex", "claude"]))
+            modes = ["auto", "denied", "ask", "once"]
+            procs = []
+            for i in range(12):
+                product, vendor = combos[i % len(combos)]
+                procs.append(subprocess.Popen(
+                    [sys.executable, str(HERE / "cli_dispatch_consent.py"), "--product", product,
+                     "--vendor", vendor, "--set", modes[i % 4]],
+                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+            for pr in procs:
+                pr.communicate()
+                self.assertEqual(pr.returncode, 0)
+
+            with open(store, encoding="utf-8") as fh:
+                data = json.load(fh)
+            log = data["log"]
+
+            self.assertEqual(len(log), 12, "a concurrent answer was lost")
+            self.assertEqual([e["seq"] for e in log], list(range(12)),
+                             "seq must stay contiguous under concurrency")
+            self.assertTrue(cdc.verify_chain(data)["ok"],
+                            "concurrent appends must not corrupt the chain")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
