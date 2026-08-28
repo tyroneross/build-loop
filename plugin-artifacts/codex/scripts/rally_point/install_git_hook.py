@@ -130,11 +130,20 @@ _RUNTIME_GUARD_SRC = '''#!/usr/bin/env python3
 
 Run by .git/hooks/pre-commit. Delegates to the plugin's pinned
 check_runtime_memory_tracking.py; a non-zero exit aborts the commit.
+A vanished checker (e.g. a pruned plugin cache) must not brick every
+commit in the repo: warn and pass instead of crashing.
 """
+import os
 import runpy
 import sys
 
 _CHECKER = {checker!r}
+if not os.path.isfile(_CHECKER):
+    sys.stderr.write(
+        "runtime-memory guard: checker missing at %s; skipping "
+        "(re-run rally hook install to repin)\\n" % _CHECKER
+    )
+    sys.exit(0)
 sys.argv = [_CHECKER]
 try:
     runpy.run_path(_CHECKER, run_name="__main__")
