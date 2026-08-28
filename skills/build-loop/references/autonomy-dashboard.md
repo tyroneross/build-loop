@@ -1,10 +1,10 @@
-# Autonomy Decision Dashboard
+# Build Loop Dashboard
 
 ## Big idea
 
-Build Loop should finish related work by default and interrupt the owner only
-when a decision changes production, reversibility, authorized scope, or a major
-user outcome.
+The local dashboard shows the current Build Loop phase, major tasks, and agents
+that have actually been invoked. The same page retains the autonomy decision
+controls for production, reversibility, scope, and major user outcomes.
 
 ## Start
 
@@ -23,6 +23,28 @@ python3 scripts/autonomy_dashboard.py --workdir "$PWD" --stop
 Use `--foreground` only when an external process manager owns the server
 lifecycle. The server refuses non-loopback binding and non-loopback Host/Origin
 headers.
+
+## Live run projection
+
+`GET /api/state` includes a `run` object produced by
+`scripts/dashboard_projection.py`. The browser refreshes that projection every
+two seconds while the page is visible; no server restart is required when the
+run advances.
+
+The projection is read-only and rebuildable. It uses these canonical records:
+
+- `.build-loop/state.json` for the current run, phase, and structured task
+  collections;
+- `.build-loop/plan.md` to enrich matching bare task IDs and as a major-task
+  fallback when structured execution tasks are absent;
+- `.build-loop/agent-ledger.jsonl` for recorded agent invocations in the current
+  run; and
+- `runs[-1].judge_decisions` in `.build-loop/state.json` for the latest
+  completed run when no agent-ledger rows are available.
+
+Missing or malformed optional records produce an honest empty state or warning.
+The dashboard does not infer invocation from an available-agent roster and does
+not write phase, task, agent, or judge state.
 
 ## Persistence contract
 

@@ -269,6 +269,8 @@ def test_live_http_save_reload_and_queue(live_server: str, repo: Path) -> None:
         state = json.loads(response.read())
     assert state["ok"] is True
     assert len(state["gaps"]) == 6
+    assert state["run"]["status"] == "idle"
+    assert len(state["run"]["phases"]) == 6
     status, saved = _post(live_server, "/api/responses", {
         "gap_id": "bounded-related-work", "choice_id": "adaptive", "note": "Reserve capacity for discovered work."
     })
@@ -336,10 +338,36 @@ def test_html_has_semantic_controls_and_autosave_contract() -> None:
         "is-selected", "Selected policy", "Queued for Build Loop", "response_applied",
         "applied-count", "Applied · validated", "evidence-backed completion",
         "const saved = await save(card, gap);", "if (!saved) return;",
+        'id="run-panel"', 'id="phase-list"', 'id="task-list"', 'id="agent-list"',
+        "renderRun", "refreshRun", "setInterval(refreshRun, 2000)", "Current run",
+        "Major tasks", "Agents invoked", "No agent records yet",
     ):
         assert token in html
+    assert 'id="run-refresh" role="status"' not in html
     assert "innerHTML" not in html
     assert "linear-gradient" not in html
+
+
+def test_api_state_reprojects_phase_changes_without_restarting_server(live_server: str, repo: Path) -> None:
+    state_path = repo / ".build-loop/state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "active": True,
+        "phase": "plan",
+        "execution": {"build_loop_id": "run-live", "phase": "plan"},
+    }), encoding="utf-8")
+    with urllib.request.urlopen(live_server + "/api/state", timeout=2) as response:
+        planned = json.loads(response.read())
+    assert planned["run"]["current_phase"] == "plan"
+
+    state_path.write_text(json.dumps({
+        "active": True,
+        "phase": "execute",
+        "execution": {"build_loop_id": "run-live", "phase": "execute"},
+    }), encoding="utf-8")
+    with urllib.request.urlopen(live_server + "/api/state", timeout=2) as response:
+        executing = json.loads(response.read())
+    assert executing["run"]["current_phase"] == "execute"
 
 
 def test_non_loopback_bind_is_rejected(repo: Path) -> None:

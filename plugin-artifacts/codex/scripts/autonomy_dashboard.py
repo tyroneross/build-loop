@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
+from dashboard_projection import build_run_projection  # noqa: E402
 
 MAX_BODY_BYTES = 64 * 1024
 MAX_NOTE_CHARS = 8_000
@@ -358,7 +359,12 @@ class DecisionStore:
             return event
 
     def state(self) -> dict[str, Any]:
-        return {"big_idea": "Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.", "gaps": DEFAULT_GAPS, "responses": self.latest()}
+        return {
+            "big_idea": "Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.",
+            "gaps": DEFAULT_GAPS,
+            "responses": self.latest(),
+            "run": build_run_projection(self.workdir),
+        }
 
 
 def make_handler(workdir: Path, html_path: Path) -> type[BaseHTTPRequestHandler]:

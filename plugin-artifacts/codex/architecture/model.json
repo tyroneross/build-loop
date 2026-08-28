@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "47dc895f48b17718ce2dcbad76ba575fe96f45a3712729ef58711c1f838fc71e"
+    "content_sha256": "186162ce3d0a6f3bee0d9df4b419854ecf6343a5e7fa902bbfaf3bd9b82f0a94"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1614,6 +1614,7 @@
       "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
       "scripts/cost_rca.py": "cost_rca.py — deterministic measured-token aggregation for cost-impact RCA.",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
+      "scripts/dashboard_projection.py": "Read-only projection of Build Loop phase, task, and agent run state.\"\"\"",
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",

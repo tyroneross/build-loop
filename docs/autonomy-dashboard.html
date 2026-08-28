@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Build Loop Autonomy Decisions</title>
+  <title>Build Loop Dashboard</title>
   <style>
     :root {
       --canvas: #f6fbff;
@@ -90,6 +90,51 @@
       border-radius: 14px;
       font-size: .91rem;
     }
+    .run-panel {
+      margin: 0 0 22px;
+      padding: clamp(22px, 4vw, 34px);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .run-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+    .run-head h2 { margin: 4px 0 0; font-size: clamp(1.55rem, 3vw, 2.2rem); letter-spacing: -.03em; line-height: 1.15; }
+    .run-status { color: var(--accent-strong); font-size: .82rem; font-weight: 800; text-align: right; }
+    .run-goal { max-width: 820px; margin: 12px 0 0; color: var(--muted); }
+    .run-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; color: var(--muted); font-size: .76rem; }
+    .run-meta strong { color: var(--ink); }
+    .phase-list {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0;
+      margin: 26px 0 0;
+      padding: 0;
+      list-style: none;
+      border-block: 1px solid var(--line);
+    }
+    .phase-item { min-width: 0; padding: 16px 13px 15px; border-left: 1px solid var(--line); }
+    .phase-item:first-child { border-left: 0; }
+    .phase-item[data-status="active"] { box-shadow: inset 0 3px 0 var(--accent); background: color-mix(in srgb, var(--accent-soft) 38%, white); }
+    .phase-item[data-status="complete"] .phase-number { background: var(--accent); color: white; border-color: var(--accent); }
+    .phase-item[data-status="blocked"] { box-shadow: inset 0 3px 0 var(--error); }
+    .phase-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .76rem; font-weight: 800; }
+    .phase-item h3 { margin: 9px 0 1px; font-size: .9rem; }
+    .phase-item p { margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.4; }
+    .phase-state { display: block; margin-top: 7px; color: var(--accent-strong); font-size: .68rem; font-weight: 800; text-transform: capitalize; }
+    .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 26px; }
+    .work-column + .work-column { border-left: 1px solid var(--line); padding-left: 28px; }
+    .work-column h3 { margin: 0; font-size: 1rem; }
+    .work-column > p { margin: 3px 0 12px; color: var(--muted); font-size: .78rem; }
+    .record-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+    .record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 11px 0; border-top: 1px solid var(--line); }
+    .record-row:first-child { border-top: 0; }
+    .record-title { min-width: 0; overflow-wrap: anywhere; font-size: .86rem; font-weight: 750; }
+    .record-status { color: var(--accent-strong); font-size: .7rem; font-weight: 800; text-transform: capitalize; text-align: right; }
+    .record-meta { grid-column: 1 / -1; color: var(--muted); font-size: .71rem; }
+    .empty-record { padding: 16px 0; color: var(--muted); font-size: .82rem; }
+    .run-warning { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--error); font-size: .78rem; }
+    .decision-metrics { max-width: 470px; margin: 0 0 18px auto; }
     .principle strong { flex: 0 0 auto; }
     .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 0 0 16px; }
     .toolbar h2 { margin: 0; font-size: 1.75rem; font-weight: 750; letter-spacing: -.025em; }
@@ -185,6 +230,9 @@
       .readiness { border-top: 1px solid var(--line); border-left: 0; }
       .choices { grid-template-columns: 1fr; }
       .choice { min-height: 0; }
+      .phase-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .phase-item:nth-child(4) { border-left: 0; }
+      .phase-item:nth-child(n + 4) { border-top: 1px solid var(--line); }
     }
     @media (max-width: 700px) {
       .shell { width: min(100% - 20px, 1180px); padding-top: 10px; }
@@ -202,6 +250,15 @@
       .decision { padding: 18px; }
       .note-row { grid-template-columns: 1fr; }
       button { width: 100%; }
+      .run-panel { border-radius: 18px; padding: 22px; }
+      .run-head { display: block; }
+      .run-status { margin-top: 8px; text-align: left; }
+      .phase-list { grid-template-columns: 1fr; }
+      .phase-item, .phase-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--line); }
+      .phase-item:first-child { border-top: 0; }
+      .work-grid { grid-template-columns: 1fr; gap: 18px; }
+      .work-column + .work-column { border-top: 1px solid var(--line); border-left: 0; padding-top: 18px; padding-left: 0; }
+      .decision-metrics { max-width: none; margin-left: 0; }
     }
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
@@ -213,23 +270,50 @@
   <main class="shell">
     <div class="masthead">
       <header class="hero">
-        <div class="eyebrow">Autonomy decisions</div>
-        <h1>Finish the related work. Ask only when the outcome changes.</h1>
-        <p id="big-idea">Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.</p>
+        <div class="eyebrow">Build Loop dashboard</div>
+        <h1>See where every run stands.</h1>
+        <p>Follow the current phase, major tasks, and agents that have actually been invoked. The view reads Build Loop's local records and never edits run state.</p>
       </header>
-      <aside class="readiness" aria-labelledby="summary-title">
+      <aside class="readiness" aria-labelledby="run-summary-title">
         <div>
-          <h2 id="summary-title">Decision state</h2>
-          <p>Saved records your choice. Queued schedules work. Applied confirms validated execution.</p>
+          <h2 id="run-summary-title">Current run</h2>
+          <p id="run-summary-copy">Loading the latest recorded state.</p>
         </div>
         <div class="metrics" aria-live="polite">
-          <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
-          <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
-          <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
-          <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
+          <div class="metric"><strong id="run-status">—</strong><span>state</span></div>
+          <div class="metric"><strong id="phase-progress">—</strong><span>phases</span></div>
+          <div class="metric"><strong id="task-count">—</strong><span>tasks</span></div>
+          <div class="metric"><strong id="agent-count">—</strong><span>agents</span></div>
         </div>
       </aside>
     </div>
+
+    <section id="run-panel" class="run-panel" aria-labelledby="run-title" data-status="loading">
+      <div class="run-head">
+        <div><div class="eyebrow">Current run</div><h2 id="run-title">Loading run state…</h2></div>
+        <div id="run-state-label" class="run-status" role="status" aria-live="polite">Reading local records</div>
+      </div>
+      <p id="run-goal" class="run-goal">The dashboard is reading the current goal.</p>
+      <div class="run-meta">
+        <span><strong>Run</strong> <span id="run-id">—</span></span>
+        <span><strong>Updated</strong> <span id="run-updated">—</span></span>
+        <span id="run-refresh">Automatic refresh is starting.</span>
+      </div>
+      <ol id="phase-list" class="phase-list" aria-label="Build Loop phases"></ol>
+      <div class="work-grid">
+        <section class="work-column" aria-labelledby="tasks-title">
+          <h3 id="tasks-title">Major tasks</h3>
+          <p>Structured run work, with plan headings used only when execution state has no tasks.</p>
+          <ul id="task-list" class="record-list"></ul>
+        </section>
+        <section class="work-column" aria-labelledby="agents-title">
+          <h3 id="agents-title">Agents invoked</h3>
+          <p>Recorded invocations for this run. Available or configured agents are excluded.</p>
+          <ul id="agent-list" class="record-list"></ul>
+        </section>
+      </div>
+      <p id="run-warning" class="run-warning" hidden></p>
+    </section>
 
     <div class="principle"><strong>Operating rule</strong><span>Related + reversible + testable work executes. Production, irreversible actions, scope expansion, and major user choices request a decision.</span></div>
 
@@ -238,17 +322,27 @@
         <div><h2 id="gaps-title">Choose the operating policy</h2><p>Each card connects the gap to your cost, the resolution, and its impact.</p></div>
         <div class="legend" aria-label="Priority legend"><span>P0 run integrity</span><span>P1 intervention</span><span>P2 capacity</span></div>
       </div>
+      <div class="metrics decision-metrics" aria-live="polite">
+        <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
+        <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
+        <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
+        <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
+      </div>
       <div id="loading" role="status">Loading autonomy decisions…</div>
       <div id="cards" class="cards"></div>
     </section>
-    <p class="footer-note">Local control plane · append-only decisions · evidence-backed completion</p>
+    <p class="footer-note">Local read model · append-only decisions · evidence-backed completion</p>
   </main>
 
   <script>
     const cards = document.querySelector('#cards');
     const loading = document.querySelector('#loading');
+    const runPanel = document.querySelector('#run-panel');
+    const phaseList = document.querySelector('#phase-list');
+    const taskList = document.querySelector('#task-list');
+    const agentList = document.querySelector('#agent-list');
     const timers = new Map();
-    let state = { gaps: [], responses: {} };
+    let state = { gaps: [], responses: {}, run: null };
 
     function node(tag, attrs = {}, text = '') {
       const element = document.createElement(tag);
@@ -266,6 +360,87 @@
       document.querySelector('#saved-count').textContent = responses.filter(item => item.choice_id || item.note).length;
       document.querySelector('#queued-count').textContent = responses.filter(item => item.event === 'response_queued').length;
       document.querySelector('#applied-count').textContent = responses.filter(item => item.event === 'response_applied').length;
+    }
+
+    function statusLabel(status) {
+      return ({ active: 'In progress', complete: 'Complete', pending: 'Upcoming', queued: 'Queued', blocked: 'Needs attention', invoked: 'Invoked', idle: 'Idle' })[status] || status || 'Unknown';
+    }
+
+    function localTime(value) {
+      if (!value) return 'No timestamp recorded';
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    function emptyRecord(list, message) {
+      list.replaceChildren(node('li', { className: 'empty-record' }, message));
+    }
+
+    function renderRun(run) {
+      if (!run) return;
+      state.run = run;
+      runPanel.dataset.status = run.status;
+      const current = run.current_phase_name;
+      const title = run.status === 'active' ? `${current || 'Run'} in progress` : run.status === 'blocked' ? `${current || 'Run'} needs attention` : run.status === 'complete' ? 'Last run completed' : 'No active run';
+      document.querySelector('#run-title').textContent = title;
+      document.querySelector('#run-state-label').textContent = statusLabel(run.status);
+      document.querySelector('#run-summary-copy').textContent = run.status === 'active' ? `${current || 'A phase'} is currently being worked.` : run.status === 'blocked' ? `${current || 'The run'} needs attention before the loop can continue.` : run.status === 'complete' ? 'The latest recorded run reached its end state.' : 'Start Build Loop to populate live progress.';
+      document.querySelector('#run-goal').textContent = run.goal;
+      document.querySelector('#run-id').textContent = run.run_id || 'No run id';
+      document.querySelector('#run-updated').textContent = localTime(run.updated_at);
+      document.querySelector('#run-refresh').textContent = `Refreshed ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+      document.querySelector('#run-status').textContent = statusLabel(run.status);
+      document.querySelector('#phase-progress').textContent = `${run.metrics.phases_complete}/${run.metrics.phases_total}`;
+      document.querySelector('#task-count').textContent = run.metrics.tasks_total;
+      document.querySelector('#agent-count').textContent = run.metrics.agents_invoked;
+
+      phaseList.replaceChildren();
+      run.phases.forEach(phase => {
+        const item = node('li', { className: 'phase-item', 'data-status': phase.status });
+        item.append(node('span', { className: 'phase-number', 'aria-hidden': 'true' }, String(phase.number)));
+        item.append(node('h3', {}, phase.name));
+        item.append(node('p', {}, phase.summary));
+        item.append(node('span', { className: 'phase-state' }, statusLabel(phase.status)));
+        phaseList.append(item);
+      });
+
+      taskList.replaceChildren();
+      if (!run.tasks.length) emptyRecord(taskList, 'No major task records yet.');
+      run.tasks.forEach(task => {
+        const item = node('li', { className: 'record-row' });
+        item.append(node('span', { className: 'record-title' }, task.title));
+        item.append(node('span', { className: 'record-status' }, statusLabel(task.status)));
+        const details = [`ID: ${task.id}`, task.owner ? `Owner: ${task.owner}` : ''].filter(Boolean).join(' · ');
+        item.append(node('span', { className: 'record-meta' }, details));
+        taskList.append(item);
+      });
+
+      agentList.replaceChildren();
+      if (!run.agents.length) emptyRecord(agentList, 'No agent records yet.');
+      run.agents.forEach(agent => {
+        const item = node('li', { className: 'record-row' });
+        item.append(node('span', { className: 'record-title' }, agent.name));
+        item.append(node('span', { className: 'record-status' }, statusLabel(agent.status)));
+        const details = [agent.role, agent.phase ? `phase ${agent.phase}` : '', agent.tier ? `tier ${agent.tier}` : '', agent.model ? `model ${agent.model}` : '', agent.source].filter(Boolean).join(' · ');
+        item.append(node('span', { className: 'record-meta' }, details));
+        agentList.append(item);
+      });
+
+      const warning = document.querySelector('#run-warning');
+      warning.hidden = !run.warnings.length;
+      warning.textContent = run.warnings.join(' ');
+    }
+
+    async function refreshRun() {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store' });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Unable to refresh run state');
+        renderRun(body.run);
+      } catch (error) {
+        document.querySelector('#run-refresh').textContent = `Refresh failed: ${error.message}. The last state remains visible.`;
+      }
     }
 
     function listSection(title, values) {
@@ -432,7 +607,7 @@
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Unable to load dashboard');
         state = body;
-        document.querySelector('#big-idea').textContent = body.big_idea;
+        renderRun(body.run);
         body.gaps.forEach(gap => cards.append(renderGap(gap)));
         loading.hidden = true;
         updateMetrics();
@@ -441,6 +616,7 @@
       }
     }
     load();
+    setInterval(refreshRun, 2000);
   </script>
 </body>
 </html>
