@@ -338,12 +338,14 @@ def test_html_has_semantic_controls_and_autosave_contract() -> None:
         "is-selected", "Selected policy", "Queued for Build Loop", "response_applied",
         "applied-count", "Applied · validated", "evidence-backed completion",
         "const saved = await save(card, gap);", "if (!saved) return;",
-        'id="run-panel"', 'id="phase-list"', 'id="task-list"', 'id="agent-list"',
+        'id="run-panel"', 'id="phase-list"', 'id="task-list"', 'id="agent-list"', 'id="note-list"',
         "renderRun", "refreshRun", "setInterval(refreshRun, 2000)", "Current run",
-        "Major tasks", "Agents invoked", "No agent records yet",
+        "Major tasks", "Agents invoked", "Run notes", "No agent records yet",
+        "Output: ${phase.output}", "if (stateLabel.textContent !== nextStateLabel)",
     ):
         assert token in html
     assert 'id="run-refresh" role="status"' not in html
+    assert '<div class="metrics" aria-live="polite">' not in html
     assert "innerHTML" not in html
     assert "linear-gradient" not in html
 

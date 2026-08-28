@@ -13,14 +13,16 @@ from typing import Any, Iterable
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_PLAN_BYTES = 512 * 1024
 MAX_LEDGER_LINES = 5_000
+MAX_WORKING_STATE_LINES = 200
+MAX_RUN_NOTES = 20
 
 PHASES: tuple[dict[str, Any], ...] = (
-    {"id": "assess", "number": 1, "name": "Assess", "summary": "Understand the repository and define success."},
-    {"id": "plan", "number": 2, "name": "Plan", "summary": "Map the work, ownership, dependencies, and checks."},
-    {"id": "execute", "number": 3, "name": "Execute", "summary": "Build the planned change."},
-    {"id": "review", "number": 4, "name": "Review", "summary": "Critique, validate, fact-check, simplify, and report."},
-    {"id": "iterate", "number": 5, "name": "Iterate", "summary": "Fix review failures and re-check the result."},
-    {"id": "learn", "number": 6, "name": "Learn", "summary": "Capture recurring lessons and improvement candidates."},
+    {"id": "assess", "number": 1, "name": "Assess", "summary": "Understand the repository and define success.", "output": "State summary and goal"},
+    {"id": "plan", "number": 2, "name": "Plan", "summary": "Map the work, ownership, dependencies, and checks.", "output": "Ordered task plan"},
+    {"id": "execute", "number": 3, "name": "Execute", "summary": "Build the planned change.", "output": "Working implementation"},
+    {"id": "review", "number": 4, "name": "Review", "summary": "Critique, validate, fact-check, simplify, and report.", "output": "Scorecard and evidence"},
+    {"id": "iterate", "number": 5, "name": "Iterate", "summary": "Fix review failures and re-check the result.", "output": "Resolved review findings"},
+    {"id": "learn", "number": 6, "name": "Learn", "summary": "Capture recurring lessons and improvement candidates.", "output": "Learning outcome"},
 )
 
 PHASE_ALIASES = {
@@ -420,6 +422,76 @@ def _judge_agents(context: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(agents.values(), key=lambda item: (item["last_seen"], item["name"]), reverse=True)
 
 
+def _note_from_record(item: dict[str, Any]) -> str:
+    for key in ("note", "comment", "message", "current_task_summary", "blocked_reason"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:800]
+    return ""
+
+
+def _working_notes(
+    workdir: Path,
+    context: dict[str, Any],
+    warnings: list[str],
+    sources: list[Path],
+) -> list[dict[str, Any]]:
+    """Return current-run free-form notes from the existing working-state channel."""
+    run_id = context.get("run_id")
+    if not run_id:
+        return []
+
+    records: list[dict[str, Any]] = []
+    log_text = _read_text(
+        workdir,
+        ".build-loop/working-state/log.jsonl",
+        warnings,
+        sources,
+        max_bytes=MAX_JSON_BYTES,
+    )
+    malformed = 0
+    if log_text:
+        for line in log_text.splitlines()[-MAX_WORKING_STATE_LINES:]:
+            try:
+                item = json.loads(line)
+            except ValueError:
+                malformed += 1
+                continue
+            if isinstance(item, dict):
+                records.append(item)
+    if malformed:
+        warnings.append(f"Ignored {malformed} malformed working-state row(s).")
+
+    current = _read_json(workdir, ".build-loop/working-state/current.json", warnings, sources)
+    if isinstance(current, dict):
+        records.append(current)
+
+    notes: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in records:
+        item_run_id = item.get("run_id") or item.get("run")
+        if str(item_run_id or "") != str(run_id):
+            continue
+        text = _note_from_record(item)
+        if not text:
+            continue
+        timestamp = str(item.get("updated_at") or item.get("t") or item.get("ts") or "")
+        author = str(item.get("agent") or item.get("author") or "Build Loop")
+        identity = (timestamp, author, text)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        raw_phase = item.get("phase")
+        notes.append({
+            "text": text,
+            "author": author,
+            "phase": _normalize_phase(raw_phase) or str(raw_phase or ""),
+            "timestamp": timestamp,
+            "source": "working-state",
+        })
+    return sorted(notes, key=lambda item: item["timestamp"], reverse=True)[:MAX_RUN_NOTES]
+
+
 def _goal_text(workdir: Path, state: dict[str, Any], context: dict[str, Any], warnings: list[str], sources: list[Path]) -> str:
     intent = state.get("intent") if isinstance(state.get("intent"), dict) else {}
     for value in (
@@ -467,6 +539,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     agents = _agents_from_ledger(ledger_rows, context["run_id"])
     if not agents:
         agents = _judge_agents(context)
+    notes = _working_notes(root, context, warnings, sources)
     if context["active"] and not agents:
         warnings.append("No agent invocation records exist for this run yet.")
 
@@ -486,6 +559,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
         "phases": phases,
         "tasks": tasks,
         "agents": agents,
+        "notes": notes,
         "metrics": {
             "phases_complete": sum(item["status"] == "complete" for item in phases),
             "phases_total": len(phases),

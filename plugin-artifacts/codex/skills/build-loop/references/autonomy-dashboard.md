@@ -20,6 +20,10 @@ python3 scripts/autonomy_dashboard.py --workdir "$PWD" --status
 python3 scripts/autonomy_dashboard.py --workdir "$PWD" --stop
 ```
 
+The dashboard is opt-in and token-free. Build Loop does not start it
+automatically, `--stop` removes the running surface whenever the user prefers,
+and the projection performs no LLM or provider calls.
+
 Use `--foreground` only when an external process manager owns the server
 lifecycle. The server refuses non-loopback binding and non-loopback Host/Origin
 headers.
@@ -31,6 +35,19 @@ headers.
 two seconds while the page is visible; no server restart is required when the
 run advances.
 
+Each of the six standard phases includes its expected output. Free-form progress
+comments use the existing bounded working-state channel:
+
+```bash
+python3 scripts/working_state_writer.py --workdir "$PWD" \
+  --agent "<agent-id>" --run-id "<run-id>" --phase execute \
+  --status editing --note "Connecting the live task projection."
+```
+
+The note is capped at 800 characters, stored in
+`.build-loop/working-state/{current.json,log.jsonl}`, and filtered to the current
+run before display.
+
 The projection is read-only and rebuildable. It uses these canonical records:
 
 - `.build-loop/state.json` for the current run, phase, and structured task
@@ -39,6 +56,8 @@ The projection is read-only and rebuildable. It uses these canonical records:
   fallback when structured execution tasks are absent;
 - `.build-loop/agent-ledger.jsonl` for recorded agent invocations in the current
   run; and
+- `.build-loop/working-state/{current.json,log.jsonl}` for bounded free-form run
+  notes and comments; and
 - `runs[-1].judge_decisions` in `.build-loop/state.json` for the latest
   completed run when no agent-ledger rows are available.
 

@@ -121,6 +121,7 @@
     .phase-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .76rem; font-weight: 800; }
     .phase-item h3 { margin: 9px 0 1px; font-size: .9rem; }
     .phase-item p { margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.4; }
+    .phase-item .phase-output { margin-top: 7px; color: var(--ink); font-weight: 700; }
     .phase-state { display: block; margin-top: 7px; color: var(--accent-strong); font-size: .68rem; font-weight: 800; text-transform: capitalize; }
     .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 26px; }
     .work-column + .work-column { border-left: 1px solid var(--line); padding-left: 28px; }
@@ -133,6 +134,9 @@
     .record-status { color: var(--accent-strong); font-size: .7rem; font-weight: 800; text-transform: capitalize; text-align: right; }
     .record-meta { grid-column: 1 / -1; color: var(--muted); font-size: .71rem; }
     .empty-record { padding: 16px 0; color: var(--muted); font-size: .82rem; }
+    .run-notes { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .run-notes h3 { margin: 0; font-size: 1rem; }
+    .run-notes > p { margin: 3px 0 8px; color: var(--muted); font-size: .78rem; }
     .run-warning { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--error); font-size: .78rem; }
     .decision-metrics { max-width: 470px; margin: 0 0 18px auto; }
     .principle strong { flex: 0 0 auto; }
@@ -279,7 +283,7 @@
           <h2 id="run-summary-title">Current run</h2>
           <p id="run-summary-copy">Loading the latest recorded state.</p>
         </div>
-        <div class="metrics" aria-live="polite">
+        <div class="metrics">
           <div class="metric"><strong id="run-status">—</strong><span>state</span></div>
           <div class="metric"><strong id="phase-progress">—</strong><span>phases</span></div>
           <div class="metric"><strong id="task-count">—</strong><span>tasks</span></div>
@@ -312,6 +316,11 @@
           <ul id="agent-list" class="record-list"></ul>
         </section>
       </div>
+      <section class="run-notes" aria-labelledby="notes-title">
+        <h3 id="notes-title">Run notes</h3>
+        <p>Free-form comments recorded through Build Loop's working-state channel.</p>
+        <ul id="note-list" class="record-list"></ul>
+      </section>
       <p id="run-warning" class="run-warning" hidden></p>
     </section>
 
@@ -341,6 +350,7 @@
     const phaseList = document.querySelector('#phase-list');
     const taskList = document.querySelector('#task-list');
     const agentList = document.querySelector('#agent-list');
+    const noteList = document.querySelector('#note-list');
     const timers = new Map();
     let state = { gaps: [], responses: {}, run: null };
 
@@ -383,7 +393,9 @@
       const current = run.current_phase_name;
       const title = run.status === 'active' ? `${current || 'Run'} in progress` : run.status === 'blocked' ? `${current || 'Run'} needs attention` : run.status === 'complete' ? 'Last run completed' : 'No active run';
       document.querySelector('#run-title').textContent = title;
-      document.querySelector('#run-state-label').textContent = statusLabel(run.status);
+      const stateLabel = document.querySelector('#run-state-label');
+      const nextStateLabel = statusLabel(run.status);
+      if (stateLabel.textContent !== nextStateLabel) stateLabel.textContent = nextStateLabel;
       document.querySelector('#run-summary-copy').textContent = run.status === 'active' ? `${current || 'A phase'} is currently being worked.` : run.status === 'blocked' ? `${current || 'The run'} needs attention before the loop can continue.` : run.status === 'complete' ? 'The latest recorded run reached its end state.' : 'Start Build Loop to populate live progress.';
       document.querySelector('#run-goal').textContent = run.goal;
       document.querySelector('#run-id').textContent = run.run_id || 'No run id';
@@ -400,6 +412,7 @@
         item.append(node('span', { className: 'phase-number', 'aria-hidden': 'true' }, String(phase.number)));
         item.append(node('h3', {}, phase.name));
         item.append(node('p', {}, phase.summary));
+        item.append(node('p', { className: 'phase-output' }, `Output: ${phase.output}`));
         item.append(node('span', { className: 'phase-state' }, statusLabel(phase.status)));
         phaseList.append(item);
       });
@@ -424,6 +437,17 @@
         const details = [agent.role, agent.phase ? `phase ${agent.phase}` : '', agent.tier ? `tier ${agent.tier}` : '', agent.model ? `model ${agent.model}` : '', agent.source].filter(Boolean).join(' · ');
         item.append(node('span', { className: 'record-meta' }, details));
         agentList.append(item);
+      });
+
+      noteList.replaceChildren();
+      if (!run.notes.length) emptyRecord(noteList, 'No run notes recorded yet.');
+      run.notes.forEach(note => {
+        const item = node('li', { className: 'record-row' });
+        item.append(node('span', { className: 'record-title' }, note.text));
+        item.append(node('span', { className: 'record-status' }, note.phase || 'Run'));
+        const details = [note.author, localTime(note.timestamp)].filter(Boolean).join(' · ');
+        item.append(node('span', { className: 'record-meta' }, details));
+        noteList.append(item);
       });
 
       const warning = document.querySelector('#run-warning');

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import dashboard_projection as projection
+import working_state_writer as working_state
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -38,6 +39,10 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
     assert result["status"] == "active"
     assert result["current_phase"] == "execute"
     assert [phase["status"] for phase in result["phases"]] == ["complete", "complete", "active", "pending", "pending", "pending"]
+    assert [phase["output"] for phase in result["phases"]] == [
+        "State summary and goal", "Ordered task plan", "Working implementation",
+        "Scorecard and evidence", "Resolved review findings", "Learning outcome",
+    ]
     assert {task["id"]: task["status"] for task in result["tasks"]} == {"c1": "active", "c2": "queued", "c0": "complete"}
     assert [agent["name"] for agent in result["agents"]] == ["independent-auditor", "frontend-implementer"]
     assert result["agents"][0]["source"] == "agent-ledger"
@@ -50,6 +55,60 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
         "tasks_total": 3,
         "agents_invoked": 2,
     }
+
+
+def test_current_run_notes_use_bounded_working_state_and_exclude_other_runs(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-current", "phase": "execute"},
+    })
+    working = tmp_path / ".build-loop/working-state"
+    working.mkdir(parents=True)
+    working.joinpath("log.jsonl").write_text("\n".join((
+        json.dumps({"t": "2026-08-28T20:00:00Z", "run": "older", "agent": "old", "note": "Do not show"}),
+        json.dumps({"t": "2026-08-28T21:00:00Z", "run": "run-current", "agent": "implementer", "phase": "execute", "note": "Projection connected."}),
+    )) + "\n", encoding="utf-8")
+    _write_json(working / "current.json", {
+        "updated_at": "2026-08-28T21:01:00Z",
+        "run_id": "run-current",
+        "agent": "reviewer",
+        "phase": "review",
+        "comment": "Checking the live result.",
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert [(item["text"], item["phase"]) for item in result["notes"]] == [
+        ("Checking the live result.", "review"),
+        ("Projection connected.", "execute"),
+    ]
+    assert all(item["text"] != "Do not show" for item in result["notes"])
+
+
+def test_working_state_writer_keeps_note_and_run_identity_in_log_row() -> None:
+    class Args:
+        agent = "implementer"
+        run_id = "run-1"
+        phase = "execute"
+        chunk_id = "c1"
+        current_task_id = None
+        current_task_summary = None
+        current_file = None
+        current_file_line_range = None
+        next_task_id = None
+        next_task_summary = None
+        status = "editing"
+        elapsed_in_chunk_s = None
+        blocked_reason = None
+        note = "A free-form progress comment."
+
+    state = working_state.build_state(Args())
+    row = working_state.build_log_row(state)
+
+    assert state["note"] == "A free-form progress comment."
+    assert row["run"] == "run-1"
+    assert row["phase"] == "execute"
+    assert row["note"] == "A free-form progress comment."
 
 
 def test_task_status_precedence_prevents_conflicting_duplicates(tmp_path: Path) -> None:

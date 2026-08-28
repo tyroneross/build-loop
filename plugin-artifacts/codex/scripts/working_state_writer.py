@@ -54,6 +54,7 @@ VALID_STATUS = {
     "dispatching", "awaiting_return", "phase_transition", "completed",
 }
 DEFAULT_JSONL_MAX_MB = 10
+MAX_NOTE_CHARS = 800
 
 
 def iso_utc() -> str:
@@ -98,6 +99,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     # Optional fields — omit when empty so the snapshot stays terse.
     optional = {
         "run_id": args.run_id,
+        "phase": args.phase,
         "chunk_id": args.chunk_id,
         "current_task_id": args.current_task_id,
         "current_task_summary": args.current_task_summary,
@@ -108,6 +110,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         "status": args.status,
         "elapsed_in_chunk_s": args.elapsed_in_chunk_s,
         "blocked_reason": args.blocked_reason,
+        "note": args.note,
     }
     for k, v in optional.items():
         if v is not None and v != "":
@@ -130,6 +133,9 @@ def build_log_row(state: dict[str, Any]) -> dict[str, Any]:
         "status": "status",
         "chunk_id": "chunk",
         "blocked_reason": "blocked",
+        "run_id": "run",
+        "phase": "phase",
+        "note": "note",
     }
     for full, short in short_map.items():
         if full in state:
@@ -142,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workdir", required=True, help="Project root containing .build-loop/")
     p.add_argument("--agent", required=True, help="Writing agent id, e.g. implementer:c1")
     p.add_argument("--run-id", default=None, help="Active run_id")
+    p.add_argument("--phase", default=None, help="Current Build Loop phase")
     p.add_argument("--chunk-id", default=None, help="Active chunk id, e.g. c1")
     p.add_argument("--current-task-id", default=None, help="Plan task ID, e.g. T-3")
     p.add_argument("--current-task-summary", default=None, help="Short summary of current task (≤ 200 chars)")
@@ -152,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status", default=None, choices=sorted(VALID_STATUS) + [None], help="Current status")
     p.add_argument("--elapsed-in-chunk-s", type=int, default=None, help="Seconds since chunk dispatch")
     p.add_argument("--blocked-reason", default=None, help="When status=blocked_external")
+    p.add_argument("--note", default=None, help=f"Free-form dashboard note (≤ {MAX_NOTE_CHARS} chars)")
     p.add_argument("--no-log", action="store_true", help="Skip log.jsonl append (current.json only)")
     p.add_argument("--max-jsonl-mb", type=int, default=DEFAULT_JSONL_MAX_MB, help="log.jsonl rolling cap")
     args = p.parse_args(argv)
@@ -163,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         args.current_task_summary = args.current_task_summary[:197] + "..."
     if args.next_task_summary and len(args.next_task_summary) > 200:
         args.next_task_summary = args.next_task_summary[:197] + "..."
+    if args.note and len(args.note) > MAX_NOTE_CHARS:
+        args.note = args.note[: MAX_NOTE_CHARS - 3] + "..."
 
     workdir = Path(args.workdir).resolve()
     ws_dir = workdir / ".build-loop" / "working-state"
