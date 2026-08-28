@@ -909,6 +909,9 @@ def _terminal_event(root: Path, req: dict[str, Any], result: dict[str, Any], key
             "scope": req.get("scope"),
             "trust_domain": req.get("trust_domain"),
             "mutating": req.get("mutating"),
+            "purpose": req.get("purpose"),
+            "initiating_app": req.get("initiating_app"),
+            "risk_class": req.get("risk_class"),
         },
         config,
     )

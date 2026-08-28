@@ -179,6 +179,22 @@ or edited record is detectable (`verify-ledger`). Live visibility is an optional
 discarded and never inspected**, so no Ambient state can approve, deny, terminate,
 or widen a request. A hostile sink is a covered test case.
 
+To surface the event in RossLabs Ambient Agent, run its local daemon and configure
+the broker with its `ambientctl` binary and state directory. The receiver accepts
+only the redacted event on standard input; it records the purpose, requesting app,
+risk class, and broker event id in Ambient activity. It never receives command
+arguments, command output, or a password.
+
+```json
+{
+  "ambient": {
+    "mode": "live",
+    "notify_command": ["/absolute/path/to/ambientctl", "--state-dir", "/absolute/path/to/ambient-state", "systemAccessRequest"],
+    "notify_timeout_seconds": 3
+  }
+}
+```
+
 ### Unavailability is never approval
 
 | Risk class | Coordinator unavailable | Ambient unavailable |
