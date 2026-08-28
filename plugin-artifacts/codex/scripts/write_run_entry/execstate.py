@@ -34,6 +34,23 @@ EXECUTION_RETURN_STATUSES = {
 }
 EXECUTION_ITEM_STATUSES = {"started", "passed", "failed", "blocked", "deferred", "stopped"}
 
+# Phase 1 creates the stable run identity and optional isolation worktree before
+# the execution heartbeat starts.  The ``start`` action must enrich that block,
+# not replace it, or crash recovery loses the only pointers to the surviving
+# branch, worktree, and data-plane manifest.
+_START_PRESERVED_IDENTITY_FIELDS = (
+    "build_loop_id",
+    "started_at",
+    "started_by_tool",
+    "started_by_session_id",
+    "current_session_id",
+    "run_label",
+    "run_worktree_path",
+    "run_worktree_branch",
+    "data_manifest_path",
+    "data_root",
+)
+
 
 def _encode(state: Any) -> bytes:
     return (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
@@ -303,7 +320,16 @@ def update_execution_state(
                 f"(got {type(execution).__name__})"
             )
         if action == "start":
+            prior_execution = dict(execution or {})
+            prior_identity = prior_execution.get("build_loop_id")
+            if prior_identity and prior_identity != run_id:
+                raise ValueError(
+                    "action='start' run_id does not match the active build_loop_id"
+                )
             execution = _build_start_block(run_id, queued_chunks, file_ownership, ts)
+            for key in _START_PRESERVED_IDENTITY_FIELDS:
+                if key in prior_execution:
+                    execution[key] = prior_execution[key]
         elif action == "item_iteration":
             if not isinstance(execution, dict):
                 raise ValueError("action='item_iteration' requires an existing execution block (run start first)")
