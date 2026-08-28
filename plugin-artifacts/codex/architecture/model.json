@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "608391474bdf3353621a25bfff921a99abaad37474cf13c3cd806a3f446209d2"
+    "content_sha256": "47dc895f48b17718ce2dcbad76ba575fe96f45a3712729ef58711c1f838fc71e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1653,6 +1653,7 @@
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
+      "scripts/hooks/run_registration_gate.py": "run_registration_gate.py — warn, at commit time, that this run was never registered.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",

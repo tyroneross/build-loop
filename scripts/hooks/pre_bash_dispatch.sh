@@ -417,6 +417,15 @@ esac
 COMMIT_AUDIT_HARD_BLOCK=0
 case " $_GITCLASS " in
     *" commit "*)
+        # Run-registration advisory. Wires run_close_lint's designed caller #3
+        # ("fail-open hook callers, --advisory") to the commit choke-point. The
+        # 2026-08-28 TruePace miss: a session acted as the orchestrator INLINE, so
+        # neither Review-G nor a dispatching parent existed to invoke the lint, and
+        # two commits landed with no runs[] entry. This hook fires on the TOOL CALL
+        # rather than on the protocol, so it is the one caller a skipped protocol
+        # cannot also skip. Always exits 0 — never blocks a commit.
+        ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/hooks/run_registration_gate.py")")
+
         GATE_RC_FILE=$(mktemp 2>/dev/null || echo "")
         ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/audit_before_commit.py")")
         if [ -n "$GATE_RC_FILE" ] && [ -f "$GATE_RC_FILE" ]; then
