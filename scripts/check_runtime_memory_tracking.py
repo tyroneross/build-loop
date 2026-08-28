@@ -84,19 +84,41 @@ def _is_blocked_path(path: str) -> bool:
     return any(part in BLOCKED_SEGMENTS for part in parts)
 
 
-def _paths_for_args(argv: list[str]) -> list[str]:
+def _head_tracked_files() -> set[str]:
+    # Files present in HEAD. Empty set on an unborn branch (first commit),
+    # which correctly grandfathers nothing.
+    result = _git(["ls-tree", "-r", "HEAD", "--name-only"])
+    if result.returncode != 0:
+        return set()
+    return set(_split_paths(result.stdout))
+
+
+def _paths_for_args(argv: list[str]) -> tuple[list[str], bool]:
+    """Return (paths, grandfather_eligible).
+
+    Grandfathering applies only on the staged pre-commit path: a repo that
+    already tracks a runtime path in HEAD (a deliberate, pre-policy state —
+    e.g. a private consumer repo) may keep UPDATING or deleting it; only
+    NEWLY-ADDED runtime paths are blocked. The public plugin repo tracks no
+    runtime state, so this changes nothing there. `--all` audits and explicit
+    path arguments keep strict behavior for CI sweeps.
+    """
     if "--all" in argv:
-        return _all_tracked_files()
+        return _all_tracked_files(), False
     explicit = [arg for arg in argv if not arg.startswith("-")]
     if explicit:
-        return explicit
-    return _staged_files()
+        return explicit, False
+    return _staged_files(), True
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     _repo_root()
-    blocked = sorted(path for path in _paths_for_args(argv) if _is_blocked_path(path))
+    paths, grandfather_eligible = _paths_for_args(argv)
+    blocked = sorted(path for path in paths if _is_blocked_path(path))
+    if blocked and grandfather_eligible:
+        head = _head_tracked_files()
+        blocked = [path for path in blocked if path not in head]
     if not blocked:
         return 0
 
