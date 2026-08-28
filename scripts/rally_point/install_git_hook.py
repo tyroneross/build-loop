@@ -346,8 +346,16 @@ def _install_pre_commit(hooks_dir: Path) -> None:
         # guard in the segment running.
         guard.unlink(missing_ok=True)
     if runtime_checker.exists():
+        # Pin the shim to a LOCAL copy of the checker under .git/hooks, not to
+        # the plugin/package path: plugin caches get pruned (observed twice on
+        # 2026-08-28, bricking every commit in a consumer repo), while a copy
+        # inside .git/hooks lives exactly as long as the hooks that call it.
+        # The checker is stdlib-only and self-contained, so a copy is safe.
+        local_checker = hooks_dir / ".runtime-memory-checker.py"
+        local_checker.write_text(runtime_checker.read_text())
+        local_checker.chmod(0o755)
         guard = hooks_dir / ".runtime-memory-tracking-check.py"
-        guard.write_text(_RUNTIME_GUARD_SRC.format(checker=str(runtime_checker)))
+        guard.write_text(_RUNTIME_GUARD_SRC.format(checker=str(local_checker)))
         guard.chmod(0o755)
 
     hook = hooks_dir / "pre-commit"
