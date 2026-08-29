@@ -7,15 +7,16 @@
   <title>Build Loop Dashboard</title>
   <style>
     :root {
-      --canvas: #f6fbff;
+      --canvas: #f7f8ff;
       --surface: #ffffff;
       --ink: #313438;
       --muted: #6f7277;
-      --line: #caced3;
-      --accent: #00836f;
-      --accent-strong: #09362d;
-      --accent-soft: #c2f0e4;
-      --success: #286344;
+      --line: #ccd1df;
+      --accent: #4f46e5;
+      --accent-strong: #312e81;
+      --accent-soft: #e0e7ff;
+      --accent-gradient: linear-gradient(135deg, #2563eb 0%, #4338ca 100%);
+      --success: #3730a3;
       --error: #a23535;
       --radius: 18px;
     }
@@ -66,7 +67,7 @@
     .phase-item[data-status="active"] { box-shadow: inset 0 3px 0 var(--accent); background: color-mix(in srgb, var(--accent-soft) 28%, white); }
     .phase-item[data-status="blocked"] { box-shadow: inset 0 3px 0 var(--error); }
     .phase-number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .7rem; font-weight: 800; }
-    .phase-item[data-status="complete"] .phase-number { border-color: var(--accent); background: var(--accent); color: white; }
+    .phase-item[data-status="complete"] .phase-number { border-color: var(--accent); background: var(--accent-gradient); color: white; }
     .phase-name { margin-top: 7px; font-size: .8rem; font-weight: 750; }
     .phase-state { color: var(--muted); font-size: .66rem; }
     .run-disclosure { border-top: 0; }
@@ -154,7 +155,7 @@
     .note-label { display: grid; gap: 6px; color: var(--muted); font-size: .72rem; }
     textarea { width: 100%; min-height: 72px; resize: vertical; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); font-size: 1rem; }
     textarea:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
-    button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: white; font-weight: 750; cursor: pointer; }
+    button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent-gradient); color: white; font-weight: 750; cursor: pointer; }
     button:hover { background: var(--accent-strong); }
     button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
     button:disabled { cursor: not-allowed; background: var(--line); color: var(--ink); }

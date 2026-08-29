@@ -13,6 +13,19 @@ import pytest
 import autonomy_dashboard as dashboard
 
 
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 @pytest.fixture
 def repo() -> Path:
     with tempfile.TemporaryDirectory() as directory:
@@ -334,7 +347,8 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
     for token in (
         "<main", "node('details'", "node('summary'", "node('fieldset')", "node('legend'",
         "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue Decision",
-        '"Avenir Next"', "--canvas: #f6fbff", "--accent: #00836f", "min-height: 44px",
+        '"Avenir Next"', "--canvas: #f7f8ff", "--accent: #4f46e5", "--accent-strong: #312e81",
+        "--accent-gradient: linear-gradient(135deg, #2563eb 0%, #4338ca 100%)", "min-height: 44px",
         "is-selected", "Selected policy", "Queued for Build Loop", "response_applied",
         "applied-count", "Applied · validated",
         "const saved = await save(card, gap);", "if (!saved) return;",
@@ -354,7 +368,15 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
     assert 'id="run-refresh" role="status"' not in html
     assert '<div class="metrics" aria-live="polite">' not in html
     assert "innerHTML" not in html
-    assert "linear-gradient" not in html
+    assert html.count("linear-gradient(") == 1
+    assert "<script src=" not in html
+    assert "<link rel=" not in html
+    assert "@import" not in html
+
+
+def test_brand_gradient_keeps_white_small_text_at_wcag_aa_contrast() -> None:
+    for endpoint in ("#2563eb", "#4338ca"):
+        assert _contrast_ratio("#ffffff", endpoint) >= 4.5
 
 
 def test_api_state_reprojects_phase_changes_without_restarting_server(live_server: str, repo: Path) -> None:
