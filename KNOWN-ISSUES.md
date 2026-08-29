@@ -226,3 +226,16 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 - The CLAUDE.md parity-contract note lands at P0 merge.
 
 **Resolution criteria.** Remove once `--require-seats` is promoted to default-on and the CLAUDE.md contract documents inline-vs-agent parity as enforced.
+
+## Session findings 2026-08-29 (Fable session a0e54769, ambient-agent decision day)
+
+Four unfiled defects/gaps observed in live operation, plus one pattern candidate. Evidence: build-loop-memory retrospective `2026-08-29-session-ambient-agent-decision-day.md`.
+
+1. **Agent-dispatch worktree-isolation gap.** The enforced lint (`scripts/worktree_isolation_lint.py`) covers launchd/cron writers; nothing checks the Agent-tool path at dispatch time. On 2026-08-28 three writer lanes shared the ambient repo's live checkout and an orchestrator `--amend` absorbed a peer's commit (audit finding F4; content survived via git-notes). Recommendation: orchestrator preflight detects other active writers (rally claims on the workdir, or index-lock heuristics) and refuses to commit without `isolation: "worktree"`.
+2. **`git_command_classifier.py` apostrophe parse-fallback.** Apostrophes in long prose arguments trigger the conservative parse-failure fallback (emits "commit push"), which armed a full pre-push security scan and blocked two unrelated Codex dispatches on 2026-08-28. Fix: quote-tolerant parsing, or scope the fallback's scan to staged paths.
+3. **Rally commit-capture attribution is `model:unknown / run:unknown`** for managed-session captures, producing review-queue facts that cannot be attributed without base64-decoding the payload and cross-referencing git. Carry tool/session identity in the capture payload.
+4. **Pre-existing HIGH: `skills/decision-queue/assets/template.html:948` innerHTML sink** — surfaced by the pre-push scan 2026-08-28, still open. Needs sanitization or textContent.
+
+Pattern candidate (positive): the live decision-dashboard artifact with save-back loop (publish → owner picks → republish notification → agent acts, ADRs 013–019 in one evening) is a proven shape for the `decision-queue` skill's surfacing layer.
+
+**Resolution criteria.** Items 1–4 each get a fix or an explicit wontfix rationale; item 4 is security-gated and should not wait.
