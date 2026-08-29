@@ -13,6 +13,26 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # scripts/ on path so `import retrospective.*` works
 
 from retrospective.synthesize import run as synth_run  # noqa: E402
+from retrospective import file_findings as _ff  # noqa: E402
+
+
+def _filing_status(active_path: str | None) -> dict | None:
+    """Lint the freshly-written retrospective for unfiled findings.
+
+    Wired HERE because this is the one entry point BOTH paths share — the
+    synthesizer agent and the headless SessionEnd sweep. Left to the agent's
+    prose instructions alone, the check ran only if an LLM chose to run it, so
+    a retrospective could name six findings, file none, and report success.
+
+    Non-gating, matching this CLI's existing "never fail the run" contract: the
+    verdict is surfaced, never enforced here.
+    """
+    if not active_path:
+        return None
+    try:
+        return _ff.lint(Path(active_path))
+    except Exception as exc:  # never let the lint break run-close
+        return {"ok": None, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -46,6 +66,9 @@ def main(argv: list[str]) -> int:
         memory_root=memory_root,
         session_id=args.session_id,
     )
+    filing = _filing_status(result.get("active_path"))
+    if filing is not None:
+        result["filing"] = filing
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -60,6 +83,10 @@ def main(argv: list[str]) -> int:
         ec = result.get("enforce_candidates") or []
         if ec:
             print(f"  enforce-candidates: {len(ec)}")
+        if filing and filing.get("ok") is False:
+            print(f"  UNFILED FINDINGS: {filing['violations'][0]}")
+            print("    fix: python3 -m retrospective.file_findings plan "
+                  f"--retro {result.get('active_path')} --json")
         if result.get("reason"):
             print(f"  reason:  {result['reason']}")
     return 0 if result.get("status") == "ok" else 0  # never fail the run

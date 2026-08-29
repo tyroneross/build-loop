@@ -17,330 +17,247 @@
       --accent-soft: #c2f0e4;
       --success: #286344;
       --error: #a23535;
-      --shadow: 0 18px 50px rgb(49 52 56 / 8%);
-      --radius: 20px;
+      --radius: 18px;
     }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
     body {
       margin: 0;
       background: var(--canvas);
       color: var(--ink);
       font-family: "Avenir Next", Avenir, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 1rem;
-      line-height: 1.6;
+      line-height: 1.5;
       text-rendering: optimizeLegibility;
     }
     button, textarea, input { font: inherit; }
     button, label, summary { -webkit-tap-highlight-color: transparent; }
-    .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 80px; }
-    .masthead {
-      display: grid;
-      grid-template-columns: minmax(0, 1.55fr) minmax(270px, .65fr);
-      overflow: hidden;
-      margin-bottom: 16px;
-      background: var(--surface);
+    .shell { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 64px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; margin-bottom: 12px; }
+    .brand { font-size: .92rem; font-weight: 800; letter-spacing: -.01em; }
+    .topbar p { margin: 0; color: var(--muted); font-size: .78rem; }
+    .run-panel, .policy-panel {
       border: 1px solid var(--line);
-      border-radius: 28px;
-      box-shadow: var(--shadow);
-    }
-    .hero { padding: clamp(30px, 5vw, 58px); }
-    .eyebrow, .priority {
-      display: inline-flex;
-      align-items: center;
-      color: var(--accent);
-      font-size: .73rem;
-      font-weight: 800;
-      letter-spacing: .1em;
-      text-transform: uppercase;
-    }
-    h1 {
-      max-width: 760px;
-      margin: 15px 0 16px;
-      font-size: clamp(2.25rem, 4.8vw, 4.35rem);
-      font-weight: 750;
-      letter-spacing: -.045em;
-      line-height: 1.04;
-    }
-    .hero p { max-width: 690px; margin: 0; color: var(--muted); font-size: 1.08rem; }
-    .readiness {
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 32px 28px;
-      border-left: 1px solid var(--line);
-      background: color-mix(in srgb, var(--canvas) 62%, white);
-    }
-    .readiness h2 { margin: 0 0 6px; font-size: 1rem; }
-    .readiness p { margin: 0; color: var(--muted); font-size: .88rem; }
-    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 26px; }
-    .metric { padding: 8px 6px; text-align: center; }
-    .metric + .metric { border-left: 1px solid var(--line); }
-    .metric strong { display: block; color: var(--accent-strong); font-size: 1.55rem; line-height: 1.2; }
-    .metric span { color: var(--muted); font-size: .72rem; }
-    .principle {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 14px;
-      margin: 0 0 34px;
-      padding: 14px 18px;
-      border: 1px solid color-mix(in srgb, var(--accent) 28%, white);
-      background: color-mix(in srgb, var(--accent-soft) 62%, white);
-      color: var(--accent-strong);
-      border-radius: 14px;
-      font-size: .91rem;
-    }
-    .run-panel {
-      margin: 0 0 22px;
-      padding: clamp(22px, 4vw, 34px);
-      border: 1px solid var(--line);
-      border-radius: 24px;
+      border-radius: var(--radius);
       background: var(--surface);
-      box-shadow: var(--shadow);
+      box-shadow: 0 10px 30px rgb(49 52 56 / 6%);
     }
-    .run-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
-    .run-head h2 { margin: 4px 0 0; font-size: clamp(1.55rem, 3vw, 2.2rem); letter-spacing: -.03em; line-height: 1.15; }
-    .run-status { color: var(--accent-strong); font-size: .82rem; font-weight: 800; text-align: right; }
-    .run-goal { max-width: 820px; margin: 12px 0 0; color: var(--muted); }
-    .run-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; color: var(--muted); font-size: .76rem; }
+    .run-panel { overflow: hidden; }
+    .run-overview { padding: clamp(22px, 5vw, 42px); }
+    .status-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; }
+    .run-state { color: var(--accent-strong); font-size: .78rem; font-weight: 800; }
+    .run-panel[data-status="blocked"] .run-state { color: var(--error); }
+    .status-head h1 { margin: 6px 0 0; font-size: clamp(1.9rem, 5vw, 3.15rem); letter-spacing: -.04em; line-height: 1.05; }
+    .run-goal { max-width: 720px; margin: 14px 0 0; color: var(--muted); font-size: 1rem; }
+    .run-meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 16px; color: var(--muted); font-size: .74rem; }
     .run-meta strong { color: var(--ink); }
+    .run-stats { display: grid; gap: 7px; min-width: 128px; text-align: right; }
+    .run-stats strong { color: var(--accent-strong); font-size: 1.05rem; }
+    .run-stats span { color: var(--muted); font-size: .72rem; }
     .phase-list {
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 0;
-      margin: 26px 0 0;
+      margin: 28px 0 0;
       padding: 0;
-      list-style: none;
       border-block: 1px solid var(--line);
+      list-style: none;
     }
-    .phase-item { min-width: 0; padding: 16px 13px 15px; border-left: 1px solid var(--line); }
+    .phase-item { display: grid; justify-items: start; min-width: 0; padding: 14px 12px; border-left: 1px solid var(--line); }
     .phase-item:first-child { border-left: 0; }
-    .phase-item[data-status="active"] { box-shadow: inset 0 3px 0 var(--accent); background: color-mix(in srgb, var(--accent-soft) 38%, white); }
-    .phase-item[data-status="complete"] .phase-number { background: var(--accent); color: white; border-color: var(--accent); }
+    .phase-item[data-status="active"] { box-shadow: inset 0 3px 0 var(--accent); background: color-mix(in srgb, var(--accent-soft) 28%, white); }
     .phase-item[data-status="blocked"] { box-shadow: inset 0 3px 0 var(--error); }
-    .phase-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .76rem; font-weight: 800; }
-    .phase-item h3 { margin: 9px 0 1px; font-size: .9rem; }
-    .phase-item p { margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.4; }
-    .phase-item .phase-output { margin-top: 7px; color: var(--ink); font-weight: 700; }
-    .phase-state { display: block; margin-top: 7px; color: var(--accent-strong); font-size: .68rem; font-weight: 800; text-transform: capitalize; }
-    .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 26px; }
-    .work-column + .work-column { border-left: 1px solid var(--line); padding-left: 28px; }
-    .work-column h3 { margin: 0; font-size: 1rem; }
-    .work-column > p { margin: 3px 0 12px; color: var(--muted); font-size: .78rem; }
-    .record-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
-    .record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 11px 0; border-top: 1px solid var(--line); }
-    .record-row:first-child { border-top: 0; }
-    .record-title { min-width: 0; overflow-wrap: anywhere; font-size: .86rem; font-weight: 750; }
-    .record-status { color: var(--accent-strong); font-size: .7rem; font-weight: 800; text-transform: capitalize; text-align: right; }
-    .record-meta { grid-column: 1 / -1; color: var(--muted); font-size: .71rem; }
-    .empty-record { padding: 16px 0; color: var(--muted); font-size: .82rem; }
-    .run-notes { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
-    .run-notes h3 { margin: 0; font-size: 1rem; }
-    .run-notes > p { margin: 3px 0 8px; color: var(--muted); font-size: .78rem; }
-    .run-warning { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--error); font-size: .78rem; }
-    .decision-metrics { max-width: 470px; margin: 0 0 18px auto; }
-    .principle strong { flex: 0 0 auto; }
-    .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 0 0 16px; }
-    .toolbar h2 { margin: 0; font-size: 1.75rem; font-weight: 750; letter-spacing: -.025em; }
-    .toolbar p { margin: 4px 0 0; color: var(--muted); }
-    .legend { display: flex; gap: 8px; flex-wrap: wrap; }
-    .legend span { color: var(--muted); font-size: .75rem; }
-    .legend span + span::before { content: "·"; margin-right: 8px; color: var(--line); }
-    #loading { padding: 42px; text-align: center; color: var(--muted); }
-    .cards { display: grid; gap: 12px; }
-    .gap-card {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: 0 8px 24px rgb(49 52 56 / 4%);
-      overflow: hidden;
-    }
-    .gap-card[open] { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); box-shadow: var(--shadow); }
-    .card-head {
+    .phase-number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .7rem; font-weight: 800; }
+    .phase-item[data-status="complete"] .phase-number { border-color: var(--accent); background: var(--accent); color: white; }
+    .phase-name { margin-top: 7px; font-size: .8rem; font-weight: 750; }
+    .phase-state { color: var(--muted); font-size: .66rem; }
+    .run-disclosure { border-top: 0; }
+    .disclosure-head, .policy-head, .card-head { cursor: pointer; list-style: none; }
+    .disclosure-head::-webkit-details-marker, .policy-head::-webkit-details-marker, .card-head::-webkit-details-marker { display: none; }
+    .disclosure-head {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 16px;
       align-items: center;
-      min-height: 88px;
-      padding: 19px 22px;
-      cursor: pointer;
-      list-style: none;
+      min-height: 56px;
+      padding: 0 clamp(22px, 5vw, 42px);
     }
-    .card-head::-webkit-details-marker { display: none; }
-    .card-head:hover { background: color-mix(in srgb, var(--canvas) 48%, white); }
-    .card-head:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
-    .priority { width: 44px; height: 44px; justify-content: center; border-radius: 12px; background: var(--accent-soft); letter-spacing: .04em; }
-    .card-head h3 { margin: 0; font-size: 1.15rem; line-height: 1.35; }
-    .big-idea { margin: 4px 0 0; color: var(--muted); font-size: .92rem; line-height: 1.45; }
-    .card-meta { display: grid; min-width: 118px; gap: 4px; justify-items: end; }
-    .selected-policy { color: var(--accent-strong); font-size: .81rem; font-weight: 800; text-align: right; }
+    .disclosure-copy strong { display: block; font-size: .88rem; }
+    .disclosure-copy span { color: var(--muted); font-size: .72rem; }
+    .disclosure-label { color: var(--accent); font-size: .76rem; font-weight: 750; }
+    .when-open { display: none; }
+    details[open] > summary .when-closed { display: none; }
+    details[open] > summary .when-open { display: inline; }
+    .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
+    details[open] > summary .disclosure-label::after { transform: rotate(180deg); }
+    summary:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+    .detail-body { padding: 6px clamp(22px, 5vw, 42px) 28px; border-top: 1px solid var(--line); }
+    .detail-section { padding-top: 22px; }
+    .detail-section + .detail-section { margin-top: 20px; border-top: 1px solid var(--line); }
+    .detail-section h2, .work-column h2 { margin: 0 0 8px; font-size: .9rem; }
+    .phase-output-list, .record-list { margin: 0; padding: 0; list-style: none; }
+    .record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+    .record-row:first-child { border-top: 0; }
+    .record-title { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; font-weight: 750; }
+    .record-status { color: var(--accent-strong); font-size: .69rem; font-weight: 800; text-align: right; text-transform: capitalize; }
+    .record-meta { grid-column: 1 / -1; color: var(--muted); font-size: .7rem; }
+    .empty-record { padding: 10px 0; color: var(--muted); font-size: .78rem; }
+    .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+    .work-column + .work-column { padding-left: 28px; border-left: 1px solid var(--line); }
+    .run-warning { margin: 20px 0 0; color: var(--error); font-size: .78rem; }
+    .policy-panel { margin-top: 14px; overflow: hidden; }
+    .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
+    .policy-head h2 { margin: 0; font-size: 1rem; }
+    .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
+    .policy-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
+    .principle { margin: 18px 0; color: var(--muted); font-size: .78rem; }
+    .principle strong { color: var(--ink); }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; border-block: 1px solid var(--line); }
+    .metric { padding: 10px 6px; text-align: center; }
+    .metric + .metric { border-left: 1px solid var(--line); }
+    .metric strong { display: block; color: var(--accent-strong); font-size: 1rem; }
+    .metric span { color: var(--muted); font-size: .68rem; }
+    #loading { padding: 24px 0; color: var(--muted); text-align: center; }
+    .cards { display: grid; gap: 8px; }
+    .gap-card { overflow: hidden; border-block: 1px solid var(--line); }
+    .gap-card + .gap-card { border-top: 0; }
+    .card-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 68px; padding: 12px 4px; }
+    .priority { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; font-size: .68rem; font-weight: 800; }
+    .card-head h3 { margin: 0; font-size: .9rem; line-height: 1.3; }
+    .big-idea { margin: 0 0 14px; color: var(--muted); font-size: .78rem; }
+    .card-meta { display: grid; min-width: 110px; gap: 2px; justify-items: end; }
+    .selected-policy { color: var(--accent-strong); font-size: .72rem; font-weight: 800; text-align: right; }
     .selected-policy:empty { display: none; }
-    .status { min-width: 92px; color: var(--muted); font-size: .76rem; text-align: right; }
+    .status { color: var(--muted); font-size: .68rem; text-align: right; }
     .status[data-kind="saved"], .status[data-kind="queued"], .status[data-kind="applied"] { color: var(--success); }
     .status[data-kind="error"] { color: var(--error); }
-    .disclosure-label { color: var(--accent); font-size: .75rem; font-weight: 750; }
-    .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
-    .gap-card[open] .disclosure-label::after { transform: rotate(180deg); }
-    .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 55%, white); }
-    .explain section { padding: 19px 22px; }
+    .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: var(--canvas); }
+    .explain section { padding: 16px; }
     .explain section + section { border-left: 1px solid var(--line); }
-    .explain h4 { margin: 0 0 9px; color: var(--muted); font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; }
-    .explain ul { margin: 0; padding-left: 18px; font-size: .88rem; }
-    .explain li + li { margin-top: 6px; }
-    .why { margin: 0; font-size: .9rem; }
-    .decision { padding: 22px; }
+    .explain h4 { margin: 0 0 7px; color: var(--muted); font-size: .68rem; text-transform: uppercase; }
+    .explain ul { margin: 0; padding-left: 17px; font-size: .78rem; }
+    .explain li + li { margin-top: 4px; }
+    .why { margin: 0; font-size: .78rem; }
+    .decision { padding: 18px 0; }
     fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-    legend { margin-bottom: 13px; font-weight: 750; }
-    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .choice {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      min-height: 168px;
-      padding: 15px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: var(--surface);
-      cursor: pointer;
-      transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
-    }
-    .choice:hover { border-color: var(--accent); transform: translateY(-1px); }
-    .choice:has(input:checked), .choice.is-selected { border: 2px solid var(--accent); padding: 14px; box-shadow: 0 0 0 4px var(--accent-soft); }
-    .choice input { position: absolute; opacity: 0; pointer-events: none; }
-    .choice input:focus-visible + .choice-title { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
-    .choice-title { display: flex; align-items: center; gap: 8px; font-weight: 800; }
-    .choice-title::before { content: ""; width: 13px; height: 13px; border: 2px solid var(--muted); border-radius: 50%; }
-    input:checked + .choice-title::before { border: 4px solid var(--accent); }
-    .choice.is-selected .choice-title::after { content: "Selected"; margin-left: auto; color: var(--success); font-size: .69rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-    .recommended { margin-left: auto; padding: 3px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: .65rem; letter-spacing: .04em; text-transform: uppercase; }
-    .impact { display: grid; gap: 5px; margin: 13px 0 0; color: var(--muted); font-size: .76rem; }
-    .impact div { display: grid; grid-template-columns: 42px 1fr; gap: 5px; }
-    .impact b { color: var(--ink); font-weight: 700; }
-    .note-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-top: 16px; }
-    .applied-note { margin-top: 16px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--success) 32%, white); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 52%, white); }
-    .applied-note strong { color: var(--success); }
-    .applied-note p { margin: 3px 0 0; font-size: .84rem; }
-    .applied-note code { overflow-wrap: anywhere; color: var(--muted); font-size: .76rem; }
-    .note-label { display: grid; gap: 7px; color: var(--muted); font-size: .79rem; }
-    textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--ink); }
+    legend { margin-bottom: 10px; font-size: .84rem; font-weight: 750; }
+    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .choice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; min-height: 44px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+    .choice:hover { border-color: var(--accent); }
+    .choice:has(input:checked), .choice.is-selected { border: 2px solid var(--accent); padding: 11px; }
+    .choice input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
+    .choice-title { display: flex; align-items: center; gap: 6px; font-size: .82rem; font-weight: 800; }
+    .choice.is-selected .choice-title::after { content: "Selected"; margin-left: auto; color: var(--success); font-size: .62rem; text-transform: uppercase; }
+    .recommended { margin-left: auto; color: var(--accent-strong); font-size: .62rem; text-transform: uppercase; }
+    .impact { display: grid; gap: 4px; margin-top: 9px; color: var(--muted); font-size: .69rem; }
+    .impact div { display: grid; grid-template-columns: 38px 1fr; gap: 4px; }
+    .impact b { color: var(--ink); }
+    .note-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-top: 12px; }
+    .note-label { display: grid; gap: 6px; color: var(--muted); font-size: .72rem; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); font-size: 1rem; }
     textarea:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
-    button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--accent); color: #ffffff; font-weight: 750; cursor: pointer; }
+    button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: white; font-weight: 750; cursor: pointer; }
     button:hover { background: var(--accent-strong); }
     button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-    button:disabled { cursor: not-allowed; background: color-mix(in srgb, var(--line) 70%, white); color: var(--ink); }
-    .footer-note { margin-top: 22px; color: var(--muted); text-align: center; font-size: .8rem; }
-    @media (max-width: 900px) {
-      .masthead { grid-template-columns: 1fr; }
-      .readiness { border-top: 1px solid var(--line); border-left: 0; }
-      .choices { grid-template-columns: 1fr; }
-      .choice { min-height: 0; }
-      .phase-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    button:disabled { cursor: not-allowed; background: var(--line); color: var(--ink); }
+    .applied-note { margin-bottom: 14px; padding: 11px 13px; border-left: 3px solid var(--success); background: var(--canvas); }
+    .applied-note strong { color: var(--success); }
+    .applied-note p { margin: 2px 0 0; font-size: .76rem; }
+    .applied-note code { color: var(--muted); font-size: .69rem; overflow-wrap: anywhere; }
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 20px, 980px); padding-top: 12px; }
+      .topbar { align-items: flex-start; flex-direction: column; gap: 0; }
+      .status-head { grid-template-columns: 1fr; }
+      .run-stats { grid-template-columns: repeat(3, auto); justify-content: start; text-align: left; }
+      .phase-list { grid-template-columns: repeat(3, 1fr); }
       .phase-item:nth-child(4) { border-left: 0; }
       .phase-item:nth-child(n + 4) { border-top: 1px solid var(--line); }
-    }
-    @media (max-width: 700px) {
-      .shell { width: min(100% - 20px, 1180px); padding-top: 10px; }
-      .masthead { border-radius: 18px; }
-      .hero { padding: 26px 22px; }
-      .readiness { padding: 22px; }
-      .toolbar { align-items: flex-start; flex-direction: column; }
-      .legend { display: none; }
-      .card-head { grid-template-columns: auto minmax(0, 1fr); padding: 18px; }
+      .work-grid, .choices, .explain { grid-template-columns: 1fr; }
+      .work-column + .work-column, .explain section + section { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
+      .work-column + .work-column { padding-top: 20px; }
+      .card-head { grid-template-columns: auto minmax(0, 1fr); }
       .card-meta { grid-column: 2; justify-items: start; }
-      .selected-policy { text-align: left; }
-      .status { text-align: left; }
-      .explain { grid-template-columns: 1fr; }
-      .explain section + section { border-left: 0; border-top: 1px solid var(--line); }
-      .decision { padding: 18px; }
+      .selected-policy, .status { text-align: left; }
       .note-row { grid-template-columns: 1fr; }
       button { width: 100%; }
-      .run-panel { border-radius: 18px; padding: 22px; }
-      .run-head { display: block; }
-      .run-status { margin-top: 8px; text-align: left; }
-      .phase-list { grid-template-columns: 1fr; }
-      .phase-item, .phase-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--line); }
-      .phase-item:first-child { border-top: 0; }
-      .work-grid { grid-template-columns: 1fr; gap: 18px; }
-      .work-column + .work-column { border-top: 1px solid var(--line); border-left: 0; padding-top: 18px; padding-left: 0; }
-      .decision-metrics { max-width: none; margin-left: 0; }
     }
     @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
       *, *::before, *::after { transition-duration: .01ms !important; }
     }
   </style>
 </head>
 <body>
   <main class="shell">
-    <div class="masthead">
-      <header class="hero">
-        <div class="eyebrow">Build Loop dashboard</div>
-        <h1>See where every run stands.</h1>
-        <p>Follow the current phase, major tasks, and agents that have actually been invoked. The view reads Build Loop's local records and never edits run state.</p>
-      </header>
-      <aside class="readiness" aria-labelledby="run-summary-title">
-        <div>
-          <h2 id="run-summary-title">Current run</h2>
-          <p id="run-summary-copy">Loading the latest recorded state.</p>
-        </div>
-        <div class="metrics">
-          <div class="metric"><strong id="run-status">—</strong><span>state</span></div>
-          <div class="metric"><strong id="phase-progress">—</strong><span>phases</span></div>
-          <div class="metric"><strong id="task-count">—</strong><span>tasks</span></div>
-          <div class="metric"><strong id="agent-count">—</strong><span>agents</span></div>
-        </div>
-      </aside>
-    </div>
+    <header class="topbar">
+      <div class="brand">Build Loop</div>
+      <p>Track this run. It updates automatically.</p>
+    </header>
 
     <section id="run-panel" class="run-panel" aria-labelledby="run-title" data-status="loading">
-      <div class="run-head">
-        <div><div class="eyebrow">Current run</div><h2 id="run-title">Loading run state…</h2></div>
-        <div id="run-state-label" class="run-status" role="status" aria-live="polite">Reading local records</div>
+      <div class="run-overview">
+        <div class="status-head">
+          <div>
+            <div id="run-state-label" class="run-state" role="status" aria-live="polite">Reading local records.</div>
+            <h1 id="run-title">Loading the run.</h1>
+          </div>
+          <div class="run-stats" aria-label="Run counts">
+            <strong id="phase-progress">— phases</strong>
+            <span id="task-count">— tasks</span>
+            <span id="agent-count">— agents</span>
+          </div>
+        </div>
+        <p id="run-goal" class="run-goal">The dashboard is reading the current goal.</p>
+        <div class="run-meta">
+          <span><strong>Run</strong> <span id="run-id">—</span></span>
+          <span><strong>Updated</strong> <span id="run-updated">—</span></span>
+        </div>
+        <ol id="phase-list" class="phase-list" aria-label="Build Loop phases"></ol>
       </div>
-      <p id="run-goal" class="run-goal">The dashboard is reading the current goal.</p>
-      <div class="run-meta">
-        <span><strong>Run</strong> <span id="run-id">—</span></span>
-        <span><strong>Updated</strong> <span id="run-updated">—</span></span>
-        <span id="run-refresh">Automatic refresh is starting.</span>
-      </div>
-      <ol id="phase-list" class="phase-list" aria-label="Build Loop phases"></ol>
-      <div class="work-grid">
-        <section class="work-column" aria-labelledby="tasks-title">
-          <h3 id="tasks-title">Major tasks</h3>
-          <p>Structured run work, with plan headings used only when execution state has no tasks.</p>
-          <ul id="task-list" class="record-list"></ul>
-        </section>
-        <section class="work-column" aria-labelledby="agents-title">
-          <h3 id="agents-title">Agents invoked</h3>
-          <p>Recorded invocations for this run. Available or configured agents are excluded.</p>
-          <ul id="agent-list" class="record-list"></ul>
-        </section>
-      </div>
-      <section class="run-notes" aria-labelledby="notes-title">
-        <h3 id="notes-title">Run notes</h3>
-        <p>Free-form comments recorded through Build Loop's working-state channel.</p>
-        <ul id="note-list" class="record-list"></ul>
-      </section>
-      <p id="run-warning" class="run-warning" hidden></p>
+
+      <details id="run-details" class="run-disclosure">
+        <summary class="disclosure-head">
+          <div class="disclosure-copy"><strong>Run details</strong><span id="detail-summary">Phase outputs, tasks, agents, and notes.</span></div>
+          <span class="disclosure-label"><span class="when-closed">Show details</span><span class="when-open">Hide details</span></span>
+        </summary>
+        <div class="detail-body">
+          <section class="detail-section" aria-labelledby="outputs-title">
+            <h2 id="outputs-title">Phase outputs</h2>
+            <ul id="phase-output-list" class="phase-output-list"></ul>
+          </section>
+          <section class="detail-section work-grid">
+            <div class="work-column" aria-labelledby="tasks-title">
+              <h2 id="tasks-title">Major tasks</h2>
+              <ul id="task-list" class="record-list"></ul>
+            </div>
+            <div class="work-column" aria-labelledby="agents-title">
+              <h2 id="agents-title">Agents invoked</h2>
+              <ul id="agent-list" class="record-list"></ul>
+            </div>
+          </section>
+          <section class="detail-section" aria-labelledby="notes-title">
+            <h2 id="notes-title">Run notes</h2>
+            <ul id="note-list" class="record-list"></ul>
+          </section>
+          <p id="run-warning" class="run-warning" hidden></p>
+        </div>
+      </details>
     </section>
 
-    <div class="principle"><strong>Operating rule</strong><span>Related + reversible + testable work executes. Production, irreversible actions, scope expansion, and major user choices request a decision.</span></div>
-
-    <section aria-labelledby="gaps-title">
-      <div class="toolbar">
-        <div><h2 id="gaps-title">Choose the operating policy</h2><p>Each card connects the gap to your cost, the resolution, and its impact.</p></div>
-        <div class="legend" aria-label="Priority legend"><span>P0 run integrity</span><span>P1 intervention</span><span>P2 capacity</span></div>
+    <details id="policy-panel" class="policy-panel">
+      <summary class="policy-head">
+        <div><h2>Operating policy</h2><p id="policy-summary">Optional settings appear here.</p></div>
+        <span class="disclosure-label"><span class="when-closed">Show decisions</span><span class="when-open">Hide decisions</span></span>
+      </summary>
+      <div class="policy-body">
+        <p class="principle"><strong>Rule:</strong> Related, reversible, and testable work executes. Consequential choices require a decision.</p>
+        <div class="metrics" aria-label="Operating policy counts">
+          <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
+          <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
+          <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
+          <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
+        </div>
+        <div id="loading" role="status">Loading operating decisions.</div>
+        <div id="cards" class="cards"></div>
       </div>
-      <div class="metrics decision-metrics" aria-live="polite">
-        <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
-        <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
-        <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
-        <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
-      </div>
-      <div id="loading" role="status">Loading autonomy decisions…</div>
-      <div id="cards" class="cards"></div>
-    </section>
-    <p class="footer-note">Local read model · append-only decisions · evidence-backed completion</p>
+    </details>
   </main>
 
   <script>
@@ -348,6 +265,7 @@
     const loading = document.querySelector('#loading');
     const runPanel = document.querySelector('#run-panel');
     const phaseList = document.querySelector('#phase-list');
+    const phaseOutputList = document.querySelector('#phase-output-list');
     const taskList = document.querySelector('#task-list');
     const agentList = document.querySelector('#agent-list');
     const noteList = document.querySelector('#note-list');
@@ -366,10 +284,12 @@
 
     function updateMetrics() {
       const responses = Object.values(state.responses);
+      const decided = responses.filter(item => item.choice_id || item.note).length;
       document.querySelector('#gap-count').textContent = state.gaps.length;
-      document.querySelector('#saved-count').textContent = responses.filter(item => item.choice_id || item.note).length;
+      document.querySelector('#saved-count').textContent = decided;
       document.querySelector('#queued-count').textContent = responses.filter(item => item.event === 'response_queued').length;
       document.querySelector('#applied-count').textContent = responses.filter(item => item.event === 'response_applied').length;
+      document.querySelector('#policy-summary').textContent = `Optional settings. ${decided} of ${state.gaps.length} decisions are recorded.`;
     }
 
     function statusLabel(status) {
@@ -382,6 +302,16 @@
       return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     }
 
+    function sentence(value, fallback) {
+      const text = String(value || fallback || '').trim();
+      if (!text) return '';
+      return /[.!?]$/.test(text) ? text : `${text}.`;
+    }
+
+    function countLabel(value, singular, plural = `${singular}s`) {
+      return `${value} ${value === 1 ? singular : plural}`;
+    }
+
     function emptyRecord(list, message) {
       list.replaceChildren(node('li', { className: 'empty-record' }, message));
     }
@@ -391,37 +321,47 @@
       state.run = run;
       runPanel.dataset.status = run.status;
       const current = run.current_phase_name;
-      const title = run.status === 'active' ? `${current || 'Run'} in progress` : run.status === 'blocked' ? `${current || 'Run'} needs attention` : run.status === 'complete' ? 'Last run completed' : 'No active run';
+      const title = run.status === 'active' ? `${current || 'The run'} is in progress.` : run.status === 'blocked' ? `${current || 'The run'} needs attention.` : run.status === 'complete' ? 'The run is complete.' : 'No run is active.';
       document.querySelector('#run-title').textContent = title;
       const stateLabel = document.querySelector('#run-state-label');
-      const nextStateLabel = statusLabel(run.status);
+      const nextStateLabel = `${statusLabel(run.status)}.`;
       if (stateLabel.textContent !== nextStateLabel) stateLabel.textContent = nextStateLabel;
-      document.querySelector('#run-summary-copy').textContent = run.status === 'active' ? `${current || 'A phase'} is currently being worked.` : run.status === 'blocked' ? `${current || 'The run'} needs attention before the loop can continue.` : run.status === 'complete' ? 'The latest recorded run reached its end state.' : 'Start Build Loop to populate live progress.';
-      document.querySelector('#run-goal').textContent = run.goal;
+      document.querySelector('#run-goal').textContent = sentence(run.goal, 'No goal is recorded');
       document.querySelector('#run-id').textContent = run.run_id || 'No run id';
       document.querySelector('#run-updated').textContent = localTime(run.updated_at);
-      document.querySelector('#run-refresh').textContent = `Refreshed ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-      document.querySelector('#run-status').textContent = statusLabel(run.status);
-      document.querySelector('#phase-progress').textContent = `${run.metrics.phases_complete}/${run.metrics.phases_total}`;
-      document.querySelector('#task-count').textContent = run.metrics.tasks_total;
-      document.querySelector('#agent-count').textContent = run.metrics.agents_invoked;
+      const currentPhase = run.phases.find(phase => phase.status === 'active' || phase.status === 'blocked');
+      document.querySelector('#phase-progress').textContent = currentPhase
+        ? `${run.metrics.phases_complete} complete · phase ${currentPhase.number} ${statusLabel(currentPhase.status).toLowerCase()}`
+        : `${run.metrics.phases_complete} of ${run.metrics.phases_total} complete`;
+      document.querySelector('#task-count').textContent = countLabel(run.metrics.tasks_total, 'task');
+      document.querySelector('#agent-count').textContent = countLabel(run.metrics.agents_invoked, 'agent');
+      document.querySelector('#detail-summary').textContent = [
+        countLabel(run.metrics.tasks_total, 'task'),
+        countLabel(run.metrics.agents_invoked, 'agent'),
+        countLabel(run.notes.length, 'note'),
+      ].join(' · ');
 
       phaseList.replaceChildren();
+      phaseOutputList.replaceChildren();
       run.phases.forEach(phase => {
         const item = node('li', { className: 'phase-item', 'data-status': phase.status });
         item.append(node('span', { className: 'phase-number', 'aria-hidden': 'true' }, String(phase.number)));
-        item.append(node('h3', {}, phase.name));
-        item.append(node('p', {}, phase.summary));
-        item.append(node('p', { className: 'phase-output' }, `Output: ${phase.output}`));
+        item.append(node('span', { className: 'phase-name' }, phase.name));
         item.append(node('span', { className: 'phase-state' }, statusLabel(phase.status)));
         phaseList.append(item);
+
+        const output = node('li', { className: 'record-row' });
+        output.append(node('span', { className: 'record-title' }, phase.name));
+        output.append(node('span', { className: 'record-status' }, statusLabel(phase.status)));
+        output.append(node('span', { className: 'record-meta' }, sentence(phase.output ? `Expected output: ${phase.output}` : '', 'No output is recorded')));
+        phaseOutputList.append(output);
       });
 
       taskList.replaceChildren();
-      if (!run.tasks.length) emptyRecord(taskList, 'No major task records yet.');
+      if (!run.tasks.length) emptyRecord(taskList, 'No tasks are recorded.');
       run.tasks.forEach(task => {
         const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, task.title));
+        item.append(node('span', { className: 'record-title' }, sentence(task.title, task.id)));
         item.append(node('span', { className: 'record-status' }, statusLabel(task.status)));
         const details = [`ID: ${task.id}`, task.owner ? `Owner: ${task.owner}` : ''].filter(Boolean).join(' · ');
         item.append(node('span', { className: 'record-meta' }, details));
@@ -429,7 +369,7 @@
       });
 
       agentList.replaceChildren();
-      if (!run.agents.length) emptyRecord(agentList, 'No agent records yet.');
+      if (!run.agents.length) emptyRecord(agentList, 'No agents are recorded.');
       run.agents.forEach(agent => {
         const item = node('li', { className: 'record-row' });
         item.append(node('span', { className: 'record-title' }, agent.name));
@@ -440,10 +380,10 @@
       });
 
       noteList.replaceChildren();
-      if (!run.notes.length) emptyRecord(noteList, 'No run notes recorded yet.');
+      if (!run.notes.length) emptyRecord(noteList, 'No notes are recorded.');
       run.notes.forEach(note => {
         const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, note.text));
+        item.append(node('span', { className: 'record-title' }, sentence(note.text, 'Run note')));
         item.append(node('span', { className: 'record-status' }, note.phase || 'Run'));
         const details = [note.author, localTime(note.timestamp)].filter(Boolean).join(' · ');
         item.append(node('span', { className: 'record-meta' }, details));
@@ -452,7 +392,7 @@
 
       const warning = document.querySelector('#run-warning');
       warning.hidden = !run.warnings.length;
-      warning.textContent = run.warnings.join(' ');
+      warning.textContent = sentence(run.warnings.join(' '), '');
     }
 
     async function refreshRun() {
@@ -463,7 +403,9 @@
         if (!response.ok) throw new Error(body.error || 'Unable to refresh run state');
         renderRun(body.run);
       } catch (error) {
-        document.querySelector('#run-refresh').textContent = `Refresh failed: ${error.message}. The last state remains visible.`;
+        const warning = document.querySelector('#run-warning');
+        warning.hidden = false;
+        warning.textContent = `Refresh failed: ${error.message}. The last state remains visible.`;
       }
     }
 
@@ -471,7 +413,7 @@
       const section = node('section');
       section.append(node('h4', {}, title));
       const list = node('ul');
-      values.forEach(value => list.append(node('li', {}, value)));
+      values.forEach(value => list.append(node('li', {}, sentence(value, ''))));
       section.append(list);
       return section;
     }
@@ -514,7 +456,7 @@
         state.responses[gap.id] = response;
         card.querySelector('button').disabled = false;
         reflectSelection(card, gap, response);
-        statusFor(card, `Saved ${new Date(response.saved_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`, 'saved');
+        statusFor(card, `Saved ${new Date(response.saved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, 'saved');
         updateMetrics();
         return true;
       } catch (error) {
@@ -549,25 +491,26 @@
       const input = node('input', { type: 'radio', name: `choice-${gap.id}`, value: option.id });
       input.checked = current?.choice_id === option.id;
       if (input.checked) label.classList.add('is-selected');
+      const body = node('span');
       const title = node('span', { className: 'choice-title' }, option.label);
       if (option.recommended) title.append(node('span', { className: 'recommended' }, 'Recommended'));
       const impact = node('span', { className: 'impact' });
       Object.entries(option.impact).forEach(([name, value]) => {
         const row = node('div');
-        row.append(node('b', {}, name), node('span', {}, value));
+        row.append(node('b', {}, name), node('span', {}, sentence(value, '')));
         impact.append(row);
       });
-      label.append(input, title, impact);
+      body.append(title, impact);
+      label.append(input, body);
       return label;
     }
 
     function renderGap(gap) {
       const current = state.responses[gap.id];
       const article = node('details', { className: 'gap-card', id: gap.id });
-      if (gap === state.gaps[0]) article.open = true;
       const head = node('summary', { className: 'card-head' });
       const titleWrap = node('div');
-      titleWrap.append(node('h3', {}, gap.gap), node('p', { className: 'big-idea' }, gap.big_idea));
+      titleWrap.append(node('h3', {}, sentence(gap.gap, 'Operating decision')));
       const isApplied = current?.event === 'response_applied';
       const isQueued = current?.event === 'response_queued';
       const statusText = isApplied ? 'Applied · validated' : isQueued ? 'Queued for Build Loop' : current ? 'Saved' : 'Choose an option';
@@ -578,16 +521,17 @@
       const cardMeta = node('div', { className: 'card-meta' });
       const currentOption = selectedOption(gap, current?.choice_id);
       const selectedPolicy = node('div', { className: 'selected-policy', 'aria-label': 'Selected policy' }, currentOption ? `✓ ${currentOption.label}` : current?.note ? '✓ Custom direction' : '');
-      cardMeta.append(selectedPolicy, status, node('span', { className: 'disclosure-label' }, 'Review decision'));
+      cardMeta.append(selectedPolicy, status, node('span', { className: 'disclosure-label' }, 'Review'));
       head.append(node('div', { className: 'priority' }, gap.priority), titleWrap, cardMeta);
 
       const explain = node('div', { className: 'explain' });
-      explain.append(listSection('Pain now', gap.pain), listSection('Resolution payoff', gap.payoff));
+      explain.append(listSection('Current cost', gap.pain), listSection('Payoff', gap.payoff));
       const why = node('section');
-      why.append(node('h4', {}, 'Why this works'), node('p', { className: 'why' }, gap.why));
+      why.append(node('h4', {}, 'Reason'), node('p', { className: 'why' }, sentence(gap.why, '')));
       explain.append(why);
 
       const decision = node('div', { className: 'decision' });
+      decision.append(node('p', { className: 'big-idea' }, sentence(gap.big_idea, '')));
       const fieldset = node('fieldset');
       fieldset.append(node('legend', {}, 'Select a policy'));
       const choices = node('div', { className: 'choices' });
@@ -595,18 +539,18 @@
       fieldset.append(choices);
       const noteRow = node('div', { className: 'note-row' });
       const noteLabel = node('label', { className: 'note-label' });
-      noteLabel.append(node('span', {}, 'Add direction, conditions, or a different option'));
-      const textarea = node('textarea', { maxlength: '8000', placeholder: 'Example: Use the recommended policy, but cap proposal items at four per manifest.' });
+      noteLabel.append(node('span', {}, 'Add conditions or a different direction.'));
+      const textarea = node('textarea', { maxlength: '8000', placeholder: 'Add a condition or alternative.' });
       textarea.value = current?.note || '';
       noteLabel.append(textarea);
-      const buttonLabel = isApplied ? 'Queue a revision' : isQueued ? 'Replace queued decision' : 'Queue for Build Loop';
+      const buttonLabel = isApplied ? 'Queue Revision' : isQueued ? 'Replace Decision' : 'Queue Decision';
       const button = node('button', { type: 'button' }, buttonLabel);
       button.disabled = !current?.choice_id && !current?.note;
       if (isApplied) {
         const applied = node('div', { className: 'applied-note' });
         applied.append(node('strong', {}, 'Applied'));
-        applied.append(node('p', {}, current.summary || 'Build Loop validated and completed this decision.'));
-        applied.append(node('code', {}, current.evidence || 'Completion evidence recorded.'));
+        applied.append(node('p', {}, sentence(current.summary, 'Build Loop validated and completed this decision')));
+        applied.append(node('code', {}, current.evidence || 'Completion evidence is recorded.'));
         decision.append(applied);
       }
       noteRow.append(noteLabel, button);
@@ -620,7 +564,10 @@
         statusFor(article, 'Saving selection…');
         scheduleSave(article, gap);
       });
-      textarea.addEventListener('input', () => { button.disabled = !textarea.value.trim() && !choices.querySelector('input:checked'); scheduleSave(article, gap); });
+      textarea.addEventListener('input', () => {
+        button.disabled = !textarea.value.trim() && !choices.querySelector('input:checked');
+        scheduleSave(article, gap);
+      });
       button.addEventListener('click', () => queueDecision(article, gap));
       return article;
     }
@@ -632,11 +579,12 @@
         if (!response.ok) throw new Error(body.error || 'Unable to load dashboard');
         state = body;
         renderRun(body.run);
+        cards.replaceChildren();
         body.gaps.forEach(gap => cards.append(renderGap(gap)));
         loading.hidden = true;
         updateMetrics();
       } catch (error) {
-        loading.textContent = `Dashboard failed to load: ${error.message}`;
+        loading.textContent = `The dashboard could not load because ${error.message}. Check the local server and try again.`;
       }
     }
     load();

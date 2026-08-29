@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "186162ce3d0a6f3bee0d9df4b419854ecf6343a5e7fa902bbfaf3bd9b82f0a94"
+    "content_sha256": "61b4f9836eb4325876e737bb8d94550706eddb8ff42bf88ca72a8de8e2848cc7"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1039,8 +1039,8 @@
         "description": "Post-push retrospective synthesizer. Reads the session transcript JSONL + state.json + intent + plan after the Phase 4 Report closing push, and writes a structured 11-section retrospective to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` plus a ≤5-line `<run-id>.summary.md` surfaced inline. The 9 core sections plus §10 (plugin & tooling observations) and §11 (deterministic-automation candidates) are computed…",
         "file": "agents/retrospective-synthesizer.md",
         "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "author": "Claude",
+          "date": "2026-08-29"
         }
       },
       "root-cause-investigator": {
@@ -1822,6 +1822,7 @@
       "scripts/retrospective/__init__.py": "scripts/retrospective/ — post-push 9-section synthesis package.",
       "scripts/retrospective/__main__.py": "CLI: python3 -m retrospective --workdir <repo> [--run-id <id>] [--transcript <path>] [--session-id <id>] [--j…",
       "scripts/retrospective/conftest.py": "Test isolation for the retrospective capability.",
+      "scripts/retrospective/file_findings.py": "file_findings.py — file a retrospective's issues to their RELEVANT location.",
       "scripts/retrospective/locate.py": "locate.py — find the Claude Code session transcript for a given run.",
       "scripts/retrospective/sections.py": "sections.py — assemble the 9 retrospective sections.",
       "scripts/retrospective/synthesize.py": "synthesize.py — entry point for the post-push retrospective.",

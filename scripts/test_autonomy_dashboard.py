@@ -329,21 +329,28 @@ def test_shutdown_rejects_wrong_instance_token(repo: Path) -> None:
         server.server_close()
 
 
-def test_html_has_semantic_controls_and_autosave_contract() -> None:
+def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract() -> None:
     html = (Path(__file__).resolve().parents[1] / "docs/autonomy-dashboard.html").read_text(encoding="utf-8")
     for token in (
         "<main", "node('details'", "node('summary'", "node('fieldset')", "node('legend'",
-        "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue for Build Loop",
+        "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue Decision",
         '"Avenir Next"', "--canvas: #f6fbff", "--accent: #00836f", "min-height: 44px",
         "is-selected", "Selected policy", "Queued for Build Loop", "response_applied",
-        "applied-count", "Applied · validated", "evidence-backed completion",
+        "applied-count", "Applied · validated",
         "const saved = await save(card, gap);", "if (!saved) return;",
         'id="run-panel"', 'id="phase-list"', 'id="task-list"', 'id="agent-list"', 'id="note-list"',
-        "renderRun", "refreshRun", "setInterval(refreshRun, 2000)", "Current run",
-        "Major tasks", "Agents invoked", "Run notes", "No agent records yet",
-        "Output: ${phase.output}", "if (stateLabel.textContent !== nextStateLabel)",
+        'id="run-details"', 'id="policy-panel"', "Show details", "Hide details", "Show decisions", "Hide decisions",
+        ".when-open { display: none; }", "details[open] > summary .when-closed { display: none; }",
+        "details[open] > summary .when-open { display: inline; }",
+        "renderRun", "refreshRun", "setInterval(refreshRun, 2000)", "Track this run. It updates automatically.",
+        "Major tasks", "Agents invoked", "Run notes", "No agents are recorded.",
+        "sentence(phase.output", "if (stateLabel.textContent !== nextStateLabel)", "function sentence",
+        "statusLabel(currentPhase.status).toLowerCase()",
     ):
         assert token in html
+    assert '<details id="run-details" class="run-disclosure" open>' not in html
+    assert '<details id="policy-panel" class="policy-panel" open>' not in html
+    assert "phase ${currentPhase.number} active" not in html
     assert 'id="run-refresh" role="status"' not in html
     assert '<div class="metrics" aria-live="polite">' not in html
     assert "innerHTML" not in html

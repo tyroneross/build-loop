@@ -56,6 +56,8 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 
 - Consumer default — learned drafts route to `~/.build-loop-extensions/pending/` via `scripts/extensions_route.py --name <ext-slug> --file <draft>`; they do not load until `scripts/extensions_approve.py` moves them into `plugin/`. (Maintainer routing: P2.)
 
+**Retrospective finding capture — ownership (2026-08-29).** build-loop is the DEFAULT owner of the retrospective-finding-filing flow (`scripts/retrospective/file_findings.py`; see `AGENTS.md` §"Retrospective finding capture" for the exact `plan`/`apply`/`lint` commands and filing ladder). The `ai-assistant` and `ambient agent` projects may also invoke or guide this same flow, but only through those same `file_findings.py` commands — never a parallel reimplementation. This pointer lives in build-loop's own docs only: `ai-assistant` and `ambient agent` are NOT edited by this change.
+
 **What this phase will NOT do**:
 - Modify the build-loop plugin repo
 - Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`

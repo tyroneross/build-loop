@@ -66,9 +66,29 @@ class _Base(unittest.TestCase):
                  related_to=kw.get("related_to", ""),
                  decision_option=kw.get("decision_option", []),
                  decision_impact=kw.get("decision_impact", []),
+                 impact=kw.get("impact", ""),
+                 observed=kw.get("observed", ""),
+                 what_happened=kw.get("what_happened", ""),
+                 recommendation=kw.get("recommendation", ""),
+                 why=kw.get("why", ""),
                  review_days=kw.get("review_days", 30),
                  today=kw.get("today", "2026-06-16"))
         return bl.cmd_new(ns)
+
+    def _new_retro(self, **kw):
+        """Create a fully-specified retrospective-sourced finding."""
+        defaults = dict(
+            area="routing", typ="fix", title="Router over-fires on conversational turns",
+            provenance_source="retrospective",
+            provenance_ref="build-loop-memory/retrospectives/2026-08-29-session.md",
+            observed="2026-08-28",
+            impact="Two Codex dispatches blocked; one full agent run wasted",
+            what_happened="Router sent a retrospective request to security-review.",
+            recommendation="Anti-over-fire default wins on conversational turns.",
+            why="No confidence floor before dispatch.",
+        )
+        defaults.update(kw)
+        return self._new(**defaults)
 
     def _sync(self, today="2026-06-16", no_mirror=False, prune=False):
         return bl.cmd_sync(_NS(repo=str(self.repo), today=today,
@@ -1571,6 +1591,149 @@ class TestNormalizeRepo(unittest.TestCase):
                 self.assertEqual(bl.normalize_repo("new-thing"), Path("new-thing"))
             finally:
                 os.chdir(old)
+
+
+class TestRetrospectiveProvenance(_Base):
+    """Retrospective-sourced findings: additive schema + five-segment body.
+
+    Owner directive 2026-08-29 — a retrospective must file every issue it names
+    with enough context that a later reader can act without reopening the retro.
+    """
+
+    def test_retro_item_carries_provenance_impact_and_observed(self):
+        res = self._new_retro()
+        fm, body = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["provenance"]["source"], "retrospective")
+        self.assertEqual(
+            fm["provenance"]["ref"],
+            "build-loop-memory/retrospectives/2026-08-29-session.md",
+        )
+        self.assertEqual(fm["observed"], "2026-08-28")
+        self.assertEqual(fm["impact"],
+                         "Two Codex dispatches blocked; one full agent run wasted")
+        # `observed` is the OBSERVATION date and may predate `created`.
+        self.assertEqual(fm["created"], "2026-06-16")
+
+    def test_retro_body_carries_five_segments_in_fixed_order(self):
+        res = self._new_retro()
+        _, body = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        positions = [body.index(f"## {name}") for name in bl.RETRO_BODY_SECTIONS]
+        self.assertEqual(positions, sorted(positions),
+                         "five segments must appear in the contract order")
+        segments = bl.retro_segments(body)
+        self.assertEqual(set(bl.RETRO_BODY_SECTIONS), set(segments))
+        self.assertEqual(segments["When"], "2026-08-28")
+        self.assertEqual(segments["Why"], "No confidence floor before dispatch.")
+
+    def test_segments_parse_from_both_contract_encodings(self):
+        """One contract, two encodings: `## What happened` in backlog items and
+        `**What happened.**` in a repo's KNOWN-ISSUES.md, where a per-segment H2
+        would fight that file's own structure. A `## `-only parser made every
+        markdown-filed finding unreadable to the index."""
+        heading_form = ("## What happened\nA write clobbered eight tests\n\n"
+                        "## When\n2026-08-28\n\n## Impact\nA full re-review\n\n"
+                        "## Recommendation\nRun git ls-files first\n\n"
+                        "## Why\nNo absence check\n")
+        runin_form = ("**What happened.** A write clobbered eight tests\n\n"
+                      "**When.** 2026-08-28\n\n**Impact.** A full re-review\n\n"
+                      "**Recommendation.** Run git ls-files first\n\n"
+                      "**Why.** No absence check\n")
+        for label, body in (("heading", heading_form), ("run-in", runin_form)):
+            segs = bl.retro_segments(body)
+            self.assertEqual(set(bl.RETRO_BODY_SECTIONS), set(segs), label)
+            self.assertEqual(segs["Impact"], "A full re-review", label)
+            self.assertEqual(segs["Why"], "No absence check", label)
+
+    def test_retro_source_without_segments_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._new(provenance_source="retrospective")
+        msg = str(ctx.exception)
+        for flag in ("--provenance-ref", "--observed", "--impact",
+                     "--what-happened", "--recommendation", "--why"):
+            self.assertIn(flag, msg)
+
+    def test_malformed_observed_date_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._new(observed="08/28/2026")
+
+    def test_non_retro_item_needs_no_segments(self):
+        """The contract binds retrospective provenance ONLY — other sources are
+        unaffected, which is what keeps the field additive."""
+        res = self._new(provenance_source="user-report", provenance_ref="chat")
+        fm, body = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["impact"], "")
+        self.assertIsNone(fm["observed"])
+        self.assertIn("## Context", body)
+
+    def test_old_item_without_new_fields_still_reads_and_syncs(self):
+        """Backward compat: an item written before this schema must not break."""
+        res = self._new(area="legacy")
+        path = Path(res["path"])
+        text = path.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            ln for ln in text.splitlines()
+            if not ln.startswith("impact:") and not ln.startswith("observed:")
+        )
+        self.assertNotIn("impact:", stripped)
+        path.write_text(stripped + "\n", encoding="utf-8")
+        fm, _ = bl.read_item(path.read_text(encoding="utf-8"))
+        self.assertEqual(fm["impact"], "")       # defaulted by the tolerant reader
+        self.assertIsNone(fm["observed"])
+        self._sync()  # must not raise
+        index = (self.repo / ".build-loop" / "backlog" / "INDEX.md").read_text(encoding="utf-8")
+        self.assertIn(res["id"], index)
+
+
+class TestRetrospectiveSegmentation(_Base):
+    """`sync` clusters retrospective findings by theme in the derived INDEX."""
+
+    def test_index_groups_retro_findings_by_area(self):
+        a = self._new_retro(area="routing", title="Router over-fires")
+        b = self._new_retro(area="routing", title="Router drops owner check")
+        c = self._new_retro(area="storage", title="Envelope bloat")
+        self._sync()
+        index = (self.repo / ".build-loop" / "backlog" / "INDEX.md").read_text(encoding="utf-8")
+        self.assertIn("## Retrospective findings by theme", index)
+        self.assertIn("### routing (2)", index)
+        self.assertIn("### storage (1)", index)
+        for res in (a, b, c):
+            self.assertIn(res["id"], index)
+        # The five-segment context survives into the derived view.
+        self.assertIn("Anti-over-fire default wins on conversational turns.", index)
+        self.assertIn("2026-08-28", index)
+
+    def test_section_absent_when_no_retro_items(self):
+        self._new(area="search")
+        self._sync()
+        index = (self.repo / ".build-loop" / "backlog" / "INDEX.md").read_text(encoding="utf-8")
+        self.assertNotIn("## Retrospective findings by theme", index)
+
+    def test_cross_project_rollup_spans_repos(self):
+        """The memory roll-up unions findings from EVERY mirrored project, so a
+        theme recurring in three repos stops looking like three one-offs."""
+        self._new_retro(area="routing")
+        self._sync()
+        # Simulate a second repo mirroring into the same memory root.
+        other = Path(self._tmp.name) / "otherproj"
+        other.mkdir()
+        ns = _NS(repo=str(other), area="routing", type="fix",
+                 title="Second repo, same theme",
+                 priority="P2", status="open", gated="none", entities="", evidence="",
+                 provenance_source="retrospective", provenance_ref="retro-b.md",
+                 observed="2026-08-27", impact="Rework on two branches",
+                 what_happened="Same misroute class.", recommendation="Same fix.",
+                 why="Same missing control.", owner="", context="", notes="",
+                 bucket="", workstream="", related_to="", decision_option=[],
+                 decision_impact=[], review_days=30, today="2026-06-16")
+        bl.cmd_new(ns)
+        bl.cmd_sync(_NS(repo=str(other), today="2026-06-16",
+                        no_mirror=False, prune=False))
+
+        rollup = (self.mem / bl.CROSS_PROJECT_RETRO_INDEX).read_text(encoding="utf-8")
+        self.assertIn("Retrospective findings — all projects", rollup)
+        self.assertIn("### myproj-app/routing (1)", rollup)
+        self.assertIn("### otherproj/routing (1)", rollup)
+        self.assertIn("Retrospective-sourced findings: 2", rollup)
 
 
 if __name__ == "__main__":

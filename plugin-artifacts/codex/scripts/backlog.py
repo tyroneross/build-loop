@@ -85,7 +85,14 @@ ARCHIVE_STATUSES = ("done", "dropped")
 FIELD_ORDER = (
     "id", "schema_version", "title", "status", "priority", "type", "area",
     "bucket", "workstream", "related_to", "decision_options", "decision_impacts",
-    "entities", "gated", "provenance", "evidence", "supersedes", "superseded_by",
+    "entities", "gated", "provenance",
+    # `impact` and `observed` were added for retrospective-sourced findings
+    # (owner directive 2026-08-29): a finding is only actionable when the reader
+    # can see WHAT it costs and WHEN it was seen without opening the source
+    # retro. Both are ADDITIVE and optional — the tolerant reader defaults them,
+    # so an item written before this schema still reads and syncs cleanly.
+    "impact", "observed",
+    "evidence", "supersedes", "superseded_by",
     # `validated` is read by premise_revalidation.py:171 to decide whether an
     # item's premise is fresh enough to schedule. It was never declared here,
     # so the drain's staleness gate worked only because read_item preserves
@@ -119,6 +126,11 @@ def item_defaults() -> dict[str, Any]:
         "entities": [],
         "gated": "none",
         "provenance": {},
+        # "" = impact not stated. Retrospective-sourced items are REQUIRED to
+        # state it (see cmd_new); other sources may leave it blank.
+        "impact": "",
+        # None = observation date unknown; readers fall back to `created`.
+        "observed": None,
         "evidence": [],
         "supersedes": None,
         "superseded_by": None,
@@ -155,6 +167,30 @@ _BODY_TEMPLATE = """## Context
 
 ## Notes
 {notes}
+"""
+
+# Retrospective-sourced items carry a DIFFERENT body: the five segments the
+# owner directive (2026-08-29) named, in fixed order. The order is the contract
+# — a reader scanning many findings across many retros can compare them only if
+# every finding answers the same five questions in the same sequence.
+RETRO_PROVENANCE_SOURCE = "retrospective"
+
+RETRO_BODY_SECTIONS = ("What happened", "When", "Impact", "Recommendation", "Why")
+
+_RETRO_BODY_TEMPLATE = """## What happened
+{what_happened}
+
+## When
+{when}
+
+## Impact
+{impact}
+
+## Recommendation
+{recommendation}
+
+## Why
+{why}
 """
 
 # Static scaffold for a fresh backlog (created by `adopt`). README explains the
@@ -802,10 +838,51 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             "ref": args.provenance_ref or None,
         }
 
-    body = _BODY_TEMPLATE.format(
-        context=(args.context or "<why this matters / what's the situation>"),
-        notes=(args.notes or "<additional detail>"),
-    )
+    observed = (getattr(args, "observed", "") or "").strip() or None
+    if observed is not None:
+        try:
+            _dt.date.fromisoformat(observed)
+        except ValueError as exc:
+            raise ValueError(f"--observed must be YYYY-MM-DD, got {observed!r}") from exc
+    impact = (getattr(args, "impact", "") or "").strip()
+
+    is_retro = args.provenance_source == RETRO_PROVENANCE_SOURCE
+    if is_retro:
+        # A retrospective finding that cannot be traced back to its retro, dated,
+        # costed, and acted on is a note, not a finding. Enforce all five at the
+        # point of creation — the only moment the author still has the context.
+        what_happened = (getattr(args, "what_happened", "") or "").strip()
+        recommendation = (getattr(args, "recommendation", "") or "").strip()
+        why = (getattr(args, "why", "") or "").strip()
+        missing = [
+            name for name, value in (
+                ("--provenance-ref", args.provenance_ref),
+                ("--observed", observed),
+                ("--impact", impact),
+                ("--what-happened", what_happened),
+                ("--recommendation", recommendation),
+                ("--why", why),
+            ) if not value
+        ]
+        if missing:
+            raise ValueError(
+                "--provenance-source retrospective requires "
+                + ", ".join(missing)
+                + " (the five-segment finding contract: what happened / when / "
+                  "impact / recommendation / why)"
+            )
+        body = _RETRO_BODY_TEMPLATE.format(
+            what_happened=what_happened,
+            when=observed,
+            impact=impact,
+            recommendation=recommendation,
+            why=why,
+        )
+    else:
+        body = _BODY_TEMPLATE.format(
+            context=(args.context or "<why this matters / what's the situation>"),
+            notes=(args.notes or "<additional detail>"),
+        )
 
     def _render(item_id: str) -> str:
         data: dict[str, Any] = {
@@ -824,6 +901,8 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             "entities": _csv(args.entities),
             "gated": gated,
             "provenance": provenance,
+            "impact": impact,
+            "observed": observed,
             "evidence": _csv(args.evidence),
             "supersedes": None,
             "superseded_by": None,
@@ -873,6 +952,105 @@ def _sort_key(item: dict[str, Any]) -> tuple:
 def _esc_cell(value: Any) -> str:
     s = "" if value is None else str(value)
     return s.replace("|", "\\|").replace("\n", " ").strip()
+
+
+_RETRO_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.M)
+# The SAME five segments are also written as bold run-ins inside a repo's
+# KNOWN-ISSUES.md / LESSONS-LEARNED.md, where an `## ` heading per segment would
+# fight that file's own structure. One parser reads both shapes so the contract
+# has a single reader — previously `## `-only parsing made every
+# markdown-filed finding unreadable to this function.
+_RETRO_RUNIN_RE = re.compile(r"^\*\*(.+?)\.?\*\*\s*", re.M)
+
+
+def retro_segments(body: str) -> dict[str, str]:
+    """Parse a retrospective finding's five-segment body into {section: text}.
+
+    Accepts both encodings of the contract: `## What happened` (backlog items)
+    and `**What happened.**` (markdown issue logs).
+
+    Tolerant by design: returns whatever sections exist. A body that does not
+    follow the contract yields a partial (or empty) dict rather than raising, so
+    a hand-written or older item never breaks INDEX rendering.
+    """
+    body = body or ""
+    out: dict[str, str] = {}
+    matches = list(_RETRO_SECTION_RE.finditer(body))
+    if not matches:
+        matches = list(_RETRO_RUNIN_RE.finditer(body))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        out[m.group(1).strip()] = body[m.end():end].strip()
+    return out
+
+
+def is_retro_item(item: dict[str, Any]) -> bool:
+    """True when the item's provenance names a retrospective as its source."""
+    prov = item.get("provenance")
+    if not isinstance(prov, dict):
+        return False
+    return str(prov.get("source") or "") == RETRO_PROVENANCE_SOURCE
+
+
+def _truncate_cell(text: str, limit: int = 160) -> str:
+    """Collapse whitespace and cap length so an INDEX row stays one line."""
+    collapsed = re.sub(r"\s+", " ", (text or "").strip())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1].rstrip() + "…"
+
+
+def render_retro_findings_section(items: list[dict[str, Any]]) -> list[str]:
+    """Render the theme-clustered retrospective-findings section as INDEX lines.
+
+    Clusters every `provenance.source: retrospective` item by `area` (the theme
+    axis) and carries the five-segment context forward — impact and observed
+    date come from frontmatter, recommendation from the body — so a reader
+    comparing findings across many retros never has to open each source retro.
+
+    Returns [] when no retrospective-sourced item exists, so the section is
+    absent rather than empty on stores that have none.
+    """
+    retro_items = [it for it in items if is_retro_item(it) and not it.get("_archived")]
+    if not retro_items:
+        return []
+
+    by_theme: dict[str, list[dict[str, Any]]] = {}
+    for it in retro_items:
+        by_theme.setdefault(str(it.get("area") or "general"), []).append(it)
+
+    lines: list[str] = []
+    lines.append("## Retrospective findings by theme")
+    lines.append("")
+    lines.append(
+        f"{len(retro_items)} finding(s) captured from retrospectives, grouped by "
+        f"`area`. Each carries the five-segment context (what happened / when / "
+        f"impact / recommendation / why) in its item file; the columns below "
+        f"surface when, impact, and the recommendation."
+    )
+    lines.append("")
+    for theme in sorted(by_theme):
+        group = sorted(
+            by_theme[theme],
+            key=lambda it: (str(it.get("observed") or it.get("created") or ""), str(it.get("id") or "")),
+        )
+        lines.append(f"### {theme} ({len(group)})")
+        lines.append("")
+        lines.append("| id | observed | status | impact | recommendation | source retro |")
+        lines.append("|----|----------|--------|--------|----------------|--------------|")
+        for it in group:
+            segments = retro_segments(str(it.get("_body") or ""))
+            prov = it.get("provenance") if isinstance(it.get("provenance"), dict) else {}
+            lines.append(
+                f"| {_esc_cell(it.get('id'))} "
+                f"| {_esc_cell(it.get('observed') or it.get('created'))} "
+                f"| {_esc_cell(it.get('status'))} "
+                f"| {_esc_cell(_truncate_cell(str(it.get('impact') or segments.get('Impact', ''))))} "
+                f"| {_esc_cell(_truncate_cell(segments.get('Recommendation', '')))} "
+                f"| {_esc_cell(prov.get('ref'))} |"
+            )
+        lines.append("")
+    return lines
 
 
 def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
@@ -1000,6 +1178,8 @@ def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
                 f"| {_esc_cell(it.get('review_by'))} |"
             )
         lines.append("")
+
+    lines.extend(render_retro_findings_section(active_sorted))
 
     text = "\n".join(lines)
     if not text.endswith("\n"):
@@ -1153,6 +1333,75 @@ def _load_mirror_items(dest_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+CROSS_PROJECT_RETRO_INDEX = "RETROSPECTIVE-FINDINGS.md"
+
+
+def write_cross_project_retro_rollup(root: Path, today: str) -> dict[str, Any]:
+    """Regenerate the CROSS-REPO retrospective-findings roll-up in the memory root.
+
+    Every repo's `sync` mirrors its items into `projects/<slug>/backlog/`, so the
+    memory root already holds the union of every repo's findings — this walks
+    that union and renders ONE theme-clustered view across all of them. Without
+    it, a theme recurring in three repos looks like three unrelated one-offs.
+
+    Derived and regenerable: reuses `render_retro_findings_section`, writes a
+    single markdown file, and adds no new store. Best-effort — an unwritable or
+    absent memory root returns a skip reason instead of failing `sync`.
+    """
+    projects_dir = root / "projects"
+    if not projects_dir.is_dir():
+        return {"written": False, "skipped": "no_projects_dir", "path": None}
+
+    # iterdir() itself raises on a permission change or a race that removes
+    # projects/ mid-sync. This function is called unguarded from
+    # mirror_to_memory, so an unhandled OSError here fails the whole `sync` —
+    # breaking the "best-effort" promise this docstring makes.
+    try:
+        slug_dirs = sorted(projects_dir.iterdir())
+    except OSError as exc:
+        return {"written": False, "skipped": f"unreadable: {exc}", "path": None}
+
+    collected: list[dict[str, Any]] = []
+    scanned = 0
+    for slug_dir in slug_dirs:
+        backlog_dir = slug_dir / "backlog"
+        if not backlog_dir.is_dir():
+            continue
+        scanned += 1
+        for item in _load_mirror_items(backlog_dir):
+            if not is_retro_item(item):
+                continue
+            # Namespace the theme by project so the cross-repo view shows WHICH
+            # repo each finding came from; `area` alone collides across repos
+            # (three repos all have a `routing` area).
+            item["area"] = f"{slug_dir.name}/{item.get('area') or 'general'}"
+            collected.append(item)
+
+    body = render_retro_findings_section(collected)
+    lines = [
+        "# Retrospective findings — all projects",
+        "",
+        "Generated by `scripts/backlog.py sync`. **Do not hand-edit** — this is a "
+        "derived view over every `projects/<slug>/backlog/` mirror. Regenerate by "
+        "running `backlog.py sync` in any adopted repo.",
+        "",
+        f"- Projects scanned: {scanned}",
+        f"- Retrospective-sourced findings: {len(collected)}",
+        "",
+    ]
+    lines.extend(body or ["_No retrospective-sourced findings yet._", ""])
+    text = "\n".join(lines)
+    if not text.endswith("\n"):
+        text += "\n"
+
+    dest = root / CROSS_PROJECT_RETRO_INDEX
+    try:
+        _atomic_write_text(dest, text)
+    except OSError as exc:
+        return {"written": False, "skipped": f"unwritable: {exc}", "path": str(dest)}
+    return {"written": True, "findings": len(collected), "path": str(dest)}
+
+
 def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, Any]:
     """Mirror active item files into the per-user memory backlog lane (MERGE).
 
@@ -1219,7 +1468,14 @@ def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, A
         _atomic_write_text(dest_dir / "INDEX.md", render_index(repo, union, today))
     except OSError:
         pass
-    return {"written": written, "pruned": pruned, "merged": len(union), "dir": str(dest_dir)}
+    rollup = write_cross_project_retro_rollup(memory_root(), today)
+    return {
+        "written": written,
+        "pruned": pruned,
+        "merged": len(union),
+        "dir": str(dest_dir),
+        "retro_rollup": rollup,
+    }
 
 
 # ----------------------------------------------------------------------------
@@ -1986,8 +2242,22 @@ def build_parser() -> argparse.ArgumentParser:
     pn.add_argument("--decision-impact", action="append", default=[], dest="decision_impact")
     pn.add_argument("--entities", default="", help="comma-separated")
     pn.add_argument("--evidence", default="", help="comma-separated paths/refs")
-    pn.add_argument("--provenance-source", default="", dest="provenance_source")
-    pn.add_argument("--provenance-ref", default="", dest="provenance_ref")
+    pn.add_argument("--provenance-source", default="", dest="provenance_source",
+                    help="Where this item came from, e.g. `retrospective`. "
+                         "`retrospective` additionally requires --provenance-ref, "
+                         "--observed, --impact, --what-happened, --recommendation, --why.")
+    pn.add_argument("--provenance-ref", default="", dest="provenance_ref",
+                    help="Path/URL of the source document (for retrospectives, the retro file).")
+    pn.add_argument("--impact", default="",
+                    help="What this costs, concretely (who is affected, how much).")
+    pn.add_argument("--observed", default="",
+                    help="Date the finding was OBSERVED (YYYY-MM-DD) — may predate `created`.")
+    pn.add_argument("--what-happened", default="", dest="what_happened",
+                    help="Retrospective segment 1: the observed event.")
+    pn.add_argument("--recommendation", default="",
+                    help="Retrospective segment 4: the proposed action.")
+    pn.add_argument("--why", default="",
+                    help="Retrospective segment 5: the root cause / missing system control.")
     pn.add_argument("--owner", default="")
     pn.add_argument("--context", default="")
     pn.add_argument("--notes", default="")
