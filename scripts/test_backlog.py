@@ -1625,6 +1625,25 @@ class TestRetrospectiveProvenance(_Base):
         self.assertEqual(segments["When"], "2026-08-28")
         self.assertEqual(segments["Why"], "No confidence floor before dispatch.")
 
+    def test_segments_parse_from_both_contract_encodings(self):
+        """One contract, two encodings: `## What happened` in backlog items and
+        `**What happened.**` in a repo's KNOWN-ISSUES.md, where a per-segment H2
+        would fight that file's own structure. A `## `-only parser made every
+        markdown-filed finding unreadable to the index."""
+        heading_form = ("## What happened\nA write clobbered eight tests\n\n"
+                        "## When\n2026-08-28\n\n## Impact\nA full re-review\n\n"
+                        "## Recommendation\nRun git ls-files first\n\n"
+                        "## Why\nNo absence check\n")
+        runin_form = ("**What happened.** A write clobbered eight tests\n\n"
+                      "**When.** 2026-08-28\n\n**Impact.** A full re-review\n\n"
+                      "**Recommendation.** Run git ls-files first\n\n"
+                      "**Why.** No absence check\n")
+        for label, body in (("heading", heading_form), ("run-in", runin_form)):
+            segs = bl.retro_segments(body)
+            self.assertEqual(set(bl.RETRO_BODY_SECTIONS), set(segs), label)
+            self.assertEqual(segs["Impact"], "A full re-review", label)
+            self.assertEqual(segs["Why"], "No absence check", label)
+
     def test_retro_source_without_segments_is_rejected(self):
         with self.assertRaises(ValueError) as ctx:
             self._new(provenance_source="retrospective")

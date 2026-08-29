@@ -955,17 +955,29 @@ def _esc_cell(value: Any) -> str:
 
 
 _RETRO_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.M)
+# The SAME five segments are also written as bold run-ins inside a repo's
+# KNOWN-ISSUES.md / LESSONS-LEARNED.md, where an `## ` heading per segment would
+# fight that file's own structure. One parser reads both shapes so the contract
+# has a single reader — previously `## `-only parsing made every
+# markdown-filed finding unreadable to this function.
+_RETRO_RUNIN_RE = re.compile(r"^\*\*(.+?)\.?\*\*\s*", re.M)
 
 
 def retro_segments(body: str) -> dict[str, str]:
-    """Parse a retrospective item's five-segment body into {section: text}.
+    """Parse a retrospective finding's five-segment body into {section: text}.
 
-    Tolerant by design: returns whatever `## ` sections exist. A body that does
-    not follow the contract yields a partial (or empty) dict rather than
-    raising, so a hand-written or older item never breaks INDEX rendering.
+    Accepts both encodings of the contract: `## What happened` (backlog items)
+    and `**What happened.**` (markdown issue logs).
+
+    Tolerant by design: returns whatever sections exist. A body that does not
+    follow the contract yields a partial (or empty) dict rather than raising, so
+    a hand-written or older item never breaks INDEX rendering.
     """
+    body = body or ""
     out: dict[str, str] = {}
-    matches = list(_RETRO_SECTION_RE.finditer(body or ""))
+    matches = list(_RETRO_SECTION_RE.finditer(body))
+    if not matches:
+        matches = list(_RETRO_RUNIN_RE.finditer(body))
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         out[m.group(1).strip()] = body[m.end():end].strip()
@@ -1340,11 +1352,22 @@ def write_cross_project_retro_rollup(root: Path, today: str) -> dict[str, Any]:
     if not projects_dir.is_dir():
         return {"written": False, "skipped": "no_projects_dir", "path": None}
 
+    # iterdir() itself raises on a permission change or a race that removes
+    # projects/ mid-sync. This function is called unguarded from
+    # mirror_to_memory, so an unhandled OSError here fails the whole `sync` —
+    # breaking the "best-effort" promise this docstring makes.
+    try:
+        slug_dirs = sorted(projects_dir.iterdir())
+    except OSError as exc:
+        return {"written": False, "skipped": f"unreadable: {exc}", "path": None}
+
     collected: list[dict[str, Any]] = []
-    for slug_dir in sorted(projects_dir.iterdir()):
+    scanned = 0
+    for slug_dir in slug_dirs:
         backlog_dir = slug_dir / "backlog"
         if not backlog_dir.is_dir():
             continue
+        scanned += 1
         for item in _load_mirror_items(backlog_dir):
             if not is_retro_item(item):
                 continue
@@ -1362,7 +1385,7 @@ def write_cross_project_retro_rollup(root: Path, today: str) -> dict[str, Any]:
         "derived view over every `projects/<slug>/backlog/` mirror. Regenerate by "
         "running `backlog.py sync` in any adopted repo.",
         "",
-        f"- Projects scanned: {sum(1 for d in sorted(projects_dir.iterdir()) if (d / 'backlog').is_dir())}",
+        f"- Projects scanned: {scanned}",
         f"- Retrospective-sourced findings: {len(collected)}",
         "",
     ]

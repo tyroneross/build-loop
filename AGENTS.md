@@ -635,10 +635,22 @@ Every retrospective MUST file the issues and recommendations it names to their r
 cd <build-loop>/scripts
 python3 -m retrospective.file_findings plan  --retro <path> [--json]   # dry-run: what would be filed, where
 python3 -m retrospective.file_findings apply --retro <path> [--json]   # execute the plan
-python3 -m retrospective.file_findings lint  --retro <path> [--json]   # exit 1 if a finding is named but nothing was filed
+python3 -m retrospective.file_findings lint  --retro <path> [--json]   # exit 1 if findings are named but not all filed
 ```
 
 `plan`/`apply` also accept `--repo-root <dir>` (repeatable, default `~/dev/git-folder`) and `--default-repo <path>` (repo to use for findings naming no recognizable surface).
+
+**When `plan` reports `needs_input`, fill the plan and feed it back — do NOT hand-run `backlog.py new`.** `backlog.py new` creates a backlog store in whatever repo it is pointed at, so running it for a finding the ladder routed to `LESSONS-LEARNED.md` scaffolds a store into a repo that deliberately has none. `apply` honors each entry's resolved mechanism:
+
+```bash
+python3 -m retrospective.file_findings plan --retro <path> --json > plan.json
+# edit plan.json: fill each entry.finding.{what_happened,impact,recommendation,why}
+# and clear that entry's "needs_input" list. Use
+# "unknown - <what would determine it>" when you genuinely cannot tell.
+python3 -m retrospective.file_findings apply --retro <path> --plan plan.json --json
+```
+
+`--plan -` reads the filled plan from stdin. `apply` writes the `## Filed findings` table into the retrospective itself, and replaces a stale one rather than stacking a second, so a regenerated retro recovers its receipt without re-filing.
 
 **Filing ladder** (per finding, first match wins):
 1. The affected repo's `.build-loop/backlog/`, via:
@@ -654,4 +666,6 @@ python3 -m retrospective.file_findings lint  --retro <path> [--json]   # exit 1 
 
 **Five body segments, fixed order, every filed finding:** What happened → When → Impact → Recommendation → Why. `apply` never invents a missing segment — an undeducible one is reported `needs_input` rather than filed hollow.
 
-Every retrospective ends with a `## Filed findings` section naming every id/path this run produced — the checkable artifact `lint` requires. A retro that names an issue and files nothing fails lint.
+Every retrospective ends with a `## Filed findings` section naming every id/path this run produced — the checkable artifact `lint` requires. `apply` writes it; you do not hand-author it. Lint fails when the section is missing, when it names no location other than the retro itself, or when it accounts for fewer findings than the retro names.
+
+`python3 -m retrospective` runs this lint automatically after writing a retrospective and reports the verdict as `filing` in its JSON envelope, so an unfiled finding surfaces without anyone choosing to check.

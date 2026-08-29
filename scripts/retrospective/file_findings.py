@@ -347,12 +347,6 @@ def build_repo_index(roots: Iterable[Path] = DEFAULT_REPO_ROOTS) -> RepoIndex:
     return index
 
 
-# Filing idioms in ladder order. `backlog` is first because it is the only
-# structured, queryable, cross-repo-mirrored store; the markdown files are
-# append-only prose that no index can cluster.
-FILING_LADDER = ("backlog", "KNOWN-ISSUES.md", "LESSONS-LEARNED.md")
-
-
 @dataclass
 class Target:
     repo: str
@@ -485,8 +479,8 @@ def _atomic_append(dest: Path, text: str) -> None:
         raise
 
 
-def already_filed(finding: Finding, target: Target, retro_ref: str) -> bool:
-    """Has THIS finding from THIS retro already been filed to THIS target?
+def find_existing(finding: Finding, target: Target, retro_ref: str) -> str | None:
+    """Where was THIS finding from THIS retro already filed? None if nowhere.
 
     `apply` must be safe to run twice. A retrospective gets regenerated after a
     crash, re-narrated by the LLM step, or swept a second time at SessionEnd —
@@ -495,33 +489,45 @@ def already_filed(finding: Finding, target: Target, retro_ref: str) -> bool:
     recurrence. Measured before the fix: two runs produced 2 identical
     LESSONS-LEARNED entries and 2 identical backlog items.
 
+    Returns the PATH rather than a bool so a regenerated retrospective — whose
+    `## Filed findings` appendix was wiped by `write_active` rebuilding the file
+    from its section keys — can rebuild that receipt from what is already on
+    disk. Without the path, a replay left the lint failing with no machine
+    route back to exit 0.
+
     The identity is (retro ref, finding title) — a plain substring test, so it
     works across both filing shapes without importing the backlog reader.
     """
     title = finding.title.strip()
     if not title:
-        return False
+        return None
 
-    def _hit(text: str) -> bool:
+    def _hit(path: Path) -> bool:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            # ValueError covers UnicodeDecodeError: a target file in a repo we
+            # do not own may hold invalid UTF-8, and that must not abort a run
+            # that has already filed other findings.
+            return False
         return retro_ref in text and title in text
 
     if target.mechanism == "backlog":
         items = Path(target.path) / "items"
         if not items.is_dir():
-            return False
-        for item in items.glob("*.md"):
-            try:
-                if _hit(item.read_text(encoding="utf-8")):
-                    return True
-            except OSError:
-                continue
-        return False
+            return None
+        for item in sorted(items.glob("*.md")):
+            if _hit(item):
+                return str(item)
+        return None
 
     dest = Path(target.path)
-    try:
-        return dest.is_file() and _hit(dest.read_text(encoding="utf-8"))
-    except OSError:
-        return False
+    return str(dest) if dest.is_file() and _hit(dest) else None
+
+
+def already_filed(finding: Finding, target: Target, retro_ref: str) -> bool:
+    """Boolean form of `find_existing`, kept for readability at call sites."""
+    return find_existing(finding, target, retro_ref) is not None
 
 
 def plan(retro_path: Path, index: RepoIndex | None = None,
@@ -564,8 +570,20 @@ def apply(retro_path: Path, plan_result: dict[str, Any] | None = None,
           index: RepoIndex | None = None,
           build_loop_root: Path | None = None,
           default_repo: Path | None = None,
-          repo_roots: Iterable[Path] = DEFAULT_REPO_ROOTS) -> dict[str, Any]:
-    """Execute a plan. Skips any finding still missing a segment."""
+          repo_roots: Iterable[Path] = DEFAULT_REPO_ROOTS,
+          record: bool = True) -> dict[str, Any]:
+    """Execute a plan, then append the `## Filed findings` receipt to the retro.
+
+    `plan_result` accepts a plan whose `needs_input` entries have been FILLED IN
+    by the caller (the CLI's `--plan` flag reads one from a file or stdin).
+    Without that route, a retro whose findings all need input — which is every
+    finding of the real 2026-08-29 fixture — could be filed only from Python,
+    and a Codex or Gemini host following AGENTS.md had no way to complete the
+    flow at all.
+
+    `record=False` suppresses the receipt append, for callers that assemble the
+    section themselves.
+    """
     build_loop_root = build_loop_root or Path(__file__).resolve().parents[2]
     backlog_py = backlog_py or (build_loop_root / "scripts" / "backlog.py")
     result = plan_result or plan(
@@ -579,13 +597,22 @@ def apply(retro_path: Path, plan_result: dict[str, Any] | None = None,
     for entry in result["entries"]:
         f = Finding(**entry["finding"])
         target = Target(**entry["target"])
-        if entry["needs_input"]:
+        # Re-derive rather than trusting the plan's cached list, so a caller
+        # that filled the segments in does not also have to clear the flag.
+        missing = f.missing_segments() + ([] if f.observed else ["observed"])
+        if missing:
             skipped.append({"title": f.title, "reason": "needs_input",
-                            "missing": entry["needs_input"]})
+                            "missing": missing})
             continue
-        if already_filed(f, target, retro_ref):
+        existing = find_existing(f, target, retro_ref)
+        if existing:
+            # Carry the PATH so a regenerated retro can rebuild its receipt.
+            filed.append({"title": f.title, "mechanism": target.mechanism,
+                          "id": Path(existing).stem
+                          if target.mechanism == "backlog" else None,
+                          "path": existing, "preexisting": True})
             skipped.append({"title": f.title, "reason": "already_filed",
-                            "path": target.path})
+                            "path": existing})
             continue
         if target.mechanism == "backlog":
             cmd = backlog_command(f, target, retro_ref, backlog_py)
@@ -613,8 +640,30 @@ def apply(retro_path: Path, plan_result: dict[str, Any] | None = None,
             filed.append({"title": f.title, "mechanism": target.mechanism,
                           "id": None, "path": str(dest)})
 
+    # Write the receipt HERE, not in a docstring telling an agent to hand-write
+    # it. `render_filed_section` previously had no caller but its own test, so
+    # the one checkable artifact the lint requires depended on an LLM
+    # remembering to produce it.
+    recorded = False
+    if record and filed:
+        try:
+            current = retro_path.read_text(encoding="utf-8")
+            m = _FILED_HEADING_RE.search(current)
+            if m:
+                # Replace a stale receipt rather than stacking a second one.
+                nxt = re.search(r"^#{1,6}\s+\S", current[m.end():], re.M)
+                end = m.end() + (nxt.start() if nxt else len(current) - m.end())
+                current = current[: m.start()] + current[end:]
+            _atomic_append(retro_path,
+                           current.rstrip("\n") + "\n" + render_filed_section(filed))
+            recorded = True
+        except (OSError, ValueError):
+            recorded = False
+
+    newly = [f for f in filed if not f.get("preexisting")]
     return {"command": "apply", "retro": retro_ref, "filed": filed,
-            "skipped": skipped, "filed_count": len(filed)}
+            "skipped": skipped, "filed_count": len(newly),
+            "accounted_count": len(filed), "receipt_written": recorded}
 
 
 def render_filed_section(filed: list[dict[str, Any]]) -> str:
@@ -641,30 +690,60 @@ def render_filed_section(filed: list[dict[str, Any]]) -> str:
 # Lint
 # --------------------------------------------------------------------------
 
-def lint(retro_path: Path) -> dict[str, Any]:
-    """A retro that NAMES an issue but files nothing FAILS.
+_LOCATION_RE = re.compile(r"[A-Z0-9]+-[A-Z0-9]+-[0-9a-z]{6,}|[^\s`|]+\.md")
 
-    Two-part check, because either half alone is gameable: the section must
-    EXIST, and it must name at least one location. A `## Filed findings`
-    heading with an empty body is the same failure wearing a passing shape.
+
+def filed_locations(body: str, retro_name: str) -> list[str]:
+    """Distinct filed locations named in the `## Filed findings` body.
+
+    Excludes any reference that resolves to the retrospective UNDER LINT. A
+    sentence like "See 2026-08-29-quote.md for details." otherwise satisfied the
+    check by pointing at the very document that was supposed to have filed
+    something — the section citing itself as its own evidence.
+    """
+    out: list[str] = []
+    for hit in _LOCATION_RE.findall(body):
+        if Path(hit).name == retro_name:
+            continue
+        if hit not in out:
+            out.append(hit)
+    return out
+
+
+def lint(retro_path: Path) -> dict[str, Any]:
+    """A retro that NAMES an issue but files fewer than all of them FAILS.
+
+    Three checks, because each of the first two is independently gameable:
+    the section must EXIST; it must name locations that are not the retro
+    itself; and it must account for EVERY finding, not just one. Counting "at
+    least one location" let a retro naming six findings and filing one pass
+    clean — the delinquency this lint exists to catch, wearing a passing shape.
     """
     text = retro_path.read_text(encoding="utf-8")
     findings = extract_findings(text, retro_path)
     m = _FILED_HEADING_RE.search(text)
     section_present = m is not None
-    listed = 0
+    locations: list[str] = []
+    rows = 0
     if m:
         after = text[m.end():]
         nxt = re.search(r"^#{1,6}\s+\S", after, re.M)
         body = after[: nxt.start()] if nxt else after
-        # A location is a backlog id, or a path ending in .md.
-        listed = len(re.findall(r"[A-Z0-9]+-[A-Z0-9]+-[0-9a-z]{6,}|\S+\.md", body))
+        locations = filed_locations(body, retro_path.name)
+        # Count table rows that actually NAME a location. Two findings filed to
+        # the same LESSONS-LEARNED.md are 2 rows but 1 distinct location, so
+        # rows are the accounting unit — but only rows carrying a location,
+        # since a header or a prose row proves nothing. Excluding merely the
+        # header by its text let a 2-finding retro pass on 1 filed row.
+        rows = len([
+            ln for ln in body.splitlines()
+            if ln.strip().startswith("|") and filed_locations(ln, retro_path.name)
+        ])
+    accounted = max(rows, len(locations))
 
-    # Two DISTINCT failures, each with its own message, because they need
-    # different fixes: a missing section means nothing was filed at all; an
-    # empty one means the filing ran and recorded nothing. Collapsing them into
-    # one branch produced a message that said "section is present" about a retro
-    # that had no section.
+    # DISTINCT failures with distinct messages, because each needs a different
+    # fix: no section means nothing was filed; no location means the filing ran
+    # and recorded nothing; a shortfall means it recorded only some.
     violations: list[str] = []
     if findings:
         if not section_present:
@@ -672,10 +751,15 @@ def lint(retro_path: Path) -> dict[str, Any]:
                 f"retro names {len(findings)} finding(s) but has no "
                 f"`## {FILED_SECTION_TITLE}` section"
             )
-        elif listed == 0:
+        elif not locations:
             violations.append(
                 f"`## {FILED_SECTION_TITLE}` section is present but names no filed "
                 f"location for {len(findings)} finding(s)"
+            )
+        elif accounted < len(findings):
+            violations.append(
+                f"`## {FILED_SECTION_TITLE}` accounts for {accounted} of "
+                f"{len(findings)} finding(s)"
             )
 
     return {
@@ -683,7 +767,8 @@ def lint(retro_path: Path) -> dict[str, Any]:
         "retro": str(retro_path),
         "finding_count": len(findings),
         "filed_section_present": section_present,
-        "filed_locations": listed,
+        "filed_locations": len(locations),
+        "filed_accounted": accounted,
         "violations": violations,
         "ok": not violations,
     }
@@ -705,6 +790,11 @@ def _main(argv: list[str]) -> int:
                          "Default: ~/dev/git-folder.")
     ap.add_argument("--default-repo", default="",
                     help="Repo to file findings that name no recognizable surface.")
+    ap.add_argument("--plan", default="", dest="plan_file",
+                    help="apply only: read a plan JSON (from `plan`) whose "
+                         "needs_input segments you have filled in. `-` reads "
+                         "stdin. Without this, apply recomputes the plan and "
+                         "can only file findings whose segments parse cleanly.")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -722,8 +812,23 @@ def _main(argv: list[str]) -> int:
         return 0 if result["ok"] else 1
     if args.mode == "plan":
         result = plan(retro, repo_roots=roots, default_repo=default_repo)
-    else:
-        result = apply(retro, repo_roots=roots, default_repo=default_repo)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    filled: dict[str, Any] | None = None
+    if args.plan_file:
+        try:
+            raw = sys.stdin.read() if args.plan_file == "-" \
+                else Path(args.plan_file).expanduser().read_text(encoding="utf-8")
+            filled = json.loads(raw)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"error": f"could not read --plan: {exc}"}))
+            return 2
+        if not isinstance(filled, dict) or "entries" not in filled:
+            print(json.dumps({"error": "--plan must be a plan JSON with an 'entries' list"}))
+            return 2
+    result = apply(retro, plan_result=filled, repo_roots=roots,
+                   default_repo=default_repo)
     print(json.dumps(result, indent=2))
     return 0
 

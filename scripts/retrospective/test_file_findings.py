@@ -267,6 +267,32 @@ class TestLint(unittest.TestCase):
              "location for 2 finding(s)"],
         )
 
+    def test_partial_filing_fails(self):
+        """REGRESSION: a retro naming 6 findings and filing 1 passed clean.
+        `listed >= 1` was the whole test, so the delinquency this lint exists to
+        catch wore a passing shape."""
+        text = RETRO_WITH_FINDINGS + (
+            "\n## Filed findings\n\n"
+            "| finding | filed as | location |\n|---|---|---|\n"
+            "| Surface-ownership | x | `~/a/LESSONS-LEARNED.md` |\n"
+        )
+        retro = _write(self.tmp, "2026-08-29-partial.md", text)
+        result = ff.lint(retro)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["filed_accounted"], 1)
+        self.assertEqual(result["finding_count"], 2)
+        self.assertIn("accounts for 1 of 2", result["violations"][0])
+
+    def test_section_citing_only_the_retro_itself_fails(self):
+        """REGRESSION: `\\S+\\.md` matched the retro's own filename, so a section
+        whose only 'evidence' was a pointer back to itself passed."""
+        retro = _write(self.tmp, "2026-08-29-self.md",
+                       RETRO_WITH_FINDINGS
+                       + "\n## Filed findings\n\nSee 2026-08-29-self.md for details.\n")
+        result = ff.lint(retro)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["filed_locations"], 0)
+
     def test_retro_with_no_findings_passes(self):
         retro = _write(self.tmp, "2026-08-29-clean.md",
                        "# Retro\n\n## What went well\n\n1. **All green.** Nothing to file.\n")
@@ -373,6 +399,86 @@ class TestApply(unittest.TestCase):
         self.assertEqual(
             len(list((beta / ".build-loop" / "backlog" / "items").glob("*.md"))), 1)
 
+    def _alpha(self):
+        alpha = self.root / "alpha-svc"
+        (alpha / ".git").mkdir(parents=True)
+        (alpha / "LESSONS-LEARNED.md").write_text("# Lessons\n", encoding="utf-8")
+        return alpha
+
+    ONE_FINDING = ("# Retro\n\n## Issues\n\n"
+                   "1. **Alpha broke.** The alpha-svc worker died. Cost: 2h downtime. "
+                   "Fix: add a supervisor. Root cause: no restart policy.\n")
+
+    def test_apply_writes_the_filed_findings_receipt(self):
+        """REGRESSION: render_filed_section had no caller but its own test, so
+        the one artifact the lint requires depended on an LLM remembering."""
+        self._alpha()
+        retro = _write(self.tmp, "2026-08-29-r.md", self.ONE_FINDING)
+        result = ff.apply(retro, repo_roots=[self.root], build_loop_root=self.bl,
+                          backlog_py=BUILD_LOOP_ROOT / "scripts" / "backlog.py")
+        self.assertTrue(result["receipt_written"])
+        self.assertIn("## Filed findings", retro.read_text(encoding="utf-8"))
+        self.assertTrue(ff.lint(retro)["ok"])
+
+    def test_regenerated_retro_recovers_its_receipt_without_refiling(self):
+        """`write_active` rebuilds the retro from its section keys and drops the
+        appendix. The replay must restore the receipt and file nothing new."""
+        alpha = self._alpha()
+        retro = _write(self.tmp, "2026-08-29-r.md", self.ONE_FINDING)
+        kw = dict(repo_roots=[self.root], build_loop_root=self.bl,
+                  backlog_py=BUILD_LOOP_ROOT / "scripts" / "backlog.py")
+        ff.apply(retro, **kw)
+        retro.write_text(self.ONE_FINDING, encoding="utf-8")   # regeneration
+        self.assertFalse(ff.lint(retro)["ok"])
+
+        replay = ff.apply(retro, **kw)
+        self.assertEqual(replay["filed_count"], 0)        # nothing NEW filed
+        self.assertEqual(replay["accounted_count"], 1)    # but accounted for
+        self.assertTrue(replay["receipt_written"])
+        self.assertTrue(ff.lint(retro)["ok"])
+        self.assertEqual(
+            (alpha / "LESSONS-LEARNED.md").read_text(encoding="utf-8").count("Alpha broke"), 1)
+
+    def test_apply_accepts_a_filled_plan_via_cli(self):
+        """REGRESSION: every golden-fixture finding needs input, and the CLI
+        recomputed the plan internally — so a non-Python host had no route to
+        file any of them."""
+        self._alpha()
+        text = ("# Retro\n\n## Issues\n\n"
+                "1. **Gamma broke.** The alpha-svc cache went cold.\n")
+        retro = _write(self.tmp, "2026-08-29-g.md", text)
+        p = ff.plan(retro, repo_roots=[self.root], build_loop_root=self.bl)
+        self.assertTrue(p["entries"][0]["needs_input"])
+
+        entry = p["entries"][0]
+        entry["finding"].update(impact="2h stale reads",
+                                recommendation="add a TTL",
+                                why="unknown - would need the transcript")
+        entry["needs_input"] = []
+        plan_file = self.tmp / "filled.json"
+        plan_file.write_text(json.dumps(p), encoding="utf-8")
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "retrospective.file_findings", "apply",
+             "--retro", str(retro), "--plan", str(plan_file), "--json"],
+            capture_output=True, text=True, cwd=str(BUILD_LOOP_ROOT / "scripts"),
+            env={**os.environ, "BUILD_LOOP_MEMORY_DIR": str(self.tmp / "memory")},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["filed_count"], 1)
+        self.assertTrue(ff.lint(retro)["ok"])
+
+    def test_invalid_utf8_in_a_target_file_does_not_abort_the_run(self):
+        """UnicodeDecodeError subclasses ValueError, not OSError. A bad byte in
+        a repo we do not own must not kill a partially-filed run."""
+        alpha = self._alpha()
+        (alpha / "LESSONS-LEARNED.md").write_bytes(b"# Lessons\n\xff\xfe bad\n")
+        retro = _write(self.tmp, "2026-08-29-u.md", self.ONE_FINDING)
+        f = ff.extract_findings(self.ONE_FINDING, retro)[0]
+        target = ff.Target(str(alpha), "alpha-svc", "lessons-learned",
+                           str(alpha / "LESSONS-LEARNED.md"))
+        self.assertIsNone(ff.find_existing(f, target, str(retro)))
+
     def test_render_filed_section_names_every_location(self):
         section = ff.render_filed_section([
             {"title": "Alpha", "mechanism": "backlog", "id": "BUIL-A-m17dppm",
@@ -381,6 +487,29 @@ class TestApply(unittest.TestCase):
         self.assertIn("## Filed findings", section)
         self.assertIn("BUIL-A-m17dppm", section)
         self.assertIn("/x/items/BUIL-A-m17dppm.md", section)
+
+
+class TestPipelineWiring(unittest.TestCase):
+    """The lint must fire without an LLM electing to run it."""
+
+    def test_cli_entry_point_lints_every_retrospective(self):
+        """REGRESSION: nothing in the codebase called file_findings. The
+        contract was enforced by prose, so a retro could name six findings, file
+        none, and report success."""
+        import importlib
+        mod = importlib.import_module("retrospective.__main__")
+        self.assertTrue(hasattr(mod, "_filing_status"))
+
+        with tempfile.TemporaryDirectory() as d:
+            retro = Path(d) / "2026-08-29-x.md"
+            retro.write_text(RETRO_WITH_FINDINGS, encoding="utf-8")
+            status = mod._filing_status(str(retro))
+            self.assertIs(status["ok"], False)
+            self.assertEqual(status["finding_count"], 2)
+
+        # Never raises, whatever it is handed — run-close must not break.
+        self.assertIsNone(mod._filing_status(None))
+        self.assertIsNotNone(mod._filing_status("/nonexistent/path.md"))
 
 
 @unittest.skipUnless(GOLDEN.is_file(), "golden fixture retrospective not present")
@@ -408,16 +537,56 @@ class TestGoldenFixture(unittest.TestCase):
             Path.home() / "dev" / "git-folder" / "RossLabs-AI-Toolkit" / "LESSONS-LEARNED.md",
         )
 
-    def test_build_loop_findings_route_to_the_build_loop_repo(self):
-        """Same REPO the human chose. The MECHANISM differs by design: the spec
-        ladder puts `.build-loop/backlog/` above KNOWN-ISSUES.md, and build-loop
-        has one. The human filed into KNOWN-ISSUES.md because the ladder did not
+    # GROUND TRUTH: where the human actually filed each of the six findings,
+    # by index. `None` marks a finding the human did not file anywhere the
+    # resolver could be measured against. Asserting against this — rather than
+    # against whatever the resolver currently emits — is what lets a future
+    # resolver change be scored as better or worse instead of merely different.
+    HUMAN_GROUND_TRUTH = {
+        1: "RossLabs-AI-Toolkit",   # LESSONS-LEARNED.md, surface-ownership
+        2: "build-loop",            # KNOWN-ISSUES.md session-findings
+        3: None,                    # process lesson, never filed to one repo
+        4: "build-loop",            # KNOWN-ISSUES.md item 1 (worktree isolation)
+        5: None,                    # ambient-agent dashboard, not filed here
+        6: None,                    # stale-item dispatch, not filed here
+    }
+    # Findings the resolver cannot attribute from the retro's own text, because
+    # the retro never names a resolvable surface for them. Tracked explicitly so
+    # the number cannot drift upward unnoticed.
+    KNOWN_UNATTRIBUTED = {3, 5, 6}
+
+    def test_resolution_matches_human_ground_truth_where_one_exists(self):
+        attributed = 0
+        for entry in self.plan["entries"]:
+            idx = entry["finding"]["index"]
+            expected = self.HUMAN_GROUND_TRUTH[idx]
+            if expected is None:
+                continue
+            self.assertEqual(
+                entry["target"]["repo_name"], expected,
+                f"finding {idx} resolved to {entry['target']['repo_name']}, "
+                f"human filed it to {expected}",
+            )
+            attributed += 1
+        self.assertEqual(attributed, 3, "3 of 6 findings have a filed ground truth")
+
+    def test_unattributed_set_has_not_grown(self):
+        """The fallback is honest behavior, but it must not silently spread."""
+        unattributed = {
+            e["finding"]["index"] for e in self.plan["entries"]
+            if not e["target"]["matched_token"]
+        }
+        self.assertEqual(unattributed, self.KNOWN_UNATTRIBUTED)
+
+    def test_build_loop_findings_use_the_backlog_rung(self):
+        """Same REPO the human chose, different MECHANISM by design: the ladder
+        puts `.build-loop/backlog/` above KNOWN-ISSUES.md and build-loop has
+        one. The human filed into KNOWN-ISSUES.md because the ladder did not
         exist yet."""
         matched = [e for e in self.plan["entries"]
                    if e["target"]["matched_token"] == "build-loop"]
-        self.assertGreaterEqual(len(matched), 2)
+        self.assertEqual(len(matched), 2)
         for e in matched:
-            self.assertEqual(e["target"]["repo_name"], "build-loop")
             self.assertEqual(e["target"]["mechanism"], "backlog")
 
     def test_golden_retro_currently_fails_the_lint(self):

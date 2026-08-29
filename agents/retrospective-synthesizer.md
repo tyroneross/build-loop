@@ -33,7 +33,7 @@ You run **non-gating in the background**: the orchestrator dispatches you after 
 2. **Local read-only inputs.** Read only: the session transcript (`~/.claude/projects/<cwd-slug>/*.jsonl`), `.build-loop/state.json`, `.build-loop/intent.md`, `.build-loop/plan.md`. No network, no external services.
 3. **Local deterministic writes, plus a REQUIRED durable copy.** Write to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` + `<run-id>.summary.md` and `.build-loop/proposals/enforce-from-retro/<run-id>-<NN>.md`. Atomic writes via `os.replace`.
    **Every retrospective ALSO lands in `build-loop-memory/projects/<slug>/retrospectives/` via `scripts/memory_writer.py`** — this is required, not best-effort. `.build-loop/` is gitignored, so a retrospective written only there does not survive a fresh clone and the next session cannot find it; the whole point of the artifact is that a later session reads it. If the durable write fails, say so in the summary line rather than reporting the retrospective as complete.
-4. **Step 4 writes OUTSIDE this repo — that is deliberate, and it is bounded.** Filing a finding appends to the AFFECTED repo's issue log or creates a backlog item there. Two limits hold: `file_findings.py` only ever appends to `KNOWN-ISSUES.md` / `LESSONS-LEARNED.md` or calls `backlog.py new` (it never edits code, never deletes, never commits), and it never runs `git` in the target repo. Leave every filed change uncommitted for that repo's owner.
+4. **Step 3 writes OUTSIDE this repo — that is deliberate, and it is bounded.** Filing a finding appends to the AFFECTED repo's issue log, or creates a backlog item in a repo that ALREADY has a backlog. Three limits hold: `file_findings.py` only appends to `KNOWN-ISSUES.md` / `LESSONS-LEARNED.md` or calls `backlog.py new` against a repo whose `.build-loop/backlog/` already exists (it never edits code, never deletes, never commits); it never runs `git` in the target repo; and it never creates a backlog store in a repo that lacks one — see the warning in Step 3b, which is the failure mode this bound exists to prevent. Leave every filed change uncommitted for that repo's owner.
 5. **No silent promotion.** Enforce-candidates are proposal files for human review. Never modify orchestrator behavior or skill defaults.
 6. **Reuse, never re-implement.** Transcript locator, prompted-≥2× clustering, section assembly, and finding-filing live in `scripts/retrospective/`. Call the CLI; do not re-derive its output.
 
@@ -93,40 +93,44 @@ Run from `<build-loop>/scripts`. Returns one entry per finding with its resolved
 `target` (repo + mechanism) and a `needs_input` list naming any of the five
 segments it could not derive from your prose.
 
-**3b. Fill what the parser could not derive — DO NOT let it guess.** For each
-entry with a non-empty `needs_input`, supply the missing segment from the
-transcript and file that finding directly:
-
-```bash
-python3 scripts/backlog.py new --repo <TARGET_REPO> \
-  --area <theme> --type fix --title "<finding>" \
-  --provenance-source retrospective --provenance-ref "$DURABLE_PATH" \
-  --observed <YYYY-MM-DD> \
-  --impact "<who is affected, how much>" \
-  --what-happened "<the observed event>" \
-  --recommendation "<the proposed action>" \
-  --why "<root cause / missing system control>" --json
-```
+**3b. Fill what the parser could not derive — DO NOT let it guess.** Save the
+plan JSON, then for each entry with a non-empty `needs_input`, write the missing
+segment INTO that entry from the transcript and clear its `needs_input` list.
 
 The five segments are a fixed-order contract — What happened / When / Impact /
 Recommendation / Why — because findings are only comparable across retros when
 every one answers the same five questions in the same sequence.
+
+**Never hand-run `backlog.py new` to fill a gap.** `backlog.py new` calls
+`ensure_dirs`, which CREATES `.build-loop/backlog/items/`, `archive/`, and a
+`.gitattributes` in whatever repo it is pointed at. On a finding the ladder
+routed to `lessons-learned` — which happens precisely because that repo has no
+backlog — running it would scaffold a new store into a repo you do not own,
+inverting the ladder. Feed the filled plan back to `apply` instead; it honors
+each entry's resolved mechanism.
 
 **Escape hatch.** A finding whose impact or root cause you genuinely cannot
 determine still gets filed: write `unknown — <what would determine it>` in that
 segment. Never drop the finding, and never invent a segment. An honestly
 incomplete record beats a confident wrong one, and beats silence.
 
-**3c. Apply the rest, then record the artifact.**
+**3c. Apply the filled plan. It writes the receipt for you.**
 
 ```bash
-python3 -m retrospective.file_findings apply --retro "$ACTIVE_PATH" --json
+python3 -m retrospective.file_findings apply \
+  --retro "$ACTIVE_PATH" --plan filled-plan.json --json
 ```
 
-Append a `## Filed findings` section to the retrospective naming every filed
-id/path (`render_filed_section` produces the table). This section is the
-checkable artifact — a disposition claim with nothing to check is not a
-disposition.
+`--plan -` reads the filled plan from stdin. Omit `--plan` only when the dry-run
+reported no `needs_input` anywhere.
+
+`apply` files each finding by its resolved mechanism and appends the
+`## Filed findings` table to the retrospective itself — the checkable artifact,
+since a disposition claim with nothing to check is not a disposition. It also
+replaces a stale receipt rather than stacking a second one, so a retrospective
+regenerated by `write_active` (which rebuilds the file from its section keys and
+drops the appendix) recovers its receipt on the next apply without re-filing
+anything.
 
 **Ladder (resolved per finding, by detection).** The affected repo's
 `.build-loop/backlog/` → its `KNOWN-ISSUES.md` → its `LESSONS-LEARNED.md` →
@@ -140,10 +144,11 @@ an ownership nobody verified.
 python3 -m retrospective.file_findings lint --retro "$ACTIVE_PATH" --json
 ```
 
-Exit 1 means the retrospective NAMES an issue and files nothing — the failure
-this step exists to catch. Fix it by completing Step 4, not by deleting the
-finding. Report the exit code as `filing_lint_ok` in your envelope; a retro that
-cannot reach exit 0 is `status: degraded`, never `ok`.
+Exit 1 means the retrospective names findings it has not fully filed — either no
+receipt at all, or a receipt accounting for fewer findings than the retro names.
+Fix it by completing Step 3, not by deleting the finding. Report the exit code
+as `filing_lint_ok` in your envelope; a retro that cannot reach exit 0 is
+`status: degraded`, never `ok`.
 
 ## Step 5 — Emit closeout status (mandatory, non-skippable)
 
