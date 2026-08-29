@@ -626,3 +626,32 @@ YYYY-MM-DD | what happened | what to do differently
 ```
 
 These entries are loaded during Phase 1 (Assess) of future builds to prevent repeating mistakes.
+
+## Retrospective finding capture
+
+Every retrospective MUST file the issues and recommendations it names to their relevant location — a finding left only in prose is a workflow violation. This command surface is host-neutral: run it identically from Claude Code, Codex, or any other host.
+
+```bash
+cd <build-loop>/scripts
+python3 -m retrospective.file_findings plan  --retro <path> [--json]   # dry-run: what would be filed, where
+python3 -m retrospective.file_findings apply --retro <path> [--json]   # execute the plan
+python3 -m retrospective.file_findings lint  --retro <path> [--json]   # exit 1 if a finding is named but nothing was filed
+```
+
+`plan`/`apply` also accept `--repo-root <dir>` (repeatable, default `~/dev/git-folder`) and `--default-repo <path>` (repo to use for findings naming no recognizable surface).
+
+**Filing ladder** (per finding, first match wins):
+1. The affected repo's `.build-loop/backlog/`, via:
+   ```bash
+   python3 <build-loop>/scripts/backlog.py new --repo <repo> --area <area> --type <type> \
+     --title <title> --provenance-source retrospective --provenance-ref <retro-path> \
+     --observed <YYYY-MM-DD> --impact <text> --what-happened <text> \
+     --recommendation <text> --why <text> --json
+   ```
+2. That repo's `KNOWN-ISSUES.md`
+3. That repo's `LESSONS-LEARNED.md`
+4. build-loop's own `KNOWN-ISSUES.md` (fallback when the repo has none of the above)
+
+**Five body segments, fixed order, every filed finding:** What happened → When → Impact → Recommendation → Why. `apply` never invents a missing segment — an undeducible one is reported `needs_input` rather than filed hollow.
+
+Every retrospective ends with a `## Filed findings` section naming every id/path this run produced — the checkable artifact `lint` requires. A retro that names an issue and files nothing fails lint.
