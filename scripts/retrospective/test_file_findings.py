@@ -223,7 +223,15 @@ class TestLint(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["finding_count"], 2)
         self.assertFalse(result["filed_section_present"])
-        self.assertIn("Filed findings", result["violations"][0])
+        # Assert the EXACT message, not just that some violation fired. The
+        # loose form let a mutant that disabled this branch survive: the
+        # empty-section branch caught the retro anyway and reported "section is
+        # present" about a retro with no section. Each branch must be
+        # independently killable.
+        self.assertEqual(
+            result["violations"],
+            ["retro names 2 finding(s) but has no `## Filed findings` section"],
+        )
 
         proc = subprocess.run(
             [sys.executable, "-m", "retrospective.file_findings", "lint",
@@ -253,6 +261,11 @@ class TestLint(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["filed_section_present"])
         self.assertEqual(result["filed_locations"], 0)
+        self.assertEqual(
+            result["violations"],
+            ["`## Filed findings` section is present but names no filed "
+             "location for 2 finding(s)"],
+        )
 
     def test_retro_with_no_findings_passes(self):
         retro = _write(self.tmp, "2026-08-29-clean.md",

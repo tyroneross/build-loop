@@ -660,17 +660,23 @@ def lint(retro_path: Path) -> dict[str, Any]:
         # A location is a backlog id, or a path ending in .md.
         listed = len(re.findall(r"[A-Z0-9]+-[A-Z0-9]+-[0-9a-z]{6,}|\S+\.md", body))
 
+    # Two DISTINCT failures, each with its own message, because they need
+    # different fixes: a missing section means nothing was filed at all; an
+    # empty one means the filing ran and recorded nothing. Collapsing them into
+    # one branch produced a message that said "section is present" about a retro
+    # that had no section.
     violations: list[str] = []
-    if findings and not section_present:
-        violations.append(
-            f"retro names {len(findings)} finding(s) but has no "
-            f"`## {FILED_SECTION_TITLE}` section"
-        )
-    elif findings and listed == 0:
-        violations.append(
-            f"`## {FILED_SECTION_TITLE}` section is present but names no filed "
-            f"location for {len(findings)} finding(s)"
-        )
+    if findings:
+        if not section_present:
+            violations.append(
+                f"retro names {len(findings)} finding(s) but has no "
+                f"`## {FILED_SECTION_TITLE}` section"
+            )
+        elif listed == 0:
+            violations.append(
+                f"`## {FILED_SECTION_TITLE}` section is present but names no filed "
+                f"location for {len(findings)} finding(s)"
+            )
 
     return {
         "command": "lint",
