@@ -325,6 +325,41 @@ class TestApply(unittest.TestCase):
         self.assertIn("## What happened", content)
         self.assertIn("## Why", content)
 
+    def test_apply_is_idempotent(self):
+        """REGRESSION: `apply` run twice appended a second copy of every finding.
+
+        A retrospective gets regenerated after a crash, re-narrated by the LLM
+        step, or swept again at SessionEnd. Before the fix two runs produced 2
+        identical LESSONS-LEARNED entries and 2 identical backlog items, which
+        would show up in the theme index as phantom recurrence — the exact
+        signal the segmentation view is supposed to make trustworthy.
+        """
+        text = ("# Retro\n\n## Issues\n\n"
+                "1. **Alpha broke.** The alpha-svc worker died. Cost: 2h downtime. "
+                "Fix: add a supervisor. Root cause: no restart policy.\n"
+                "2. **Beta broke.** The beta-svc router misfired. Cost: 2 blocked "
+                "dispatches. Fix: a confidence floor. Root cause: no owner check.\n")
+        alpha = self.root / "alpha-svc"
+        (alpha / ".git").mkdir(parents=True)
+        (alpha / "LESSONS-LEARNED.md").write_text("# Lessons\n", encoding="utf-8")
+        beta = self.root / "beta-svc"
+        (beta / ".git").mkdir(parents=True)
+        (beta / ".build-loop" / "backlog").mkdir(parents=True)
+        retro = _write(self.tmp, "2026-08-29-i.md", text)
+        kw = dict(repo_roots=[self.root], build_loop_root=self.bl,
+                  backlog_py=BUILD_LOOP_ROOT / "scripts" / "backlog.py")
+
+        first = ff.apply(retro, **kw)
+        second = ff.apply(retro, **kw)
+
+        self.assertEqual(first["filed_count"], 2, first["skipped"])
+        self.assertEqual(second["filed_count"], 0)
+        self.assertTrue(all(s["reason"] == "already_filed" for s in second["skipped"]))
+        self.assertEqual(
+            (alpha / "LESSONS-LEARNED.md").read_text(encoding="utf-8").count("Alpha broke"), 1)
+        self.assertEqual(
+            len(list((beta / ".build-loop" / "backlog" / "items").glob("*.md"))), 1)
+
     def test_render_filed_section_names_every_location(self):
         section = ff.render_filed_section([
             {"title": "Alpha", "mechanism": "backlog", "id": "BUIL-A-m17dppm",

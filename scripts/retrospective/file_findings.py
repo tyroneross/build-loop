@@ -465,6 +465,45 @@ def markdown_entry(finding: Finding, retro_ref: str) -> str:
     )
 
 
+def already_filed(finding: Finding, target: Target, retro_ref: str) -> bool:
+    """Has THIS finding from THIS retro already been filed to THIS target?
+
+    `apply` must be safe to run twice. A retrospective gets regenerated after a
+    crash, re-narrated by the LLM step, or swept a second time at SessionEnd —
+    without this check each replay appended another copy of every finding,
+    inflating the theme index and the cross-repo roll-up with phantom
+    recurrence. Measured before the fix: two runs produced 2 identical
+    LESSONS-LEARNED entries and 2 identical backlog items.
+
+    The identity is (retro ref, finding title) — a plain substring test, so it
+    works across both filing shapes without importing the backlog reader.
+    """
+    title = finding.title.strip()
+    if not title:
+        return False
+
+    def _hit(text: str) -> bool:
+        return retro_ref in text and title in text
+
+    if target.mechanism == "backlog":
+        items = Path(target.path) / "items"
+        if not items.is_dir():
+            return False
+        for item in items.glob("*.md"):
+            try:
+                if _hit(item.read_text(encoding="utf-8")):
+                    return True
+            except OSError:
+                continue
+        return False
+
+    dest = Path(target.path)
+    try:
+        return dest.is_file() and _hit(dest.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+
+
 def plan(retro_path: Path, index: RepoIndex | None = None,
          build_loop_root: Path | None = None,
          default_repo: Path | None = None,
@@ -523,6 +562,10 @@ def apply(retro_path: Path, plan_result: dict[str, Any] | None = None,
         if entry["needs_input"]:
             skipped.append({"title": f.title, "reason": "needs_input",
                             "missing": entry["needs_input"]})
+            continue
+        if already_filed(f, target, retro_ref):
+            skipped.append({"title": f.title, "reason": "already_filed",
+                            "path": target.path})
             continue
         if target.mechanism == "backlog":
             cmd = backlog_command(f, target, retro_ref, backlog_py)
