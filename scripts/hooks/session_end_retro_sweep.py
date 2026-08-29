@@ -267,18 +267,48 @@ GENERIC_TOOL_PREFIXES = {
     "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
 }
 
+# A step is a PLACEHOLDER when its sub-name names no specific work: the miner
+# emitted the tool's generic parameter slot rather than a concrete identity.
+# `Skill:skill` and `ToolSearch:query` are placeholders exactly like
+# `Bash:command` is — "ran a skill" is not a workflow, "ran /build-loop:run" is.
+# Gating on the STEP (not on whether the tool is core) is what makes the noisy
+# shape inexpressible: previously one non-core terminator rescued an otherwise
+# fully-generic run from the gate, which is how a single
+# `Bash:command → Bash:command → Skill:skill` family produced 64 consecutive
+# needs-attention markers with zero actionable content.
+PLACEHOLDER_SUBNAMES = {
+    "command", "skill", "query", "task", "agent", "file_path", "pattern",
+    "path", "prompt", "args", "input", "url", "name", "content",
+}
+
+
+def step_is_placeholder(step: str) -> bool:
+    """True when a `Tool:subname` step carries no specific identity."""
+    tool, _, sub = str(step).partition(":")
+    if not sub:
+        # A bare step is a placeholder only when the tool itself is generic.
+        # A specific tool (`mcp__operations-center__claim_task`) names real work.
+        return tool.strip() in GENERIC_TOOL_PREFIXES
+    sub = sub.strip().lower()
+    return sub in PLACEHOLDER_SUBNAMES or sub == tool.strip().lower()
+
 
 def sequence_is_generic(c: dict) -> bool:
-    """True when a repeated_tool_sequence has only core-tool steps (e.g.
-    `Edit:replace_all → Bash:command`). Sequences with a step outside the core
-    toolset (Skill, MCP tool, slash command) keep their candidacy; shapes that
-    carry content elsewhere (manual_command_ritual) are never gated here."""
+    """True when a repeated_tool_sequence carries no actionable identity — every
+    step is either a core tool or an unparameterized placeholder (e.g.
+    `Edit:replace_all → Bash:command`, `Bash:command → Skill:skill`). A sequence
+    naming real work (`Skill:build-loop:run → Bash:pytest`) keeps its candidacy;
+    shapes that carry content elsewhere (manual_command_ritual) are never gated
+    here."""
     if c.get("shape") != "repeated_tool_sequence":
         return False
     seq = c.get("sequence") or []
     if not seq:
         return False
-    return all(str(s).split(":", 1)[0] in GENERIC_TOOL_PREFIXES for s in seq)
+    return all(
+        str(s).split(":", 1)[0] in GENERIC_TOOL_PREFIXES or step_is_placeholder(s)
+        for s in seq
+    )
 
 
 def split_candidates(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
