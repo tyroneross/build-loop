@@ -465,6 +465,26 @@ def markdown_entry(finding: Finding, retro_ref: str) -> str:
     )
 
 
+def _atomic_append(dest: Path, text: str) -> None:
+    """Write via a temp file + os.replace.
+
+    These writes land in OTHER repos' issue logs. A plain `write_text` that dies
+    mid-call leaves someone else's KNOWN-ISSUES.md truncated, and this tool runs
+    unattended at run-close. Same guarantee `backlog.py:_atomic_write_text`
+    already gives its own store.
+    """
+    tmp = dest.parent / f".{dest.name}.{os.getpid()}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, dest)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def already_filed(finding: Finding, target: Target, retro_ref: str) -> bool:
     """Has THIS finding from THIS retro already been filed to THIS target?
 
@@ -584,8 +604,8 @@ def apply(retro_path: Path, plan_result: dict[str, Any] | None = None,
             dest = Path(target.path)
             try:
                 existing = dest.read_text(encoding="utf-8") if dest.is_file() else ""
-                dest.write_text(existing.rstrip("\n") + "\n"
-                                + markdown_entry(f, retro_ref), encoding="utf-8")
+                _atomic_append(dest, existing.rstrip("\n") + "\n"
+                               + markdown_entry(f, retro_ref))
             except OSError as exc:
                 skipped.append({"title": f.title, "reason": "write_error",
                                 "detail": str(exc)})
