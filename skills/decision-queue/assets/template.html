@@ -1,0 +1,1101 @@
+<!--
+  decision-queue template — READ skills/decision-queue/SKILL.md before editing this.
+
+  Two zones:
+    1. CONTENT ZONE  — window.__META__ and window.__ITEMS__ inside the
+       <script id="app-data"> tag. Replace freely per topic.
+    2. PLUMBING ZONE — everything in <script id="app-script">. Tested and
+       correct. Do not touch it, and NEVER replace the HEAD_HTML /
+       SAVE_BAR_HTML constants with a runtime document.head / DOM capture
+       — see SKILL.md "The one rule that matters" for why that corrupts
+       the page on every save.
+
+  This comment block itself must NOT ship in the published artifact —
+  strip it (and this note) when you copy this file to scratchpad.
+-->
+<title>Decision Queue</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style id="app-style">
+  :root {
+    --bg: #F5F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #FAFBFC;
+    --border: #E0E4EA;
+    --border-strong: #C7CDD7;
+    --text: #171B21;
+    --text-muted: #5B6472;
+    --text-faint: #8A93A2;
+    --accent: #2F52D6;
+    --accent-soft: #EAEEFC;
+    --accent-strong: #1E3AAE;
+    --danger: #A5393B;
+    --danger-soft: #F7E9E9;
+    --good: #2C7A55;
+    --good-soft: #E7F3ED;
+    --neutral-chip: #EEF0F3;
+    --shadow: rgba(20, 24, 30, 0.10);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1116;
+      --surface: #161A21;
+      --surface-2: #1B2029;
+      --border: #2A303B;
+      --border-strong: #3A4150;
+      --text: #E8EAEE;
+      --text-muted: #9BA3B2;
+      --text-faint: #6B7382;
+      --accent: #7089FF;
+      --accent-soft: rgba(112, 137, 255, 0.14);
+      --accent-strong: #91A4FF;
+      --danger: #E28C8C;
+      --danger-soft: rgba(226, 140, 140, 0.12);
+      --good: #7BCBA4;
+      --good-soft: rgba(123, 203, 164, 0.12);
+      --neutral-chip: #232935;
+      --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0E1116;
+    --surface: #161A21;
+    --surface-2: #1B2029;
+    --border: #2A303B;
+    --border-strong: #3A4150;
+    --text: #E8EAEE;
+    --text-muted: #9BA3B2;
+    --text-faint: #6B7382;
+    --accent: #7089FF;
+    --accent-soft: rgba(112, 137, 255, 0.14);
+    --accent-strong: #91A4FF;
+    --danger: #E28C8C;
+    --danger-soft: rgba(226, 140, 140, 0.12);
+    --good: #7BCBA4;
+    --good-soft: rgba(123, 203, 164, 0.12);
+    --neutral-chip: #232935;
+    --shadow: rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px 4px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-family: "Archivo", ui-sans-serif, sans-serif;
+    font-weight: 800;
+    font-size: clamp(26px, 4vw, 34px);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 12px;
+  }
+
+  .lede {
+    color: var(--text-muted);
+    max-width: 62ch;
+    font-size: 15.5px;
+    margin: 0;
+  }
+
+  .summary-strip {
+    display: flex;
+    gap: 0;
+    margin-top: 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .summary-cell {
+    flex: 1;
+    padding: 14px 18px;
+    border-right: 1px solid var(--border);
+  }
+  .summary-cell:last-child { border-right: none; }
+
+  .summary-num {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .summary-num.accent { color: var(--accent); }
+
+  .summary-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .queue {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 24px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px 24px;
+  }
+
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 6px;
+  }
+
+  .card-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  .card-title {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: var(--neutral-chip);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .chip.class-production { background: var(--danger-soft); color: var(--danger); }
+  .chip.class-safe { background: var(--good-soft); color: var(--good); }
+
+  .chip.repo {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .status-chip.saved { background: var(--good-soft); color: var(--good); }
+  .status-chip.pending { background: var(--neutral-chip); color: var(--text-faint); }
+
+  .section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .card-head + .section { margin-top: 18px; }
+
+  .section-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  .section p { margin: 0; color: var(--text); }
+  .section p + p { margin-top: 8px; }
+  .section p.muted { color: var(--text-muted); }
+
+  .options {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .opt-label {
+    display: flex;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14.5px;
+    cursor: pointer;
+    align-items: flex-start;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .opt-label:hover { border-color: var(--border-strong); }
+  .opt-label.checked { border-color: var(--accent); background: var(--accent-soft); }
+
+  .opt-radio {
+    margin-top: 3px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+  }
+  .opt-radio:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .opt-letter {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-faint);
+    margin-right: 2px;
+  }
+
+  .comment-field {
+    margin-top: 10px;
+  }
+
+  .comment-field label {
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  textarea.comment-input {
+    width: 100%;
+    min-height: 60px;
+    resize: vertical;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  textarea.comment-input::placeholder { color: var(--text-faint); }
+  textarea.comment-input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+  }
+
+  .recommendation {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .recommendation .section-label { color: var(--accent-strong); }
+  .recommendation p { color: var(--text); }
+
+  .inferred-note {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  footer {
+    margin: 32px 0 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+
+  .save-bar-shell {
+    position: sticky;
+    bottom: 16px;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+    z-index: 10;
+  }
+
+  .save-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px var(--shadow);
+  }
+
+  .save-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  .save-count {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .save-status { font-size: 12.5px; color: var(--text-faint); }
+  .save-status.error { color: var(--danger); }
+  .save-status.ok { color: var(--good); }
+
+  .save-btn {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .save-btn:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+  .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .save-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (max-width: 560px) {
+    .summary-strip { flex-direction: column; }
+    .summary-cell { border-right: none; border-bottom: 1px solid var(--border); }
+    .summary-cell:last-child { border-bottom: none; }
+    .save-bar { flex-direction: column; align-items: stretch; }
+    .save-btn { width: 100%; }
+  }
+</style>
+
+<div class="page" id="root"></div>
+
+<div class="save-bar-shell" id="save-bar-shell">
+  <div class="save-bar" id="save-bar">
+    <div class="save-info">
+      <div class="save-count" id="save-count">0 answered</div>
+      <div class="save-status" id="save-status">Select a response on any card, then save.</div>
+    </div>
+    <button class="save-btn" id="save-btn" type="button">Save responses</button>
+  </div>
+</div>
+
+<script id="app-data">
+/* ===== CONTENT ZONE — edit META and ITEMS per topic; leave everything below untouched ===== */
+
+window.__META__ = {
+  eyebrow: "Source · scope · date read",
+  title: "N decisions are waiting on you",
+  lede: "One sentence framing what this batch of decisions has in common and why it's stalled on the reader specifically.",
+  /* Fixed context cells shown before the live "Answered" counter, which app-script appends automatically. */
+  summaryCells: [
+    { num: "N", label: "Pending decisions" }
+  ],
+  footer: "Source and date read, plus a one-line disclaimer about what is fact vs. recommendation and what saving here does and does not do."
+};
+
+window.__ITEMS__ = [
+  {
+    id: "example-item",
+    num: "01",
+    opened: "2026-01-01",
+    touched: "2026-01-01",
+    repo: "example-repo",
+    classChip: "",
+    typeLabel: "type · class",
+    priority: "P1",
+    title: "One-line name of the decision",
+    decision: "What action is on the table, stated as a full sentence — the thing being decided, not a summary of the situation.",
+    why: "Why this specifically needs the reader's input rather than being handled automatically — what makes it their call and not an agent's.",
+    whyInferred: false,
+    impact: "What actually changes for the app, the user, or the team depending on the outcome — concrete, not hand-wavy.",
+    options: [
+      { letter: "A", text: "First option, stated as an action." },
+      { letter: "B", text: "Second option, a real alternative, not a straw man." },
+      { letter: "C", text: "Third option — often 'defer' or 'reject', stated with its real cost." }
+    ],
+    recommendation: "Which option and why, in one or two sentences that name the actual tradeoff being made.",
+    selected: null,
+    comment: "",
+    respondedAt: null
+  }
+];
+</script>
+
+<script id="app-script">
+/* ===== PLUMBING ZONE — do not edit. See SKILL.md before touching HEAD_HTML/SAVE_BAR_HTML. ===== */
+(function () {
+  var items = window.__ITEMS__;
+  var meta = window.__META__;
+
+  /* HEAD_HTML and SAVE_BAR_HTML are hardcoded strings, not document.head / DOM
+     captures. The claude.ai viewer injects its own bootstrap script into
+     <head> before this script runs; capturing document.head.innerHTML at
+     runtime bakes that injected script into the saved page, and it collides
+     with the fresh copy the viewer injects on the next load — the page loses
+     all styling. Keep these as literal strings; if you edit the CSS above,
+     copy the change into this string too. */
+  var HEAD_HTML = `<title>Decision Queue</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style id="app-style">
+  :root {
+    --bg: #F5F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #FAFBFC;
+    --border: #E0E4EA;
+    --border-strong: #C7CDD7;
+    --text: #171B21;
+    --text-muted: #5B6472;
+    --text-faint: #8A93A2;
+    --accent: #2F52D6;
+    --accent-soft: #EAEEFC;
+    --accent-strong: #1E3AAE;
+    --danger: #A5393B;
+    --danger-soft: #F7E9E9;
+    --good: #2C7A55;
+    --good-soft: #E7F3ED;
+    --neutral-chip: #EEF0F3;
+    --shadow: rgba(20, 24, 30, 0.10);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1116;
+      --surface: #161A21;
+      --surface-2: #1B2029;
+      --border: #2A303B;
+      --border-strong: #3A4150;
+      --text: #E8EAEE;
+      --text-muted: #9BA3B2;
+      --text-faint: #6B7382;
+      --accent: #7089FF;
+      --accent-soft: rgba(112, 137, 255, 0.14);
+      --accent-strong: #91A4FF;
+      --danger: #E28C8C;
+      --danger-soft: rgba(226, 140, 140, 0.12);
+      --good: #7BCBA4;
+      --good-soft: rgba(123, 203, 164, 0.12);
+      --neutral-chip: #232935;
+      --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0E1116;
+    --surface: #161A21;
+    --surface-2: #1B2029;
+    --border: #2A303B;
+    --border-strong: #3A4150;
+    --text: #E8EAEE;
+    --text-muted: #9BA3B2;
+    --text-faint: #6B7382;
+    --accent: #7089FF;
+    --accent-soft: rgba(112, 137, 255, 0.14);
+    --accent-strong: #91A4FF;
+    --danger: #E28C8C;
+    --danger-soft: rgba(226, 140, 140, 0.12);
+    --good: #7BCBA4;
+    --good-soft: rgba(123, 203, 164, 0.12);
+    --neutral-chip: #232935;
+    --shadow: rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px 4px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-family: "Archivo", ui-sans-serif, sans-serif;
+    font-weight: 800;
+    font-size: clamp(26px, 4vw, 34px);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 12px;
+  }
+
+  .lede {
+    color: var(--text-muted);
+    max-width: 62ch;
+    font-size: 15.5px;
+    margin: 0;
+  }
+
+  .summary-strip {
+    display: flex;
+    gap: 0;
+    margin-top: 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .summary-cell {
+    flex: 1;
+    padding: 14px 18px;
+    border-right: 1px solid var(--border);
+  }
+  .summary-cell:last-child { border-right: none; }
+
+  .summary-num {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .summary-num.accent { color: var(--accent); }
+
+  .summary-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .queue {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 24px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px 24px;
+  }
+
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 6px;
+  }
+
+  .card-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  .card-title {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: var(--neutral-chip);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .chip.class-production { background: var(--danger-soft); color: var(--danger); }
+  .chip.class-safe { background: var(--good-soft); color: var(--good); }
+
+  .chip.repo {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .status-chip.saved { background: var(--good-soft); color: var(--good); }
+  .status-chip.pending { background: var(--neutral-chip); color: var(--text-faint); }
+
+  .section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .card-head + .section { margin-top: 18px; }
+
+  .section-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  .section p { margin: 0; color: var(--text); }
+  .section p + p { margin-top: 8px; }
+  .section p.muted { color: var(--text-muted); }
+
+  .options {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .opt-label {
+    display: flex;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14.5px;
+    cursor: pointer;
+    align-items: flex-start;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .opt-label:hover { border-color: var(--border-strong); }
+  .opt-label.checked { border-color: var(--accent); background: var(--accent-soft); }
+
+  .opt-radio {
+    margin-top: 3px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+  }
+  .opt-radio:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .opt-letter {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-faint);
+    margin-right: 2px;
+  }
+
+  .comment-field {
+    margin-top: 10px;
+  }
+
+  .comment-field label {
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  textarea.comment-input {
+    width: 100%;
+    min-height: 60px;
+    resize: vertical;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  textarea.comment-input::placeholder { color: var(--text-faint); }
+  textarea.comment-input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+  }
+
+  .recommendation {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .recommendation .section-label { color: var(--accent-strong); }
+  .recommendation p { color: var(--text); }
+
+  .inferred-note {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  footer {
+    margin: 32px 0 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+
+  .save-bar-shell {
+    position: sticky;
+    bottom: 16px;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+    z-index: 10;
+  }
+
+  .save-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px var(--shadow);
+  }
+
+  .save-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  .save-count {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .save-status { font-size: 12.5px; color: var(--text-faint); }
+  .save-status.error { color: var(--danger); }
+  .save-status.ok { color: var(--good); }
+
+  .save-btn {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .save-btn:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+  .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .save-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (max-width: 560px) {
+    .summary-strip { flex-direction: column; }
+    .summary-cell { border-right: none; border-bottom: 1px solid var(--border); }
+    .summary-cell:last-child { border-bottom: none; }
+    .save-bar { flex-direction: column; align-items: stretch; }
+    .save-btn { width: 100%; }
+  }
+</style>`;
+  var SAVE_BAR_HTML = ``;
+
+  var artifactNS = null;
+  var readOnly = false;
+  var pendingWrites = false;
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Mark a string as already-HTML so h`` leaves it alone. Everything NOT
+  // wrapped in raw() is escaped. This is the whole point: the default is safe,
+  // and bypassing it is a visible, greppable act.
+  function raw(html) {
+    return { __html: String(html == null ? "" : html) };
+  }
+
+  // Tagged template that escapes every interpolation. Card and header markup is
+  // built from item fields written by agents (Operations Center tasks, backlog
+  // items, peer-authored rally records), so a title of
+  //   <img src=x onerror=alert(1)>
+  // must render as text, not run. Before this, escapeHtml() was applied at 5 of
+  // ~23 interpolation sites and every newly added field defaulted to unescaped.
+  function h(strings) {
+    var out = strings[0];
+    for (var i = 1; i < arguments.length; i++) {
+      var value = arguments[i];
+      out += (value && value.__html !== undefined ? value.__html : escapeHtml(value)) + strings[i];
+    }
+    return out;
+  }
+
+  // JSON.stringify does not escape "<", so a field containing "</script>" ends
+  // the data element early and everything after it parses as markup. Escaping
+  // the three markup-significant characters plus the two JS line terminators
+  // keeps the payload inert and still valid JSON.
+  function safeJsonForScript(value) {
+    return JSON.stringify(value)
+      .replace(/</g, "\\u003c")
+      .replace(/>/g, "\\u003e")
+      .replace(/&/g, "\\u0026")
+      .replace(/\u2028/g, "\\u2028")
+      .replace(/\u2029/g, "\\u2029");
+  }
+
+  function formatDate(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+    catch (e) { return iso; }
+  }
+
+  function optionHtml(item, opt) {
+    var checked = item.selected === opt.letter;
+    return h`<label class="opt-label${checked ? " checked" : ""}" data-item="${item.id}" data-letter="${opt.letter}">`
+      + h`<input type="radio" class="opt-radio" name="resp-${item.id}" value="${opt.letter}"${raw(checked ? " checked" : "")}>`
+      + h`<span><span class="opt-letter">${opt.letter}</span>${opt.text}</span>`
+      + "</label>";
+  }
+
+  function cardHtml(item) {
+    var statusChip = item.selected
+      ? h`<span class="status-chip saved">Answered · ${item.selected}${item.respondedAt ? " · " + formatDate(item.respondedAt) : ""}</span>`
+      : '<span class="status-chip pending">No response yet</span>';
+
+    var inferredNote = item.whyInferred
+      ? '<p class="inferred-note">Inferred — the source record’s own “why” field is unset for this item.</p>'
+      : "";
+
+    return h`<div class="card" id="card-${item.id}">`
+      + '<div class="card-head"><div>'
+      + h`<div class="card-num">${item.num} · opened ${item.opened} · last touched ${item.touched}</div>`
+      + h`<h2 class="card-title">${item.title}</h2>`
+      + "</div></div>"
+      + '<div class="meta-row">'
+      + h`<span class="chip repo">${item.repo}</span>`
+      + h`<span class="chip${item.classChip ? " class-" + item.classChip : ""}">${item.typeLabel}</span>`
+      + h`<span class="chip">${item.priority}</span>`
+      + raw(statusChip).__html
+      + "</div>"
+      + h`<div class="section"><div class="section-label">The decision</div><p>${item.decision}</p></div>`
+      + h`<div class="section"><div class="section-label">Why it needs you</div><p>${item.why}</p>${raw(inferredNote)}</div>`
+      + h`<div class="section"><div class="section-label">Impact</div><p>${item.impact}</p></div>`
+      + '<div class="section">'
+      + '<div class="section-label">Your response</div>'
+      + h`<div class="options">${raw(item.options.map(function (o) { return optionHtml(item, o); }).join(""))}</div>`
+      + '<div class="comment-field">'
+      + h`<label class="section-label" for="comment-${item.id}">Comment (optional)</label>`
+      + h`<textarea class="comment-input" id="comment-${item.id}" data-item="${item.id}" placeholder="Add context, a counter-proposal, or a condition on approval…">${item.comment}</textarea>`
+      + "</div>"
+      + "</div>"
+      + h`<div class="recommendation"><div class="section-label">Recommendation</div><p>${item.recommendation}</p></div>`
+      + "</div>";
+  }
+
+  function renderBody(meta, items) {
+    var answered = items.filter(function (i) { return i.selected; }).length;
+    var cells = meta.summaryCells.map(function (c) {
+      return h`<div class="summary-cell"><div class="summary-num">${c.num}</div><div class="summary-label">${c.label}</div></div>`;
+    }).join("");
+    cells += h`<div class="summary-cell"><div class="summary-num accent">${answered} / ${items.length}</div><div class="summary-label">Answered</div></div>`;
+    return "<header>"
+      + h`<div class="eyebrow">${meta.eyebrow}</div>`
+      + h`<h1>${meta.title}</h1>`
+      + h`<p class="lede">${meta.lede}</p>`
+      + h`<div class="summary-strip">${raw(cells)}</div>`
+      + "</header>"
+      + h`<div class="queue">${raw(items.map(cardHtml).join(""))}</div>`
+      + h`<footer>${meta.footer}</footer>`;
+  }
+
+  function paint() {
+    document.getElementById("root").innerHTML = renderBody(meta, items);
+    wireEvents();
+  }
+
+  function wireEvents() {
+    var radios = document.querySelectorAll(".opt-radio");
+    for (var i = 0; i < radios.length; i++) {
+      radios[i].addEventListener("change", onOptionChange);
+    }
+    var boxes = document.querySelectorAll(".comment-input");
+    for (var j = 0; j < boxes.length; j++) {
+      boxes[j].addEventListener("input", onCommentInput);
+    }
+  }
+
+  function findItem(id) {
+    for (var i = 0; i < items.length; i++) { if (items[i].id === id) return items[i]; }
+    return null;
+  }
+
+  function onOptionChange(e) {
+    var name = e.target.name; // "resp-<id>"
+    var id = name.slice(5);
+    var item = findItem(id);
+    if (!item) return;
+    item.selected = e.target.value;
+    pendingWrites = true;
+    var group = document.querySelectorAll('.opt-label[data-item="' + id + '"]');
+    for (var i = 0; i < group.length; i++) {
+      group[i].classList.toggle("checked", group[i].getAttribute("data-letter") === item.selected);
+    }
+    updateSaveBar();
+  }
+
+  function onCommentInput(e) {
+    var id = e.target.getAttribute("data-item");
+    var item = findItem(id);
+    if (!item) return;
+    item.comment = e.target.value;
+    pendingWrites = true;
+    updateSaveBar();
+  }
+
+  function updateSaveBar() {
+    var answered = items.filter(function (i) { return i.selected; }).length;
+    var commented = items.filter(function (i) { return i.comment && i.comment.trim(); }).length;
+    var countEl = document.getElementById("save-count");
+    if (countEl) countEl.textContent = answered + " of " + items.length + " answered" + (commented ? " · " + commented + " with comments" : "");
+  }
+
+  function setStatus(text, kind) {
+    var el = document.getElementById("save-status");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "save-status" + (kind ? " " + kind : "");
+  }
+
+  function buildDocument(meta, items) {
+    var dataScript = '<script id="app-data">window.__META__ = ' + safeJsonForScript(meta) + ";\nwindow.__ITEMS__ = " + safeJsonForScript(items) + ';<\/script>';
+    var appScriptTag = document.getElementById("app-script").outerHTML;
+    return (
+      "<!doctype html><html><head><meta charset=\"utf-8\">" + HEAD_HTML + "</head><body>" +
+      '<div class="page" id="root">' + renderBody(meta, items) + "</div>" +
+      SAVE_BAR_HTML +
+      dataScript +
+      appScriptTag +
+      "</body></html>"
+    );
+  }
+
+  function onSaveClick() {
+    if (readOnly) return;
+    if (!artifactNS) { setStatus("Saving isn’t available in this view.", "error"); return; }
+    var btn = document.getElementById("save-btn");
+    btn.disabled = true;
+    setStatus("Saving…");
+    var now = new Date().toISOString();
+    items.forEach(function (it) {
+      if (it.selected || (it.comment && it.comment.trim())) it.respondedAt = now;
+    });
+    artifactNS.publish(buildDocument(meta, items)).then(
+      function () {
+        // successful publish reloads this view automatically
+      },
+      function (err) {
+        btn.disabled = false;
+        var code = err && err.code;
+        if (code === "not_writer" || code === "not_granted" || code === "not_declared" || code === "capability_disabled") {
+          readOnly = true;
+          setStatus("This view is read-only — your response wasn’t saved.", "error");
+          btn.textContent = "Read-only";
+          btn.disabled = true;
+        } else if (code === "conflict") {
+          setStatus("Newer version found — reloading…");
+        } else {
+          setStatus("Save failed" + (code ? " (" + code + ")" : "") + " — try again.", "error");
+        }
+      }
+    );
+  }
+
+  paint();
+  updateSaveBar();
+
+  var saveBtn = document.getElementById("save-btn");
+  saveBtn.addEventListener("click", onSaveClick);
+
+  if (window.claude && window.claude.use) {
+    window.claude.use("artifact").then(function (ns) {
+      artifactNS = ns;
+      if (!ns) {
+        readOnly = true;
+        setStatus("Saving isn’t available in this view — responses stay local to this tab.", "error");
+        saveBtn.disabled = true;
+      }
+    });
+  } else {
+    readOnly = true;
+    setStatus("Saving isn’t available outside the Artifact viewer.", "error");
+    saveBtn.disabled = true;
+  }
+})();
+</script>
