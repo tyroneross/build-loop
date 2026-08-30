@@ -329,6 +329,14 @@ def _structured_tasks(state: dict[str, Any], context: dict[str, Any]) -> list[di
         for item in per_commit.get("completed") or []:
             _merge_task(tasks, item, "complete", order)
             order += 1
+
+    recorded_tasks = context["selected_run"].get("tasks")
+    if isinstance(recorded_tasks, list):
+        default_status = "complete" if context["status"] == "complete" else "pending"
+        for item in recorded_tasks:
+            explicit = item.get("status") if isinstance(item, dict) else None
+            _merge_task(tasks, item, _normalize_explicit_status(explicit) or default_status, order)
+            order += 1
     return sorted(({key: value for key, value in task.items() if key != "order"} for task in tasks.values()), key=lambda task: tasks[task["id"]]["order"])
 
 
@@ -623,7 +631,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     phases = _phase_projection(context, state, warnings)
     learn_receipt = _learn_receipt(root, context, warnings, sources)
     work_orders = _learn_work_orders(learn_receipt)
-    tasks = _structured_tasks(state, context) if context["active"] else []
+    tasks = _structured_tasks(state, context)
     if context["active"]:
         planned = _plan_tasks(root, warnings, sources, fallback=not tasks)
         tasks = _enrich_task_titles(tasks, planned) if tasks else planned

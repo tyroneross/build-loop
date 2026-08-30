@@ -89,6 +89,24 @@ def test_repeated_unchanged_run_is_idempotent(tmp_path: Path, monkeypatch: pytes
     ]
 
 
+def test_stop_cannot_downgrade_completed_review_g_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = _write_state(tmp_path, 2)
+    runner = _runner()
+    monkeypatch.setattr(runner.learn_accruing, "fire", lambda *_a, **_k: {"fired": True})
+
+    completed = runner.run(tmp_path, run_id=run_id, source="review-g", accrue=True)
+    stopped = runner.run(tmp_path, run_id=run_id, source="stop", accrue=False)
+
+    assert completed["status"] == "complete"
+    assert stopped["status"] == "complete"
+    assert stopped["already"] is True
+    state = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    current = next(item for item in state["runs"] if item["run_id"] == run_id)
+    assert current["learn"]["status"] == "complete"
+
+
 def test_stop_latency_boundary_can_be_completed_by_manual_rerun(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

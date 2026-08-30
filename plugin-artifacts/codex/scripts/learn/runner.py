@@ -87,9 +87,6 @@ def _digest_inputs(
     workdir: Path,
     state: dict[str, Any],
     run_id: str,
-    defer_reason: str,
-    source: str,
-    accrue: bool,
 ) -> tuple[str, dict[str, Any]]:
     files: dict[str, dict[str, Any]] = {}
     limits = {
@@ -135,9 +132,6 @@ def _digest_inputs(
                     limits["truncated_files"].append(relative)
     payload = {
         "run_id": run_id,
-        "defer_reason": defer_reason,
-        "source": source,
-        "accrue": accrue,
         "state": _state_without_learn(state),
         "files": files,
     }
@@ -655,13 +649,14 @@ def run(
             root,
             state,
             run_id,
-            defer_reason,
-            source,
-            accrue,
         )
         if receipt_path.exists():
             existing = _read_json(receipt_path, {})
-            if existing.get("input_digest") == digest:
+            same_inputs = existing.get("input_digest") == digest
+            pending_can_advance = (
+                existing.get("status") == "pending" and (accrue or bool(defer_reason))
+            )
+            if same_inputs and not pending_can_advance:
                 if comment:
                     existing.setdefault("comments", []).append(
                         {"at": _now(), "source": source, "text": comment}

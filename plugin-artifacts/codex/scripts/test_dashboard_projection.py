@@ -203,6 +203,30 @@ def test_completed_run_does_not_show_plan_tasks_as_pending(tmp_path: Path) -> No
     assert result["tasks"] == []
 
 
+def test_completed_run_preserves_recorded_major_tasks(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "done-1",
+            "goal": "Finish dashboard.",
+            "outcome": "pass",
+            "tasks": [
+                {"id": "C1", "title": "Build projection"},
+                {"id": "C2", "title": "Review dashboard", "status": "complete"},
+            ],
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert [(task["id"], task["status"]) for task in result["tasks"]] == [
+        ("C1", "complete"),
+        ("C2", "complete"),
+    ]
+
+
 def test_pending_learn_receipt_projects_phase_agents_and_comments(tmp_path: Path) -> None:
     receipt_path = tmp_path / ".build-loop/learn/run-learn.json"
     _write_json(tmp_path / ".build-loop/state.json", {
