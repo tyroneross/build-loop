@@ -431,6 +431,82 @@ def test_schema_less_crash_without_durable_pass_remains_refused(tmp_path, outcom
     assert json.loads(state_path.read_text())["execution"] == execution
 
 
+def test_explicit_abandonment_preserves_partial_legacy_run_resources(tmp_path):
+    state_path, run_worktree, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    data_root = tmp_path / ".build-loop" / "data" / execution["build_loop_id"]
+    data_root.mkdir(parents=True)
+    execution["data_root"] = str(data_root)
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{"run_id": execution["build_loop_id"], "outcome": "partial"}],
+    }))
+    branch = execution["run_worktree_branch"]
+
+    env = resolve(
+        tmp_path,
+        "",
+        abandon_legacy_crash=execution["build_loop_id"],
+        now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+    )
+
+    state = json.loads(state_path.read_text())
+    archived = state["historicalExecutions"][-1]
+    assert env["decision"] == "fresh"
+    assert env["abandon_applied"] is True
+    assert env["fresh_ready"] is True
+    assert state["execution"] == {}
+    assert archived["build_loop_id"] == execution["build_loop_id"]
+    assert archived["archive_disposition"] == "explicitly_abandoned"
+    assert archived["abandoned_at"] == "2026-07-30T00:00:00Z"
+    assert run_worktree.exists()
+    assert Path(execution["data_manifest_path"]).exists()
+    assert Path(execution["data_root"]).exists()
+    assert env["preserved_resources"] == {
+        "run_worktree_path": execution["run_worktree_path"],
+        "run_worktree_branch": branch,
+        "data_manifest_path": execution["data_manifest_path"],
+        "data_root": execution["data_root"],
+    }
+    assert subprocess.run(
+        ["git", "-C", str(tmp_path), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        check=False,
+    ).returncode == 0
+
+
+def test_explicit_abandonment_requires_exact_run_id(tmp_path):
+    state_path, _, _execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    before = state_path.read_bytes()
+
+    env = resolve(tmp_path, "", abandon_legacy_crash="wrong-run-id")
+
+    assert env["decision"] == "abort"
+    assert env["abandon_applied"] is False
+    assert "does not match" in env["reason"]
+    assert state_path.read_bytes() == before
+
+
+def test_explicit_abandonment_refuses_execution_without_crash_marker(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    execution = {"build_loop_id": "legacy-live", "started_at": "2026-07-29T00:00:00Z"}
+    state_path.write_text(json.dumps({"execution": execution}))
+
+    env = resolve(tmp_path, "", abandon_legacy_crash="legacy-live")
+
+    assert env["decision"] == "abort"
+    assert env["abandon_applied"] is False
+    assert "crash marker" in env["reason"]
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
 @pytest.mark.parametrize("manifest_status", ["active", "error", "deferred"])
 def test_schema_less_crash_with_nonterminal_data_manifest_remains_refused(tmp_path, manifest_status):
     state_path, _, execution = _write_surviving_legacy_run(

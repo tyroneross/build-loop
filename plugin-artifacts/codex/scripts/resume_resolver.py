@@ -597,6 +597,71 @@ def _archive_legacy_crash(workdir: Path, expected_execution: dict) -> tuple[bool
     return True, "terminal legacy crash archived; execution identity cleared"
 
 
+def _abandon_legacy_crash(
+    workdir: Path,
+    expected_execution: dict,
+    expected_run_id: str,
+    *,
+    now: datetime,
+) -> tuple[bool, str]:
+    """Losslessly clear an explicitly named crashed legacy execution.
+
+    Unlike automatic archival, explicit abandonment does not require a durable
+    pass outcome. It never deletes the referenced branch, worktree, manifest,
+    or data root; it only moves the exact execution record into history and
+    clears the active identity so a new run can start.
+    """
+    state_path = workdir / ".build-loop" / "state.json"
+    with LockedFile(state_path):
+        try:
+            state = _load_state(workdir)
+        except StateReadError as exc:
+            return False, str(exc)
+        if not isinstance(state, dict):
+            return False, "state.json disappeared or became unreadable before abandonment"
+        execution = state.get("execution")
+        if execution != expected_execution:
+            return False, "execution changed before abandonment; refusing to clear a different run"
+        if not isinstance(execution, dict):
+            return False, "execution is no longer an object"
+        run_id = _execution_identity(execution)
+        if not expected_run_id or run_id != expected_run_id:
+            return False, "abandonment run id does not match the active legacy execution"
+        if execution.get("schema_version") is not None:
+            return False, "only schema-less legacy executions can use explicit abandonment"
+        crashed_at = _parse_iso(execution.get("crashed_at", ""))
+        crash_signal = execution.get("crash_signal")
+        if crashed_at is None or not isinstance(crash_signal, str) or not crash_signal.strip():
+            return False, "legacy execution lacks a durable crash marker"
+        heartbeat = _parse_iso(execution.get("last_heartbeat_at", ""))
+        if heartbeat is not None:
+            if heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+            if crashed_at.tzinfo is None:
+                crashed_at = crashed_at.replace(tzinfo=timezone.utc)
+            if heartbeat > crashed_at:
+                return False, "legacy execution has a heartbeat newer than its crash marker"
+        history = state.get("historicalExecutions")
+        if history is not None and not isinstance(history, list):
+            return False, "historicalExecutions is not a list; refusing a lossy abandonment"
+        archived_execution = dict(execution)
+        archived_execution["archive_disposition"] = "explicitly_abandoned"
+        archived_execution["abandoned_at"] = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        history = list(history or [])
+        if not any(
+            isinstance(row, dict)
+            and _execution_identity(row) == run_id
+            and row.get("archive_disposition") == "explicitly_abandoned"
+            for row in history
+        ):
+            history.append(archived_execution)
+        state["historicalExecutions"] = history[-10:]
+        state["execution"] = {}
+        encoded = (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        atomic_write_bytes(state_path, encoded)
+    return True, "legacy crash explicitly abandoned; active identity cleared and referenced resources preserved"
+
+
 def _resolve_latest(state: dict, now: datetime, staleness_minutes: int) -> tuple[str | None, str]:
     """Return (run_id, reason) for --resume latest. None if no resumable run."""
     execution = state.get("execution")
@@ -766,6 +831,8 @@ def _compute_remaining(
 
     for entry in _normalize_completed_chunks(execution)[0]:
         cid = entry.get("chunk_id")
+        if not isinstance(cid, str) or not cid:
+            continue
         if cid in flagged_ids:
             remaining.append({
                 "chunk_id": cid,
@@ -804,6 +871,7 @@ def resolve(
     staleness_minutes: int = 5,
     now: datetime | None = None,
     archive_terminal_legacy_crash: bool = False,
+    abandon_legacy_crash: str | None = None,
     current_session_id: str | None = None,
 ) -> dict:
     """Top-level resolver. Returns the decision envelope (see module docstring)."""
@@ -814,7 +882,7 @@ def resolve(
         return _abort_state_read(str(exc))
     if state is None:
         return {
-            "decision": "fresh" if not resume_arg and not archive_terminal_legacy_crash else "abort",
+            "decision": "fresh" if not resume_arg and not archive_terminal_legacy_crash and not abandon_legacy_crash else "abort",
             "reason": "no .build-loop/state.json present",
             "run_id": None,
             "remaining_chunks": [],
@@ -826,10 +894,18 @@ def resolve(
 
     execution = state.get("execution") if isinstance(state, dict) else None
 
-    if archive_terminal_legacy_crash and resume_arg:
+    if (archive_terminal_legacy_crash or abandon_legacy_crash) and resume_arg:
         return {
             "decision": "abort",
-            "reason": "--archive-terminal-legacy-crash cannot be combined with --resume-arg",
+            "reason": "legacy crash archival or abandonment cannot be combined with --resume-arg",
+            "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
+            "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+        }
+
+    if archive_terminal_legacy_crash and abandon_legacy_crash:
+        return {
+            "decision": "abort",
+            "reason": "--archive-terminal-legacy-crash and --abandon-legacy-crash are mutually exclusive",
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
             "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
         }
@@ -842,6 +918,33 @@ def resolve(
     if isinstance(execution, dict) and execution and execution.get("phase") != "report" \
             and execution.get("schema_version") != EXPECTED_SCHEMA_VERSION:
         legacy = _classify_legacy_crash(workdir, state, execution)
+        if abandon_legacy_crash and not resume_arg:
+            abandoned, abandon_reason = _abandon_legacy_crash(
+                workdir,
+                execution,
+                abandon_legacy_crash,
+                now=now,
+            )
+            if not abandoned:
+                return {
+                    "decision": "abort", "reason": abandon_reason, "run_id": legacy["run_id"],
+                    "remaining_chunks": [], "iterate_attempt": 0,
+                    "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+                    "legacy_crash": legacy, "abandon_applied": False, "fresh_ready": False,
+                }
+            return {
+                "decision": "fresh", "reason": abandon_reason, "run_id": None,
+                "remaining_chunks": [], "iterate_attempt": 0,
+                "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+                "legacy_crash": legacy, "required_action": None,
+                "abandon_applied": True, "fresh_ready": True,
+                "preserved_resources": {
+                    "run_worktree_path": execution.get("run_worktree_path"),
+                    "run_worktree_branch": execution.get("run_worktree_branch"),
+                    "data_manifest_path": execution.get("data_manifest_path"),
+                    "data_root": execution.get("data_root"),
+                },
+            }
         if legacy["archive_safe"] and not resume_arg:
             if archive_terminal_legacy_crash:
                 archived, archive_reason = _archive_legacy_crash(workdir, execution)
@@ -877,9 +980,9 @@ def resolve(
             "legacy_crash": legacy,
         }
 
-    if archive_terminal_legacy_crash:
+    if archive_terminal_legacy_crash or abandon_legacy_crash:
         return {
-            "decision": "abort", "reason": "no terminal schema-less crash residue to archive",
+            "decision": "abort", "reason": "no eligible schema-less crash residue to archive or abandon",
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
             "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
         }
@@ -1053,6 +1156,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Atomically archive a proven terminal schema-less crash before starting fresh",
     )
+    p.add_argument(
+        "--abandon-legacy-crash",
+        metavar="RUN_ID",
+        help=(
+            "Explicitly abandon the named crashed schema-less execution, preserving its "
+            "branch, worktree, manifest, data, and history before starting fresh"
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -1064,6 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
             args.resume_arg,
             staleness_minutes=args.staleness_minutes,
             archive_terminal_legacy_crash=args.archive_terminal_legacy_crash,
+            abandon_legacy_crash=args.abandon_legacy_crash,
             current_session_id=args.current_session_id,
         )
     except OSError as e:
