@@ -312,7 +312,21 @@ def _is_testflight_command(lower_text: str, lower_tokens: list[str]) -> bool:
 
 def _is_production_command(lower_text: str, lower_tokens: list[str]) -> bool:
     command_text = " ".join(lower_tokens)
-    if "npm publish" in command_text or "gh release" in command_text or "twine upload" in command_text:
+    # Anchored to the INVOKED command, not to the text. A substring test
+    # classified `grep "<publish cmd>" file` and the read-only
+    # `<gh release> list` / `view` as production deploys, which triggered a
+    # full-repo scan that hard-blocked both reads.
+    _pub_tokens = [t.lower() for t in _split(command_text)]
+    _pub_leader = _leading_command(_pub_tokens).rsplit("/", 1)[-1]
+    _pub_sub = next((t for t in _pub_tokens[1:] if not t.startswith("-")), "")
+    _pub_sub2 = next((t for t in _pub_tokens[2:] if not t.startswith("-")), "")
+    _is_registry_publish = (
+        (_pub_leader in ("npm", "pnpm", "yarn") and "publish" in _pub_tokens)
+        or (_pub_leader == "twine" and "upload" in _pub_tokens)
+        or (_pub_leader == "gh" and _pub_sub == "release"
+            and _pub_sub2 in _GH_RELEASE_MUTATIONS)
+    )
+    if _is_registry_publish:
         return True
     if "vercel" in lower_tokens and "deploy" in lower_tokens:
         return "--prod" in lower_tokens or _has_option_value(lower_tokens, "--target", "production")
@@ -355,6 +369,54 @@ _DEPLOY_TOOLS = {
 }
 
 
+
+#: Commands that only READ. A deploy tool named inside their arguments is a
+#: search pattern or a string literal, never an invocation. Without this,
+#: `grep -ln "npm publish" .github/workflows/` was classified as a production
+#: deploy and triggered a full-repo scan that hard-blocked the read.
+_READ_ONLY_LEADERS = frozenset({
+    "grep", "egrep", "fgrep", "rg", "ag", "ack",
+    "cat", "bat", "head", "tail", "less", "more", "strings",
+    "awk", "sed", "jq", "yq", "cut", "sort", "uniq", "wc", "tr",
+    "find", "fd", "ls", "tree", "stat", "file", "diff", "comm",
+    "echo", "printf", "true", "false", "test",
+})
+
+#: Prefixes that wrap a real command without being one. `FOO=bar sudo npm
+#: publish` must still resolve to the tool, not to `sudo`.
+_WRAPPERS = frozenset({"sudo", "env", "time", "nohup", "command", "exec", "nice", "caffeinate"})
+
+#: `gh release` is only a deploy in its MUTATING subcommands. `list`,
+#: `view`, and `download` read published state and must not gate.
+_GH_RELEASE_MUTATIONS = frozenset({"create", "edit", "delete", "upload"})
+
+
+def _leading_command(tokens: list[str]) -> str:
+    """The program actually being run: env assignments and wrappers skipped."""
+    for tok in tokens:
+        if "=" in tok and not tok.startswith("-") and tok.split("=", 1)[0].isidentifier():
+            continue            # FOO=bar
+        if tok in _WRAPPERS:
+            continue            # sudo / env / time
+        return tok
+    return ""
+
+
+def _is_read_only_invocation(tokens: list[str]) -> bool:
+    """True when this segment only reads, whatever its arguments mention."""
+    leader = _leading_command(tokens)
+    base = leader.rsplit("/", 1)[-1]
+    if base in _READ_ONLY_LEADERS:
+        return True
+    # `python3 -c "..."` / `node -e "..."` evaluate a literal; the deploy words
+    # live in the source string, not in an invocation.
+    if base.startswith(("python", "node", "deno", "ruby", "perl")) and any(
+        t in ("-c", "-e", "--eval") for t in tokens[1:]
+    ):
+        return True
+    return False
+
+
 def is_deploy_like(raw_command: str) -> bool:
     """True when the command plausibly publishes code or config to a live target.
 
@@ -370,6 +432,9 @@ def is_deploy_like(raw_command: str) -> bool:
         tokens = [t.lower() for t in _split(segment)]
         if not tokens:
             continue
+        if _is_read_only_invocation(tokens):
+            continue
+        leader = _leading_command(tokens).rsplit("/", 1)[-1]
         text = " ".join(tokens)
 
         # Anything classify_command already recognizes is deploy-like by
@@ -378,10 +443,11 @@ def is_deploy_like(raw_command: str) -> bool:
         if target in {"production", "preview", "testflight"}:
             return True
 
-        # A known deploy tool paired with a shipping verb.
-        if any(t in _DEPLOY_TOOLS for t in tokens) and any(
-            v in _DEPLOY_VERBS for v in tokens
-        ):
+        # A known deploy tool paired with a shipping verb. The TOOL must be the
+        # command being invoked — `any(token)` matched deploy words appearing in
+        # a quoted search pattern, which is how a read-only grep was gated as a
+        # production deploy.
+        if leader in _DEPLOY_TOOLS and any(v in _DEPLOY_VERBS for v in tokens):
             # `npm run deploy` / `pnpm deploy` count; `npm install` does not,
             # and neither does a local-only `docker build`.
             if "install" in tokens or "add" in tokens or "build" in tokens:
@@ -390,8 +456,8 @@ def is_deploy_like(raw_command: str) -> bool:
             return True
 
         # Registry publishes and workflow triggers that carry no tool/verb pair.
-        if re.search(
-            r"\b(?:gh\s+workflow\s+run|gh\s+release\s+create|"
+        if leader in {"gh", "git", "make", "terraform", "pulumi", "ansible-playbook"} and re.search(
+            r"\b(?:gh\s+workflow\s+run|gh\s+release\s+(?:create|edit|delete|upload)|"
             r"git\s+push\s+.*--tags|make\s+deploy|make\s+release|"
             r"terraform\s+apply|pulumi\s+up|ansible-playbook)\b",
             text,
