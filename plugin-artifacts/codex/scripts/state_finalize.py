@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+from atomic_io import LockedFile, atomic_write_bytes
+
+
+LOCK_TIMEOUT_S = 0.5
 
 
 def _iso_utc() -> str:
@@ -45,48 +48,35 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
     swallows all I/O errors per Stop-hook discipline.
     """
     state_path = workdir / ".build-loop" / "state.json"
-    if not state_path.exists():
-        return False
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(state, dict):
-        return False
-    execution = state.get("execution")
-    if not isinstance(execution, dict):
-        return False
-    if not execution:
-        # stop_closeout clears terminal identity to this tombstone. A later
-        # Stop must not turn it into a schema-less crash marker.
-        return False
-    # Two legitimate phase conventions: the orchestrator (M2 execstate) writes
-    # `execution.phase` and finishes at "report"; inline runs (skill-as-
-    # methodology) write TOP-LEVEL `state.phase` and finish at "done". Honoring
-    # only the first stamped crash markers on every healthy inline run.
-    exec_phase = str(execution.get("phase") or "").lower()
-    top_phase = str(state.get("phase") or "").lower()
-    if exec_phase == "report" or top_phase in ("report", "done"):
-        # Clean exit — not a crash
-        return False
-    if execution.get("crashed_at"):
-        # Already annotated for this run — a Stop fires every turn; re-stamping
-        # adds no signal and rewrites state.json each idle turn. A fresh run
-        # starts with a clean execution block (build_loop_id fresh-mint), so
-        # this never suppresses a NEW run's first annotation.
-        return False
-    execution["crashed_at"] = _iso_utc()
-    execution["crash_signal"] = signal
-    state["execution"] = execution
-    payload = (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-    try:
-        fd, tmp = tempfile.mkstemp(prefix=state_path.name + ".tmp.", dir=str(state_path.parent))
-        with os.fdopen(fd, "wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, state_path)
-    except OSError:
+        with LockedFile(state_path, timeout_s=LOCK_TIMEOUT_S):
+            if not state_path.exists():
+                return False
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                return False
+            execution = state.get("execution")
+            if not isinstance(execution, dict):
+                return False
+            if not execution:
+                # stop_closeout clears terminal identity to this tombstone. A
+                # later Stop must not turn it into a schema-less crash marker.
+                return False
+            # Two legitimate phase conventions: the orchestrator (M2
+            # execstate) writes `execution.phase` and finishes at "report";
+            # inline runs write TOP-LEVEL `state.phase` and finish at "done".
+            exec_phase = str(execution.get("phase") or "").lower()
+            top_phase = str(state.get("phase") or "").lower()
+            if exec_phase == "report" or top_phase in ("report", "done"):
+                return False
+            if execution.get("crashed_at"):
+                return False
+            execution["crashed_at"] = _iso_utc()
+            execution["crash_signal"] = signal
+            state["execution"] = execution
+            payload = (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+            atomic_write_bytes(state_path, payload)
+    except (OSError, TimeoutError, json.JSONDecodeError):
         return False
     return True
 

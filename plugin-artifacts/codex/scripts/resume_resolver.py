@@ -603,6 +603,7 @@ def _abandon_legacy_crash(
     expected_run_id: str,
     *,
     now: datetime,
+    staleness_minutes: int,
 ) -> tuple[bool, str]:
     """Losslessly clear an explicitly named crashed legacy execution.
 
@@ -641,6 +642,16 @@ def _abandon_legacy_crash(
                 crashed_at = crashed_at.replace(tzinfo=timezone.utc)
             if heartbeat > crashed_at:
                 return False, "legacy execution has a heartbeat newer than its crash marker"
+        newest_activity = max(
+            timestamp for timestamp in (crashed_at, heartbeat) if timestamp is not None
+        )
+        age = _heartbeat_age(now, newest_activity)
+        if age is None or age < timedelta(minutes=staleness_minutes):
+            observed_seconds = age.total_seconds() if age is not None else 0
+            return False, (
+                "legacy execution activity is too recent for explicit abandonment "
+                f"({observed_seconds:.0f}s old; threshold {staleness_minutes * 60}s)"
+            )
         history = state.get("historicalExecutions")
         if history is not None and not isinstance(history, list):
             return False, "historicalExecutions is not a list; refusing a lossy abandonment"
@@ -655,7 +666,9 @@ def _abandon_legacy_crash(
             for row in history
         ):
             history.append(archived_execution)
-        state["historicalExecutions"] = history[-10:]
+        # Explicit abandonment is a forensic escape hatch. Preserve the full
+        # prior history rather than applying the normal rolling-history cap.
+        state["historicalExecutions"] = history
         state["execution"] = {}
         encoded = (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
         atomic_write_bytes(state_path, encoded)
@@ -924,6 +937,7 @@ def resolve(
                 execution,
                 abandon_legacy_crash,
                 now=now,
+                staleness_minutes=staleness_minutes,
             )
             if not abandoned:
                 return {
@@ -978,6 +992,7 @@ def resolve(
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
             "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
             "legacy_crash": legacy,
+            "abandon_flag": "--abandon-legacy-crash",
         }
 
     if archive_terminal_legacy_crash or abandon_legacy_crash:

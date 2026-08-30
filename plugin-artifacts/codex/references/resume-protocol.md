@@ -79,6 +79,18 @@ revalidates the exact execution and its terminal evidence, moves it to
 the applied result reports `archive_applied: true` and `fresh_ready: true`.
 Ambiguous or potentially active schema-less executions remain aborts.
 
+If the user explicitly directs Build Loop to abandon one named crashed legacy
+run, invoke the resolver with `--abandon-legacy-crash <run-id>` and no
+`--resume-arg`. This is never automatic: the exact run id is the confirmation
+binding. The resolver locks and re-reads `state.json`, requires a durable crash
+marker, refuses a heartbeat newer than that marker, archives the execution with
+`archive_disposition: explicitly_abandoned`, and clears only the active
+execution identity. It does not delete or truncate the referenced branch,
+worktree, data manifest, data root, or prior execution history. Proceed only
+when the newest crash/heartbeat activity is older than the configured staleness
+threshold and the result reports `abandon_applied: true` and
+`fresh_ready: true`.
+
 This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
 
 ## Resolver decision matrix
@@ -95,6 +107,7 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 | `""` (no flag)       | terminal schema-less crash residue | `abort` | rerun with `--archive-terminal-legacy-crash`; proceed only after applied `fresh` |
 | `""` (archive mode)  | terminal schema-less crash residue | `fresh` | exact execution archived atomically; fresh identity may now be minted    |
 | `""` (no flag)       | ambiguous/active schema-less execution | `abort` | refuse archive and fresh start                                            |
+| `""` + explicit abandon | named crashed schema-less execution | `fresh` | preserve resources/history, archive exact execution as abandoned, then start fresh |
 | `"<run-id>"`         | run_id mismatch          | `abort`      | refuse with reason; user picks correct id or starts fresh                |
 | `"<run-id>"`         | schema_version mismatch  | `abort`      | refuse with reason; user upgrades or starts fresh                         |
 | `"<run-id>"`         | phase=report             | `abort`      | refuse — already complete                                                |

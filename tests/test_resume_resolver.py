@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import resume_resolver  # noqa: E402
+import state_finalize  # noqa: E402
 from resume_resolver import resolve  # noqa: E402
 from write_run_entry import update_execution_state  # noqa: E402
 from write_subagent_result import write_subagent_result  # noqa: E402
@@ -505,6 +507,102 @@ def test_explicit_abandonment_refuses_execution_without_crash_marker(tmp_path):
     assert env["abandon_applied"] is False
     assert "crash marker" in env["reason"]
     assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_explicit_abandonment_refuses_recent_legacy_activity(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    execution["crashed_at"] = "2026-07-29T23:59:59Z"
+    execution["last_heartbeat_at"] = "2026-07-29T23:59:58Z"
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{"run_id": execution["build_loop_id"], "outcome": "partial"}],
+    }))
+
+    env = resolve(
+        tmp_path,
+        "",
+        abandon_legacy_crash=execution["build_loop_id"],
+        now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+    )
+
+    assert env["decision"] == "abort"
+    assert env["abandon_applied"] is False
+    assert "too recent" in env["reason"]
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_stop_hook_cannot_restore_execution_after_abandonment(tmp_path, monkeypatch):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    abandon_writing = threading.Event()
+    stop_lock_attempted = threading.Event()
+    allow_abandon_write = threading.Event()
+    real_atomic_write = resume_resolver.atomic_write_bytes
+    real_locked_file = state_finalize.LockedFile
+    results = {}
+
+    def paused_atomic_write(target, data):
+        abandon_writing.set()
+        assert allow_abandon_write.wait(timeout=2)
+        real_atomic_write(target, data)
+
+    def signaling_locked_file(*args, **kwargs):
+        stop_lock_attempted.set()
+        return real_locked_file(*args, **kwargs)
+
+    monkeypatch.setattr(resume_resolver, "atomic_write_bytes", paused_atomic_write)
+    monkeypatch.setattr(state_finalize, "LockedFile", signaling_locked_file)
+
+    abandon_thread = threading.Thread(
+        target=lambda: results.setdefault(
+            "abandon",
+            resolve(tmp_path, "", abandon_legacy_crash=execution["build_loop_id"]),
+        )
+    )
+    abandon_thread.start()
+    assert abandon_writing.wait(timeout=2)
+    stop_thread = threading.Thread(
+        target=lambda: results.setdefault("stop", state_finalize.annotate_if_incomplete(tmp_path))
+    )
+    stop_thread.start()
+    assert stop_lock_attempted.wait(timeout=2)
+    allow_abandon_write.set()
+    abandon_thread.join(timeout=2)
+    stop_thread.join(timeout=2)
+
+    state = json.loads(state_path.read_text())
+    assert results["abandon"]["decision"] == "fresh"
+    assert results["stop"] is False
+    assert state["execution"] == {}
+    assert state["historicalExecutions"][-1]["build_loop_id"] == execution["build_loop_id"]
+
+
+def test_explicit_abandonment_does_not_evict_prior_history(tmp_path):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    prior_history = [{"build_loop_id": f"old-{index}"} for index in range(10)]
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "historicalExecutions": prior_history,
+        "runs": [{"run_id": execution["build_loop_id"], "outcome": "partial"}],
+    }))
+
+    env = resolve(tmp_path, "", abandon_legacy_crash=execution["build_loop_id"])
+
+    history = json.loads(state_path.read_text())["historicalExecutions"]
+    assert env["decision"] == "fresh"
+    assert history[:10] == prior_history
+    assert history[-1]["build_loop_id"] == execution["build_loop_id"]
 
 
 @pytest.mark.parametrize("manifest_status", ["active", "error", "deferred"])
