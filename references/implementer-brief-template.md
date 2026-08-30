@@ -19,7 +19,7 @@ Apply Commit <N> (C<N>) of <feature-slug>.
 `<absolute path>` — branch `<branch-name>` (HEAD = `<sha>` <if applicable: prior-wave context>)
 
 ## brief
-Read `docs/plans/<slug>.handoff.md` §"Commit <N>" + ADR-<NN> in the spec.
+Read `.build-loop/plans/<slug>.handoff.md` §"Commit <N>" + ADR-<NN> in the spec.
 
 ## Commit <N> deliverable
 `<conventional-commit subject — type(scope): summary>`

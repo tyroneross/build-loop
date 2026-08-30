@@ -14,7 +14,7 @@ description: |
   <example>
   Context: Phase 2 of a high-stakes build (riskSurfaceChange + synthesisDensity 7). The orchestrator wants the plan authored at Frontier, not inline on Opus.
   user: "Author the Phase 2 plan for the auth-refactor build at frontier tier"
-  assistant: "Dispatching the advisor agent. It reads intent.md + goal.md + the architecture baseline, walks the spec-writing checklist, and writes the plan to docs/plans/. plan-critic + scope-auditor then verify it before any implementer runs."
+  assistant: "Dispatching the advisor agent. It reads intent.md + goal.md + the architecture baseline, walks the spec-writing checklist, and writes the plan to .build-loop/plans/. plan-critic + scope-auditor then verify it before any implementer runs."
   </example>
 
   <example>
@@ -62,7 +62,7 @@ Load the canonical protocol rather than re-deriving it: **`Skill("build-loop:spe
 5. **Name the falsifier** for each F-criterion — the concrete check that would prove the criterion failed.
 6. **Approach lenses** for non-trivial architecture/workflow/interface decisions: clean-sheet best answer, current-constraints answer, and the bridge between them.
 
-Write the plan to `docs/plans/<feature-slug>.md` (or the path the orchestrator names) and/or `.build-loop/` artifacts. **You write only plan artifacts** — your `Write` access is scoped to `docs/plans/**` and `.build-loop/**`; you do not touch source files (that is the implementer's job, verified separately).
+Write the plan to `.build-loop/plans/<feature-slug>.md` (or the path the orchestrator names). **You write only plan artifacts** — your `Write` access is scoped to `.build-loop/**`; you do not touch source files (that is the implementer's job, verified separately), and you never write a plan into `docs/`.
 
 ## Re-planning on a planning miss (the remediation contract)
 
@@ -102,7 +102,7 @@ Return a condensed envelope to the orchestrator:
 
 ```
 mode: author | re-plan
-plan_path: docs/plans/<slug>.md
+plan_path: .build-loop/plans/<slug>.md
 diagnosis: planning-miss | execution-miss | n/a   # re-plan mode only
 instructions_diff: <summary of the plan delta>     # re-plan mode only
 trigger: <objective verifier signal that summoned/advanced you>

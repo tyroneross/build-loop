@@ -45,7 +45,7 @@ The orchestrator (single writer) appends one row to `.build-loop/agent-ledger.js
 action: author | re-plan
 agent: advisor · tier: frontier · model: <resolved id (fable / gpt-5.x / …)>
 rung: 0|1|2|3 · status: pass|fail|partial · trigger: <synthesisDensity>5 | riskSurfaceChange | stakes>=medium | dispatch_tier:frontier>
-refs: {output: docs/plans/<slug>.md, input: <prior plan / failure evidence>}
+refs: {output: .build-loop/plans/<slug>.md, input: <prior plan / failure evidence>}
 note: <on re-plan: failure evidence + why a retry is justified>
 ```
 

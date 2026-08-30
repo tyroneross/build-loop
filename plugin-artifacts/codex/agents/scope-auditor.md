@@ -18,7 +18,7 @@ The orchestrator dispatches you after Phase 2 Plan completes (plan-verify clean,
 ## Input
 
 ```
-plan_path: <absolute path to docs/plans/<feature>.md>
+plan_path: <absolute path to .build-loop/plans/<feature>.md>
 workdir: <absolute path to project root>
 commit_table: [
   { id: "C1", subject: "...", files_owned: ["..."], modifies_api: ["functionA", "ComponentB", "TypeC"] | null },

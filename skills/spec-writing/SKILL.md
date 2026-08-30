@@ -163,10 +163,10 @@ For each new POST/PUT/PATCH route: name the validation library and schema file. 
 ```bash
 # Verify ID prefixes appear in the plan body
 grep -E "\bU-[0-9]+\b|\bF-[0-9]+\b|\bD-[0-9]+\b|\bS-[0-9]+\b|\bT-[0-9]+\b|\bA-[0-9]+\b" \
-  docs/plans/<feature-slug>.md | head -20
+  .build-loop/plans/<feature-slug>.md | head -20
 
 # Every [P0] line must have at least one T- reference on the same or adjacent line
-grep -n "\[P0\]" docs/plans/<feature-slug>.md
+grep -n "\[P0\]" .build-loop/plans/<feature-slug>.md
 ```
 
 The checklist answer must name at least one full trace chain (e.g., `U-01 → F-03 → D-02 → T-07`). If the spec has no P0 items, write "N/A: no P0 scope."
@@ -180,8 +180,8 @@ The checklist answer must name at least one full trace chain (e.g., `U-01 → F-
 **How to check:**
 
 ```bash
-grep -n "## Spec Object" docs/plans/<feature-slug>.md
-grep -n '```json' docs/plans/<feature-slug>.md | head -5
+grep -n "## Spec Object" .build-loop/plans/<feature-slug>.md
+grep -n '```json' .build-loop/plans/<feature-slug>.md | head -5
 ```
 
 The plan must contain a `## Spec Object (JSON)` section with a fenced JSON block whose top-level keys include `needs`, `features`, and `tests`. If the plan is a one-line doc update with no structured outputs, write "N/A: doc-only change, no spec object required."
@@ -195,9 +195,9 @@ The plan must contain a `## Spec Object (JSON)` section with a fenced JSON block
 **How to check:**
 
 ```bash
-grep -n "blocking-test:" docs/plans/<feature-slug>.md
-grep -n "\[ASSUMED:\]" docs/plans/<feature-slug>.md
-grep -n "## Open Questions" docs/plans/<feature-slug>.md
+grep -n "blocking-test:" .build-loop/plans/<feature-slug>.md
+grep -n "\[ASSUMED:\]" .build-loop/plans/<feature-slug>.md
+grep -n "## Open Questions" .build-loop/plans/<feature-slug>.md
 ```
 
 Each entry in the "Open Questions" section must carry a `blocking-test: T-NN` annotation. Questions without that annotation are invalid — resolve them as `[ASSUMED: ...]` in the spec body instead.
@@ -211,9 +211,9 @@ Each entry in the "Open Questions" section must carry a `blocking-test: T-NN` an
 **How to check:**
 
 ```bash
-grep -n "## ADR-" docs/plans/<feature-slug>.md
+grep -n "## ADR-" .build-loop/plans/<feature-slug>.md
 grep -in "low-reversib\|db choice\|auth provider\|api contract\|public schema" \
-  docs/plans/<feature-slug>.md
+  .build-loop/plans/<feature-slug>.md
 ```
 
 Every "Locked Decision" row tagged as low-reversibility must reference an `ADR-NN` entry. If no low-reversibility decisions exist in this spec, write "N/A: all decisions are reversible."
@@ -227,7 +227,7 @@ Every "Locked Decision" row tagged as low-reversibility must reference an `ADR-N
 **How to check:**
 
 ```bash
-grep -in "Analytical lens:" docs/plans/<feature-slug>.md
+grep -in "Analytical lens:" .build-loop/plans/<feature-slug>.md
 ```
 
 The Locked Decisions section must contain a line matching `Analytical lens: <name>` (e.g., `Analytical lens: QFD — need-to-feature mapping`). If multiple lenses apply, list all. Choosing "none / not applicable" is only valid for trivial patches with no user-facing scope.
@@ -236,13 +236,13 @@ The Locked Decisions section must contain a line matching `Analytical lens: <nam
 
 ### Item 14 — Coding-agent handoff document
 
-**Prompt:** Generate a coding-agent handoff document (`docs/plans/<slug>.handoff.md`) alongside the plan. Aggregates ADRs + Tests + relevant context with explicit pointers ("When implementing F-08, read ADR-002 and satisfy T-19"). The implementer subagent reads the handoff, not the plan.
+**Prompt:** Generate a coding-agent handoff document (`.build-loop/plans/<slug>.handoff.md`) alongside the plan. Aggregates ADRs + Tests + relevant context with explicit pointers ("When implementing F-08, read ADR-002 and satisfy T-19"). The implementer subagent reads the handoff, not the plan.
 
 **How to check:**
 
 ```bash
-ls docs/plans/<feature-slug>.handoff.md
-grep -n "When implementing\|read ADR-\|satisfy T-" docs/plans/<feature-slug>.handoff.md | head -10
+ls .build-loop/plans/<feature-slug>.handoff.md
+grep -n "When implementing\|read ADR-\|satisfy T-" .build-loop/plans/<feature-slug>.handoff.md | head -10
 ```
 
 The sibling `<slug>.handoff.md` file must exist and contain at least one implementation pointer linking a feature ID to an ADR or test ID. If the plan has no P0 features (doc-only), write "N/A: no implementation tasks."
@@ -289,7 +289,7 @@ If the plan adds no UI surface (API/backend only), write "N/A: no UI surface."
 **How to check:**
 
 ```bash
-grep -n "risk_reason:" docs/plans/<feature-slug>.md
+grep -n "risk_reason:" .build-loop/plans/<feature-slug>.md
 ```
 
 If `risk_reason:` is present, its value must be exactly one of the five canonical strings above. Any other value causes a BLOCKER in `plan_verify.py` (rule `risk-reason-invalid-value`). If none of the five applies, omit `risk_reason:` entirely — absent is fine; only invalid values are rejected.
@@ -329,7 +329,7 @@ If no UI surface is in scope, write "N/A: no UI surface."
 **How to check:**
 
 ```bash
-grep -n "dispatch_tier:" docs/plans/<feature-slug>.md
+grep -n "dispatch_tier:" .build-loop/plans/<feature-slug>.md
 ```
 
 Each value must be exactly one of `script | haiku | sonnet | opus | frontier`. Omit the field for an item whose tier is obvious from context; the checks fire only on a declared tier that fights its task description. (`frontier` never trips a sanity WARN — it is the top judgment tier, never a "waste" smell.)
@@ -393,8 +393,8 @@ If the change adds no new external service, write "N/A: no new external service.
 **How to check:**
 
 ```bash
-grep -n "## Capability Gap Map" docs/plans/<feature-slug>.md
-grep -in "current source of truth\|target behavior\|gap\|validation" docs/plans/<feature-slug>.md
+grep -n "## Capability Gap Map" .build-loop/plans/<feature-slug>.md
+grep -in "current source of truth\|target behavior\|gap\|validation" .build-loop/plans/<feature-slug>.md
 ```
 
 The section should be small enough to guide execution. Do not create a separate gap-closure plan unless the user explicitly asks for a standalone artifact or the gap map is too large for the main plan.
@@ -416,8 +416,8 @@ The section should be small enough to guide execution. Do not create a separate 
 **How to check:**
 
 ```bash
-grep -n "## Single-Shot Build Guardrails" docs/plans/<feature-slug>.md
-grep -in "guardrail\|prevents\|evidence" docs/plans/<feature-slug>.md
+grep -n "## Single-Shot Build Guardrails" .build-loop/plans/<feature-slug>.md
+grep -in "guardrail\|prevents\|evidence" .build-loop/plans/<feature-slug>.md
 ```
 
 Reject generic rules like "keep it simple" unless they cite the exact file, scope boundary, or validation that makes the rule enforceable.
@@ -440,8 +440,8 @@ Reject generic rules like "keep it simple" unless they cite the exact file, scop
 **How to check:**
 
 ```bash
-grep -n "## Read-Before-Edit Map" docs/plans/<feature-slug>.md
-grep -in "read first\|why\|edit after" docs/plans/<feature-slug>.md
+grep -n "## Read-Before-Edit Map" .build-loop/plans/<feature-slug>.md
+grep -in "read first\|why\|edit after" .build-loop/plans/<feature-slug>.md
 ```
 
 The map must be repo-grounded. "Review existing code" is insufficient; name the files or the command that finds them.
@@ -462,7 +462,7 @@ These fields appear in plan or chunk frontmatter and affect orchestrator routing
 
 ## Plan Output Template
 
-After the checklist is complete, write the plan to `docs/plans/<feature-slug>.md` using this structure:
+After the checklist is complete, write the plan to `.build-loop/plans/<feature-slug>.md` using this structure:
 
 ```markdown
 # Plan: <Feature Name>
@@ -662,7 +662,7 @@ After writing the plan, run both verifiers before returning. Attempt up to 3 fix
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/spec-writing/scripts/check_checklist.py \
-  --plan docs/plans/<feature-slug>.md --json
+  --plan .build-loop/plans/<feature-slug>.md --json
 ```
 
 Exit 0 = checklist complete. Exit 1 = items missing — revise the plan's checklist block and re-run.
@@ -671,7 +671,7 @@ Also run the existing plan-verify script:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py \
-  docs/plans/<feature-slug>.md --repo "$PWD" --json
+  .build-loop/plans/<feature-slug>.md --repo "$PWD" --json
 ```
 
 Both must exit 0 before proceeding to Step B.
@@ -699,8 +699,14 @@ The critic's output has `strong_checkpoint_count` (its name for WARN findings th
 
 ## Output Convention
 
-1. Write the plan to `docs/plans/<feature-slug>.md` (create `docs/plans/` if it doesn't exist).
-2. Commit on a docs-only commit with subject `docs(plans): draft <feature-slug> spec` BEFORE any implementation branches are cut.
-3. Copy the plan path into `.build-loop/plan.md` (symlink or copy — copy is fine) so Phase 3 Execute picks it up.
+1. Write the plan to `.build-loop/plans/<feature-slug>.md` (create `.build-loop/plans/` if it doesn't exist).
+2. Copy the plan path into `.build-loop/plan.md` (symlink or copy — copy is fine) so Phase 3 Execute picks it up.
+
+A plan is a run artifact, not a published document. `.build-loop/` is gitignored, so
+the plan stays out of the public tree and needs no docs-only commit. When a plan is
+worth keeping past the run, Review-G promotes it to build-loop-memory through
+`scripts/archive_project_plan.py` — never to `docs/`. Writing plans, retrospectives,
+RCAs, or session handoffs into `docs/` puts private working material in a published
+surface; see `references/public-repository-documentation-boundary.md`.
 
 Return the plan path, the checklist answers, and the final verifier JSON to the caller.

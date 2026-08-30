@@ -228,7 +228,7 @@ def _dispatch_commands(
             continue
         out[name] = template.format(
             range=diff_range,
-            plan=plan_path or "docs/plans/<active-plan>.md",
+            plan=plan_path or ".build-loop/plans/<active-plan>.md",
         )
     return out
 

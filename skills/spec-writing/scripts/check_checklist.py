@@ -15,7 +15,7 @@ Exit codes:
     2 — verifier error (file not found, parse failure)
 
 Usage:
-    python3 check_checklist.py --plan docs/plans/my-feature.md [--json] [--quiet]
+    python3 check_checklist.py --plan .build-loop/plans/my-feature.md [--json] [--quiet]
 """
 from __future__ import annotations
 
@@ -403,7 +403,7 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             "status": "warn",
             "message": (
                 f"Sibling handoff file '{handoff_path.name}' not found. "
-                "Generate docs/plans/<slug>.handoff.md alongside the plan."
+                "Generate .build-loop/plans/<slug>.handoff.md alongside the plan."
             ),
         })
 
