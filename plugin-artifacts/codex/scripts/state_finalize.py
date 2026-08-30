@@ -48,6 +48,8 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
     swallows all I/O errors per Stop-hook discipline.
     """
     state_path = workdir / ".build-loop" / "state.json"
+    if not state_path.exists():
+        return False
     try:
         with LockedFile(state_path, timeout_s=LOCK_TIMEOUT_S):
             if not state_path.exists():

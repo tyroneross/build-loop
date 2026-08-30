@@ -17,6 +17,7 @@ from write_run_entry import update_execution_state  # noqa: E402
 
 def test_no_state_json_returns_false(tmp_path):
     assert annotate_if_incomplete(tmp_path) is False
+    assert not (tmp_path / ".build-loop").exists()
 
 
 def test_state_without_execution_block_no_annotation(tmp_path):

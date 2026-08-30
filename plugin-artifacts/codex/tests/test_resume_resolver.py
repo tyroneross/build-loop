@@ -574,53 +574,71 @@ def test_cli_rejects_nonpositive_staleness_threshold(tmp_path, staleness_minutes
     assert "must be a positive integer" in result.stderr
 
 
-def test_stop_hook_cannot_restore_execution_after_abandonment(tmp_path, monkeypatch):
+def test_stop_hook_rechecks_state_after_waiting_for_lock(tmp_path, monkeypatch):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "execution": {"build_loop_id": "active-run", "phase": "execute"},
+    }))
+    stop_lock_attempted = threading.Event()
+    real_locked_file = state_finalize.LockedFile
+    results = {}
+
+    class SignalingLockedFile:
+        def __init__(self, *args, **kwargs):
+            self._inner = real_locked_file(*args, **kwargs)
+
+        def __enter__(self):
+            stop_lock_attempted.set()
+            return self._inner.__enter__()
+
+        def __exit__(self, *args):
+            return self._inner.__exit__(*args)
+
+    monkeypatch.setattr(state_finalize, "LockedFile", SignalingLockedFile)
+
+    with real_locked_file(state_path):
+        stop_thread = threading.Thread(
+            target=lambda: results.setdefault("stop", state_finalize.annotate_if_incomplete(tmp_path))
+        )
+        stop_thread.start()
+        assert stop_lock_attempted.wait(timeout=2)
+        state_finalize.atomic_write_bytes(
+            state_path,
+            (json.dumps({"execution": {}}) + "\n").encode("utf-8"),
+        )
+    stop_thread.join(timeout=2)
+
+    state = json.loads(state_path.read_text())
+    assert results["stop"] is False
+    assert state["execution"] == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("crashed_at", "2026-07-29T01:06:26", "crash marker lacks timezone"),
+        ("last_heartbeat_at", "2026-07-29T01:06:25", "heartbeat lacks timezone"),
+        ("crashed_at", "2099-07-29T01:06:26Z", "timestamp is in the future"),
+    ],
+)
+def test_explicit_abandonment_refuses_ambiguous_activity_timestamps(tmp_path, field, value, reason):
     state_path, _, execution = _write_surviving_legacy_run(
         tmp_path,
         merge_to_main=True,
         outcome="partial",
     )
-    abandon_writing = threading.Event()
-    stop_lock_attempted = threading.Event()
-    allow_abandon_write = threading.Event()
-    real_atomic_write = resume_resolver.atomic_write_bytes
-    real_locked_file = state_finalize.LockedFile
-    results = {}
+    execution[field] = value
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{"run_id": execution["build_loop_id"], "outcome": "partial"}],
+    }))
 
-    def paused_atomic_write(target, data):
-        abandon_writing.set()
-        assert allow_abandon_write.wait(timeout=2)
-        real_atomic_write(target, data)
+    env = resolve(tmp_path, "", abandon_legacy_crash=execution["build_loop_id"])
 
-    def signaling_locked_file(*args, **kwargs):
-        stop_lock_attempted.set()
-        return real_locked_file(*args, **kwargs)
-
-    monkeypatch.setattr(resume_resolver, "atomic_write_bytes", paused_atomic_write)
-    monkeypatch.setattr(state_finalize, "LockedFile", signaling_locked_file)
-
-    abandon_thread = threading.Thread(
-        target=lambda: results.setdefault(
-            "abandon",
-            resolve(tmp_path, "", abandon_legacy_crash=execution["build_loop_id"]),
-        )
-    )
-    abandon_thread.start()
-    assert abandon_writing.wait(timeout=2)
-    stop_thread = threading.Thread(
-        target=lambda: results.setdefault("stop", state_finalize.annotate_if_incomplete(tmp_path))
-    )
-    stop_thread.start()
-    assert stop_lock_attempted.wait(timeout=2)
-    allow_abandon_write.set()
-    abandon_thread.join(timeout=2)
-    stop_thread.join(timeout=2)
-
-    state = json.loads(state_path.read_text())
-    assert results["abandon"]["decision"] == "fresh"
-    assert results["stop"] is False
-    assert state["execution"] == {}
-    assert state["historicalExecutions"][-1]["build_loop_id"] == execution["build_loop_id"]
+    assert env["decision"] == "abort"
+    assert reason in env["reason"]
+    assert json.loads(state_path.read_text())["execution"] == execution
 
 
 def test_explicit_abandonment_does_not_evict_prior_history(tmp_path):

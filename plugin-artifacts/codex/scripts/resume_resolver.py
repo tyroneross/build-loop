@@ -634,18 +634,20 @@ def _abandon_legacy_crash(
         crash_signal = execution.get("crash_signal")
         if crashed_at is None or not isinstance(crash_signal, str) or not crash_signal.strip():
             return False, "legacy execution lacks a durable crash marker"
+        if crashed_at.tzinfo is None:
+            return False, "legacy execution crash marker lacks timezone information"
         heartbeat = _parse_iso(execution.get("last_heartbeat_at", ""))
         if heartbeat is not None:
             if heartbeat.tzinfo is None:
-                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
-            if crashed_at.tzinfo is None:
-                crashed_at = crashed_at.replace(tzinfo=timezone.utc)
+                return False, "legacy execution heartbeat lacks timezone information"
             if heartbeat > crashed_at:
                 return False, "legacy execution has a heartbeat newer than its crash marker"
         newest_activity = max(
             timestamp for timestamp in (crashed_at, heartbeat) if timestamp is not None
         )
         age = _heartbeat_age(now, newest_activity)
+        if age is not None and age.total_seconds() < 0:
+            return False, "legacy execution activity timestamp is in the future"
         if age is None or age < timedelta(minutes=staleness_minutes):
             observed_seconds = age.total_seconds() if age is not None else 0
             return False, (
