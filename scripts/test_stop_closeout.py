@@ -806,6 +806,18 @@ def _pattern_runs(root_cause="widget-crash", n=3):
     return [{"run_id": f"bl-seed-{i}", "root_cause": root_cause, "outcome": "done"} for i in range(n)]
 
 
+def test_derive_root_cause_reads_canonical_run_phase_shape():
+    state = {
+        "runs": [
+            {
+                "run_id": "prior",
+                "phases": {"execute": {"status": "fail", "root_cause": "nested-cause"}},
+            }
+        ]
+    }
+    assert stop_closeout._derive_root_cause(state) == "nested-cause"
+
+
 def test_learn_drafting_owed_surfaces_recurring_pattern(tmp_path):
     # 3 prior runs share a root_cause → the deterministic detector clusters them,
     # so Learn drafting is owed (no experimental draft yet). This is the inline
@@ -814,18 +826,22 @@ def test_learn_drafting_owed_surfaces_recurring_pattern(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: true" in marker
-    assert "[ ] **Phase-6 Learn drafting**" in marker
-    assert "self-improve" in marker
+    assert "[ ] **Phase-6 Learn**" in marker
+    assert "pending work orders" in marker
     assert "closeout_incomplete: true" in marker
+    receipt = json.loads((tmp_path / ".build-loop" / "learn" / "bl-test-001.json").read_text())
+    assert receipt["status"] == "awaiting_agents"
+    assert receipt["source"] == "stop"
 
 
 def test_learn_not_owed_below_run_floor(tmp_path):
-    # Only the current run accrues (< 3) → Learn is still accruing, not owed.
+    # Stop keeps the hook fast and records the miner as pending for a normal run.
     _write_state(tmp_path, _base_state(runs=[]))
     stop_closeout.run_stop(tmp_path, SESSION)
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: false" in marker
-    assert "[x] **Phase-6 Learn drafting**" in marker
+    assert "miner pending" in marker
+    assert "[x] **Phase-6 Learn**" in marker
 
 
 def test_learn_owed_clears_when_experimental_draft_present(tmp_path):
@@ -840,7 +856,7 @@ def test_learn_owed_clears_when_experimental_draft_present(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: false" in marker
-    assert "draft present for each" in marker
+    assert "0 patterns above threshold" in marker
 
 
 def test_stale_draft_for_other_pattern_does_not_suppress_new_pattern(tmp_path):
@@ -854,7 +870,8 @@ def test_stale_draft_for_other_pattern_does_not_suppress_new_pattern(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: true" in marker
-    assert "1 of 2" in marker  # one of two patterns still undrafted
+    receipt = json.loads((tmp_path / ".build-loop" / "learn" / "bl-test-001.json").read_text())
+    assert [order["pattern_key"] for order in receipt["work_orders"]] == ["db-timeout"]
 
 
 def test_ds_store_only_experimental_dir_does_not_clear_owed(tmp_path):
@@ -883,18 +900,15 @@ def test_cluster_under_threshold_at_run_floor_not_owed(tmp_path):
     assert "0 patterns above threshold" in marker
 
 
-def test_pattern_is_drafted_boundary_anchored_not_substring(tmp_path):
-    # f2 match is boundary-anchored: a short slug must NOT be false-cleared by an
-    # unrelated draft that merely contains it mid-name (auditor finding f1-obs).
-    fn = stop_closeout._pattern_is_drafted
-    # legitimate tolerances clear owed:
-    assert fn("widget-crash", {"widget-crash"})            # exact
-    assert fn("widget-crash", {"widget-crash-v2"})         # <slug>-suffix
-    assert fn("widget-crash", {"exp-widget-crash"})        # prefix-<slug>
-    # mid-name / unrelated containment must NOT clear owed:
-    assert not fn("db", {"database-migration"})            # not a hyphen boundary
-    assert not fn("crash", {"widget-crash-handler"})       # mid-name occurrence
-    assert not fn("widget", {"some-widgets"})              # partial token
+def test_unrelated_draft_name_does_not_clear_work_order(tmp_path):
+    _write_state(tmp_path, _base_state(runs=_pattern_runs("db")))
+    unrelated = tmp_path / ".build-loop" / "skills" / "experimental" / "database-migration"
+    unrelated.mkdir(parents=True)
+    (unrelated / "SKILL.md").write_text("x")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    receipt = json.loads((tmp_path / ".build-loop" / "learn" / "bl-test-001.json").read_text())
+    assert receipt["status"] == "awaiting_agents"
+    assert receipt["work_orders"][0]["pattern_key"] == "db"
 
 
 def test_candidates_persist_to_procedural_after_stop_record(tmp_path):
@@ -910,9 +924,8 @@ def test_candidates_persist_to_procedural_after_stop_record(tmp_path):
 
 
 def test_raising_detector_fails_open_stop_survives(tmp_path, monkeypatch):
-    # A raising detector must not break the Stop, and must not falsely satisfy
-    # closeout: learn falls to not-owed (detector-unavailable) while retro/lessons
-    # keep closeout_incomplete true.
+    # A raising detector must not break Stop or falsely satisfy Learn. The runner
+    # writes an error receipt and the marker keeps the work owed.
     import procedural_governance
     def _boom(*a, **k):
         raise RuntimeError("detector exploded")
@@ -920,9 +933,11 @@ def test_raising_detector_fails_open_stop_survives(tmp_path, monkeypatch):
     _write_state(tmp_path, _base_state(runs=_pattern_runs()))
     out = stop_closeout.run_stop(tmp_path, SESSION)  # must not raise
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
-    assert "learn_drafting_owed: false" in marker
-    assert "detector-unavailable" in marker
+    assert "learn_drafting_owed: true" in marker
+    assert "Learn: error" in marker
     assert "closeout_incomplete: true" in marker  # retro + lessons still owed
+    receipt = json.loads((tmp_path / ".build-loop" / "learn" / "bl-test-001.json").read_text())
+    assert receipt["status"] == "error"
     assert isinstance(out, dict)
 
 

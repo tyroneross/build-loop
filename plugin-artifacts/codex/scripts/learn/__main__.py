@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--source", required=True)
     run_parser.add_argument("--defer-reason", default="")
     run_parser.add_argument("--budget-action", default="")
+    run_parser.add_argument("--skip-accrue", action="store_true")
     run_parser.add_argument("--json", action="store_true")
 
     attest_parser = sub.add_parser("attest", help="attach agent evidence to a work order")
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
                 source=args.source,
                 defer_reason=args.defer_reason,
                 budget_action=args.budget_action,
+                accrue=not args.skip_accrue,
             )
         else:
             result = runner.attest(

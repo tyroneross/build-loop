@@ -49,7 +49,14 @@ def _state_without_learn(state: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def _digest_inputs(workdir: Path, state: dict[str, Any], run_id: str, defer_reason: str) -> str:
+def _digest_inputs(
+    workdir: Path,
+    state: dict[str, Any],
+    run_id: str,
+    defer_reason: str,
+    source: str,
+    accrue: bool,
+) -> str:
     files: dict[str, str] = {}
     fixed = [
         workdir / ".build-loop" / "config.json",
@@ -70,6 +77,8 @@ def _digest_inputs(workdir: Path, state: dict[str, Any], run_id: str, defer_reas
     payload = {
         "run_id": run_id,
         "defer_reason": defer_reason,
+        "source": source,
+        "accrue": accrue,
         "state": _state_without_learn(state),
         "files": files,
     }
@@ -150,14 +159,19 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for pattern in patterns:
         unique.setdefault((pattern["source"], pattern["key"]), pattern)
-    selected = list(unique.values())[:PATTERN_CAP]
+    undrafted = [
+        pattern for pattern in unique.values()
+        if _artifact_path(workdir, pattern["key"]) is None
+    ]
+    selected = undrafted[:PATTERN_CAP]
     details = {
         "procedural_candidates": len(procedural),
         "retro_patterns": len(retro.get("patterns", [])),
         "learning_proposals": len(converted.get("proposals", [])),
         "enforcement_specs": len(converted.get("enforcement_specs", [])),
         "selected": len(selected),
-        "skipped_by_cap": max(0, len(unique) - len(selected)),
+        "drafted_skipped": len(unique) - len(undrafted),
+        "skipped_by_cap": max(0, len(undrafted) - len(selected)),
     }
     return selected, details
 
@@ -254,7 +268,8 @@ def _learn_line(outcome: str, runs_count: int, pattern_count: int, orders: list[
     if status == "error":
         return "Learn: error — inspect receipt"
     if outcome == "accruing":
-        return f"Learn: accruing ({runs_count}/3 runs)"
+        suffix = "; miner pending" if status == "pending" else ""
+        return f"Learn: accruing ({runs_count}/3 runs){suffix}"
     if outcome == "deferred":
         return f"Learn: deferred — {defer_reason}"
     pending = [order for order in orders if order.get("status") == "pending"]
@@ -286,6 +301,7 @@ def run(
     source: str,
     defer_reason: str = "",
     budget_action: str = "",
+    accrue: bool = True,
 ) -> dict[str, Any]:
     """Run deterministic Learn stages and persist one idempotent receipt."""
     root = Path(workdir).expanduser().resolve()
@@ -303,7 +319,14 @@ def run(
         runs = state.get("runs", []) if isinstance(state, dict) else []
         runs = runs if isinstance(runs, list) else []
         current = next((row for row in runs if isinstance(row, dict) and str(row.get("run_id")) == run_id), None)
-        digest = _digest_inputs(root, state if isinstance(state, dict) else {}, run_id, defer_reason)
+        digest = _digest_inputs(
+            root,
+            state if isinstance(state, dict) else {},
+            run_id,
+            defer_reason,
+            source,
+            accrue,
+        )
         if receipt_path.exists():
             existing = _read_json(receipt_path, {})
             if existing.get("input_digest") == digest:
@@ -341,10 +364,13 @@ def run(
 
         runs_count = len(runs)
         outcome = "deferred" if defer_reason else ("accruing" if runs_count < 3 else "full")
-        if outcome == "accruing":
+        accrue_pending = outcome == "accruing" and not accrue
+        if outcome == "accruing" and accrue:
             stages["accrue"], error = _run_stage("accrue", lambda: learn_accruing.fire(root))
             if error:
                 errors.append(error)
+        elif accrue_pending:
+            stages["accrue"] = {"status": "pending", "reason": "stop-hook-latency-boundary"}
         else:
             stages["accrue"] = {"status": "skipped", "reason": outcome}
 
@@ -372,7 +398,9 @@ def run(
         else:
             stages["sample_sweep"] = {"status": "skipped", "reason": outcome}
 
-        status = "error" if errors else ("awaiting_agents" if work_orders else "complete")
+        status = "error" if errors else (
+            "awaiting_agents" if work_orders else ("pending" if accrue_pending else "complete")
+        )
         receipt: dict[str, Any] = {
             "schema": SCHEMA,
             "run_id": run_id,
@@ -386,6 +414,7 @@ def run(
             "stages": stages,
             "work_orders": work_orders,
             "errors": errors,
+            "pending_actions": (["rerun Learn outside the Stop hook to fire the accruing miner"] if accrue_pending else []),
             "already": False,
         }
         receipt["learn_line"] = _learn_line(

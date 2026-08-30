@@ -87,6 +87,29 @@ def test_repeated_unchanged_run_is_idempotent(tmp_path: Path, monkeypatch: pytes
     ]
 
 
+def test_stop_latency_boundary_can_be_completed_by_manual_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = _write_state(tmp_path, 2)
+    runner = _runner()
+    calls = 0
+
+    def fire(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {"fired": True, "candidates": 0}
+
+    monkeypatch.setattr(runner.learn_accruing, "fire", fire)
+    stop_receipt = runner.run(tmp_path, run_id=run_id, source="stop", accrue=False)
+    manual_receipt = runner.run(tmp_path, run_id=run_id, source="manual")
+
+    assert stop_receipt["status"] == "pending"
+    assert stop_receipt["stages"]["accrue"]["status"] == "pending"
+    assert manual_receipt["status"] == "complete"
+    assert manual_receipt["already"] is False
+    assert calls == 1
+
+
 def test_repeated_root_cause_emits_architect_work_order(tmp_path: Path) -> None:
     run_id = _write_state(tmp_path, 3, cause="closeout skipped Learn")
     result = _runner().run(tmp_path, run_id=run_id, source="test")

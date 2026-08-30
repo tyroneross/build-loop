@@ -85,7 +85,7 @@ fi
 rm -rf "$P"
 
 # --- 2. no .build-loop/ → silent exit 0 ------------------------------------
-P2="$(mktemp -d /tmp/build-loop-closeout-none.XXXXXX)"
+P2="$(mktemp -d)"
 OUT="$(printf '{"session_id":"x"}' | CLAUDE_PROJECT_DIR="$P2" CLAUDE_PLUGIN_ROOT="$REPO" bash "$HOOK" stop)"
 RC=$?
 if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then
