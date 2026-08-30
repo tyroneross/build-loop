@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "55976ae49f2af93ab39433042ad29a0333b5a9b12434c57913d09024a42efe46"
+    "content_sha256": "8359bf3c14c1d0292d6d7dc4e0586a1beaad76779c306d5883ea2cc49338e470"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-08-29"
         }
       },
       "database-assessor": {
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-23"
+          "date": "2026-08-29"
         }
       },
       "building-with-deepagents": {
@@ -1481,7 +1481,7 @@
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-29"
         }
       },
       "spec-writing": {

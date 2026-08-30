@@ -176,6 +176,14 @@ def _run_context(state: dict[str, Any]) -> dict[str, Any]:
                 raw_status = phase_record.get("status") if isinstance(phase_record, dict) else phase_record
                 if _normalize_explicit_status(raw_status) == "blocked":
                     current_phase = _normalize_phase(phase_id)
+    learn = selected_run.get("learn") if isinstance(selected_run.get("learn"), dict) else {}
+    learn_status = str(learn.get("status") or "").strip().lower()
+    if run_id and learn_status in {"pending", "awaiting_agents"}:
+        status = "active"
+        current_phase = "learn"
+    elif run_id and learn_status == "error":
+        status = "blocked"
+        current_phase = "learn"
     return {
         "execution": execution,
         "latest_run": latest,
@@ -222,6 +230,32 @@ def _phase_projection(context: dict[str, Any], state: dict[str, Any], warnings: 
     if active_count > 1:
         warnings.append("Multiple phases were marked active; the dashboard preserved the recorded states.")
     return result
+
+
+def _learn_receipt(
+    workdir: Path,
+    context: dict[str, Any],
+    warnings: list[str],
+    sources: list[Path],
+) -> dict[str, Any]:
+    run_id = context.get("run_id")
+    if not run_id:
+        return {}
+    selected = context.get("selected_run") if isinstance(context.get("selected_run"), dict) else {}
+    summary = selected.get("learn") if isinstance(selected.get("learn"), dict) else {}
+    relative = summary.get("receipt") or f".build-loop/learn/{run_id}.json"
+    if not isinstance(relative, str) or not relative:
+        return {}
+    receipt = _read_json(workdir, relative, warnings, sources)
+    if receipt is None:
+        return {}
+    if not isinstance(receipt, dict) or receipt.get("schema") != "build-loop.learn-receipt.v1":
+        warnings.append(f"Ignored invalid Learn receipt in {relative}.")
+        return {}
+    if str(receipt.get("run_id") or "") != str(run_id):
+        warnings.append(f"Ignored Learn receipt for another run in {relative}.")
+        return {}
+    return receipt
 
 
 def _task_id(item: Any, fallback: str) -> str:
@@ -422,6 +456,26 @@ def _judge_agents(context: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(agents.values(), key=lambda item: (item["last_seen"], item["name"]), reverse=True)
 
 
+def _learn_agents(receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    agents: list[dict[str, Any]] = []
+    for order in receipt.get("work_orders", []) if isinstance(receipt.get("work_orders"), list) else []:
+        if not isinstance(order, dict) or not order.get("role"):
+            continue
+        role = str(order["role"])
+        agents.append({
+            "name": role,
+            "role": "reviewer" if role == "promotion-reviewer" else "implementer",
+            "status": _normalize_explicit_status(order.get("status")) or "queued",
+            "phase": "learn",
+            "tier": "",
+            "model": "",
+            "last_seen": str(order.get("attested_at") or receipt.get("updated_at") or receipt.get("created_at") or ""),
+            "actions": ["verify" if role == "promotion-reviewer" else "execute"],
+            "source": f"Learn work order · {order.get('source') or 'pattern'}",
+        })
+    return agents
+
+
 def _note_from_record(item: dict[str, Any]) -> str:
     for key in ("note", "comment", "message", "current_task_summary", "blocked_reason"):
         value = item.get(key)
@@ -492,6 +546,21 @@ def _working_notes(
     return sorted(notes, key=lambda item: item["timestamp"], reverse=True)[:MAX_RUN_NOTES]
 
 
+def _learn_notes(receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    notes: list[dict[str, Any]] = []
+    for item in receipt.get("comments", []) if isinstance(receipt.get("comments"), list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
+            continue
+        notes.append({
+            "text": item["text"].strip()[:800],
+            "author": str(item.get("source") or "Learn"),
+            "phase": "learn",
+            "timestamp": str(item.get("at") or ""),
+            "source": "Learn receipt",
+        })
+    return notes
+
+
 def _goal_text(workdir: Path, state: dict[str, Any], context: dict[str, Any], warnings: list[str], sources: list[Path]) -> str:
     intent = state.get("intent") if isinstance(state.get("intent"), dict) else {}
     for value in (
@@ -531,15 +600,22 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     state = raw_state if isinstance(raw_state, dict) else {}
     context = _run_context(state)
     phases = _phase_projection(context, state, warnings)
+    learn_receipt = _learn_receipt(root, context, warnings, sources)
     tasks = _structured_tasks(state, context) if context["active"] else []
     if context["active"]:
         planned = _plan_tasks(root, warnings, sources, fallback=not tasks)
         tasks = _enrich_task_titles(tasks, planned) if tasks else planned
     ledger_rows = _read_ledger(root, warnings, sources)
     agents = _agents_from_ledger(ledger_rows, context["run_id"])
-    if not agents:
-        agents = _judge_agents(context)
-    notes = _working_notes(root, context, warnings, sources)
+    known_agents = {(item["name"], item["phase"]) for item in agents}
+    for agent in [*_judge_agents(context), *_learn_agents(learn_receipt)]:
+        identity = (agent["name"], agent["phase"])
+        if identity not in known_agents:
+            agents.append(agent)
+            known_agents.add(identity)
+    agents.sort(key=lambda item: (item["last_seen"], item["name"]), reverse=True)
+    notes = [*_working_notes(root, context, warnings, sources), *_learn_notes(learn_receipt)]
+    notes = sorted(notes, key=lambda item: item["timestamp"], reverse=True)[:MAX_RUN_NOTES]
     if context["active"] and not agents:
         warnings.append("No agent invocation records exist for this run yet.")
 

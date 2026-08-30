@@ -202,6 +202,73 @@ def test_completed_run_does_not_show_plan_tasks_as_pending(tmp_path: Path) -> No
     assert result["tasks"] == []
 
 
+def test_pending_learn_receipt_projects_phase_agents_and_comments(tmp_path: Path) -> None:
+    receipt_path = tmp_path / ".build-loop/learn/run-learn.json"
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "learn": {
+                "status": "awaiting_agents",
+                "receipt": ".build-loop/learn/run-learn.json",
+            },
+        }],
+    })
+    _write_json(receipt_path, {
+        "schema": "build-loop.learn-receipt.v1",
+        "run_id": "run-learn",
+        "status": "awaiting_agents",
+        "created_at": "2026-08-30T01:00:00Z",
+        "work_orders": [
+            {"role": "self-improvement-architect", "status": "pending", "source": "procedural"},
+            {"role": "promotion-reviewer", "status": "complete", "source": "sample-sweep", "attested_at": "2026-08-30T01:02:00Z"},
+        ],
+        "comments": [{"at": "2026-08-30T01:01:00Z", "source": "manual", "text": "Review the recurring retry."}],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "active"
+    assert result["current_phase"] == "learn"
+    assert [phase["status"] for phase in result["phases"]] == [
+        "complete", "complete", "complete", "complete", "complete", "active",
+    ]
+    assert [(agent["name"], agent["status"], agent["phase"]) for agent in result["agents"]] == [
+        ("promotion-reviewer", "complete", "learn"),
+        ("self-improvement-architect", "pending", "learn"),
+    ]
+    assert result["notes"][0]["text"] == "Review the recurring retry."
+    assert result["notes"][0]["source"] == "Learn receipt"
+    assert ".build-loop/learn/run-learn.json" in result["sources"]
+
+
+def test_invalid_learn_receipt_does_not_claim_agent_activity(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "learn": {"status": "complete", "receipt": ".build-loop/learn/run-learn.json"},
+        }],
+    })
+    _write_json(tmp_path / ".build-loop/learn/run-learn.json", {
+        "schema": "wrong",
+        "run_id": "run-learn",
+        "work_orders": [{"role": "invented-agent", "status": "complete"}],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["agents"] == []
+    assert any("invalid Learn receipt" in warning for warning in result["warnings"])
+
+
 def test_failed_run_identifies_the_blocked_phase(tmp_path: Path) -> None:
     _write_json(tmp_path / ".build-loop/state.json", {
         "active": False,
