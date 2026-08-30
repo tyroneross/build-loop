@@ -561,6 +561,11 @@ def _project_to_rally(
             backend=backend,
             transport=transport,
             revision=revision,
+            reason=(
+                str(post_outcome["reason"])
+                if post_outcome.get("reason") is not None
+                else None
+            ),
             event_id=(
                 str(post_outcome["event_id"])
                 if post_outcome.get("event_id") is not None

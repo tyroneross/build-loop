@@ -43,6 +43,7 @@ Fire-and-forget like the underlying primitives. Errors are swallowed
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -254,6 +255,9 @@ def post(
                             backend="rally",
                             transport="rally-cli",
                             revision=native_result.revision,
+                            # A successful post is exactly where a kind demotion
+                            # happens, so the reason must survive the success arm.
+                            reason=native_result.reason,
                         )
                         if outcome is not None and native_result.event_id:
                             outcome["event_id"] = native_result.event_id
@@ -499,8 +503,15 @@ def _post_via_repo_local_rally(
             is_synthetic_service_tool,
         )
         from payload_codec import encode_event, has_oversize_marker  # type: ignore
-    workdir = context.workdir
-    native_kind = _native_kind(kind)
+    # Legacy and test envelopes may omit ``raw``; an unknown binary just means
+    # the gate fails open to the static mapping, never a crash on this path.
+    raw_envelope = getattr(context.envelope, "raw", None)
+    binary_value = (
+        raw_envelope.get("rally_binary") if isinstance(raw_envelope, dict) else None
+    )
+    native_kind, degraded_reason = _negotiated_native_kind(
+        kind, str(binary_value) if binary_value else None
+    )
     subject = _bounded_text(_native_subject(kind, payload), 512)
     cmd = [
         "say",
@@ -581,10 +592,46 @@ def _post_via_repo_local_rally(
                 backend="rally",
                 transport="rally-cli",
             )
-    return result
+    return _with_degradation_reason(result, degraded_reason)
 
 
-def _native_kind(kind: str) -> str:
+def _with_degradation_reason(result: Any, degraded_reason: str | None) -> Any:
+    """Record a kind demotion on the result so it is never silent."""
+    if not degraded_reason:
+        return result
+    merged = (
+        f"{result.reason}; {degraded_reason}" if result.reason else degraded_reason
+    )
+    return dataclasses.replace(result, reason=merged)
+
+
+def _native_kind(kind: str, binary: str | None = None) -> str:
+    """Map a build-loop kind onto rally's native positional.
+
+    ``binary`` is the resolved ``rally`` path. When given, the static mapping
+    below is gated against the vocabulary that binary actually accepts, so a
+    kind build-loop learned before the installed binary did degrades instead of
+    being rejected at the wire. ``binary=None`` (the local fact.v1 fallback path,
+    which shells out to nothing) preserves the static mapping verbatim.
+    """
+    return _negotiated_native_kind(kind, binary)[0]
+
+
+def _negotiated_native_kind(
+    kind: str, binary: str | None = None
+) -> tuple[str, str | None]:
+    """Return ``(native_kind, degraded_reason)`` — see ``_native_kind``."""
+    native = _static_native_kind(kind)
+    if not binary:
+        return native, None
+    try:  # package import
+        from . import kind_capability
+    except ImportError:  # script import
+        import kind_capability  # type: ignore
+    return kind_capability.negotiate_kind(native, binary)
+
+
+def _static_native_kind(kind: str) -> str:
     supported = {
         "claim",
         "release",

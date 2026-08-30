@@ -77,6 +77,16 @@ class NativeRallyBridgeTests(unittest.TestCase):
             "        'worktree': repo, 'cwd': repo, 'build_id': 'test-native',\n"
             "        'host_runtime': {'ambiguous': bool(os.environ.get('FAKE_RALLY_AMBIGUOUS'))}}}}))\n"
             "    raise SystemExit(0)\n"
+            # Real rally prints its fact-kind vocabulary here; the capability
+            # gate probes it before every native post. Answer it (and do NOT
+            # log it as a call) so the fake stays faithful to the real surface.
+            "if args[:2] == ['say', '--help']:\n"
+            "    print('Available positional items:')\n"
+            "    print('    KIND   fact kind to post; one of: claim, claim.expired,')\n"
+            "    print('           release, blocker, resolve, decision, artifact,')\n"
+            "    print('           handoff, risk, lesson, session, wake, presence,')\n"
+            "    print('           read, backlog-item, receipt, standby, mission')\n"
+            "    raise SystemExit(0)\n"
             "if len(args) >= 2 and args[0] == 'say':\n"
             "    if os.environ.get('FAKE_RALLY_SAY_FAIL'):\n"
             "        print(json.dumps({'ok': False, 'product': 'rally'}))\n"

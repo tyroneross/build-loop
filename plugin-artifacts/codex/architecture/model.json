@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7c280509d761e41fc460353ad44eb282181fdb64590d17645bbad6398cc57f07"
+    "content_sha256": "d5205849c734169cafaa7bc6aa79535f191246164394157e7f88aaf2856ff642"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1774,6 +1774,7 @@
       "scripts/rally_point/inbox.py": "Targeted Rally Point inbox helpers.",
       "scripts/rally_point/inject_readiness.py": "Pane-backend readiness probe for Rally inject.",
       "scripts/rally_point/install_git_hook.py": "Idempotent installer for the Rally Point git hooks.",
+      "scripts/rally_point/kind_capability.py": "Probe which fact kinds the resolved ``rally`` binary actually accepts.",
       "scripts/rally_point/leadership.py": "Rally Point leadership lease (G1).",
       "scripts/rally_point/lifecycle.py": "Rally Point channel lifecycle hygiene.",
       "scripts/rally_point/liveness.py": "In-process ADAPTIVE, MULTI-SIGNAL session-liveness math helper.",

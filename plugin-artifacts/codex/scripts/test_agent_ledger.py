@@ -9,6 +9,7 @@ the CLI surface the orchestrator shells out to.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -1178,6 +1179,98 @@ class AppendReadTests(unittest.TestCase):
             projected_payload = decode_event(evidence)
             self.assertIsNotNone(projected_payload)
             self.assertEqual(projected_payload["payload"]["agent_ledger"], row)
+
+    def _project_with_future_kind(self, run_id: str, *, gate: bool) -> dict:
+        """Append one row while build-loop maps onto a kind rally does not know.
+
+        Simulates the observed 2026-08-30 dogfood failure: build-loop learned a
+        fact kind ahead of the installed binary. ``gate=False`` forces the
+        capability probe to answer "unknown", reproducing the pre-fix behavior
+        against the same real binary.
+        """
+        # Mirror ``agent_ledger._rally_adapter``'s import order exactly. Both
+        # ``scripts.rally_point.post`` and ``rally_point.post`` are importable,
+        # and they are DIFFERENT module objects — patching the one the adapter
+        # did not load makes this test pass vacuously.
+        try:
+            from scripts.rally_point import discovery_bridge, kind_capability
+            from scripts.rally_point import post as post_mod
+        except ImportError:
+            from rally_point import discovery_bridge, kind_capability  # type: ignore
+            from rally_point import post as post_mod  # type: ignore
+
+        row = agent_ledger.build_row(
+            run_id=run_id,
+            agent="cursor",
+            action="verify",
+            model="cursor-agent",
+            status="pass",
+            ts="2026-08-30T00:00:00Z",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            home = root / "home"
+            home.mkdir()
+            repo = root / "ledger-future-kind"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            path = agent_ledger.default_ledger_path(repo)
+
+            patches = [
+                mock.patch.object(
+                    post_mod, "_static_native_kind", return_value="session.closed"
+                )
+            ]
+            if not gate:
+                patches.append(
+                    mock.patch.object(
+                        kind_capability, "supported_kinds", return_value=None
+                    )
+                )
+
+            updates = {"HOME": str(home), "BUILD_LOOP_RALLY_TOOL": f"codex:{run_id}"}
+            with mock.patch.dict(os.environ, updates, clear=False):
+                for key in (
+                    "AGENT_RALLY_BINARY",
+                    "AGENT_RALLY_DISCOVER",
+                    "AGENT_RALLY_APPS_ROOT",
+                    "BUILD_LOOP_APPS_ROOT",
+                    "BUILD_LOOP_BRIDGE_INTERNAL_ONLY",
+                ):
+                    os.environ.pop(key, None)
+                discovery_bridge.clear_cache()
+                kind_capability.clear_cache()
+                with contextlib.ExitStack() as stack:
+                    for patch in patches:
+                        stack.enter_context(patch)
+                    env = agent_ledger.append(path, row, workdir=repo)
+                discovery_bridge.clear_cache()
+                kind_capability.clear_cache()
+
+            # The local append receipt is the authoritative record and must be
+            # readable back off disk no matter what the projection decided.
+            self.assertTrue(env["ok"], env)
+            self.assertIsNone(env["error"], env)
+            self.assertEqual(agent_ledger.read(path), [row])
+            return env
+
+    def test_future_event_kind_is_rejected_without_the_capability_gate(self) -> None:
+        """Pre-fix behavior, reproduced live: the row lands, the projection does not."""
+        env = self._project_with_future_kind("future-kind-ungated", gate=False)
+        self.assertNotEqual(env["projection"]["status"], "projected")
+
+    def test_future_event_kind_projects_through_the_capability_gate(self) -> None:
+        """Post-fix: the unknown kind demotes to artifact and the write lands."""
+        env = self._project_with_future_kind("future-kind-gated", gate=True)
+        projection = env["projection"]
+        self.assertEqual(projection["status"], "projected", projection)
+        self.assertEqual(projection["backend"], "rally")
+        self.assertEqual(projection["transport"], "rally-cli")
+        self.assertIsInstance(projection["revision"], int)
+        # Proves the demotion actually fired rather than the test passing
+        # vacuously because the forced future kind never reached the wire.
+        self.assertIn("session.closed", projection["reason"] or "")
+        self.assertIn("artifact", projection["reason"] or "")
 
 
 class SummarizeTests(unittest.TestCase):
