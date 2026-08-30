@@ -535,6 +535,45 @@ def test_explicit_abandonment_refuses_recent_legacy_activity(tmp_path):
     assert json.loads(state_path.read_text())["execution"] == execution
 
 
+@pytest.mark.parametrize("staleness_minutes", [0, -1])
+def test_explicit_abandonment_rejects_nonpositive_staleness_threshold(tmp_path, staleness_minutes):
+    state_path, _, execution = _write_surviving_legacy_run(
+        tmp_path,
+        merge_to_main=True,
+        outcome="partial",
+    )
+    before = state_path.read_bytes()
+
+    env = resolve(
+        tmp_path,
+        "",
+        abandon_legacy_crash=execution["build_loop_id"],
+        staleness_minutes=staleness_minutes,
+    )
+
+    assert env["decision"] == "abort"
+    assert "positive integer" in env["reason"]
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("staleness_minutes", ["0", "-1"])
+def test_cli_rejects_nonpositive_staleness_threshold(tmp_path, staleness_minutes):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "resume_resolver.py"),
+            "--workdir", str(tmp_path),
+            "--staleness-minutes", staleness_minutes,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "must be a positive integer" in result.stderr
+
+
 def test_stop_hook_cannot_restore_execution_after_abandonment(tmp_path, monkeypatch):
     state_path, _, execution = _write_surviving_legacy_run(
         tmp_path,

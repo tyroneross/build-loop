@@ -888,6 +888,17 @@ def resolve(
     current_session_id: str | None = None,
 ) -> dict:
     """Top-level resolver. Returns the decision envelope (see module docstring)."""
+    if isinstance(staleness_minutes, bool) or staleness_minutes < 1:
+        return {
+            "decision": "abort",
+            "reason": "staleness_minutes must be a positive integer",
+            "run_id": None,
+            "remaining_chunks": [],
+            "iterate_attempt": 0,
+            "concurrent_modifications": [],
+            "execution_block": None,
+            "envelopes": {},
+        }
     now = now or datetime.now(timezone.utc)
     try:
         state = _load_state(workdir)
@@ -1157,11 +1168,18 @@ def _resolve_budget_on_resume(execution: dict) -> dict | None:
     }
 
 
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Resume resolver for /build-loop:run --resume (M3).")
     p.add_argument("--workdir", required=True)
     p.add_argument("--resume-arg", default="", help="Literal run_id, 'latest', or '' for no-resume staleness check")
-    p.add_argument("--staleness-minutes", type=int, default=5)
+    p.add_argument("--staleness-minutes", type=_positive_int, default=5)
     p.add_argument(
         "--current-session-id",
         help="Explicit host session id; an exact match continues, never replaces, its execution",
