@@ -86,13 +86,29 @@ Add a repository retention policy when isolation creates named build roots: nami
 
 ## Structurally clean a polluted data store
 
-The same discipline governs a polluted append-only data store — a log, telemetry corpus, cache, or generated dataset — not just build artifacts. Removing bad records by matching known-bad content is whack-a-mole: it misses the next unknown pollutant and invites repeated "it's clean now" claims that are each wrong (observed: five marker-based passes on one telemetry log, each declared done, each missing more).
+The same discipline governs a polluted append-only data store — a log, telemetry corpus, cache, generated dataset, **or a documentation tree an agent writes into** — not just build artifacts. Removing bad records by matching known-bad content is whack-a-mole: it misses the next unknown pollutant and invites repeated "it's clean now" claims that are each wrong (observed: five marker-based passes on one telemetry log, each declared done, each missing more).
 
 1. **Derive one structural signal before deleting anything.** Separate polluted from legitimate by *shape*, not content: a provenance field, an impossible/out-of-registry value, or a context field legitimate data never carries (a `tmp*` temp-dir path, a test-harness cwd, a missing "written by the real path" stamp). A content denylist is acceptable only for a one-time sweep of *known-historical* strings, never as the permanent detector.
 2. **Classify every record, then prove completeness by re-scan.** Cleanup is done when a full re-scan returns zero suspects — never when the known-bad rows are gone. Eyeballing the tail is how residue survives.
 3. **Move, never delete.** Quarantine suspects to a sibling archive (`*.quarantined.*`) plus one full pre-clean snapshot, so every removed record is recoverable.
 4. **Fix the writer, not just the data.** Re-pollution recurs until the source is closed. Add a provenance invariant — *only the production path may write here* (e.g. a live-hook flag; test/ad-hoc writers are suppressed) — and an integrity gate that fails loudly at the earliest boundary (pre-commit/CI) so a regression is caught the next commit, not weeks later. Pair it with an analysis-time quarantine so a consumer never silently computes on corrupted data.
 5. **Never report the store "clean" while any record is unclassified** — the same rule as unclassified repo state below.
+
+**A documentation tree is one of these stores.** The word "data" reads as logs and
+telemetry, so a `docs/` tree full of agent-written plans, RCAs, retrospectives, and
+session handoffs does not look like a polluted store on a careful read — and that
+misread is exactly how one survives. Apply the test by shape, not by name: *does an
+automated writer append here faster than a human curates it?* If yes, it is this
+kind of store, and step 4 binds.
+
+Worked case (build-loop, 2026-08-28): a documentation-boundary audit found 122 of 716
+tracked documents were private working material in a public tree. Draining them was
+proposed as a file-archiving pass. But `skills/spec-writing/SKILL.md` instructed every
+run to write its plan into `docs/plans/` and commit it, so 13 of the 122 regenerated on
+the next run. **The archiving pass would have made room, not progress.** Closing the
+writer — plans now go to the gitignored `.build-loop/plans/` — was the step that had to
+come first; `scripts/doc_boundary.py` is the integrity gate that catches a regression at
+the next commit.
 
 ## Evolve work safely
 

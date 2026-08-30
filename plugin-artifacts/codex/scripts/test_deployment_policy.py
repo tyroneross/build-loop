@@ -380,3 +380,45 @@ class DeployLikeRecognizerTests(unittest.TestCase):
         """Widening the scan trigger must NOT widen the confirmation prompt."""
         self.assertEqual(classify_command("wrangler deploy")[0], "unknown")
         self.assertEqual(classify_command("railway up")[0], "unknown")
+
+
+class HeredocBodyIsNotACommandTests(unittest.TestCase):
+    """A heredoc body is data the command writes, not a command the shell runs.
+
+    Regression for 2026-08-28: writing a session handoff into a scratchpad with
+    `cat > file <<'EOF' ... EOF` tripped the pre-deploy security gate, because
+    is_deploy_like() tokenized the DOCUMENT and found "npm run deploy" inside
+    the prose. The gate then blocked on an unrelated HIGH in an unrelated
+    untracked file. A gate that fires on unrelated actions teaches people to
+    set BUILD_LOOP_HOOKS=off, which is worse than no gate.
+    """
+
+    def test_document_mentioning_a_deploy_is_not_a_deploy(self):
+        for body in (
+            "We should npm run deploy later.",
+            "Do not bypass the gate before you vercel deploy --prod.",
+            "Step 3: wrangler deploy",
+        ):
+            cmd = "cat > /tmp/notes.md <<'EOF'\n" + body + "\nEOF\n"
+            with self.subTest(body=body):
+                self.assertFalse(
+                    is_deploy_like(cmd),
+                    "writing a document that MENTIONS a deploy is not a deploy",
+                )
+
+    def test_unquoted_and_indented_heredocs_are_stripped_too(self):
+        self.assertFalse(is_deploy_like("cat > /tmp/n <<EOF\nnpm run deploy\nEOF\n"))
+        self.assertFalse(is_deploy_like("cat > /tmp/n <<-EOF\n\tnpm run deploy\n\tEOF\n"))
+
+    def test_deploy_THROUGH_a_heredoc_still_gates(self):
+        """The introducing line survives, so a real heredoc deploy is caught."""
+        self.assertTrue(is_deploy_like("kubectl apply -f - <<EOF\napiVersion: v1\nEOF\n"))
+
+    def test_deploy_AFTER_a_heredoc_still_gates(self):
+        """The stripper must consume the body only — never the commands after it."""
+        cmd = "cat > /tmp/x <<'EOF'\nhello\nEOF\nvercel deploy --prod"
+        self.assertTrue(is_deploy_like(cmd))
+
+    def test_unterminated_heredoc_does_not_leak_the_body(self):
+        cmd = "cat > /tmp/x <<'EOF'\nnpm run deploy\n"
+        self.assertFalse(is_deploy_like(cmd))

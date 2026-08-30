@@ -986,6 +986,7 @@ def audit(
     compare_ref: str = "HEAD",
 ) -> dict[str, Any]:
     root = resolve_root(repo)
+    scan_head_start = run_git(root, "rev-parse", "HEAD", check=False).stdout.strip() or None
     base_exists = ref_exists(root, base)
     worktrees = parse_worktrees(root)
     branches = branch_inventory(root, base, worktrees) if base_exists else []
@@ -1007,7 +1008,7 @@ def audit(
         if branch["name"] != base and branch.get("merged_into_base", False)
     ]
     report: dict[str, Any] = {
-        "schema_version": 4,
+        "schema_version": 5,
         "repo_root": str(root),
         "base": base,
         "base_exists": base_exists,
@@ -1048,6 +1049,12 @@ def audit(
             compare_ref,
             compare_prefix,
         )
+    scan_head_end = run_git(root, "rev-parse", "HEAD", check=False).stdout.strip() or None
+    report["scan_head"] = {
+        "start": scan_head_start,
+        "end": scan_head_end,
+        "moved": bool(scan_head_start and scan_head_end and scan_head_start != scan_head_end),
+    }
     return report
 
 
@@ -1071,6 +1078,14 @@ def render_text(report: dict[str, Any]) -> str:
         f"archive tags: {len(report['archive_tags'])}",
         f"tracked files: {report['structure']['tracked_file_count']}",
     ]
+    scan_head = report.get("scan_head") or {}
+    if scan_head.get("moved"):
+        lines.append(
+            f"HEAD MOVED DURING SCAN: {scan_head['start']} -> {scan_head['end']} "
+            "— every count in this report is a snapshot of a tree that changed under it"
+        )
+    elif scan_head.get("start"):
+        lines.append(f"scan head: {scan_head['start']} (stable)")
     profile = report["profile_signals"]
     lines.extend(
         [

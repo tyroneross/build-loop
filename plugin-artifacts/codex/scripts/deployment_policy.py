@@ -87,6 +87,36 @@ class PolicyError(ValueError):
     """Raised when repo deployment policy config is malformed."""
 
 
+_HEREDOC_RE = re.compile(r"<<-?\s*([\"\']?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def strip_heredoc_bodies(command: str) -> str:
+    """Drop heredoc payloads, keeping the line that introduces them.
+
+    A heredoc body is data the command WRITES, not a command the shell RUNS.
+    Tokenizing it means a document that merely mentions "npm run deploy"
+    classifies as a deploy — which is how writing a handoff note into a
+    scratchpad tripped the pre-deploy security gate on 2026-08-28.
+
+    The introducing line survives, so a command that genuinely ships through a
+    heredoc (``kubectl apply -f - <<EOF``) still classifies on ``kubectl
+    apply``. Only the payload between the delimiters is discarded.
+    """
+    lines = command.splitlines()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        delimiters = [m.group(2) for m in _HEREDOC_RE.finditer(line)]
+        i += 1
+        for delimiter in delimiters:
+            while i < len(lines) and lines[i].strip() != delimiter:
+                i += 1
+            i += 1  # consume the terminator itself
+    return "\n".join(out)
+
+
 def extract_command(raw: str) -> str:
     """Return a shell-like command from raw text or a hook JSON payload."""
     text = raw.strip()
@@ -95,16 +125,16 @@ def extract_command(raw: str) -> str:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return text
+        return strip_heredoc_bodies(text)
     if isinstance(payload, dict):
         for key in ("command", "cmd", "script"):
             value = payload.get(key)
             if isinstance(value, str):
-                return value
+                return strip_heredoc_bodies(value)
         return " ".join(_string_values(payload))
     if isinstance(payload, str):
-        return payload
-    return text
+        return strip_heredoc_bodies(payload)
+    return strip_heredoc_bodies(text)
 
 
 def _string_values(value: Any) -> list[str]:

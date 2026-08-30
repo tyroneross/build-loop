@@ -312,7 +312,7 @@ class AuditRepoMaintenanceTests(unittest.TestCase):
         report = MODULE.audit(self.repo)
         profile = report["profile_signals"]
 
-        self.assertEqual(report["schema_version"], 4)
+        self.assertEqual(report["schema_version"], 5)
         self.assertEqual(profile["source_ref"], "main")
         self.assertTrue(
             {"Swift", "Rust"}.issubset({item["name"] for item in profile["languages"]})
@@ -444,3 +444,63 @@ class AuditRepoMaintenanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScanHeadMovementTests(unittest.TestCase):
+    """A count taken from a tree that moved under the scan is a snapshot, not a fact.
+
+    2026-08-28: an audit of this repo ran while a peer session was committing.
+    HEAD advanced three times mid-scan, so every number the report gave was a
+    blend of three trees, and nothing in the output said so. The reader had no
+    way to know the counts needed re-taking.
+    """
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.repo = Path(self.tempdir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.email", "maintenance@example.test")
+        git(self.repo, "config", "user.name", "Maintenance Test")
+        (self.repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+        git(self.repo, "add", "tracked.txt")
+        git(self.repo, "commit", "-m", "base")
+
+    def test_stable_head_reports_start_equals_end_and_not_moved(self) -> None:
+        report = MODULE.audit(self.repo)
+        scan_head = report["scan_head"]
+        self.assertFalse(scan_head["moved"])
+        self.assertEqual(scan_head["start"], scan_head["end"])
+        self.assertEqual(scan_head["start"], git(self.repo, "rev-parse", "HEAD"))
+
+    def test_a_peer_commit_mid_scan_is_reported_with_both_shas(self) -> None:
+        """Genuinely move HEAD partway through the scan, as a live peer would."""
+        before = git(self.repo, "rev-parse", "HEAD")
+        real_tracked_structure = MODULE.tracked_structure
+
+        def commit_then_delegate(root, *args, **kwargs):
+            # simulate the peer session landing a commit mid-audit
+            (self.repo / "peer.txt").write_text("peer wrote this\n", encoding="utf-8")
+            git(self.repo, "add", "peer.txt")
+            git(self.repo, "commit", "-m", "peer commit during scan")
+            return real_tracked_structure(root, *args, **kwargs)
+
+        with mock.patch.object(MODULE, "tracked_structure", commit_then_delegate):
+            report = MODULE.audit(self.repo)
+
+        after = git(self.repo, "rev-parse", "HEAD")
+        self.assertNotEqual(before, after, "fixture failed to move HEAD")
+
+        scan_head = report["scan_head"]
+        self.assertTrue(scan_head["moved"], "a mid-scan commit must be reported")
+        self.assertEqual(scan_head["start"], before)
+        self.assertEqual(scan_head["end"], after)
+
+    def test_text_render_names_both_shas_when_head_moved(self) -> None:
+        report = MODULE.audit(self.repo)
+        report["scan_head"] = {"start": "aaaa111", "end": "bbbb222", "moved": True}
+        text = MODULE.render_text(report)
+        self.assertIn("HEAD MOVED DURING SCAN", text)
+        self.assertIn("aaaa111", text)
+        self.assertIn("bbbb222", text)
