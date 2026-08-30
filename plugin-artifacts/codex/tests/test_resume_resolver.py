@@ -581,6 +581,7 @@ def test_stop_hook_rechecks_state_after_waiting_for_lock(tmp_path, monkeypatch):
         "execution": {"build_loop_id": "active-run", "phase": "execute"},
     }))
     stop_lock_attempted = threading.Event()
+    stop_lock_acquired = threading.Event()
     real_locked_file = state_finalize.LockedFile
     results = {}
 
@@ -590,12 +591,15 @@ def test_stop_hook_rechecks_state_after_waiting_for_lock(tmp_path, monkeypatch):
 
         def __enter__(self):
             stop_lock_attempted.set()
-            return self._inner.__enter__()
+            value = self._inner.__enter__()
+            stop_lock_acquired.set()
+            return value
 
         def __exit__(self, *args):
             return self._inner.__exit__(*args)
 
     monkeypatch.setattr(state_finalize, "LockedFile", SignalingLockedFile)
+    monkeypatch.setattr(state_finalize, "LOCK_TIMEOUT_S", 2)
 
     with real_locked_file(state_path):
         stop_thread = threading.Thread(
@@ -607,6 +611,7 @@ def test_stop_hook_rechecks_state_after_waiting_for_lock(tmp_path, monkeypatch):
             state_path,
             (json.dumps({"execution": {}}) + "\n").encode("utf-8"),
         )
+    assert stop_lock_acquired.wait(timeout=2)
     stop_thread.join(timeout=2)
 
     state = json.loads(state_path.read_text())
