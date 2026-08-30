@@ -458,7 +458,11 @@ def is_deploy_like(raw_command: str) -> bool:
     if not command.strip():
         return False
 
-    for segment in re.split(r"&&|\|\||[;|&]", command):
+    # A newline separates commands as surely as ";" does. Without it a whole
+    # multi-line script collapses into ONE segment, so leader-anchored
+    # classification only ever judges the FIRST line and every command below it
+    # goes unclassified -- a deploy on line 2 is missed entirely.
+    for segment in re.split(r"&&|\|\||[;|&\r\n]", command):
         tokens = [t.lower() for t in _split(segment)]
         if not tokens:
             continue

@@ -422,3 +422,42 @@ class HeredocBodyIsNotACommandTests(unittest.TestCase):
     def test_unterminated_heredoc_does_not_leak_the_body(self):
         cmd = "cat > /tmp/x <<'EOF'\nnpm run deploy\n"
         self.assertFalse(is_deploy_like(cmd))
+
+
+class NewlineSeparatesCommandsTests(unittest.TestCase):
+    """A newline separates commands as surely as ";" does.
+
+    The segment splitter handled &&, ||, ;, | and & but not the newline, so a
+    multi-line script collapsed into ONE segment. That was harmless while
+    is_deploy_like() asked whether ANY token anywhere was a deploy tool. Once
+    classification anchored on the segment's LEADER (a499123a, correctly — a
+    tool named in a grep pattern is not an invocation), only the first line of
+    any multi-line command was ever judged, and a deploy on line 2 went
+    unscanned. Found by test_deploy_AFTER_a_heredoc_still_gates failing on the
+    merge of the two fixes.
+    """
+
+    def test_a_deploy_on_a_later_line_still_gates(self):
+        for cmd in (
+            "echo starting\nvercel deploy --prod",
+            "cd app\nwrangler deploy",
+            "# prepare the release\ngh release create v1.2.3",
+            "npm run build\nnpm test\nflyctl deploy",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    is_deploy_like(cmd),
+                    "a deploy below the first line must still trigger the scan",
+                )
+
+    def test_carriage_returns_separate_too(self):
+        self.assertTrue(is_deploy_like("echo hi\r\nvercel deploy --prod"))
+
+    def test_multi_line_read_only_work_is_still_quiet(self):
+        for cmd in (
+            "cd repo\ngit status",
+            "echo checking\ngrep -rn 'vercel deploy' .github/",
+            "cat > /tmp/n.md <<'EOF'\nnpm run deploy\nEOF",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(is_deploy_like(cmd))
