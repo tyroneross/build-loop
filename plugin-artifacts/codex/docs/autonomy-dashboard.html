@@ -215,7 +215,7 @@
 
       <details id="run-details" class="run-disclosure">
         <summary class="disclosure-head">
-          <div class="disclosure-copy"><strong>Run details</strong><span id="detail-summary">Phase outputs, tasks, agents, and notes.</span></div>
+          <div class="disclosure-copy"><strong>Run details</strong><span id="detail-summary">Phase outputs, tasks, agent work, and notes.</span></div>
           <span class="disclosure-label"><span class="when-closed">Show details</span><span class="when-open">Hide details</span></span>
         </summary>
         <div class="detail-body">
@@ -232,6 +232,10 @@
               <h2 id="agents-title">Agents invoked</h2>
               <ul id="agent-list" class="record-list"></ul>
             </div>
+          </section>
+          <section class="detail-section" aria-labelledby="work-orders-title">
+            <h2 id="work-orders-title">Learn work orders</h2>
+            <ul id="work-order-list" class="record-list"></ul>
           </section>
           <section class="detail-section" aria-labelledby="notes-title">
             <h2 id="notes-title">Run notes</h2>
@@ -269,6 +273,7 @@
     const phaseOutputList = document.querySelector('#phase-output-list');
     const taskList = document.querySelector('#task-list');
     const agentList = document.querySelector('#agent-list');
+    const workOrderList = document.querySelector('#work-order-list');
     const noteList = document.querySelector('#note-list');
     const timers = new Map();
     let state = { gaps: [], responses: {}, run: null };
@@ -339,6 +344,7 @@
       document.querySelector('#detail-summary').textContent = [
         countLabel(run.metrics.tasks_total, 'task'),
         countLabel(run.metrics.agents_invoked, 'agent'),
+        countLabel(run.metrics.work_orders_pending, 'pending Learn order'),
         countLabel(run.notes.length, 'note'),
       ].join(' · ');
 
@@ -378,6 +384,17 @@
         const details = [agent.role, agent.phase ? `phase ${agent.phase}` : '', agent.tier ? `tier ${agent.tier}` : '', agent.model ? `model ${agent.model}` : '', agent.source].filter(Boolean).join(' · ');
         item.append(node('span', { className: 'record-meta' }, details));
         agentList.append(item);
+      });
+
+      workOrderList.replaceChildren();
+      if (!run.work_orders.length) emptyRecord(workOrderList, 'No Learn work orders are recorded.');
+      run.work_orders.forEach(order => {
+        const item = node('li', { className: 'record-row' });
+        item.append(node('span', { className: 'record-title' }, order.role));
+        item.append(node('span', { className: 'record-status' }, statusLabel(order.status)));
+        const details = [order.pattern ? `Pattern: ${order.pattern}` : '', `Source: ${order.source}`].filter(Boolean).join(' · ');
+        item.append(node('span', { className: 'record-meta' }, details));
+        workOrderList.append(item);
       });
 
       noteList.replaceChildren();
@@ -589,7 +606,7 @@
       }
     }
     load();
-    setInterval(refreshRun, 2000);
+    setInterval(refreshRun, 5000);
   </script>
 </body>
 </html>

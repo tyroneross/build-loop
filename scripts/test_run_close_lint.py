@@ -168,6 +168,32 @@ class RunCloseLintTest(unittest.TestCase):
         self.assertEqual(result["status"], "recorded")
         self.assertTrue(result["learn_complete"])
 
+    def test_require_learn_refuses_run_id_path_escape(self) -> None:
+        run = _orchestrator_run("../escape")
+        run["learn"] = {
+            "schema": "build-loop.learn-receipt.v1",
+            "status": "complete",
+            "receipt": ".build-loop/learn/../escape.json",
+        }
+        self._write_state({"runs": [run]})
+        escaped = self.workdir / ".build-loop" / "escape.json"
+        escaped.write_text(
+            json.dumps({
+                "schema": "build-loop.learn-receipt.v1",
+                "run_id": "../escape",
+                "status": "complete",
+            }),
+            encoding="utf-8",
+        )
+
+        result = run_close_lint.check(
+            self.workdir, run_id="../escape", require_learn=True, now=NOW
+        )
+
+        self.assertEqual(result["status"], "learn_missing")
+        self.assertIn("escapes", result["reason"])
+        self.assertNotIn('"../escape"', result["remediation"])
+
     # ---- evidence-mode precedence -------------------------------------------
 
     def test_execution_run_id_is_the_fallback_identity(self) -> None:

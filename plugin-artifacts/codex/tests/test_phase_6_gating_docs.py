@@ -34,6 +34,7 @@ DOC_FILES_PHASE_6 = [
     REPO_ROOT / "skills" / "build-loop" / "references" / "phase-6-learn.md",
     REPO_ROOT / "references" / "learn-protocol.md",
     REPO_ROOT / "agents" / "build-orchestrator.md",
+    REPO_ROOT / "skills" / "self-improve" / "SKILL.md",
     REPO_ROOT / "skills" / "build-loop" / "SKILL.md",
     REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "CLAUDE.md",
@@ -45,6 +46,11 @@ GATING_OUTCOMES_FILES = [
     REPO_ROOT / "skills" / "build-loop" / "references" / "phase-6-learn.md",
     REPO_ROOT / "references" / "learn-protocol.md",
     REPO_ROOT / "agents" / "build-orchestrator.md",
+]
+
+RECEIPT_DISPATCH_FILES = [
+    *GATING_OUTCOMES_FILES,
+    REPO_ROOT / "skills" / "self-improve" / "SKILL.md",
 ]
 
 # Manifest files that share a top-level version number.
@@ -86,8 +92,9 @@ def _read(p: Path) -> str:
 # nearby. We scope to the same line to avoid false positives on unrelated
 # "(optional)" occurrences (e.g. mockup-gallery sections, optional config keys).
 _OPTIONAL_PHASE_6 = re.compile(
-    r"^(?=.*\(optional\))(?=.*(?:Phase\s*6|Learn)).*$",
-    re.M,
+    r"(?:Phase\s*6|Learn)[^\n]{0,40}(?<!not )\boptional\b|"
+    r"(?<!not )\boptional\b[^\n]{0,40}(?:Phase\s*6|Learn)",
+    re.I,
 )
 
 
@@ -129,6 +136,23 @@ def test_phase_6_docs_name_the_executable_receipt_boundary(path: Path) -> None:
         f"{path.relative_to(REPO_ROOT)} can describe Phase 6 without naming "
         "the executable runner"
     )
+
+
+@pytest.mark.parametrize("path", RECEIPT_DISPATCH_FILES, ids=lambda p: str(p.relative_to(REPO_ROOT)))
+def test_primary_protocols_dispatch_only_receipt_work_orders(path: Path) -> None:
+    body = _read(path)
+    lower = body.lower()
+    named_boundary = any(phrase in lower for phrase in (
+        "dispatch only roles returned in `work_orders[]`",
+        "dispatch those roles",
+        "dispatch each returned `work_orders[]` role",
+    ))
+    assert "work_orders[]" in body and named_boundary, (
+        f"{path.relative_to(REPO_ROOT)} must make receipt work_orders the agent-dispatch boundary"
+    )
+    assert "Dispatch recurring-pattern-detector" not in body
+    assert "Agent(subagent_type=\"build-loop:architecture-scout\", prompt='task: learn-sync')" not in body
+    assert not re.search(r"recurring-pattern-detector\s*\([^)]*(?:haiku|sonnet|opus)", body, re.I)
 
 
 @pytest.mark.parametrize("path", DOC_FILES_PHASE_6, ids=lambda p: str(p.relative_to(REPO_ROOT)))

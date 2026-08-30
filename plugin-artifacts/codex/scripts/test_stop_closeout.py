@@ -373,6 +373,27 @@ def test_skip_path_releases_when_already_recorded_terminal(tmp_path):
     assert len(st2["runs"]) == 1                      # record untouched
 
 
+def test_already_recorded_path_persists_pending_learn_agent_work(tmp_path, monkeypatch):
+    st = _base_state(phase="done")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "pass", "source": "append_run",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    _write_state(tmp_path, st)
+    monkeypatch.setattr(stop_closeout, "_run_learn", lambda *_args: {
+        "status": "awaiting_agents",
+        "learn_line": "Learn: 1 pattern awaiting draft review",
+        "work_orders": [{"role": "self-improvement-architect", "status": "pending"}],
+    })
+    monkeypatch.setattr(stop_closeout, "_run_gate", lambda *_args: {
+        "verdict": "pass", "summary": "not stakes-gated", "stakes_gated": False,
+    })
+
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+
+    marker = tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md"
+    assert marker.exists()
+    assert "learn_drafting_owed: true" in marker.read_text()
+
+
 def test_skip_path_releases_richer_terminal_record(tmp_path):
     # Audit f3: a Review-G/write_run_entry record (NO source key) with outcome
     # pass must also close identity via the already_recorded arm.
@@ -415,6 +436,24 @@ def test_already_recorded_nonterminal_keeps_identity(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     st2 = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
     assert st2["execution"].get("build_loop_id") == "bl-test-001"
+
+
+def test_already_recorded_nonterminal_does_not_run_terminal_learn_closeout(tmp_path, monkeypatch):
+    st = _base_state(phase="execute")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "partial",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    _write_state(tmp_path, st)
+    calls = []
+    monkeypatch.setattr(stop_closeout, "_run_learn", lambda *_args: calls.append("learn") or {
+        "status": "awaiting_agents",
+        "learn_line": "Learn: work pending",
+    })
+
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+    assert calls == []
+    state = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert state["execution"]["build_loop_id"] == "bl-test-001"
+    assert not (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
 
 
 def test_converge_then_release(tmp_path):

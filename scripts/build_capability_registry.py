@@ -215,7 +215,12 @@ CATEGORY_KEYWORDS = [
                       # already listed above: a gate that decides whether a
                       # surface may ship, not something that ships it.
                       "doc_boundary", "doc boundary",
-                      "documentation boundary")),
+                      "documentation boundary",
+                      # Codex hook registration trust is a validation gate:
+                      # it checks that configured SessionStart/Stop hooks are
+                      # trusted before their output can support a claim.
+                      "codex_hook_trust", "codex hook trust",
+                      "session-start-codex-hook-trust")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",

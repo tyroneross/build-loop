@@ -54,6 +54,7 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
         "tasks_blocked": 0,
         "tasks_total": 3,
         "agents_invoked": 2,
+        "work_orders_pending": 0,
     }
 
 
@@ -238,8 +239,13 @@ def test_pending_learn_receipt_projects_phase_agents_and_comments(tmp_path: Path
     ]
     assert [(agent["name"], agent["status"], agent["phase"]) for agent in result["agents"]] == [
         ("promotion-reviewer", "complete", "learn"),
-        ("self-improvement-architect", "pending", "learn"),
     ]
+    assert result["metrics"]["agents_invoked"] == 1
+    assert [(order["role"], order["status"]) for order in result["work_orders"]] == [
+        ("self-improvement-architect", "pending"),
+        ("promotion-reviewer", "complete"),
+    ]
+    assert result["metrics"]["work_orders_pending"] == 1
     assert result["notes"][0]["text"] == "Review the recurring retry."
     assert result["notes"][0]["source"] == "Learn receipt"
     assert ".build-loop/learn/run-learn.json" in result["sources"]

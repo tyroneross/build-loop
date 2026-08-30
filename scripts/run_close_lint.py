@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -156,10 +157,10 @@ def _execution_run_id(state: dict) -> str | None:
 
 def _remediation(workdir: Path, run_id: str | None) -> str:
     """The exact command that closes the gap."""
-    target = f' --run-id "{run_id}"' if run_id else ""
+    target = f" --run-id {shlex.quote(run_id)}" if run_id else ""
     return (
         'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py"'
-        f' --workdir "{workdir}" --goal "<goal>" --outcome <pass|fail|partial>'
+        f" --workdir {shlex.quote(str(workdir))} --goal \"<goal>\" --outcome <pass|fail|partial>"
         f" --scope build --files-touched-from-git{target}"
         "  # then re-run run_close_lint.py to confirm"
     )
@@ -167,8 +168,9 @@ def _remediation(workdir: Path, run_id: str | None) -> str:
 
 def _learn_remediation(workdir: Path, run_id: str) -> str:
     return (
-        f'cd "{workdir}" && python3 scripts/learn/__main__.py run --workdir "{workdir}" '
-        f'--run-id "{run_id}" --source review-g --json'
+        f"cd {shlex.quote(str(workdir))} && python3 scripts/learn/__main__.py run "
+        f"--workdir {shlex.quote(str(workdir))} --run-id {shlex.quote(run_id)} "
+        "--source review-g --json"
         "  # complete and attest every returned work order, then re-run this lint"
     )
 
@@ -181,7 +183,12 @@ def _learn_complete(workdir: Path, entry: dict[str, Any]) -> tuple[bool, str]:
     expected = f".build-loop/learn/{run_id}.json"
     if summary.get("receipt") != expected:
         return False, f"runs[].learn.receipt must equal {expected!r}"
-    receipt_path = workdir / expected
+    learn_root = (workdir / ".build-loop" / "learn").resolve()
+    receipt_path = (workdir / expected).resolve()
+    try:
+        receipt_path.relative_to(learn_root)
+    except ValueError:
+        return False, "Learn receipt path escapes .build-loop/learn"
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

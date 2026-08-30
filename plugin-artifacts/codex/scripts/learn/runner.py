@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -23,6 +25,14 @@ import procedural_governance  # noqa: E402
 
 SCHEMA = "build-loop.learn-receipt.v1"
 PATTERN_CAP = 2
+RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_JSONL_BYTES = 512 * 1024
+MAX_JSONL_ROWS = 2_000
+MAX_JSONL_FIRST_LINE_BYTES = 64 * 1024
+MAX_DIGEST_FILES = 100
+MAX_DIGEST_DIRS = 200
+MAX_DIGEST_FILE_BYTES = 256 * 1024
 
 
 def _now() -> str:
@@ -32,6 +42,8 @@ def _now() -> str:
 def _read_json(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
+    if path.stat().st_size > MAX_JSON_BYTES:
+        raise ValueError(f"{path} exceeds the {MAX_JSON_BYTES}-byte JSON limit")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -40,6 +52,27 @@ def _write_json(path: Path, value: Any) -> None:
         path,
         (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"),
     )
+
+
+def _validated_run_id(value: str) -> str:
+    run_id = str(value or "").strip()
+    if run_id in {".", ".."} or RUN_ID_RE.fullmatch(run_id) is None:
+        raise ValueError("run_id must be a single 1..128 character identifier")
+    return run_id
+
+
+def _contained_artifact(root: Path, value: str) -> tuple[Path, str]:
+    relative = Path(value)
+    if not value or relative.is_absolute():
+        raise ValueError("artifact must be a repository-relative file path")
+    path = (root / relative).resolve()
+    try:
+        canonical = path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("artifact must stay inside the repository") from exc
+    if not path.is_file():
+        raise ValueError("artifact must name an existing repository file")
+    return path, str(canonical)
 
 
 def _state_without_learn(state: dict[str, Any]) -> dict[str, Any]:
@@ -57,8 +90,14 @@ def _digest_inputs(
     defer_reason: str,
     source: str,
     accrue: bool,
-) -> str:
-    files: dict[str, str] = {}
+) -> tuple[str, dict[str, Any]]:
+    files: dict[str, dict[str, Any]] = {}
+    limits = {
+        "files_read": 0,
+        "truncated_files": [],
+        "skipped_outside": [],
+        "directory_scan_truncated": False,
+    }
     fixed = [
         workdir / ".build-loop" / "config.json",
         workdir / ".build-loop" / "learning-objects.json",
@@ -69,12 +108,31 @@ def _digest_inputs(
     ]
     for path in fixed:
         if path.is_file():
-            files[str(path.relative_to(workdir))] = path.read_text(encoding="utf-8")
+            resolved = path.resolve()
+            try:
+                relative = str(resolved.relative_to(workdir))
+            except ValueError:
+                limits["skipped_outside"].append(str(path.relative_to(workdir)))
+                continue
+            fingerprint = _bounded_fingerprint(resolved, MAX_DIGEST_FILE_BYTES)
+            files[relative] = fingerprint
+            limits["files_read"] += 1
+            if fingerprint["truncated"]:
+                limits["truncated_files"].append(relative)
     for directory in dynamic:
         if directory.is_dir():
-            for path in sorted(directory.rglob("*")):
-                if path.is_file():
-                    files[str(path.relative_to(workdir))] = path.read_text(encoding="utf-8")
+            paths, truncated_scan = _bounded_tree_files(directory, workdir)
+            limits["directory_scan_truncated"] = limits["directory_scan_truncated"] or truncated_scan
+            for path in paths:
+                if limits["files_read"] >= MAX_DIGEST_FILES:
+                    limits["directory_scan_truncated"] = True
+                    break
+                relative = str(path.relative_to(workdir))
+                fingerprint = _bounded_fingerprint(path, MAX_DIGEST_FILE_BYTES)
+                files[relative] = fingerprint
+                limits["files_read"] += 1
+                if fingerprint["truncated"]:
+                    limits["truncated_files"].append(relative)
     payload = {
         "run_id": run_id,
         "defer_reason": defer_reason,
@@ -84,7 +142,46 @@ def _digest_inputs(
         "files": files,
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limits
+
+
+def _bounded_fingerprint(path: Path, max_bytes: int) -> dict[str, Any]:
+    """Fingerprint bounded prefix/tail windows plus size for append safety."""
+    size = path.stat().st_size
+    window = max(1, max_bytes // 2)
+    with path.open("rb") as handle:
+        prefix = handle.read(window if size > max_bytes else max_bytes)
+        tail = b""
+        if size > max_bytes:
+            handle.seek(max(0, size - window))
+            tail = handle.read(window)
+    return {
+        "size": size,
+        "prefix_sha256": hashlib.sha256(prefix).hexdigest(),
+        "tail_sha256": hashlib.sha256(tail).hexdigest() if tail else "",
+        "truncated": size > max_bytes,
+    }
+
+
+def _bounded_tree_files(directory: Path, workdir: Path) -> tuple[list[Path], bool]:
+    paths: list[Path] = []
+    directories_seen = 0
+    for current, dirnames, filenames in os.walk(directory, followlinks=False):
+        directories_seen += 1
+        if directories_seen > MAX_DIGEST_DIRS:
+            return paths, True
+        dirnames[:] = sorted(dirnames)
+        for name in sorted(filenames):
+            path = (Path(current) / name).resolve()
+            try:
+                path.relative_to(workdir)
+            except ValueError:
+                continue
+            if path.is_file():
+                paths.append(path)
+                if len(paths) >= MAX_DIGEST_FILES:
+                    return paths, True
+    return paths, False
 
 
 def _run_stage(name: str, action: Callable[[], Any]) -> tuple[dict[str, Any], str | None]:
@@ -101,11 +198,35 @@ def _run_stage(name: str, action: Callable[[], Any]) -> tuple[dict[str, Any], st
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}, f"{name}: {exc}"
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl(
+    path: Path,
+    truncated_inputs: list[str] | None = None,
+    *,
+    preserve_first: bool = False,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
         return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        first = handle.readline(MAX_JSONL_FIRST_LINE_BYTES + 1) if preserve_first else b""
+        offset = max(0, size - MAX_JSONL_BYTES)
+        handle.seek(offset)
+        raw = handle.read(MAX_JSONL_BYTES)
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    if offset and lines:
+        lines = lines[1:]
+    truncated = bool(offset or len(lines) > MAX_JSONL_ROWS or len(first) > MAX_JSONL_FIRST_LINE_BYTES)
+    if truncated:
+        if truncated_inputs is not None:
+            truncated_inputs.append(str(path))
+    if len(lines) > MAX_JSONL_ROWS:
+        lines = lines[-MAX_JSONL_ROWS:]
+    if preserve_first and first and len(first) <= MAX_JSONL_FIRST_LINE_BYTES and offset:
+        first_line = first.decode("utf-8", errors="replace").rstrip("\r\n")
+        if first_line and (not lines or lines[0] != first_line):
+            lines = [first_line, *lines[-(MAX_JSONL_ROWS - 1):]]
+    for line in lines:
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
@@ -131,14 +252,7 @@ def _work_order(run_id: str, role: str, key: str, source: str, **extra: Any) -> 
     }
 
 
-def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    patterns: list[dict[str, Any]] = []
-    runs = procedural_governance.load_runs(workdir)
-    procedural = _read_jsonl(workdir / ".procedural" / "_candidates.jsonl")
-    for item in procedural:
-        key = str(item.get("name") or procedural_governance.slug(str(item.get("root_cause") or "pattern")))
-        patterns.append({"key": key, "source": "procedural", "role": "self-improvement-architect", "payload": item})
-
+def _recurring_run_patterns(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
     manual_counts: Counter[str] = Counter()
     security_counts: Counter[str] = Counter()
     for run in runs:
@@ -153,6 +267,7 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
                 signature = str(item).strip()
             if signature:
                 security_counts[signature] += 1
+    patterns: list[dict[str, Any]] = []
     for signature, count in manual_counts.items():
         if count >= 2:
             patterns.append({
@@ -169,15 +284,27 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
                 "role": "self-improvement-architect",
                 "payload": {"type": "security_finding", "signature": signature, "count": count},
             })
+    return (
+        patterns,
+        sum(count >= 2 for count in manual_counts.values()),
+        sum(count >= 2 for count in security_counts.values()),
+    )
 
+
+def _retro_patterns(workdir: Path) -> tuple[list[dict[str, Any]], int]:
     retro = enforce_retro_signals.scan(workdir)
+    patterns: list[dict[str, Any]] = []
     for item in retro.get("patterns", []):
         skeleton = item.get("proposal", {}).get("skillSkeleton", {})
         key = str(skeleton.get("name") or procedural_governance.slug(str(item.get("signature") or "pattern")))
         patterns.append({"key": key, "source": "retro", "role": "self-improvement-architect", "payload": item})
+    return patterns, len(retro.get("patterns", []))
 
+
+def _learning_object_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     objects_path = workdir / ".build-loop" / "learning-objects.json"
     converted = {"proposals": [], "enforcement_specs": [], "skipped": [], "summary": {}}
+    patterns: list[dict[str, Any]] = []
     if objects_path.exists():
         raw = _read_json(objects_path, [])
         objects = raw.get("learning_objects", []) if isinstance(raw, dict) else raw
@@ -191,12 +318,21 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
         for item in converted.get("enforcement_specs", []):
             key = f"enforce-{procedural_governance.slug(str(item.get('condition') or 'control'))}"
             patterns.append({"key": key, "source": "enforcement-spec", "role": "implementer", "payload": item})
+    return patterns, converted
 
+
+def _tool_trace_patterns(
+    workdir: Path, truncated_inputs: list[str]
+) -> tuple[list[dict[str, Any]], int]:
     trace_counts: Counter[str] = Counter()
-    for item in _read_jsonl(workdir / ".build-loop" / "telemetry" / "tool-traces.jsonl"):
+    for item in _read_jsonl(
+        workdir / ".build-loop" / "telemetry" / "tool-traces.jsonl",
+        truncated_inputs,
+    ):
         name = str(item.get("tool") or item.get("name") or item.get("operation") or "").strip()
         if name:
             trace_counts[name] += 1
+    patterns: list[dict[str, Any]] = []
     for name, count in trace_counts.items():
         if count >= 3:
             patterns.append({
@@ -205,6 +341,30 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
                 "role": "self-improvement-architect",
                 "payload": {"type": "diagnostic_repeat", "signature": name, "count": count},
             })
+    return patterns, sum(count >= 3 for count in trace_counts.values())
+
+
+def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    truncated_inputs: list[str] = []
+    procedural = _read_jsonl(
+        workdir / ".procedural" / "_candidates.jsonl", truncated_inputs
+    )
+    patterns = [
+        {
+            "key": str(item.get("name") or procedural_governance.slug(str(item.get("root_cause") or "pattern"))),
+            "source": "procedural",
+            "role": "self-improvement-architect",
+            "payload": item,
+        }
+        for item in procedural
+    ]
+    recurring, manual_count, security_count = _recurring_run_patterns(
+        procedural_governance.load_runs(workdir)
+    )
+    retro, retro_count = _retro_patterns(workdir)
+    learning, converted = _learning_object_patterns(workdir)
+    traces, trace_count = _tool_trace_patterns(workdir, truncated_inputs)
+    patterns.extend([*recurring, *retro, *learning, *traces])
 
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for pattern in patterns:
@@ -216,15 +376,16 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
     selected = undrafted[:PATTERN_CAP]
     details = {
         "procedural_candidates": len(procedural),
-        "retro_patterns": len(retro.get("patterns", [])),
+        "retro_patterns": retro_count,
         "learning_proposals": len(converted.get("proposals", [])),
         "enforcement_specs": len(converted.get("enforcement_specs", [])),
-        "manual_patterns": sum(1 for count in manual_counts.values() if count >= 2),
-        "security_patterns": sum(1 for count in security_counts.values() if count >= 2),
-        "tool_trace_patterns": sum(1 for count in trace_counts.values() if count >= 3),
+        "manual_patterns": manual_count,
+        "security_patterns": security_count,
+        "tool_trace_patterns": trace_count,
         "selected": len(selected),
         "drafted_skipped": len(unique) - len(undrafted),
         "skipped_by_cap": max(0, len(undrafted) - len(selected)),
+        "truncated_inputs": sorted(set(truncated_inputs)),
     }
     return selected, details
 
@@ -249,7 +410,10 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
         return orders, result
     for path in sorted(experiments.glob("*.jsonl")):
         result["scanned"] += 1
-        rows = _read_jsonl(path)
+        truncated_inputs: list[str] = []
+        rows = _read_jsonl(path, truncated_inputs, preserve_first=True)
+        if truncated_inputs:
+            result.setdefault("truncated_inputs", []).extend(truncated_inputs)
         created = next((row for row in rows if row.get("event") == "created"), None)
         if not created:
             continue
@@ -374,6 +538,102 @@ def _write_deferred_marker(workdir: Path, run_id: str, reason: str, runs_count: 
     return str(path.relative_to(workdir))
 
 
+def _load_run_context(root: Path, run_id: str) -> tuple[dict[str, Any], list[Any], dict[str, Any] | None, str]:
+    try:
+        state = _read_json(root / ".build-loop" / "state.json", {})
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, [], None, f"state.json: {exc}"
+    if not isinstance(state, dict):
+        return {}, [], None, "state.json must contain an object"
+    runs = state.get("runs", [])
+    runs = runs if isinstance(runs, list) else []
+    current = next(
+        (row for row in runs if isinstance(row, dict) and str(row.get("run_id")) == run_id),
+        None,
+    )
+    return state, runs, current, ""
+
+
+def _run_base_stages(
+    root: Path,
+    run_id: str,
+    current: dict[str, Any] | None,
+    state_error: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    stages: dict[str, Any] = {
+        "record": {"status": "complete" if current else "error", "run_id": run_id}
+    }
+    errors = [state_error] if state_error else []
+    if current is None:
+        errors.append(f"run_id {run_id!r} is absent from .build-loop/state.json.runs[]")
+
+    for name, action in (
+        ("consolidate", lambda: consolidate_memory.main(["--workdir", str(root)])),
+        ("detect", lambda: procedural_governance.detect_patterns(root)),
+    ):
+        stages[name], error = _run_stage(name, action)
+        if error:
+            errors.append(error)
+
+    try:
+        patterns, detection_detail = _collect_patterns(root)
+        stages["collect"] = {"status": "complete", **detection_detail}
+    except Exception as exc:  # noqa: BLE001 - keep the receipt usable on bad inputs
+        patterns = []
+        stages["collect"] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        errors.append(f"collect: {exc}")
+    return patterns, stages, errors
+
+
+def _run_outcome_stages(
+    root: Path,
+    run_id: str,
+    runs_count: int,
+    patterns: list[dict[str, Any]],
+    stages: dict[str, Any],
+    errors: list[str],
+    *,
+    defer_reason: str,
+    budget_action: str,
+    accrue: bool,
+) -> tuple[str, bool, list[dict[str, Any]]]:
+    outcome = "deferred" if defer_reason else ("accruing" if runs_count < 3 else "full")
+    accrue_pending = outcome == "accruing" and not accrue
+    if outcome == "accruing" and accrue:
+        stages["accrue"], error = _run_stage("accrue", lambda: learn_accruing.fire(root))
+        if error:
+            errors.append(error)
+    elif accrue_pending:
+        stages["accrue"] = {"status": "pending", "reason": "stop-hook-latency-boundary"}
+    else:
+        stages["accrue"] = {"status": "skipped", "reason": outcome}
+
+    work_orders: list[dict[str, Any]] = []
+    if outcome == "full" and not errors:
+        work_orders = [
+            _work_order(
+                run_id,
+                pattern["role"],
+                pattern["key"],
+                pattern["source"],
+                pattern=pattern["payload"],
+            )
+            for pattern in patterns
+        ]
+        sample_orders, sample_detail = _sample_sweep(root, run_id)
+        work_orders.extend(sample_orders)
+        stages["sample_sweep"] = {"status": "complete", **sample_detail}
+    elif outcome == "deferred":
+        stages["sample_sweep"] = {"status": "skipped", "reason": defer_reason}
+        stages["deferred_marker"] = {
+            "status": "complete",
+            "path": _write_deferred_marker(root, run_id, defer_reason, runs_count, budget_action),
+        }
+    else:
+        stages["sample_sweep"] = {"status": "skipped", "reason": outcome}
+    return outcome, accrue_pending, work_orders
+
+
 def run(
     workdir: Path | str,
     *,
@@ -386,23 +646,14 @@ def run(
 ) -> dict[str, Any]:
     """Run deterministic Learn stages and persist one idempotent receipt."""
     root = Path(workdir).expanduser().resolve()
-    state_path = root / ".build-loop" / "state.json"
+    run_id = _validated_run_id(run_id)
     receipt_path = root / ".build-loop" / "learn" / f"{run_id}.json"
     runner_lock = root / ".build-loop" / "learn" / ".runner"
     with LockedFile(runner_lock):
-        try:
-            state = _read_json(state_path, {})
-        except (OSError, json.JSONDecodeError) as exc:
-            state = {}
-            state_error = f"state.json: {exc}"
-        else:
-            state_error = ""
-        runs = state.get("runs", []) if isinstance(state, dict) else []
-        runs = runs if isinstance(runs, list) else []
-        current = next((row for row in runs if isinstance(row, dict) and str(row.get("run_id")) == run_id), None)
-        digest = _digest_inputs(
+        state, runs, current, state_error = _load_run_context(root, run_id)
+        digest, input_limits = _digest_inputs(
             root,
-            state if isinstance(state, dict) else {},
+            state,
             run_id,
             defer_reason,
             source,
@@ -421,68 +672,19 @@ def run(
                 existing["reconciled"] = repaired
                 return existing
 
-        stages: dict[str, Any] = {}
-        errors: list[str] = []
-        stages["record"] = {"status": "complete" if current else "error", "run_id": run_id}
-        if state_error:
-            errors.append(state_error)
-        if current is None:
-            errors.append(f"run_id {run_id!r} is absent from .build-loop/state.json.runs[]")
-
-        stages["consolidate"], error = _run_stage(
-            "consolidate", lambda: consolidate_memory.main(["--workdir", str(root)])
-        )
-        if error:
-            errors.append(error)
-        stages["detect"], error = _run_stage(
-            "detect", lambda: procedural_governance.detect_patterns(root)
-        )
-        if error:
-            errors.append(error)
-
-        patterns: list[dict[str, Any]] = []
-        try:
-            patterns, detection_detail = _collect_patterns(root)
-            stages["collect"] = {"status": "complete", **detection_detail}
-        except Exception as exc:  # noqa: BLE001 - keep the receipt usable on bad inputs
-            stages["collect"] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-            errors.append(f"collect: {exc}")
-
+        patterns, stages, errors = _run_base_stages(root, run_id, current, state_error)
         runs_count = len(runs)
-        outcome = "deferred" if defer_reason else ("accruing" if runs_count < 3 else "full")
-        accrue_pending = outcome == "accruing" and not accrue
-        if outcome == "accruing" and accrue:
-            stages["accrue"], error = _run_stage("accrue", lambda: learn_accruing.fire(root))
-            if error:
-                errors.append(error)
-        elif accrue_pending:
-            stages["accrue"] = {"status": "pending", "reason": "stop-hook-latency-boundary"}
-        else:
-            stages["accrue"] = {"status": "skipped", "reason": outcome}
-
-        work_orders: list[dict[str, Any]] = []
-        if outcome == "full" and not errors:
-            work_orders.extend(
-                _work_order(
-                    run_id,
-                    pattern["role"],
-                    pattern["key"],
-                    pattern["source"],
-                    pattern=pattern["payload"],
-                )
-                for pattern in patterns
-            )
-            sample_orders, sample_detail = _sample_sweep(root, run_id)
-            work_orders.extend(sample_orders)
-            stages["sample_sweep"] = {"status": "complete", **sample_detail}
-        elif outcome == "deferred":
-            stages["sample_sweep"] = {"status": "skipped", "reason": defer_reason}
-            stages["deferred_marker"] = {
-                "status": "complete",
-                "path": _write_deferred_marker(root, run_id, defer_reason, runs_count, budget_action),
-            }
-        else:
-            stages["sample_sweep"] = {"status": "skipped", "reason": outcome}
+        outcome, accrue_pending, work_orders = _run_outcome_stages(
+            root,
+            run_id,
+            runs_count,
+            patterns,
+            stages,
+            errors,
+            defer_reason=defer_reason,
+            budget_action=budget_action,
+            accrue=accrue,
+        )
 
         status = "error" if errors else (
             "awaiting_agents" if work_orders else ("pending" if accrue_pending else "complete")
@@ -493,6 +695,7 @@ def run(
             "source": source,
             "created_at": _now(),
             "input_digest": digest,
+            "input_limits": input_limits,
             "outcome": outcome,
             "status": status,
             "runs_count": runs_count,
@@ -528,6 +731,7 @@ def attest(
     if status not in {"complete", "failed"}:
         raise ValueError("attestation status must be complete or failed")
     root = Path(workdir).expanduser().resolve()
+    run_id = _validated_run_id(run_id)
     receipt_path = root / ".build-loop" / "learn" / f"{run_id}.json"
     with LockedFile(receipt_path):
         receipt = _read_json(receipt_path, {})
@@ -537,8 +741,7 @@ def attest(
         if order is None:
             raise ValueError(f"work order {work_order_id!r} is absent")
         if status == "complete" and order.get("role") == "self-improvement-architect":
-            if not artifact or not (root / artifact).is_file():
-                raise ValueError("architect completion requires an existing artifact path")
+            _, artifact = _contained_artifact(root, artifact)
         if status == "complete" and order.get("role") == "promotion-reviewer" and not verdict:
             raise ValueError("promotion-reviewer completion requires a verdict")
         order["status"] = status

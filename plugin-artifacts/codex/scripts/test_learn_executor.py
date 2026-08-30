@@ -240,6 +240,38 @@ def test_sample_sweep_emits_reviewer_order_only_for_eligible_artifact(tmp_path: 
     assert result["stages"]["sample_sweep"]["eligible"] == 1
 
 
+def test_oversized_experiment_preserves_created_row_and_changes_digest_on_append(tmp_path: Path) -> None:
+    runner = _runner()
+    run_id = _write_state(tmp_path, 3)
+    config = tmp_path / ".build-loop" / "config.json"
+    config.write_text(json.dumps({"autoPromote": True}), encoding="utf-8")
+    skill = tmp_path / ".build-loop" / "skills" / "experimental" / "large" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: large\nuser-invocable: false\n---\n", encoding="utf-8")
+    log = tmp_path / ".build-loop" / "experiments" / "large.jsonl"
+    log.parent.mkdir(parents=True)
+    created = {
+        "event": "created", "artifact": "large", "baseline_metric": "pass rate",
+        "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8,
+    }
+    filler = {"event": "ignored", "detail": "x" * 500}
+    applied = {"event": "applied", "metric_value": 0.9, "confounded": False}
+    rows = [created, *(filler for _ in range(1_100)), *(applied for _ in range(8))]
+    log.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    first = runner.run(tmp_path, run_id=run_id, source="test")
+    reviewer = next(order for order in first["work_orders"] if order["role"] == "promotion-reviewer")
+    assert reviewer["pattern_key"] == "large"
+    assert str(log) in first["stages"]["sample_sweep"]["truncated_inputs"]
+
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(applied) + "\n")
+    second = runner.run(tmp_path, run_id=run_id, source="test")
+
+    assert second["already"] is False
+    assert second["input_digest"] != first["input_digest"]
+
+
 def test_cli_emits_json_and_nonzero_on_missing_run(tmp_path: Path) -> None:
     state = tmp_path / ".build-loop" / "state.json"
     state.parent.mkdir(parents=True)
@@ -264,3 +296,50 @@ def test_cli_emits_json_and_nonzero_on_missing_run(tmp_path: Path) -> None:
     assert proc.returncode == 1
     assert payload["status"] == "error"
     assert "missing" in payload["errors"][0]
+
+
+def test_run_id_cannot_escape_the_learn_receipt_directory(tmp_path: Path) -> None:
+    _write_state(tmp_path, 1)
+
+    with pytest.raises(ValueError, match="single"):
+        _runner().run(tmp_path, run_id="../escape", source="test")
+
+    assert not (tmp_path / ".build-loop" / "escape.json").exists()
+
+
+def test_architect_attestation_rejects_artifact_outside_repository(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3, cause="closeout skipped Learn")
+    runner = _runner()
+    receipt = runner.run(tmp_path, run_id=run_id, source="test")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-proof.md"
+    outside.write_text("outside", encoding="utf-8")
+    try:
+        with pytest.raises(ValueError, match="inside the repository"):
+            runner.attest(
+                tmp_path,
+                run_id=run_id,
+                work_order_id=receipt["work_orders"][0]["id"],
+                status="complete",
+                artifact=f"../{outside.name}",
+            )
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_large_inputs_are_bounded_and_reported(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3)
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"tool": "repeat-call", "detail": "x" * 400}) + "\n"
+    traces.write_text(row * (runner.MAX_JSONL_ROWS + 50), encoding="utf-8")
+    experiments = tmp_path / ".build-loop" / "experiments"
+    experiments.mkdir(parents=True)
+    oversized = experiments / "large.jsonl"
+    oversized.write_text("x" * (runner.MAX_DIGEST_FILE_BYTES + 50), encoding="utf-8")
+
+    result = runner.run(tmp_path, run_id=run_id, source="test")
+
+    assert str(traces) in result["stages"]["collect"]["truncated_inputs"]
+    assert ".build-loop/experiments/large.jsonl" in result["input_limits"]["truncated_files"]
+    assert result["patterns_count"] <= runner.PATTERN_CAP

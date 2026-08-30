@@ -459,7 +459,11 @@ def _judge_agents(context: dict[str, Any]) -> list[dict[str, Any]]:
 def _learn_agents(receipt: dict[str, Any]) -> list[dict[str, Any]]:
     agents: list[dict[str, Any]] = []
     for order in receipt.get("work_orders", []) if isinstance(receipt.get("work_orders"), list) else []:
-        if not isinstance(order, dict) or not order.get("role"):
+        if (
+            not isinstance(order, dict)
+            or not order.get("role")
+            or order.get("status") not in {"complete", "failed"}
+        ):
             continue
         role = str(order["role"])
         agents.append({
@@ -471,9 +475,26 @@ def _learn_agents(receipt: dict[str, Any]) -> list[dict[str, Any]]:
             "model": "",
             "last_seen": str(order.get("attested_at") or receipt.get("updated_at") or receipt.get("created_at") or ""),
             "actions": ["verify" if role == "promotion-reviewer" else "execute"],
-            "source": f"Learn work order · {order.get('source') or 'pattern'}",
+            "source": f"Learn attestation · {order.get('source') or 'pattern'}",
         })
     return agents
+
+
+def _learn_work_orders(receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    orders: list[dict[str, Any]] = []
+    raw_orders = receipt.get("work_orders", []) if isinstance(receipt.get("work_orders"), list) else []
+    for index, item in enumerate(raw_orders):
+        if not isinstance(item, dict) or not item.get("role"):
+            continue
+        order_id = item.get("id") or f"learn-order-{index + 1}"
+        orders.append({
+            "id": str(order_id),
+            "role": str(item["role"]),
+            "status": _normalize_explicit_status(item.get("status")) or "queued",
+            "source": str(item.get("source") or "pattern"),
+            "pattern": str(item.get("pattern_key") or ""),
+        })
+    return orders[:20]
 
 
 def _note_from_record(item: dict[str, Any]) -> str:
@@ -601,6 +622,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     context = _run_context(state)
     phases = _phase_projection(context, state, warnings)
     learn_receipt = _learn_receipt(root, context, warnings, sources)
+    work_orders = _learn_work_orders(learn_receipt)
     tasks = _structured_tasks(state, context) if context["active"] else []
     if context["active"]:
         planned = _plan_tasks(root, warnings, sources, fallback=not tasks)
@@ -635,6 +657,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
         "phases": phases,
         "tasks": tasks,
         "agents": agents,
+        "work_orders": work_orders,
         "notes": notes,
         "metrics": {
             "phases_complete": sum(item["status"] == "complete" for item in phases),
@@ -644,6 +667,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
             "tasks_blocked": blocked_tasks,
             "tasks_total": len(tasks),
             "agents_invoked": len(agents),
+            "work_orders_pending": sum(item["status"] in {"pending", "queued"} for item in work_orders),
         },
         "sources": [str(path.relative_to(root)) for path in dict.fromkeys(sources)],
         "warnings": list(dict.fromkeys(warnings)),

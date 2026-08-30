@@ -732,8 +732,13 @@ def run_stop(workdir: Path, session_id: str) -> dict:
         # asymmetry: this fires without the session-match gate — the record is
         # terminal, so the run is finished by definition regardless of which
         # session observes it; releasing a finished run's identity is safe.
-        if decision.get("run_id"):
-            _run_learn(workdir, decision["run_id"])
+        terminal_record = decision.get("outcome") == "done"
+        if terminal_record and decision.get("run_id"):
+            learn_receipt = _run_learn(workdir, decision["run_id"])
+            if learn_receipt.get("status") in {"awaiting_agents", "error"}:
+                verdict = _run_gate(workdir, decision["run_id"])
+                _write_marker(workdir, decision, verdict, learn_receipt)
+                _write_judgment_followup(workdir, decision, verdict)
         if decision.get("outcome") == "done" and decision.get("run_id"):
             _release_identity(workdir, decision["run_id"])
         return {}
