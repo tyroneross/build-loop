@@ -131,6 +131,23 @@ def test_detect_durable_signal_counts_each_source(tmp_path: Path) -> None:
     assert sig["retro_durable_path"] and "build-loop-memory" in sig["retro_durable_path"]
 
 
+def test_detect_durable_signal_selects_only_the_requested_run(tmp_path: Path) -> None:
+    workdir = _scratch(tmp_path)
+    _write_enforce_candidate(workdir, "run-1-01.md")
+    _write_enforce_candidate(workdir, "run-1-extra-01.md")
+    _write_enforce_candidate(workdir, "run-10-01.md")
+    _write_enforce_candidate(workdir, "unrelated-01.md")
+    _write_enforce_candidate(workdir, "unrelated-02.md")
+    _write_retro_summary(workdir, date="2026-06-09", run_id="run-1")
+    _write_retro_summary(workdir, date="2026-06-10", run_id="unrelated")
+
+    sig = detect_durable_signal(workdir, "run-1")
+
+    assert sig["retro_enforce_candidates"] == 1
+    assert sig["retro_summary_path"].endswith("/2026-06-09/run-1.summary.md")
+    assert sig["retro_durable_path"].endswith("/2026-06-09/run-1.md")
+
+
 # ---------------------------------------------------------------------------
 # run() — the three closeout_status outcomes
 # ---------------------------------------------------------------------------
@@ -163,8 +180,8 @@ def test_run_queued_intake_candidate_yields_queued_pending_lesson(tmp_path: Path
 
 def test_run_retro_durable_plus_enforce_yields_wrote_memory(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
-    _write_enforce_candidate(workdir)
-    _write_retro_summary(workdir, with_durable=True)
+    _write_enforce_candidate(workdir, "r4-01.md")
+    _write_retro_summary(workdir, run_id="r4", with_durable=True)
     env = run(workdir, run_id="r4", source="post-push")
     assert env["closeout_status"] == "wrote_memory"
     assert "durable_path" in env["reason"]
@@ -173,8 +190,8 @@ def test_run_retro_durable_plus_enforce_yields_wrote_memory(tmp_path: Path) -> N
 def test_run_retro_enforce_without_durable_falls_back_to_queued(tmp_path: Path) -> None:
     """Enforce-candidates without a durable retro promotion are not wrote_memory."""
     workdir = _scratch(tmp_path)
-    _write_enforce_candidate(workdir)
-    _write_retro_summary(workdir, with_durable=False)
+    _write_enforce_candidate(workdir, "r5-01.md")
+    _write_retro_summary(workdir, run_id="r5", with_durable=False)
     env = run(workdir, run_id="r5", source="post-push")
     assert env["closeout_status"] == "queued_pending_lesson"
 
@@ -195,7 +212,10 @@ def test_contract_durable_signal_never_emits_no_durable_lesson(tmp_path: Path) -
     """
     for setup in (_write_flat_candidate, _write_queued_candidate, _write_enforce_candidate):
         workdir = _scratch(tmp_path / setup.__name__)
-        setup(workdir)
+        if setup is _write_enforce_candidate:
+            setup(workdir, "contract-01.md")
+        else:
+            setup(workdir)
         env = run(workdir, run_id="contract", source="post-push")
         assert env["closeout_status"] != "no_durable_lesson", (
             f"setup={setup.__name__} emitted no_durable_lesson despite durable signal — "
@@ -240,7 +260,7 @@ def test_full_pipeline_reaches_wrote_memory_on_a_genuine_promotion(tmp_path: Pat
     workdir = _scratch(tmp_path)
     mem = tmp_path / "mem"
     mem.mkdir()
-    _write_enforce_candidate(workdir)
+    _write_enforce_candidate(workdir, "pipeline-run-01.md")
 
     result = synth_run(workdir, run_id="pipeline-run", memory_root=mem)
     assert result["durable_path"], "fixture invalid: promotion did not actually happen"
@@ -261,7 +281,7 @@ def test_full_pipeline_without_memory_root_stays_honest(tmp_path: Path) -> None:
 
     workdir = _scratch(tmp_path)
     mem = tmp_path / "absent-memory-root"  # deliberately not created
-    _write_enforce_candidate(workdir)
+    _write_enforce_candidate(workdir, "pipeline-skip-01.md")
 
     result = synth_run(workdir, run_id="pipeline-skip", memory_root=mem)
     assert not result["durable_path"], "fixture invalid: promotion unexpectedly succeeded"
@@ -279,7 +299,7 @@ def test_real_writer_output_reaches_wrote_memory(tmp_path: Path) -> None:
     ``queued_pending_lesson``.
     """
     workdir = _scratch(tmp_path)
-    _write_enforce_candidate(workdir)
+    _write_enforce_candidate(workdir, "e2e-run-01.md")
     _real_writer_summary(
         workdir, "e2e-run",
         durable_path="/mem/projects/demo/retrospectives/2026-07-21/e2e-run.md",
@@ -294,7 +314,7 @@ def test_real_writer_output_reaches_wrote_memory(tmp_path: Path) -> None:
 def test_real_writer_without_promotion_never_claims_wrote_memory(tmp_path: Path) -> None:
     """No-weakening guard: a skipped promotion must NOT be reported as wrote_memory."""
     workdir = _scratch(tmp_path)
-    _write_enforce_candidate(workdir)
+    _write_enforce_candidate(workdir, "e2e-skip-01.md")
     _real_writer_summary(workdir, "e2e-skip", durable_path=None)
     env = run(workdir, run_id="e2e-skip", source="post-push")
     assert env["closeout_status"] == "queued_pending_lesson"

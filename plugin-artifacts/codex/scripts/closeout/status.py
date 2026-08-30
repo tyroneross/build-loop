@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import tempfile
 from datetime import datetime, timezone
@@ -86,7 +87,20 @@ def _safe_list_glob(root: Path, pattern: str) -> list[str]:
         return []
 
 
-def _latest_retro_summary(workdir: Path) -> dict[str, Any]:
+def _count_retro_enforce(root: Path, run_id: str | None) -> int:
+    """Count writer-owned candidates for one exact run, or all when unscoped."""
+    if run_id is None:
+        return _safe_count_glob(root, "*.md")
+    pattern = re.compile(rf"{re.escape(run_id)}-\d{{2,}}\.md")
+    try:
+        if not root.is_dir():
+            return 0
+        return sum(1 for path in root.glob(f"{run_id}-*.md") if pattern.fullmatch(path.name))
+    except OSError:
+        return 0
+
+
+def _latest_retro_summary(workdir: Path, run_id: str | None = None) -> dict[str, Any]:
     """Find the most recent retrospective summary's durable_path, if any.
 
     Reads ``.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.summary.md`` or its
@@ -100,10 +114,11 @@ def _latest_retro_summary(workdir: Path) -> dict[str, Any]:
         return {"present": False}
 
     summaries: list[Path] = []
+    summary_pattern = f"{run_id}.summary.md" if run_id else "*.summary.md"
     for date_dir in sorted(root.iterdir(), reverse=True):
         if not date_dir.is_dir():
             continue
-        for p in sorted(date_dir.glob("*.summary.md"), reverse=True):
+        for p in sorted(date_dir.glob(summary_pattern), reverse=True):
             summaries.append(p)
         if summaries:
             break
@@ -130,7 +145,7 @@ def _latest_retro_summary(workdir: Path) -> dict[str, Any]:
     }
 
 
-def detect_durable_signal(workdir: Path) -> dict[str, Any]:
+def detect_durable_signal(workdir: Path, run_id: str | None = None) -> dict[str, Any]:
     """Inspect the durable-signal sources.
 
     Returns::
@@ -149,8 +164,8 @@ def detect_durable_signal(workdir: Path) -> dict[str, Any]:
     raw_flat = _safe_count_glob(pending_root, "*.md")
     raw_queued = _safe_count_glob(pending_root / "pending", "*.json")
     retro_enforce_root = workdir / ".build-loop" / RETRO_ENFORCE_DIRNAME
-    retro_enforce = _safe_count_glob(retro_enforce_root, "*.md")
-    retro = _latest_retro_summary(workdir)
+    retro_enforce = _count_retro_enforce(retro_enforce_root, run_id)
+    retro = _latest_retro_summary(workdir, run_id)
 
     return {
         "raw_candidates_flat": raw_flat,
@@ -581,7 +596,7 @@ def run(
     }
 
     try:
-        signal = detect_durable_signal(workdir)
+        signal = detect_durable_signal(workdir, run_id)
         envelope["signal"] = signal
         status, reason = _classify(signal)
         envelope["closeout_status"] = status

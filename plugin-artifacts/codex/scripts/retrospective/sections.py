@@ -40,6 +40,11 @@ from tool_trace import summarize_path as summarize_tool_trace
 _NORMALIZE_STRIP_RE = re.compile(r"[^a-z0-9\s]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 _NORMALIZE_LEN = 100  # first N chars of the normalized text used for clustering
+_CODEX_META_PREFIXES = (
+    "<recommended_plugins>",
+    "# AGENTS.md instructions for ",
+    "<environment_context>",
+)
 
 
 def _normalize(text: str) -> str:
@@ -49,6 +54,118 @@ def _normalize(text: str) -> str:
     s = _NORMALIZE_STRIP_RE.sub(" ", s)
     s = _WHITESPACE_RE.sub(" ", s).strip()
     return s[:_NORMALIZE_LEN]
+
+
+def _codex_text(value: Any) -> str:
+    """Flatten Codex response-item text/output blocks without model inference."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for block in value:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") in {"input_text", "output_text", "text"}:
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _codex_input(value: Any) -> dict[str, Any]:
+    """Parse structured Codex call arguments; retain opaque inputs losslessly."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+        return {"raw": value}
+    return {}
+
+
+def _codex_output_is_error(output: str) -> bool:
+    """Return true only for direct, deterministic Codex tool-failure evidence.
+
+    Tool output often contains source code, audits, or prior logs with words
+    such as ``ERROR``. Searching the entire payload therefore creates false
+    failures. Accept explicit structured failure fields or a failure marker at
+    the start of the result instead.
+    """
+    stripped = output.lstrip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        exit_code = parsed.get("exit_code")
+        if isinstance(exit_code, int) and exit_code != 0:
+            return True
+        if parsed.get("isError") is True or (parsed.get("ok") is False and parsed.get("error")):
+            return True
+    return bool(re.match(
+        r"(?:ERROR:|Error:|Traceback \(most recent call last\)|"
+        r"Script failed\b|Process exited with code [1-9]\b|ToolCallError\b)",
+        stripped,
+    ))
+
+
+def _normalize_transcript_record(rec: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize Codex ``response_item`` records to the Claude transcript shape.
+
+    The downstream extractors stay host-neutral by consuming one small common
+    shape. Developer messages are intentionally excluded, and known Codex
+    context-injection records are marked meta so they cannot become user
+    prompts or enforce-candidates.
+    """
+    if rec.get("type") != "response_item":
+        return rec
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    ptype = payload.get("type")
+    timestamp = rec.get("timestamp")
+    if ptype == "message":
+        role = payload.get("role")
+        if role not in {"user", "assistant"}:
+            return None
+        text = _codex_text(payload.get("content"))
+        normalized = {
+            "type": role,
+            "timestamp": timestamp,
+            "message": {"role": role, "content": [{"type": "text", "text": text}]},
+        }
+        if role == "user" and text.startswith(_CODEX_META_PREFIXES):
+            normalized["isMeta"] = True
+        return normalized
+    if ptype in {"custom_tool_call", "function_call"}:
+        return {
+            "type": "assistant",
+            "timestamp": timestamp,
+            "message": {"content": [{
+                "type": "tool_use",
+                "id": payload.get("call_id") or payload.get("id"),
+                "name": payload.get("name") or "",
+                "input": _codex_input(payload.get("input", payload.get("arguments"))),
+            }]},
+        }
+    if ptype in {"custom_tool_call_output", "function_call_output"}:
+        output = _codex_text(payload.get("output"))
+        return {
+            "type": "user",
+            "timestamp": timestamp,
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": payload.get("call_id"),
+                "content": output,
+                "is_error": _codex_output_is_error(output),
+            }]},
+        }
+    return None
 
 
 def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
@@ -69,6 +186,9 @@ def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                rec = _normalize_transcript_record(rec)
+                if rec is None:
                     continue
                 if rec.get("type") != "user":
                     continue
@@ -169,6 +289,9 @@ def _iter_assistant_tool_uses(transcript_jsonl: Path | None) -> Iterable[dict[st
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                rec = _normalize_transcript_record(rec)
+                if rec is None:
                     continue
                 rtype = rec.get("type")
                 content = (rec.get("message") or {}).get("content")
@@ -334,11 +457,14 @@ def extract_issue_signals(transcript_jsonl: Path | None) -> list[str]:
         with open(transcript_jsonl, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line or "is_error" not in line and not _ISSUE_MARKER_RE.search(line):
+                if not line:
                     continue
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                rec = _normalize_transcript_record(rec)
+                if rec is None:
                     continue
                 content = (rec.get("message") or {}).get("content")
                 if not isinstance(content, list):

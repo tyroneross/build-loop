@@ -735,14 +735,18 @@ def attest(
         order = next((item for item in receipt.get("work_orders", []) if item.get("id") == work_order_id), None)
         if order is None:
             raise ValueError(f"work order {work_order_id!r} is absent")
+        artifact_sha256 = ""
         if status == "complete" and order.get("role") == "self-improvement-architect":
-            _, artifact = _contained_artifact(root, artifact)
+            artifact_path, artifact = _contained_artifact(root, artifact)
+            artifact_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         if status == "complete" and order.get("role") == "promotion-reviewer" and not verdict:
             raise ValueError("promotion-reviewer completion requires a verdict")
         order["status"] = status
         order["attested_at"] = _now()
         if artifact:
             order["artifact"] = artifact
+        if artifact_sha256:
+            order["artifact_sha256"] = artifact_sha256
         if verdict:
             order["verdict"] = verdict
         if comment:
@@ -759,9 +763,30 @@ def attest(
                 str(order.get("pattern_key")),
                 f"architect:{work_order_id}",
                 artifact_path=artifact,
+                artifact_sha256=artifact_sha256,
             )
-            if not any(item.get("id") == reviewer["id"] for item in receipt["work_orders"]):
+            existing_reviewer = next(
+                (item for item in receipt["work_orders"] if item.get("id") == reviewer["id"]),
+                None,
+            )
+            if existing_reviewer is None:
                 receipt["work_orders"].append(reviewer)
+            elif (
+                existing_reviewer.get("artifact_path") != artifact
+                or existing_reviewer.get("artifact_sha256") != artifact_sha256
+            ):
+                existing_reviewer.setdefault("artifact_revisions", []).append({
+                    "artifact_path": existing_reviewer.get("artifact_path"),
+                    "artifact_sha256": existing_reviewer.get("artifact_sha256"),
+                    "status": existing_reviewer.get("status"),
+                    "attested_at": existing_reviewer.get("attested_at"),
+                    "verdict": existing_reviewer.get("verdict"),
+                })
+                existing_reviewer["artifact_path"] = artifact
+                existing_reviewer["artifact_sha256"] = artifact_sha256
+                existing_reviewer["status"] = "pending"
+                existing_reviewer.pop("attested_at", None)
+                existing_reviewer.pop("verdict", None)
 
         pending = [item for item in receipt["work_orders"] if item.get("status") == "pending"]
         failed = [item for item in receipt["work_orders"] if item.get("status") == "failed"]

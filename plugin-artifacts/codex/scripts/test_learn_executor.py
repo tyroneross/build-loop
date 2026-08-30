@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -189,6 +190,78 @@ def test_attestation_closes_architect_and_reviewer_chain(tmp_path: Path) -> None
     assert final["learn_line"] == "Learn: 1 pattern drafted and reviewed"
     state = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
     assert state["runs"][-1]["learn"]["status"] == "complete"
+
+
+def test_revised_architect_artifact_rebinds_and_reopens_existing_review(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3, cause="closeout skipped Learn")
+    runner = _runner()
+    receipt = runner.run(tmp_path, run_id=run_id, source="test")
+    architect_id = receipt["work_orders"][0]["id"]
+    artifacts = tmp_path / ".build-loop" / "skills" / "experimental"
+    artifacts.mkdir(parents=True)
+    first = artifacts / "first.md"
+    second = artifacts / "second.md"
+    first.write_text("first\n", encoding="utf-8")
+    second.write_text("second\n", encoding="utf-8")
+
+    after_first = runner.attest(
+        tmp_path, run_id=run_id, work_order_id=architect_id,
+        status="complete", artifact=str(first.relative_to(tmp_path)),
+    )
+    reviewer = next(order for order in after_first["work_orders"] if order["role"] == "promotion-reviewer")
+    runner.attest(
+        tmp_path, run_id=run_id, work_order_id=reviewer["id"],
+        status="complete", verdict="revise",
+    )
+
+    revised = runner.attest(
+        tmp_path, run_id=run_id, work_order_id=architect_id,
+        status="complete", artifact=str(second.relative_to(tmp_path)),
+    )
+    rebound = next(order for order in revised["work_orders"] if order["id"] == reviewer["id"])
+    assert rebound["artifact_path"] == str(second.relative_to(tmp_path))
+    assert rebound["artifact_sha256"] == hashlib.sha256(b"second\n").hexdigest()
+    assert rebound["status"] == "pending"
+    assert "verdict" not in rebound
+    prior = rebound["artifact_revisions"][0]
+    assert prior["artifact_path"] == str(first.relative_to(tmp_path))
+    assert prior["artifact_sha256"] == hashlib.sha256(b"first\n").hexdigest()
+    assert prior["status"] == "complete"
+    assert prior["attested_at"]
+    assert prior["verdict"] == "revise"
+    assert revised["status"] == "awaiting_agents"
+
+
+def test_same_path_content_revision_reopens_existing_review(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3, cause="closeout skipped Learn")
+    runner = _runner()
+    receipt = runner.run(tmp_path, run_id=run_id, source="test")
+    architect_id = receipt["work_orders"][0]["id"]
+    artifact = tmp_path / ".build-loop" / "skills" / "experimental" / "draft.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("version one\n", encoding="utf-8")
+
+    first = runner.attest(
+        tmp_path, run_id=run_id, work_order_id=architect_id,
+        status="complete", artifact=str(artifact.relative_to(tmp_path)),
+    )
+    reviewer = next(order for order in first["work_orders"] if order["role"] == "promotion-reviewer")
+    runner.attest(
+        tmp_path, run_id=run_id, work_order_id=reviewer["id"],
+        status="complete", verdict="revise",
+    )
+    artifact.write_text("version two\n", encoding="utf-8")
+
+    revised = runner.attest(
+        tmp_path, run_id=run_id, work_order_id=architect_id,
+        status="complete", artifact=str(artifact.relative_to(tmp_path)),
+    )
+    rebound = next(order for order in revised["work_orders"] if order["id"] == reviewer["id"])
+    assert rebound["status"] == "pending"
+    assert rebound["artifact_sha256"] == hashlib.sha256(b"version two\n").hexdigest()
+    assert rebound["artifact_revisions"][0]["artifact_sha256"] == hashlib.sha256(b"version one\n").hexdigest()
+    assert rebound["artifact_revisions"][0]["verdict"] == "revise"
+    assert revised["status"] == "awaiting_agents"
 
 
 def test_stage_failure_is_receipted_and_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

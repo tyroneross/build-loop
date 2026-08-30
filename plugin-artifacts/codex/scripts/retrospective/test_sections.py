@@ -21,6 +21,8 @@ from retrospective.sections import (  # noqa: E402
     SECTION_KEYS,
     build,
     cluster_repeated_prompts,
+    extract_issue_signals,
+    extract_tool_usage,
     extract_user_prompts,
 )
 
@@ -87,6 +89,72 @@ class ExtractUserPromptsTests(unittest.TestCase):
     def test_unreadable_transcript_returns_empty(self) -> None:
         out = extract_user_prompts(Path("/nonexistent/zzz.jsonl"))
         self.assertEqual(out, [])
+
+    def test_codex_response_items_capture_prompts_tools_and_errors(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        p = Path(tmp.name) / "codex.jsonl"
+        records = [
+            {"type": "response_item", "timestamp": "2026-08-30T01:00:00Z", "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "Research the benchmark evidence"}],
+            }},
+            {"type": "response_item", "payload": {
+                "type": "custom_tool_call", "call_id": "call-1", "name": "Skill",
+                "input": json.dumps({"skill": "research:research"}),
+            }},
+            {"type": "response_item", "payload": {
+                "type": "custom_tool_call_output", "call_id": "call-1",
+                "output": [{"type": "input_text", "text": "Script failed\nError: source fetch failed"}],
+            }},
+            {"type": "response_item", "payload": {
+                "type": "function_call", "call_id": "call-2", "name": "spawn_agent",
+                "arguments": json.dumps({"task_name": "benchmarks"}),
+            }},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "developer",
+                "content": [{"type": "input_text", "text": "not a user prompt"}],
+            }},
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+        self.assertEqual([row["text"] for row in extract_user_prompts(p)], ["Research the benchmark evidence"])
+        usage = extract_tool_usage(p)
+        self.assertEqual(usage["total_uses"], 2)
+        self.assertEqual(usage["tools"]["Skill(research:research)"], 1)
+        self.assertEqual(usage["tools"]["spawn_agent"], 1)
+        self.assertEqual(usage["errored"]["Skill(research:research)"], 1)
+        self.assertIn("Error: source fetch failed", extract_issue_signals(p)[0])
+
+    def test_codex_context_injections_are_not_user_prompts(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        p = Path(tmp.name) / "codex-meta.jsonl"
+        records = [
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "<environment_context>generated</environment_context>"}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "actual request"}]}},
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        self.assertEqual([row["text"] for row in extract_user_prompts(p)], ["actual request"])
+
+    def test_codex_output_does_not_treat_embedded_historical_error_as_tool_failure(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        p = Path(tmp.name) / "codex-history.jsonl"
+        records = [
+            {"type": "response_item", "payload": {
+                "type": "custom_tool_call", "call_id": "call-1", "name": "exec", "input": "audit",
+            }},
+            {"type": "response_item", "payload": {
+                "type": "custom_tool_call_output", "call_id": "call-1",
+                "output": "Script completed\nOutput:\nPrior log: ERROR: historical only",
+            }},
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        self.assertEqual(extract_tool_usage(p)["errored"], {})
+        self.assertEqual(extract_issue_signals(p), [])
 
 
 class ClusterRepeatedPromptsTests(unittest.TestCase):
