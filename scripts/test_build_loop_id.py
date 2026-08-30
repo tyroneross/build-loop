@@ -30,6 +30,7 @@ from rally_point import discovery_bridge  # noqa: E402
 from rally_point import inbox  # noqa: E402
 from rally_point import post as post_mod  # noqa: E402
 from rally_point import presence  # noqa: E402
+import resume_resolver  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +73,14 @@ def test_generate_at_phase_1_when_absent(tmp_path: Path):
     assert exec_block["current_session_id"] == "claude-abc"
     assert exec_block["started_at"].endswith("Z")
     assert "claude_code#" in exec_block["run_label"]
+    assert exec_block["schema_version"] == 1
+    assert exec_block["run_id"] == exec_block["build_loop_id"]
+    assert exec_block["phase"] == "execute"
+    assert exec_block["queued_chunks"] == []
+    assert exec_block["in_flight_chunks"] == []
+    assert exec_block["completed_chunks"] == []
+    assert exec_block["file_ownership"] == {}
+    assert exec_block["last_heartbeat_at"] == exec_block["started_at"]
 
     # State.json persisted.
     state = json.loads(_state_path(workdir).read_text())
@@ -80,6 +89,26 @@ def test_generate_at_phase_1_when_absent(tmp_path: Path):
     # Runs dir created and named after the id.
     runs = workdir / ".build-loop" / "runs"
     assert (runs / exec_block["build_loop_id"]).is_dir()
+
+
+def test_fresh_identity_is_immediately_resolvable(tmp_path: Path):
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    now = _dt.datetime(2026, 8, 30, 11, 0, 0, tzinfo=_dt.timezone.utc)
+    execution = bli.generate_or_resume(
+        workdir, tool="codex", session_id="session-1", now=now
+    )
+
+    result = resume_resolver.resolve(
+        workdir,
+        execution["build_loop_id"],
+        current_session_id="session-1",
+        now=now,
+    )
+
+    assert result["decision"] == "resume"
+    assert result["run_id"] == execution["build_loop_id"]
+    assert result["remaining_chunks"] == []
 
 
 def test_fresh_mint_clears_stale_per_run_state(tmp_path: Path):
@@ -117,7 +146,8 @@ def test_fresh_mint_displaces_execution_residue(tmp_path: Path):
     }
     _state_path(workdir).write_text(json.dumps({"execution": dict(residue)}))
     exec_block = bli.generate_or_resume(workdir, tool="claude_code", session_id="s-new")
-    for stale in residue:
+    assert exec_block["crashed_at"] is None
+    for stale in ("crash_signal", "run_worktree_path", "wp_progress"):
         assert stale not in exec_block
     state = json.loads(_state_path(workdir).read_text())
     assert state["historicalExecutions"][-1] == residue
@@ -187,6 +217,7 @@ def test_resume_preserves_build_loop_id_updates_current_session_id_only(
     state = json.loads(_state_path(workdir).read_text())
     assert state["execution"]["current_session_id"] == "session-2"
     assert state["execution"]["build_loop_id"] == first["build_loop_id"]
+    assert state["execution"]["last_heartbeat_at"] == first["last_heartbeat_at"]
 
 
 # ---------------------------------------------------------------------------

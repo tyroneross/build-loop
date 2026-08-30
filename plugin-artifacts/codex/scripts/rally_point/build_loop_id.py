@@ -155,6 +155,18 @@ def _run_label(tool: str, build_loop_id: str, started_at_iso: str) -> str:
     return f"{tool or 'unknown'}#{suffix} {started_at_iso}"
 
 
+def _fresh_execution_block(build_loop_id: str, started_at_iso: str) -> dict[str, Any]:
+    """Create the canonical schema-v1 execution block at identity mint time."""
+    import sys as _sys
+
+    write_run_entry_dir = Path(__file__).resolve().parent.parent / "write_run_entry"
+    if str(write_run_entry_dir) not in _sys.path:
+        _sys.path.insert(0, str(write_run_entry_dir))
+    from execstate import build_start_block  # type: ignore
+
+    return build_start_block(build_loop_id, [], {}, started_at_iso)
+
+
 class RunWorktreeProvisionError(RuntimeError):
     """Raised when run-worktree isolation is requested but cannot be provisioned.
 
@@ -354,6 +366,7 @@ def generate_or_resume(
     when = now or _now_utc()
     started_at_iso = _ts_iso(when)
     build_loop_id = _new_unique_id(workdir_path, tool, when)
+    execution = _fresh_execution_block(build_loop_id, started_at_iso)
     execution.update(
         {
             "build_loop_id": build_loop_id,

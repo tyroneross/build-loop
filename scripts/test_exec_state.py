@@ -167,6 +167,8 @@ class ExecStateStartIdentityTests(unittest.TestCase):
         self.assertEqual(execution["run_id"], "bl-test-run")
         self.assertEqual(execution["phase"], "execute")
         self.assertEqual(execution["queued_chunks"], ["voice-review"])
+        self.assertEqual(execution["started_at"], identity["started_at"])
+        self.assertNotEqual(execution["last_heartbeat_at"], identity["started_at"])
         self.assertIsNone(execution["crashed_at"])
         self.assertNotIn("crash_signal", execution)
 

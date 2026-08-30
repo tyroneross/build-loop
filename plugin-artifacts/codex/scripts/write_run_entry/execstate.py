@@ -60,7 +60,7 @@ def _encode(state: Any) -> bytes:
 # Per-action helpers (each linear/flat)
 # ---------------------------------------------------------------------------
 
-def _build_start_block(
+def build_start_block(
     run_id: str | None,
     queued_chunks: list[str] | None,
     file_ownership: dict[str, list[str]] | None,
@@ -326,7 +326,7 @@ def update_execution_state(
                 raise ValueError(
                     "action='start' run_id does not match the active build_loop_id"
                 )
-            execution = _build_start_block(run_id, queued_chunks, file_ownership, ts)
+            execution = build_start_block(run_id, queued_chunks, file_ownership, ts)
             for key in _START_PRESERVED_IDENTITY_FIELDS:
                 if key in prior_execution:
                     execution[key] = prior_execution[key]
