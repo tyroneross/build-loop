@@ -119,3 +119,8 @@ archive/
 /.build-loop/agents/experimental/
 !/.build-loop/agents/active/
 !/.build-loop/agents/active/**
+
+# Scratch directory at the repo root. Untracked AND un-ignored is the dangerous
+# combination: a `git add -A` sweeps it into a commit. Anchored with a leading
+# slash so it covers only this directory, never a tmp/ inside a skill or fixture.
+/tmp/
