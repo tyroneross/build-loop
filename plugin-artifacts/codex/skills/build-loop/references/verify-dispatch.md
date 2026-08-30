@@ -107,11 +107,11 @@ A dispatched orchestrator that returns a polished report has not necessarily clo
 ```bash
 # The envelope named a run_id — assert that exact record:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
-  --workdir <dispatch-target-workdir> --run-id <run_id> --require-orchestrator --json
+  --workdir <dispatch-target-workdir> --run-id <run_id> --require-orchestrator --require-learn --json
 
 # No run_id in the envelope (the common shape when Review-G was skipped entirely):
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
-  --workdir <dispatch-target-workdir> --expect-recent-minutes --require-orchestrator --json
+  --workdir <dispatch-target-workdir> --expect-recent-minutes --require-orchestrator --require-learn --json
 ```
 
 Exit 1 means the run is not closed and Phase 6 Learn cannot see it. Do not accept the completion: either re-dispatch the orchestrator's Review-G run-close step, or write the record yourself from the envelope's own contents using the printed `remediation` command. A `no_state` status is the loudest case — the target workdir has no `.build-loop/state.json` at all, so that run produced no durable artifact of any kind (check whether the orchestrator actually worked in the workdir you think it did).

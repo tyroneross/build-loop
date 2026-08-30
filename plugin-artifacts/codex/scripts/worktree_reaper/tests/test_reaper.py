@@ -162,6 +162,7 @@ def test_explicit_owner_released_act_delegates_to_strict_collapse(tmp_path: Path
     assert Path(finalized["bundle"]).is_file()
     assert Path(finalized["receipt"]).is_file()
     assert finalized["memory_closeout"]["milestone"]["status"] == "recorded"
+    assert finalized["memory_closeout"]["source"] == "branch-collapse"
     milestone_path = Path(finalized["memory_closeout"]["milestone"]["append"]["path"])
     record = json.loads(milestone_path.read_text(encoding="utf-8"))
     assert record["run_id"] == run_id

@@ -162,8 +162,9 @@ def test_memory_systems_block_present() -> None:
     assert "memory_facade" in text or "memory-systems.md" in text
 
 
-def test_learn_phase_dispatches_pattern_detector_and_scout() -> None:
+def test_learn_phase_invokes_runner_and_attests_agent_work_orders() -> None:
     text = _read()
-    assert "recurring-pattern-detector" in text
-    # Scout learn-sync: either the dispatch line or the references file ref.
-    assert "learn-sync" in text or "learn-protocol.md" in text
+    assert "scripts/learn/__main__.py run" in text
+    assert "work_orders[]" in text
+    assert "attest --artifact" in text
+    assert "--require-learn" in text

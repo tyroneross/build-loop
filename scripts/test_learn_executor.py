@@ -54,7 +54,7 @@ def test_accruing_writes_receipt_and_run_learn(tmp_path: Path, monkeypatch: pyte
     runner = _runner()
     monkeypatch.setattr(runner.learn_accruing, "fire", lambda *_a, **_k: {"fired": True, "candidates": 0})
 
-    result = runner.run(tmp_path, run_id=run_id, source="test")
+    result = runner.run(tmp_path, run_id=run_id, source="test", comment="Cold-read note")
 
     assert result["outcome"] == "accruing"
     assert result["status"] == "complete"
@@ -62,6 +62,8 @@ def test_accruing_writes_receipt_and_run_learn(tmp_path: Path, monkeypatch: pyte
     receipt = json.loads((tmp_path / ".build-loop" / "learn" / f"{run_id}.json").read_text())
     state = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
     assert receipt["stages"]["accrue"]["status"] == "complete"
+    assert receipt["stages"]["notify"]["status"] == "complete"
+    assert receipt["comments"][0]["text"] == "Cold-read note"
     assert state["runs"][-1]["learn"]["receipt"] == f".build-loop/learn/{run_id}.json"
 
 
@@ -122,6 +124,21 @@ def test_repeated_root_cause_emits_architect_work_order(tmp_path: Path) -> None:
     assert orders[0]["pattern_key"] == "closeout-skipped-learn"
     assert orders[0]["status"] == "pending"
     assert result["learn_line"] == "Learn: 1 pattern awaiting draft review"
+
+
+def test_repeated_manual_intervention_is_detected_without_llm(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3)
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state = json.loads(state_path.read_text())
+    state["runs"][0]["manualInterventions"] = [{"phase": "execute", "note": "user restored Learn"}]
+    state["runs"][1]["manualInterventions"] = [{"phase": "execute", "note": "user restored Learn"}]
+    state_path.write_text(json.dumps(state))
+
+    result = _runner().run(tmp_path, run_id=run_id, source="test")
+
+    order = next(item for item in result["work_orders"] if item["source"] == "manual-intervention")
+    assert order["role"] == "self-improvement-architect"
+    assert order["pattern"]["count"] == 2
 
 
 def test_attestation_closes_architect_and_reviewer_chain(tmp_path: Path) -> None:

@@ -36,7 +36,7 @@ When ambiguous, default to BUILD.
 
 ## Core Responsibilities
 
-1. Drive Phase 1 through Phase 4 with Iterate loops; optionally Phase 6.
+1. Drive Phase 1 through Phase 4 with Iterate loops, then mandatory Phase 6.
 2. Spawn parallel subagents where the dependency graph allows.
 3. Run eval graders and track pass/fail per criterion.
 4. Detect convergence issues in the iteration loop.
@@ -162,7 +162,7 @@ Full protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presen
 
 ### Phase 6: Learn (mandatory)
 
-Full protocol: `references/learn-protocol.md`. **Phase 6 always runs after Review-G** (v0.30.0+): cheap detector + `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` always fire and a `## Learn` outcome line is always emitted. Three outcome states (Review-G report line): (1) **accruing** (`runs[] < 3`) → `Learn: accruing (N/3 runs)`; (2) **deferred** (debug-only or budget-exhausted) → `Learn: deferred — <reason>`, skips Sonnet draft + promotion signoff so Learn never blows the budget ceiling; (3) **full** (`runs[] >= 3` + pattern) → `Learn: <N> patterns drafted` — dispatch `recurring-pattern-detector` (Haiku) in parallel with `architecture-scout (learn-sync)`, filter, draft via `self-improvement-architect` (Sonnet), Opus signoff via `promotion-reviewer` (Sol on Codex), sample sweep. Promotion to `active/` requires explicit `/build-loop:promote-experiment`. Deprecated `autoSelfImprove: false` is a migration no-op (logged to `state.json.warnings[]`).
+Full protocol: `references/learn-protocol.md`. After the run record lands, invoke `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <run-id> --source review-g --json`. Dispatch each returned `work_orders[]` role using its payload. Attach architect output with `attest --artifact <path>`; this creates the promotion-reviewer order. Attach reviewer output with `attest --verdict <verdict>`. Emit the receipt's complete `learn_line`, then run `run_close_lint.py ... --require-orchestrator --require-learn`. A pending or error receipt keeps the report open. Outcomes are **accruing** (`Learn: accruing (N/3 runs)`), **deferred** (`Learn: deferred — <reason>`), or **full**. Promotion to `active/` still requires explicit `/build-loop:promote-experiment`.
 
 ## Capability Routing
 

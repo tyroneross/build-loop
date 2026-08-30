@@ -6,11 +6,13 @@
 
 ## Phase 6: Learn — Cross-Build Pattern Detection (mandatory; always runs and always reports)
 
+**One executable path:** `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. It writes `.build-loop/learn/<run-id>.json`, updates `runs[].learn`, and returns durable `work_orders[]` for agent-only drafting/review. Dispatch those roles and attach results with the CLI's `attest` command. `status: complete` is the only completed Phase 6 state.
+
 **Goal**: detect recurring patterns across recent runs, auto-draft experimental skills/agents to address them, surface them for keep/remove decisions. Closes the loop between "build N times" and "build N+1 is faster because we learned."
 
 **Load the `build-loop:self-improve` skill for the full protocol.** (Skill keeps its existing name for backward compatibility; this phase was named "Self-Improvement Review" in v0.2.0 — renamed here to avoid collision with Phase 4 Review.)
 
-**Mandatory contract (v0.30.0+).** Every Phase 6 always does three things: (a) dispatches the Haiku detector (cheap), (b) runs `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` (already unconditional), and (c) emits a `## Learn` outcome line in the Review-G report — even when nothing crosses threshold. Net marginal cost over the prior gated path is one cheap Haiku state-scan per run. The expensive arm (Sonnet draft + Opus signoff) stays conditional on `runs[] >= 3` AND a pattern crossing threshold AND not-deferred. Also user-invokable via `/build-loop:self-improve` to run a scan without a build.
+**Mandatory contract (v0.39.0+).** Every Phase 6 runs the deterministic detector and consolidation stages, persists their receipt, and emits its `learn_line` in Review-G. This path uses no LLM when nothing crosses threshold. Sonnet drafting and promotion review stay conditional and appear as explicit work orders. Also user-invokable via `/build-loop:self-improve` after recording a manual run id.
 
 Quick flow:
 

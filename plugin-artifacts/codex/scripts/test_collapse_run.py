@@ -421,6 +421,7 @@ class TestCLI:
         assert payload["strict_success"] is True
         assert payload["receipt_status"] == "complete"
         assert payload["memory_closeout"]["milestone"]["status"] == "recorded"
+        assert payload["memory_closeout"]["source"] == "branch-collapse"
         milestone_path = Path(payload["memory_closeout"]["milestone"]["append"]["path"])
         record = json.loads(milestone_path.read_text(encoding="utf-8"))
         assert record["run_id"] == "run_strict_cli"

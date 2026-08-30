@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -132,16 +133,48 @@ def _work_order(run_id: str, role: str, key: str, source: str, **extra: Any) -> 
 
 def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     patterns: list[dict[str, Any]] = []
+    runs = procedural_governance.load_runs(workdir)
     procedural = _read_jsonl(workdir / ".procedural" / "_candidates.jsonl")
     for item in procedural:
         key = str(item.get("name") or procedural_governance.slug(str(item.get("root_cause") or "pattern")))
-        patterns.append({"key": key, "source": "procedural", "payload": item})
+        patterns.append({"key": key, "source": "procedural", "role": "self-improvement-architect", "payload": item})
+
+    manual_counts: Counter[str] = Counter()
+    security_counts: Counter[str] = Counter()
+    for run in runs:
+        for item in run.get("manualInterventions", []) if isinstance(run, dict) else []:
+            note = str(item.get("note") if isinstance(item, dict) else item).strip()
+            if note:
+                manual_counts[note] += 1
+        for item in run.get("security_findings", []) if isinstance(run, dict) else []:
+            if isinstance(item, dict):
+                signature = str(item.get("title") or item.get("type") or item.get("finding") or "").strip()
+            else:
+                signature = str(item).strip()
+            if signature:
+                security_counts[signature] += 1
+    for signature, count in manual_counts.items():
+        if count >= 2:
+            patterns.append({
+                "key": f"manual-{procedural_governance.slug(signature)}",
+                "source": "manual-intervention",
+                "role": "self-improvement-architect",
+                "payload": {"type": "manual_intervention", "signature": signature, "count": count},
+            })
+    for signature, count in security_counts.items():
+        if count >= 2:
+            patterns.append({
+                "key": f"security-{procedural_governance.slug(signature)}",
+                "source": "security-finding",
+                "role": "self-improvement-architect",
+                "payload": {"type": "security_finding", "signature": signature, "count": count},
+            })
 
     retro = enforce_retro_signals.scan(workdir)
     for item in retro.get("patterns", []):
         skeleton = item.get("proposal", {}).get("skillSkeleton", {})
         key = str(skeleton.get("name") or procedural_governance.slug(str(item.get("signature") or "pattern")))
-        patterns.append({"key": key, "source": "retro", "payload": item})
+        patterns.append({"key": key, "source": "retro", "role": "self-improvement-architect", "payload": item})
 
     objects_path = workdir / ".build-loop" / "learning-objects.json"
     converted = {"proposals": [], "enforcement_specs": [], "skipped": [], "summary": {}}
@@ -154,7 +187,24 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
         for item in converted.get("proposals", []):
             skeleton = item.get("proposal", {}).get("skillSkeleton", {})
             key = str(skeleton.get("name") or procedural_governance.slug(str(item.get("signature") or "pattern")))
-            patterns.append({"key": key, "source": "learning-object", "payload": item})
+            patterns.append({"key": key, "source": "learning-object", "role": "self-improvement-architect", "payload": item})
+        for item in converted.get("enforcement_specs", []):
+            key = f"enforce-{procedural_governance.slug(str(item.get('condition') or 'control'))}"
+            patterns.append({"key": key, "source": "enforcement-spec", "role": "implementer", "payload": item})
+
+    trace_counts: Counter[str] = Counter()
+    for item in _read_jsonl(workdir / ".build-loop" / "telemetry" / "tool-traces.jsonl"):
+        name = str(item.get("tool") or item.get("name") or item.get("operation") or "").strip()
+        if name:
+            trace_counts[name] += 1
+    for name, count in trace_counts.items():
+        if count >= 3:
+            patterns.append({
+                "key": f"retry-{procedural_governance.slug(name)}",
+                "source": "tool-trace",
+                "role": "self-improvement-architect",
+                "payload": {"type": "diagnostic_repeat", "signature": name, "count": count},
+            })
 
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for pattern in patterns:
@@ -169,6 +219,9 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
         "retro_patterns": len(retro.get("patterns", [])),
         "learning_proposals": len(converted.get("proposals", [])),
         "enforcement_specs": len(converted.get("enforcement_specs", [])),
+        "manual_patterns": sum(1 for count in manual_counts.values() if count >= 2),
+        "security_patterns": sum(1 for count in security_counts.values() if count >= 2),
+        "tool_trace_patterns": sum(1 for count in trace_counts.values() if count >= 3),
         "selected": len(selected),
         "drafted_skipped": len(unique) - len(undrafted),
         "skipped_by_cap": max(0, len(undrafted) - len(selected)),
@@ -282,6 +335,33 @@ def _learn_line(outcome: str, runs_count: int, pattern_count: int, orders: list[
     return f"Learn: 0 patterns above threshold ({runs_count} runs scanned)"
 
 
+def _refresh_work_stages(receipt: dict[str, Any]) -> None:
+    stages = receipt.setdefault("stages", {})
+    orders = receipt.get("work_orders", [])
+    architects = [order for order in orders if order.get("role") == "self-improvement-architect"]
+    implementers = [order for order in orders if order.get("role") == "implementer"]
+    reviewers = [order for order in orders if order.get("role") == "promotion-reviewer"]
+
+    def status_for(items: list[dict[str, Any]], empty: str = "not_applicable") -> dict[str, Any]:
+        if not items:
+            return {"status": empty, "count": 0}
+        if any(item.get("status") == "failed" for item in items):
+            status = "error"
+        elif any(item.get("status") == "pending" for item in items):
+            status = "pending"
+        else:
+            status = "complete"
+        return {"status": status, "count": len(items)}
+
+    stages["draft"] = status_for(architects)
+    stages["enforcement"] = status_for(implementers)
+    stages["signoff"] = status_for(
+        reviewers,
+        empty="waiting_for_draft" if architects else "not_applicable",
+    )
+    stages["notify"] = {"status": "complete", "source": "learn_line"}
+
+
 def _write_deferred_marker(workdir: Path, run_id: str, reason: str, runs_count: int, budget_action: str) -> str:
     path = workdir / ".build-loop" / "proposals" / f"learn-deferred-{run_id}.md"
     body = (
@@ -302,6 +382,7 @@ def run(
     defer_reason: str = "",
     budget_action: str = "",
     accrue: bool = True,
+    comment: str = "",
 ) -> dict[str, Any]:
     """Run deterministic Learn stages and persist one idempotent receipt."""
     root = Path(workdir).expanduser().resolve()
@@ -330,6 +411,11 @@ def run(
         if receipt_path.exists():
             existing = _read_json(receipt_path, {})
             if existing.get("input_digest") == digest:
+                if comment:
+                    existing.setdefault("comments", []).append(
+                        {"at": _now(), "source": source, "text": comment}
+                    )
+                    _write_json(receipt_path, existing)
                 repaired = _persist_state_summary(root, run_id, existing) if current else False
                 existing["already"] = True
                 existing["reconciled"] = repaired
@@ -379,7 +465,7 @@ def run(
             work_orders.extend(
                 _work_order(
                     run_id,
-                    "self-improvement-architect",
+                    pattern["role"],
                     pattern["key"],
                     pattern["source"],
                     pattern=pattern["payload"],
@@ -415,11 +501,13 @@ def run(
             "work_orders": work_orders,
             "errors": errors,
             "pending_actions": (["rerun Learn outside the Stop hook to fire the accruing miner"] if accrue_pending else []),
+            "comments": ([{"at": _now(), "source": source, "text": comment}] if comment else []),
             "already": False,
         }
         receipt["learn_line"] = _learn_line(
             outcome, runs_count, len(patterns), work_orders, status, defer_reason
         )
+        _refresh_work_stages(receipt)
         _write_json(receipt_path, receipt)
         if current:
             _persist_state_summary(root, run_id, receipt)
@@ -434,6 +522,7 @@ def attest(
     status: str,
     artifact: str = "",
     verdict: str = "",
+    comment: str = "",
 ) -> dict[str, Any]:
     """Attach agent evidence to a work order without pretending the runner invoked it."""
     if status not in {"complete", "failed"}:
@@ -458,6 +547,10 @@ def attest(
             order["artifact"] = artifact
         if verdict:
             order["verdict"] = verdict
+        if comment:
+            receipt.setdefault("comments", []).append(
+                {"at": _now(), "source": f"attest:{work_order_id}", "text": comment}
+            )
         if status == "failed":
             receipt.setdefault("errors", []).append(f"work order {work_order_id} failed")
 
@@ -484,6 +577,7 @@ def attest(
             receipt["status"],
             "",
         )
+        _refresh_work_stages(receipt)
         _write_json(receipt_path, receipt)
     _persist_state_summary(root, run_id, receipt)
     return receipt

@@ -123,6 +123,15 @@ def test_phase_6_is_marked_mandatory(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", DOC_FILES_PHASE_6, ids=lambda p: str(p.relative_to(REPO_ROOT)))
+def test_phase_6_docs_name_the_executable_receipt_boundary(path: Path) -> None:
+    body = _read(path)
+    assert "scripts/learn/__main__.py" in body, (
+        f"{path.relative_to(REPO_ROOT)} can describe Phase 6 without naming "
+        "the executable runner"
+    )
+
+
+@pytest.mark.parametrize("path", DOC_FILES_PHASE_6, ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_autoSelfImprove_is_documented_as_migration_no_op(path: Path) -> None:
     """Every mention of ``autoSelfImprove`` in these files is paired with
     ``migration no-op`` or ``deprecated`` nearby (within 600 chars)."""
@@ -164,7 +173,7 @@ def test_helper_script_imports_and_exposes_scan() -> None:
 
     assert callable(getattr(ers, "scan", None)), "scan() not exposed"
     out = ers.scan(REPO_ROOT / "_does_not_exist")
-    assert out == {"scannedFiles": 0, "patterns": []}, (
+    assert out == {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}, (
         "scan(missing-dir) must return empty envelope, not raise."
     )
 

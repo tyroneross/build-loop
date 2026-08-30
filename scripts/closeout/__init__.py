@@ -20,6 +20,8 @@ Triggers
    ``.build-loop/closeout/armed.json``; the next session-start hook drains it.
 3. **phase-6-learn** — orchestrator emits the status as part of the ``## Learn``
    block at Review-G.
+4. **branch-collapse** — strict branch cleanup records or queues the milestone
+   without claiming that Phase 6 invoked memory closeout.
 
 Non-raising on internal errors (callers do not block on closeout); the only
 detectable failure mode is "skipped/empty closeout with durable signal",

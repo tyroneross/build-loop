@@ -17,7 +17,13 @@ This skill runs after Review sub-step F (Report) completes, or on demand. It det
 
 - Automatically at end of every build-loop run (Phase 6 Learn, after Review sub-step F (Report))
 - On demand via `/build-loop:self-improve`
-- Skipped if `.build-loop/state.json.runs` has fewer than 3 entries — not enough signal
+- Accruing if `.build-loop/state.json.runs` has fewer than 3 entries; the phase still writes a receipt and mines toward the threshold
+
+## Entry point
+
+Every host uses `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source manual --json`. On-demand scans first create `<recorded-run-id>` with `scripts/append_run.py`; they never invent a receipt detached from `runs[]`.
+
+The command performs deterministic work and returns `work_orders[]` only when an agent role is needed. Dispatch the named role with the order payload, then record the result through `python3 scripts/learn/__main__.py attest --workdir "$PWD" --run-id <run-id> --work-order-id <id> --status complete [--artifact <path>] [--verdict <verdict>] --json`. The receipt must reach `status: complete`.
 
 ## Flow
 
@@ -41,12 +47,11 @@ This skill runs after Review sub-step F (Report) completes, or on demand. It det
 
 ## Steps
 
-### 1. Detect recurring patterns
+### 1. Read deterministic detection results
 
 ```
-Agent: recurring-pattern-detector (haiku)
-Input: read .build-loop/state.json
-Output: {scannedRuns, patterns: [...]}
+Input: `.build-loop/learn/<run-id>.json`
+Output: deterministic stage results plus bounded `work_orders[]`
 ```
 
 If `patterns.length === 0`, skip to step 6 (notify with "no patterns detected, N runs scanned"). End.

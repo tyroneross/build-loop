@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--defer-reason", default="")
     run_parser.add_argument("--budget-action", default="")
     run_parser.add_argument("--skip-accrue", action="store_true")
+    run_parser.add_argument("--comment", default="", help="Free-form note stored in the receipt.")
     run_parser.add_argument("--json", action="store_true")
 
     attest_parser = sub.add_parser("attest", help="attach agent evidence to a work order")
@@ -34,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     attest_parser.add_argument("--status", required=True, choices=["complete", "failed"])
     attest_parser.add_argument("--artifact", default="")
     attest_parser.add_argument("--verdict", default="")
+    attest_parser.add_argument("--comment", default="", help="Free-form note stored in the receipt.")
     attest_parser.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
@@ -46,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
                 defer_reason=args.defer_reason,
                 budget_action=args.budget_action,
                 accrue=not args.skip_accrue,
+                comment=args.comment,
             )
         else:
             result = runner.attest(
@@ -55,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
                 status=args.status,
                 artifact=args.artifact,
                 verdict=args.verdict,
+                comment=args.comment,
             )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         result = {"schema": runner.SCHEMA, "status": "error", "errors": [str(exc)]}
