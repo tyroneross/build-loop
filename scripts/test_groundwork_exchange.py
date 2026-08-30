@@ -285,6 +285,91 @@ class GroundworkExchangeTests(unittest.TestCase):
         with self.assertRaisesRegex(gx.ExchangeError, "unknown local component component-missing"):
             gx.validate_request(dangling, dangling_spec)
 
+    def test_request_accepts_v3_exchange_state_refs_and_rejects_malformed_refs(self) -> None:
+        component_a = {
+            "id": "component-a", "name": "A", "kind": "service",
+            "featureIds": [], "owner": "app",
+        }
+        component_b = {
+            "id": "component-b", "name": "B", "kind": "ui",
+            "featureIds": [], "owner": "app",
+        }
+        ref_a = {"specId": "spec-demo", "kind": "component", "id": "component-a"}
+        ref_b = {"specId": "spec-demo", "kind": "component", "id": "component-b"}
+        contract_ref = {"specId": "spec-demo", "kind": "contract", "id": "contract-a"}
+        contract = {
+            "id": "contract-a", "name": "A contract", "provider": ref_a,
+            "consumers": [ref_b],
+            "ports": [{"id": "port-a", "name": "Input", "type": "json", "direction": "input"}],
+            "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+        }
+        exchange = {
+            "id": "exchange-a", "order": 1, "from": ref_a, "to": ref_b,
+            "contractRef": contract_ref, "inputRefs": [], "outputRefs": [],
+            "stateRefs": [{"screenId": "screen-plan", "state": "reviewing"}],
+            "failurePaths": ["invalid"],
+        }
+        architecture = {
+            "components": [component_a, component_b], "contracts": [contract],
+            "relationships": [],
+            "flows": [{"id": "flow-a", "name": "Plan", "trigger": "Open", "exchanges": [exchange]}],
+            "specDependencies": [],
+        }
+
+        def bound(architecture_value: dict) -> tuple[dict, dict]:
+            request = json.loads(json.dumps(self.request))
+            spec = json.loads(json.dumps(self.spec))
+            spec["screens"] = [{
+                "id": "screen-plan", "name": "Plan", "purpose": "Review",
+                "featureIds": [], "states": ["reviewing", "approved"],
+            }]
+            request["architecture"] = architecture_value
+            spec["architecture"] = json.loads(json.dumps(architecture_value))
+            request["specDigest"] = gx.digest_normalized(spec)
+            request["requestDigest"] = gx.digest_normalized(
+                {key: value for key, value in request.items() if key != "requestDigest"}
+            )
+            return request, spec
+
+        valid_request, valid_spec = bound(architecture)
+        self.assertEqual(gx.validate_request(valid_request, valid_spec)["runId"], "run-demo")
+
+        empty = json.loads(json.dumps(architecture))
+        empty["flows"][0]["exchanges"][0]["stateRefs"] = []
+        empty_request, empty_spec = bound(empty)
+        gx.validate_request(empty_request, empty_spec)
+
+        legacy = json.loads(json.dumps(architecture))
+        del legacy["flows"][0]["exchanges"][0]["stateRefs"]
+        legacy_request, legacy_spec = bound(legacy)
+        gx.validate_request(legacy_request, legacy_spec)
+        self.assertNotIn("stateRefs", legacy_request["architecture"]["flows"][0]["exchanges"][0])
+
+        malformed_cases = [
+            ("not-array", "array"),
+            ([{"screenId": "screen-plan"}], "missing required fields: state"),
+            ([{"screenId": "screen-plan", "state": "reviewing", "extra": True}], "unsupported fields: extra"),
+            ([{"screenId": 7, "state": "reviewing"}], "screenId must be a non-empty string"),
+            ([{"screenId": "screen-plan", "state": 7}], "state must be a non-empty string"),
+            ([{"screenId": "screen-missing", "state": "reviewing"}], "unknown screen"),
+            ([{"screenId": "screen-plan", "state": "missing"}], "unknown state"),
+        ]
+        for state_refs, message in malformed_cases:
+            with self.subTest(state_refs=state_refs):
+                malformed = json.loads(json.dumps(architecture))
+                malformed["flows"][0]["exchanges"][0]["stateRefs"] = state_refs
+                malformed_request, malformed_spec = bound(malformed)
+                with self.assertRaisesRegex(gx.ExchangeError, message):
+                    gx.validate_request(malformed_request, malformed_spec)
+
+        mismatched_request = json.loads(json.dumps(valid_request))
+        mismatched_request["architecture"]["flows"][0]["exchanges"][0]["stateRefs"] = []
+        mismatched_request["requestDigest"] = gx.digest_normalized(
+            {key: value for key, value in mismatched_request.items() if key != "requestDigest"}
+        )
+        with self.assertRaisesRegex(gx.ExchangeError, "architecture does not match"):
+            gx.validate_request(mismatched_request, valid_spec)
+
     def test_verified_map_is_bound_to_real_repository_evidence(self) -> None:
         request = gx.validate_request(self.request, self.spec)
         result = gx.build_implementation_map(

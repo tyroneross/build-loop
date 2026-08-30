@@ -91,7 +91,37 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                     "id": "surface-web", "platform": "web", "role": "primary", "name": "Web",
                     "interactionModes": ["pointer"], "featureIds": [],
                 }],
-                "architecture": {"components": [], "contracts": [], "relationships": [], "flows": [], "specDependencies": []},
+                "screens": [{
+                    "id": "screen-plan", "name": "Plan", "purpose": "Review the plan",
+                    "featureIds": [], "states": ["reviewing"],
+                }],
+                "architecture": {
+                    "components": [
+                        {"id": "component-source", "name": "Source", "kind": "service", "featureIds": [], "owner": "app"},
+                        {"id": "component-plan", "name": "Plan", "kind": "ui", "featureIds": [], "owner": "app"},
+                    ],
+                    "contracts": [{
+                        "id": "contract-plan", "name": "Plan contract",
+                        "provider": {"specId": "spec-parity", "kind": "component", "id": "component-source"},
+                        "consumers": [{"specId": "spec-parity", "kind": "component", "id": "component-plan"}],
+                        "ports": [{"id": "port-plan", "name": "Plan", "type": "json", "direction": "output"}],
+                        "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+                    }],
+                    "relationships": [],
+                    "flows": [{
+                        "id": "flow-plan", "name": "Review plan", "trigger": "Open",
+                        "exchanges": [{
+                            "id": "exchange-plan", "order": 1,
+                            "from": {"specId": "spec-parity", "kind": "component", "id": "component-source"},
+                            "to": {"specId": "spec-parity", "kind": "component", "id": "component-plan"},
+                            "contractRef": {"specId": "spec-parity", "kind": "contract", "id": "contract-plan"},
+                            "inputRefs": [], "outputRefs": [],
+                            "stateRefs": [{"screenId": "screen-plan", "state": "reviewing"}],
+                            "failurePaths": ["invalid"],
+                        }],
+                    }],
+                    "specDependencies": [],
+                },
             }
             tasks = [{
                 "id": "task-parity", "title": "Implement parity", "componentRefs": [],

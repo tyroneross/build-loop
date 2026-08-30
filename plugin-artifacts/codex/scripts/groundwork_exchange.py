@@ -283,6 +283,7 @@ def _validate_architecture(
     *,
     spec_id: str,
     local_refs: set[str],
+    screen_states: dict[str, set[str]],
 ) -> tuple[set[str], set[str], set[str]]:
     refs: list[tuple[dict[str, Any], str, str | None]] = []
     component_ids: list[str] = []
@@ -381,7 +382,12 @@ def _validate_architecture(
         for exchange_index, raw_exchange in enumerate(exchanges):
             exchange_label = f"{label}.exchanges[{exchange_index}]"
             exchange = _require_object(raw_exchange, exchange_label)
-            _strict_keys(exchange, {"id", "order", "from", "to", "contractRef", "inputRefs", "outputRefs", "failurePaths"}, set(), exchange_label)
+            _strict_keys(
+                exchange,
+                {"id", "order", "from", "to", "contractRef", "inputRefs", "outputRefs", "failurePaths"},
+                {"stateRefs"},
+                exchange_label,
+            )
             exchange_ids.append(_architecture_id(exchange["id"], f"{exchange_label}.id"))
             if not isinstance(exchange["order"], int) or isinstance(exchange["order"], bool) or exchange["order"] < 1:
                 _fail(f"{exchange_label}.order must be a positive integer")
@@ -396,6 +402,20 @@ def _validate_architecture(
                 for ref_index, ref in enumerate(_list(exchange[key], f"{exchange_label}.{key}")):
                     ref_label = f"{exchange_label}.{key}[{ref_index}]"
                     refs.append((_validate_qualified_ref(ref, ref_label), ref_label, None))
+            if "stateRefs" in exchange:
+                for state_ref_index, raw_state_ref in enumerate(
+                    _list(exchange["stateRefs"], f"{exchange_label}.stateRefs")
+                ):
+                    state_ref_label = f"{exchange_label}.stateRefs[{state_ref_index}]"
+                    state_ref = _require_object(raw_state_ref, state_ref_label)
+                    _strict_keys(state_ref, {"screenId", "state"}, set(), state_ref_label)
+                    screen_id = _architecture_id(state_ref["screenId"], f"{state_ref_label}.screenId")
+                    state = _nonempty(state_ref["state"], f"{state_ref_label}.state")
+                    states = screen_states.get(screen_id)
+                    if states is None:
+                        _fail(f"{state_ref_label}.screenId references unknown screen {screen_id}")
+                    if state not in states:
+                        _fail(f"{state_ref_label}.state references unknown state {state} on screen {screen_id}")
             _string_list(exchange["failurePaths"], f"{exchange_label}.failurePaths", minimum=1)
         _unique(exchange_ids, f"{label} exchange ids")
         if len(orders) != len(set(orders)):
@@ -503,6 +523,17 @@ def _canonical_local_refs(canonical: dict[str, Any], spec_id: str) -> set[str]:
     return refs
 
 
+def _canonical_screen_states(canonical: dict[str, Any]) -> dict[str, set[str]]:
+    screen_states: dict[str, set[str]] = {}
+    for index, raw in enumerate(_list(canonical.get("screens", []), "canonical Spec.screens")):
+        label = f"canonical Spec.screens[{index}]"
+        screen = _require_object(raw, label)
+        screen_id = _architecture_id(screen.get("id"), f"{label}.id")
+        states = set(_string_list(screen.get("states", []), f"{label}.states"))
+        screen_states[screen_id] = states
+    return screen_states
+
+
 def validate_request(request: Any, canonical_spec: Any) -> dict[str, Any]:
     value = _require_object(request, "build request")
     _strict_keys(value, {
@@ -530,6 +561,7 @@ def validate_request(request: Any, canonical_spec: Any) -> dict[str, Any]:
         architecture,
         spec_id=spec_id,
         local_refs=_canonical_local_refs(canonical, spec_id),
+        screen_states=_canonical_screen_states(canonical),
     )
 
     if "platformSurfaces" not in canonical or normalize_json(surfaces) != normalize_json(canonical["platformSurfaces"]):
