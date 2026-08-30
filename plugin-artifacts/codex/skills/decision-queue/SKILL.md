@@ -4,7 +4,7 @@ description: "Turn a set of pending decisions (Operations Center tasks with stat
 user-invocable: false
 companion_assets:
   - assets/template.html — tested, working page (styling, save/response plumbing, self-publish logic). Copy and adapt; never regenerate from scratch.
-  - references/example-batch-claim-triage.md — second worked example (2026-08-26, PersonalLLMWiki planner backlog): the large-queue variant, where items are classified into a few claims and ruled as batches instead of one card per item. Read it before building for a queue of 50+ items.
+  - references/example-large-queue-batching.md — second worked example (2026-08-26, PersonalLLMWiki planner backlog): the large-queue variant, where items are classified into a few claims and ruled as batches instead of one card per item. Read it before building for a queue of 50+ items.
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -41,7 +41,7 @@ close the whole class with a drill-in for auditing and per-item override.
 
 The test between them is one question: **can you write a single sentence that
 is true of thirty of these items?** If yes, build the batch variant and read
-`references/example-batch-claim-triage.md` first — it carries the pyramid
+`references/example-large-queue-batching.md` first — it carries the pyramid
 structure the claims need, the classification trap that cost a rebuild, the
 flat-control CSS the user requires, and a save round-trip test worth copying.
 If no, you do not have batches; build one card per decision.

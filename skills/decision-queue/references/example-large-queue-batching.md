@@ -2,11 +2,9 @@
 
 # Worked example: batch-claim triage
 
-Built 2026-08-26 for the PersonalLLMWiki planner backlog. The pattern is
-reusable; nothing in it is specific to that vault beyond the data it was
-pointed at.
-
-Live page: `Backlog Triage Desk`, artifact `21486e50-8565-4e60-8000-4d9267904483`.
+Built 2026-08-26 against a personal knowledge-base planner backlog. The pattern
+is reusable; nothing in it is specific to that source beyond the data it was
+pointed at. Counts below are the real ones from that run.
 
 ## The problem this variant solves
 
@@ -159,7 +157,7 @@ program.
 
 ## Reusability note
 
-This was built against a planner backlog in PersonalLLMWiki, but nothing in the
+This was built against a personal knowledge-base planner backlog, but nothing in the
 shape depends on that. It applies to any large, classifiable set the user must
 dispose of: a stale-issue sweep, a dependency-upgrade queue, a dead-code
 inventory, an inbox of unrouted records. Point it at a set, find the classes,
