@@ -97,7 +97,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                 }],
                 "architecture": {
                     "components": [
-                        {"id": "component-source", "name": "Source", "kind": "service", "featureIds": [], "owner": "app"},
+                        {"id": "component-source", "name": "Source", "kind": "service", "featureIds": [], "owner": "app", "ownedFiles": ["src/app.ts"]},
                         {"id": "component-plan", "name": "Plan", "kind": "ui", "featureIds": [], "owner": "app"},
                     ],
                     "contracts": [{
@@ -106,6 +106,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                         "consumers": [{"specId": "spec-parity", "kind": "component", "id": "component-plan"}],
                         "ports": [{"id": "port-plan", "name": "Plan", "type": "json", "direction": "output"}],
                         "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+                        "ownedFiles": ["src/app.ts"],
                     }],
                     "relationships": [],
                     "flows": [{

@@ -340,6 +340,116 @@ class GroundworkExchangeTests(unittest.TestCase):
         with self.assertRaisesRegex(gx.ExchangeError, "must be an array"):
             gx.validate_request(malformed, self.spec)
 
+    def test_architecture_owned_files_are_optional_strict_and_digest_bound(self) -> None:
+        component_a = {
+            "id": "component-a", "name": "A", "kind": "service",
+            "featureIds": [], "owner": "app",
+        }
+        component_b = {
+            "id": "component-b", "name": "B", "kind": "ui",
+            "featureIds": [], "owner": "app",
+        }
+        ref_a = {"specId": "spec-demo", "kind": "component", "id": "component-a"}
+        ref_b = {"specId": "spec-demo", "kind": "component", "id": "component-b"}
+        contract = {
+            "id": "contract-a", "name": "A contract", "provider": ref_a,
+            "consumers": [ref_b],
+            "ports": [{"id": "port-a", "name": "Input", "type": "json", "direction": "input"}],
+            "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+        }
+        architecture = {
+            "components": [component_a, component_b], "contracts": [contract],
+            "relationships": [], "flows": [], "specDependencies": [],
+        }
+
+        def bound(value: dict) -> tuple[dict, dict]:
+            request = json.loads(json.dumps(self.request))
+            spec = json.loads(json.dumps(self.spec))
+            request["architecture"] = json.loads(json.dumps(value))
+            spec["architecture"] = json.loads(json.dumps(value))
+            request["specDigest"] = gx.digest_normalized(spec)
+            self.rebind_request(request)
+            return request, spec
+
+        omitted_request, omitted_spec = bound(architecture)
+        omitted_digest = omitted_request["requestDigest"]
+        validated_omitted = gx.validate_request(omitted_request, omitted_spec)
+        self.assertNotIn("ownedFiles", validated_omitted["architecture"]["components"][0])
+        self.assertNotIn("ownedFiles", validated_omitted["architecture"]["contracts"][0])
+        self.assertEqual(validated_omitted["requestDigest"], omitted_digest)
+
+        owned = json.loads(json.dumps(architecture))
+        owned["components"][0]["ownedFiles"] = ["Sources/Planner/SourceStore.swift"]
+        owned["contracts"][0]["ownedFiles"] = ["Sources/Planner/PlanContract.swift"]
+        owned_request, owned_spec = bound(owned)
+        validated_owned = gx.validate_request(owned_request, owned_spec)
+        self.assertEqual(validated_owned["architecture"], owned)
+        self.assertEqual(owned_request["specDigest"], gx.digest_normalized(owned_spec))
+        self.assertEqual(
+            owned_request["requestDigest"],
+            gx.digest_normalized({key: value for key, value in owned_request.items() if key != "requestDigest"}),
+        )
+
+        mismatch = json.loads(json.dumps(owned_request))
+        mismatch["architecture"]["components"][0]["ownedFiles"] = ["Sources/Planner/Other.swift"]
+        self.rebind_request(mismatch)
+        with self.assertRaisesRegex(gx.ExchangeError, "architecture does not match"):
+            gx.validate_request(mismatch, owned_spec)
+
+        platform_owned = json.loads(json.dumps(self.request))
+        platform_owned_spec = json.loads(json.dumps(self.spec))
+        platform_owned["platformSurfaces"][0]["ownedFiles"] = ["Sources/App.swift"]
+        platform_owned_spec["platformSurfaces"][0]["ownedFiles"] = ["Sources/App.swift"]
+        platform_owned["specDigest"] = gx.digest_normalized(platform_owned_spec)
+        self.rebind_request(platform_owned)
+        with self.assertRaisesRegex(gx.ExchangeError, "unsupported fields: ownedFiles"):
+            gx.validate_request(platform_owned, platform_owned_spec)
+
+        for target in ("components", "contracts"):
+            with self.subTest(target=target, extra_field=True):
+                extra = json.loads(json.dumps(owned))
+                extra[target][0]["unrelated"] = True
+                extra_request, extra_spec = bound(extra)
+                with self.assertRaisesRegex(gx.ExchangeError, "unsupported fields: unrelated"):
+                    gx.validate_request(extra_request, extra_spec)
+
+    def test_architecture_owned_files_reject_empty_duplicate_unsafe_and_malformed_values(self) -> None:
+        component = {
+            "id": "component-a", "name": "A", "kind": "service",
+            "featureIds": [], "owner": "app",
+        }
+        ref = {"specId": "spec-demo", "kind": "component", "id": "component-a"}
+        contract = {
+            "id": "contract-a", "name": "A contract", "provider": ref,
+            "consumers": [ref],
+            "ports": [{"id": "port-a", "name": "Input", "type": "json", "direction": "input"}],
+            "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+        }
+        bad_values = [
+            ([], "at least 1"),
+            (["src/app.ts", "src/app.ts"], "duplicate"),
+            (["../outside.ts"], "unsafe path segment"),
+            (["/tmp/app.ts"], "repository-relative"),
+            ("src/app.ts", "must be an array"),
+        ]
+        for target in ("components", "contracts"):
+            for owned_files, message in bad_values:
+                with self.subTest(target=target, owned_files=owned_files):
+                    architecture = {
+                        "components": [json.loads(json.dumps(component))],
+                        "contracts": [json.loads(json.dumps(contract))],
+                        "relationships": [], "flows": [], "specDependencies": [],
+                    }
+                    architecture[target][0]["ownedFiles"] = owned_files
+                    request = json.loads(json.dumps(self.request))
+                    spec = json.loads(json.dumps(self.spec))
+                    request["architecture"] = architecture
+                    spec["architecture"] = json.loads(json.dumps(architecture))
+                    request["specDigest"] = gx.digest_normalized(spec)
+                    self.rebind_request(request)
+                    with self.assertRaisesRegex(gx.ExchangeError, message):
+                        gx.validate_request(request, spec)
+
     def test_request_accepts_v3_exchange_state_refs_and_rejects_malformed_refs(self) -> None:
         component_a = {
             "id": "component-a", "name": "A", "kind": "service",

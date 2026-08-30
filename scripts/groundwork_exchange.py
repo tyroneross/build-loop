@@ -238,6 +238,17 @@ def _safe_repo_path(value: Any, label: str) -> str:
     return text
 
 
+def _owned_files(raw: Any, label: str) -> list[str]:
+    values = [
+        _safe_repo_path(item, f"{label}[{index}]")
+        for index, item in enumerate(_list(raw, label))
+    ]
+    if not values:
+        _fail(f"{label} must contain at least 1 value(s)")
+    _unique(values, label)
+    return values
+
+
 def _safe_text(value: str, label: str) -> None:
     if PRIVATE_PATH_RE.search(value):
         _fail(f"{label} contains an absolute private path")
@@ -290,7 +301,7 @@ def _validate_architecture(
     for index, raw in enumerate(architecture["components"]):
         label = f"architecture.components[{index}]"
         item = _require_object(raw, label)
-        _strict_keys(item, {"id", "name", "kind", "featureIds", "owner"}, {"description", "provenance"}, label)
+        _strict_keys(item, {"id", "name", "kind", "featureIds", "owner"}, {"description", "provenance", "ownedFiles"}, label)
         component_ids.append(_architecture_id(item["id"], f"{label}.id"))
         _nonempty(item["name"], f"{label}.name")
         _nonempty(item["owner"], f"{label}.owner")
@@ -304,6 +315,8 @@ def _validate_architecture(
             ))
         if "description" in item and not isinstance(item["description"], str):
             _fail(f"{label}.description must be a string")
+        if "ownedFiles" in item:
+            _owned_files(item["ownedFiles"], f"{label}.ownedFiles")
         if "provenance" in item:
             _enum(item["provenance"], PROVENANCE, f"{label}.provenance")
     _unique(component_ids, "architecture component ids")
@@ -312,7 +325,7 @@ def _validate_architecture(
     for index, raw in enumerate(architecture["contracts"]):
         label = f"architecture.contracts[{index}]"
         item = _require_object(raw, label)
-        _strict_keys(item, {"id", "name", "provider", "consumers", "ports", "transport", "failureModes", "securityNotes"}, {"provenance"}, label)
+        _strict_keys(item, {"id", "name", "provider", "consumers", "ports", "transport", "failureModes", "securityNotes"}, {"provenance", "ownedFiles"}, label)
         contract_ids.append(_architecture_id(item["id"], f"{label}.id"))
         _nonempty(item["name"], f"{label}.name")
         refs.append((_validate_qualified_ref(item["provider"], f"{label}.provider"), f"{label}.provider", "component"))
@@ -343,6 +356,8 @@ def _validate_architecture(
         _nonempty(item["transport"], f"{label}.transport")
         _string_list(item["failureModes"], f"{label}.failureModes", minimum=1)
         _string_list(item["securityNotes"], f"{label}.securityNotes", minimum=1)
+        if "ownedFiles" in item:
+            _owned_files(item["ownedFiles"], f"{label}.ownedFiles")
         if "provenance" in item:
             _enum(item["provenance"], PROVENANCE, f"{label}.provenance")
     _unique(contract_ids, "architecture contract ids")
@@ -608,13 +623,7 @@ def validate_request(request: Any, canonical_spec: Any) -> dict[str, Any]:
         task_ids.append(_nonempty(task["id"], f"tasks[{index}].id"))
         _nonempty(task["title"], f"tasks[{index}].title")
         if "ownedFiles" in task:
-            owned_files = [
-                _safe_repo_path(item, f"tasks[{index}].ownedFiles[{path_index}]")
-                for path_index, item in enumerate(_list(task["ownedFiles"], f"tasks[{index}].ownedFiles"))
-            ]
-            if not owned_files:
-                _fail(f"tasks[{index}].ownedFiles must contain at least 1 value(s)")
-            _unique(owned_files, f"tasks[{index}].ownedFiles")
+            _owned_files(task["ownedFiles"], f"tasks[{index}].ownedFiles")
         for list_key in ("requirementIds", "dependsOn", "acceptanceCriterionIds"):
             entries = [_nonempty(item, f"tasks[{index}].{list_key}") for item in _list(task[list_key], f"tasks[{index}].{list_key}")]
             _unique(entries, f"tasks[{index}].{list_key}")
