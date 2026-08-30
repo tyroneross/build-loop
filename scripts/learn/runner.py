@@ -25,7 +25,7 @@ import procedural_governance  # noqa: E402
 
 SCHEMA = "build-loop.learn-receipt.v1"
 PATTERN_CAP = 2
-RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_JSONL_BYTES = 512 * 1024
 MAX_JSONL_ROWS = 2_000

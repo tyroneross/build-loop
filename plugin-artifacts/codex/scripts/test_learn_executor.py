@@ -389,11 +389,28 @@ def test_cli_emits_json_and_nonzero_on_missing_run(tmp_path: Path) -> None:
     assert "missing" in payload["errors"][0]
 
 
-def test_run_id_cannot_escape_the_learn_receipt_directory(tmp_path: Path) -> None:
+def test_colon_qualified_run_id_writes_exact_receipt_and_unsafe_ids_stay_rejected(tmp_path: Path) -> None:
+    run_id = "bl-20260830T103035Z-codex:terra-groundwork-state-refs-971132"
     _write_state(tmp_path, 1)
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["runs"][-1]["run_id"] = run_id
+    state_path.write_text(json.dumps(state), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="single"):
-        _runner().run(tmp_path, run_id="../escape", source="test")
+    result = _runner().run(tmp_path, run_id=run_id, source="test")
+
+    receipt_path = tmp_path / ".build-loop" / "learn" / f"{run_id}.json"
+    assert result["run_id"] == run_id
+    assert receipt_path.is_file()
+    assert receipt_path.parent == tmp_path / ".build-loop" / "learn"
+    assert json.loads(receipt_path.read_text(encoding="utf-8"))["run_id"] == run_id
+    assert json.loads(state_path.read_text(encoding="utf-8"))["runs"][-1]["learn"]["receipt"] == (
+        f".build-loop/learn/{run_id}.json"
+    )
+
+    for unsafe in ("../escape", "a/b", r"a\b", ".", "..", "", "a" * 129):
+        with pytest.raises(ValueError, match="single"):
+            _runner().run(tmp_path, run_id=unsafe, source="test")
 
     assert not (tmp_path / ".build-loop" / "escape.json").exists()
 
