@@ -35,6 +35,20 @@ For each commit with `modifies_api` non-empty:
 1. **For each symbol in `modifies_api`**, resolve its callers. Try the language
    server first; fall back to grep only when you must, and record which you used.
 
+   The caller-resolution tool is the `code-intel` CLI below — **never the host's
+   built-in `LSP` tool**. The built-in answers from whichever servers a host
+   happens to have registered and **degrades silently**: on a language with no
+   registered server it returns a confident, incomplete result with no error and
+   no readiness signal. Observed 2026-08-29 (Claude Code, Python-only server
+   registered): `findReferences` on an exported TypeScript function returned 1
+   hit — the declaration — where `code-intel refs` returned 4, including both
+   real importers. A declaration-only result is the signature of this failure.
+
+   Judge readiness **only** from the query response's `ready` field, never from
+   `code-intel doctor`. `doctor` answers globally while `typescript-language-server`
+   resolves `typescript` per workspace, so it can report a language NOT READY
+   whose queries in an actual project succeed.
+
    ```bash
    code-intel refs "<file>::<symbol-name>"
    ```

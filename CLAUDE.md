@@ -33,6 +33,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 - Fact-checker and mock-scanner agents run in parallel during Review sub-step D
 - Recurring-pattern-detector (Haiku) + self-improvement-architect (Sonnet) run during Phase 6 Learn
 - External skills used when available: `writing-plans`, `subagent-driven-development`, `calm-precision`, `verification-before-completion`, `plugin-dev:skill-development`, `navgator` — phases degrade gracefully without them
+- **Cross-file symbol work goes through `code-intel`, never the built-in `LSP` tool.** `code-intel refs|def|hover|symbols|diag <file>:<line>:<col>` is a CLI on PATH (no MCP, no tool approval) covering python/typescript/rust/swift/c; `code-intel doctor` reports per-language readiness. The built-in `LSP` tool only sees servers registered by an installed LSP plugin, and **it degrades silently**: on a language with no registered server it returns a confident, incomplete answer with no error. Observed 2026-08-29 in a private Next.js app — `findReferences` on an exported function returned 1 hit (the declaration) while `code-intel refs` correctly returned 4 including the two real importers. Treat a bare `LSP` result on an unconfirmed language as UNKNOWN, not empty. Same rule and same taxonomy as `agents/scope-auditor.md`; AGENTS.md carries the host-neutral version of this row.
 
 ## Model Tiering
 
