@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Flat sibling import: the package dir is on sys.path (see __main__.py).
+from coverage_lookup import CoverageIndex
+
 # scripts/ directory — one level above this package
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 
@@ -248,15 +251,24 @@ def _findings_oversized_files(scripts_dir: Path) -> list[dict[str, Any]]:
     return findings
 
 
-def _findings_missing_tests(scripts_dir: Path) -> list[dict[str, Any]]:
-    """Return findings for scripts lacking a corresponding test file."""
+def _findings_missing_tests(scripts_dir: Path, root: Path) -> list[dict[str, Any]]:
+    """Return findings for scripts lacking any test coverage.
+
+    Coverage is resolved by `self_review.coverage_lookup`, the same module the
+    re-validator uses to CLOSE these findings. Asking only for a sibling
+    `scripts/test_<name>.py` made the two disagree: the 2026-08-30 deep run
+    emitted 66 of these and the re-validator closed 53 (80%) in the same
+    session, because the covering test lived under another name or in another
+    directory.
+    """
     findings: list[dict[str, Any]] = []
+    index = CoverageIndex(root)
     for f in sorted(scripts_dir.glob("*.py")):
         if f.name.startswith("test_") or f.name.startswith("_"):
             continue
-        test_candidate = scripts_dir / f"test_{f.name}"
-        if test_candidate.exists():
+        if index.lookup(f.stem)[0] is not None:
             continue
+        test_candidate = scripts_dir / f"test_{f.name}"
         findings.append({
             "kind": "self_missing_test",
             "signal": f"No test file for {f.name}",
@@ -296,6 +308,6 @@ def scan_self_simplification(
     scripts_dir = workdir / "scripts"
     if scripts_dir.is_dir():
         findings.extend(_findings_oversized_files(scripts_dir))
-        findings.extend(_findings_missing_tests(scripts_dir))
+        findings.extend(_findings_missing_tests(scripts_dir, workdir))
 
     return findings

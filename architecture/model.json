@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d5205849c734169cafaa7bc6aa79535f191246164394157e7f88aaf2856ff642"
+    "content_sha256": "06e14b3acb062359de38e9a1ae94e1df2b60c64bf4aa011ce413a513b02a36f3"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1848,6 +1848,7 @@
       "scripts/self_mod_verify.py": "self_mod_verify.py — correctness gate for any self-modification of build-loop's own code.",
       "scripts/self_review/__init__.py": "self_review package — deterministic data-gatherer for build-loop periodic self-review.",
       "scripts/self_review/__main__.py": "self_review/__main__.py — deterministic data-gatherer for build-loop periodic self-review.",
+      "scripts/self_review/coverage_lookup.py": "coverage_lookup.py — the single answer to \"does a test cover this script?\".",
       "scripts/self_review/efficiency.py": "efficiency.py — state.json + git-churn efficiency scan for the self_review package.",
       "scripts/self_review/gather.py": "gather.py — transcript mining helpers for the self_review package.",
       "scripts/self_review/generated_paths.py": "Single definition of \"generated artifact\" for the self-review pipeline.",

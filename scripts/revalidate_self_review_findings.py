@@ -31,17 +31,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from self_review.coverage_lookup import (  # noqa: E402
+    EXCLUDED_PARTS,
+    CoverageIndex,
+    find_test,
+    is_live,
+)
+
 PROPOSALS_SUBDIR = Path(".build-loop") / "proposals"
-# Paths that are copies, caches, or other runs — never the live source of truth.
-EXCLUDED_PARTS = ("plugin-artifacts", "worktrees", "__pycache__", ".build-loop")
 MISSING_TEST_KIND = "self_missing_test"
 _MISSING_TEST_TARGET_RE = re.compile(r"no test file for\s+`?([^\s`*\n]+)", re.IGNORECASE)
 _DISPOSED_RE = re.compile(r"^\s*-\s*\[[xX]\]", re.MULTILINE)
 DISPOSITION_HEADING = "## Re-validated"
 
 
-def _live(path: Path) -> bool:
-    return not any(part in str(path) for part in EXCLUDED_PARTS)
+_live = is_live
 
 
 def resolve_source(root: Path, name: str) -> Path | None:
@@ -57,46 +65,13 @@ def resolve_source(root: Path, name: str) -> Path | None:
     return hits[0] if hits else None
 
 
-def find_test(root: Path, stem: str) -> tuple[Path | None, str]:
-    """Locate a test covering `stem`. Returns (path, how) where how is
-    "filename" | "import" | "".
-
-    Filename alone is too strict, and measurably so: on 2026-08-21 it reported 43
-    open findings when 27 of them already had a test under a different name —
-    slice_acp.py covered by tests/architecture/test_acp.py, build_acp.py by
-    test_acp_lessons_in_scope.py, agent_rally.py by test_agent_rally_retract.py.
-    A 63% false-open rate makes the queue overstate remaining work, which is the
-    same defect this whole script exists to correct.
-
-    The finding under test says "no test file for X". A test module that IMPORTS X
-    is a test file for X, so an import is the semantically correct signal. It is
-    not proof of thorough coverage — but this finding kind does not claim to
-    measure depth, and asserting depth here would be inventing a stronger claim
-    than the finding makes.
-    """
-    named = sorted(h for h in root.rglob(f"test_{stem}.py") if _live(h))
-    if named:
-        return named[0], "filename"
-    pattern = re.compile(
-        rf"\bimport\s+{re.escape(stem)}\b"
-        rf"|\bfrom\s+{re.escape(stem)}\s+import"
-        rf"|{re.escape(stem)}\.py\b"
-    )
-    for tf in sorted(root.rglob("test_*.py")):
-        if not _live(tf):
-            continue
-        try:
-            if pattern.search(tf.read_text(encoding="utf-8", errors="ignore")):
-                return tf, "import"
-        except OSError:
-            continue
-    return None, ""
-
-
-def classify(root: Path, body: str) -> tuple[str, str, str]:
+def classify(root: Path, body: str, index: CoverageIndex | None = None) -> tuple[str, str, str]:
     """Return (verdict, target, evidence) for one finding body.
 
     verdict: resolved | open | source-gone | not-checkable | already-dispositioned
+
+    Pass `index` when classifying a whole queue; it makes test discovery one
+    repo walk instead of one per finding.
     """
     if _DISPOSED_RE.search(body):
         return "already-dispositioned", "", ""
@@ -109,7 +84,7 @@ def classify(root: Path, body: str) -> tuple[str, str, str]:
     src = resolve_source(root, target)
     if src is None:
         return "source-gone", target, ""
-    test, how = find_test(root, Path(target).stem)
+    test, how = find_test(root, Path(target).stem, index)
     if test is not None:
         return "resolved", target, f"{test} ({how})"
     return "open", target, str(src)
@@ -132,13 +107,14 @@ def revalidate(workdir: Path, *, apply: bool = False, today: str = "") -> dict[s
                            "applied": 0, "items": []}
     if not proposals.is_dir():
         return out
+    index = CoverageIndex(root)
     for f in sorted(proposals.glob("self-review-*.md")):
         try:
             body = f.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         out["scanned"] += 1
-        verdict, target, evidence = classify(root, body)
+        verdict, target, evidence = classify(root, body, index)
         key = {"resolved": "resolved", "open": "open", "source-gone": "source_gone",
                "not-checkable": "not_checkable",
                "already-dispositioned": "already_dispositioned"}[verdict]
