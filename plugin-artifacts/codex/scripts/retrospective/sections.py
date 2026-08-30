@@ -168,12 +168,16 @@ def _normalize_transcript_record(rec: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
-    """Yield each user message record from a Claude Code transcript JSONL.
+def _iter_transcript_records(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
+    """Yield each normalized record from a Claude Code transcript JSONL.
 
-    A user record has ``type == "user"`` and a ``message.content`` block.
-    Tool-result-only user records (no human text) are skipped. Returns empty
-    iter if the transcript is None or unreadable.
+    Blank lines, undecodable lines, and records `_normalize_transcript_record`
+    rejects are skipped. A missing or unreadable file yields nothing rather than
+    raising, so callers stay total.
+
+    Three extractors each carried their own copy of this loop; a reader fix had
+    to land in three places to take effect, and the nesting it forced put all
+    three over the complexity threshold.
     """
     if transcript_jsonl is None:
         return
@@ -188,43 +192,57 @@ def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any
                 except json.JSONDecodeError:
                     continue
                 rec = _normalize_transcript_record(rec)
-                if rec is None:
-                    continue
-                if rec.get("type") != "user":
-                    continue
-                # Skip hook-injected / command-scaffolding / skill-load records.
-                # Claude Code marks these with top-level isMeta=true even though
-                # role stays "user". Counting them as human prompts corrupts the
-                # "prompted ≥2×" detection (Stop-hook feedback repeats per turn)
-                # and produces bogus enforce-candidates. See v0.29.0 retrospective
-                # over transcript dfe491e3-…: 23 raw user records → 6 isMeta noise
-                # (4× Stop-hook feedback + 1 SPDX skill body + 1 skill base-dir)
-                # + 17 real human prompts.
-                if rec.get("isMeta"):
-                    continue
-                msg = rec.get("message") or {}
-                content = msg.get("content")
-                # Content is either a string (legacy) or a list of blocks.
-                text = ""
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    parts = []
-                    for blk in content:
-                        if isinstance(blk, dict):
-                            if blk.get("type") == "text" and isinstance(blk.get("text"), str):
-                                parts.append(blk["text"])
-                            # tool_result blocks are skipped — not human prose.
-                        elif isinstance(blk, str):
-                            parts.append(blk)
-                    text = "\n".join(parts).strip()
-                if text.strip():
-                    yield {
-                        "ts": rec.get("timestamp"),
-                        "text": text.strip(),
-                    }
+                if rec is not None:
+                    yield rec
     except OSError:
         return
+
+
+def _content_blocks(rec: dict[str, Any]) -> list[Any]:
+    """Return the record's message content blocks, or [] when not a block list."""
+    content = (rec.get("message") or {}).get("content")
+    return content if isinstance(content, list) else []
+
+
+def _human_text(content: Any) -> str:
+    """Join the human-authored prose in a message content field.
+
+    Accepts the legacy string form and the block-list form. ``tool_result``
+    blocks are skipped — they are tool output, not human prose.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for blk in content:
+        if isinstance(blk, str):
+            parts.append(blk)
+        elif isinstance(blk, dict) and blk.get("type") == "text" and isinstance(blk.get("text"), str):
+            parts.append(blk["text"])
+    return "\n".join(parts).strip()
+
+
+def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
+    """Yield each human-authored user message as ``{ts, text}``.
+
+    A user record has ``type == "user"`` and a ``message.content`` block.
+    Tool-result-only user records (no human text) are skipped.
+
+    Hook-injected / command-scaffolding / skill-load records are skipped too:
+    Claude Code marks these with top-level ``isMeta=true`` even though role
+    stays "user". Counting them as human prompts corrupts the "prompted >=2x"
+    detection (Stop-hook feedback repeats per turn) and produces bogus
+    enforce-candidates. See v0.29.0 retrospective over transcript dfe491e3-...:
+    23 raw user records -> 6 isMeta noise (4x Stop-hook feedback + 1 SPDX skill
+    body + 1 skill base-dir) + 17 real human prompts.
+    """
+    for rec in _iter_transcript_records(transcript_jsonl):
+        if rec.get("type") != "user" or rec.get("isMeta"):
+            continue
+        text = _human_text((rec.get("message") or {}).get("content"))
+        if text:
+            yield {"ts": rec.get("timestamp"), "text": text}
 
 
 def extract_user_prompts(transcript_jsonl: Path | None) -> list[dict[str, Any]]:
@@ -272,49 +290,27 @@ def _tool_plugin_label(name: str) -> str | None:
 
 
 def _iter_assistant_tool_uses(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
-    """Yield each assistant ``tool_use`` block: ``{id, name, input}``.
+    """Yield each assistant ``tool_use`` block: ``{kind: "use", id, name, input}``.
 
     Also yields synthetic records for the ``tool_result`` error side (from user
     records) tagged ``{"kind": "error", "tool_use_id": ...}`` so the caller can
     attribute failures back to the tool that produced them.
     """
-    if transcript_jsonl is None:
-        return
-    try:
-        with open(transcript_jsonl, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                rec = _normalize_transcript_record(rec)
-                if rec is None:
-                    continue
-                rtype = rec.get("type")
-                content = (rec.get("message") or {}).get("content")
-                if not isinstance(content, list):
-                    continue
-                for blk in content:
-                    if not isinstance(blk, dict):
-                        continue
-                    btype = blk.get("type")
-                    if rtype == "assistant" and btype == "tool_use":
-                        yield {
-                            "kind": "use",
-                            "id": blk.get("id"),
-                            "name": blk.get("name") or "",
-                            "input": blk.get("input") or {},
-                        }
-                    elif rtype == "user" and btype == "tool_result" and blk.get("is_error"):
-                        yield {
-                            "kind": "error",
-                            "tool_use_id": blk.get("tool_use_id"),
-                        }
-    except OSError:
-        return
+    for rec in _iter_transcript_records(transcript_jsonl):
+        rtype = rec.get("type")
+        for blk in _content_blocks(rec):
+            if not isinstance(blk, dict):
+                continue
+            btype = blk.get("type")
+            if rtype == "assistant" and btype == "tool_use":
+                yield {
+                    "kind": "use",
+                    "id": blk.get("id"),
+                    "name": blk.get("name") or "",
+                    "input": blk.get("input") or {},
+                }
+            elif rtype == "user" and btype == "tool_result" and blk.get("is_error"):
+                yield {"kind": "error", "tool_use_id": blk.get("tool_use_id")}
 
 
 def _canonical_tool_label(rec: dict[str, Any]) -> str:
@@ -445,55 +441,49 @@ def extract_tool_sequences(
     return out
 
 
+def _error_result_excerpt(blk: dict[str, Any]) -> str:
+    """Return a one-line excerpt of an errored ``tool_result`` block, or "".
+
+    Centres the excerpt on the first issue marker when one is present, so the
+    signal is the error itself rather than whatever preamble came first.
+    """
+    body = blk.get("content")
+    if isinstance(body, list):
+        body = " ".join(
+            b.get("text", "") for b in body
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    body = str(body or "").strip().replace("\n", " ")
+    m = _ISSUE_MARKER_RE.search(body)
+    window = body[max(0, m.start() - 20):m.start() + 100] if m else body[:120]
+    return window.strip()
+
+
+def _iter_error_results(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
+    """Yield every ``tool_result`` block flagged ``is_error`` in the transcript."""
+    for rec in _iter_transcript_records(transcript_jsonl):
+        for blk in _content_blocks(rec):
+            if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("is_error"):
+                yield blk
+
+
 def extract_issue_signals(transcript_jsonl: Path | None) -> list[str]:
     """App/build issue signals from the transcript — errored tool results and
     error markers in tool output. Deterministic; the LLM body traces each to a
     root cause in §9. Deduped, capped at ``_ISSUE_SIGNAL_CAP``."""
-    if transcript_jsonl is None:
-        return []
     signals: list[str] = []
     seen: set[str] = set()
-    try:
-        with open(transcript_jsonl, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                rec = _normalize_transcript_record(rec)
-                if rec is None:
-                    continue
-                content = (rec.get("message") or {}).get("content")
-                if not isinstance(content, list):
-                    continue
-                for blk in content:
-                    if not isinstance(blk, dict) or blk.get("type") != "tool_result":
-                        continue
-                    if not blk.get("is_error"):
-                        continue
-                    body = blk.get("content")
-                    if isinstance(body, list):
-                        body = " ".join(
-                            b.get("text", "") for b in body
-                            if isinstance(b, dict) and b.get("type") == "text"
-                        )
-                    body = str(body or "").strip().replace("\n", " ")
-                    m = _ISSUE_MARKER_RE.search(body)
-                    excerpt = (body[max(0, m.start() - 20):m.start() + 100] if m else body[:120]).strip()
-                    if not excerpt:
-                        continue
-                    key = excerpt[:60].lower()
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    signals.append(excerpt)
-                    if len(signals) >= _ISSUE_SIGNAL_CAP:
-                        return signals
-    except OSError:
-        return signals
+    for blk in _iter_error_results(transcript_jsonl):
+        excerpt = _error_result_excerpt(blk)
+        if not excerpt:
+            continue
+        key = excerpt[:60].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        signals.append(excerpt)
+        if len(signals) >= _ISSUE_SIGNAL_CAP:
+            break
     return signals
 
 
