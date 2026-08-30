@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "033766b02cd5cd55eb9e06dcfd4c4235f73d52a0f0584d58fbe6a7f734c5c1a0"
+    "content_sha256": "6ba5ece332a7ef14111a7bb582ef85e0db6fd677f8d23bef28fb88ed0f7df015"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1414,7 +1414,7 @@
         "file": "skills/repo-maintenance/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-30"
         }
       },
       "repository-intelligence": {

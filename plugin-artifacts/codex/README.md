@@ -82,7 +82,7 @@ The host owns install, versioning, and `/plugin update`. Restart the host to loa
 The legacy `build-loop-install` binary syncs the same files into the host caches manually. Prefer the marketplace above; use this only to pin an exact version or on a host without marketplace support.
 
 ```bash
-npm install -g @tyroneross/build-loop@0.38.0
+npm install -g @tyroneross/build-loop@0.39.0
 build-loop-install --host all
 ```
 
@@ -104,6 +104,37 @@ Installer options:
 | `--dry-run` | Show cache sync actions without writing. |
 | `--json` | Emit one machine-readable result. |
 
+### Confirm it loaded
+
+The plugin has no runtime CLI, so a successful install is not visible from the shell.
+Check inside the host instead. After restarting it, run:
+
+```text
+/build-loop:run what version of build-loop is loaded and where did it load from
+```
+
+A working install answers with a version and a plugin path. If the command is not
+offered at all, the host did not load the plugin — restart it once more, then check
+that `/plugin` lists `build-loop` as installed and enabled.
+
+### Uninstall
+
+```text
+/plugin uninstall build-loop@build-loop     # Claude Code or Codex
+```
+
+Your memory store is deliberately left behind: it lives outside the plugin at
+`~/.build-loop-memory` (or wherever `BUILD_LOOP_MEMORY_ROOT` points), so
+reinstalling keeps every decision, lesson, and retrospective. Delete that directory
+yourself if you want the history gone. Per-project run state lives in each repo's
+gitignored `.build-loop/` and can be removed with the project.
+
+If you used the npm installer, also remove the global package:
+
+```bash
+npm uninstall -g @tyroneross/build-loop
+```
+
 Local development install:
 
 ```bash
@@ -118,7 +149,7 @@ python3 scripts/install_memory.py --ensure-project build-loop
 
 ## Commands
 
-`/build-loop:run` is the only command. Describe the task in plain language — build, fix, refactor, optimize, research, debug, test, root-cause, retrospective, or plan — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode or a flag.
+`/build-loop:run` is the command you will use. Describe the task in plain language — build, fix, refactor, optimize, research, debug, test, root-cause, retrospective, or plan — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode or a flag.
 
 ```text
 /build-loop:run add billing settings with tests
@@ -126,6 +157,7 @@ python3 scripts/install_memory.py --ensure-project build-loop
 /build-loop:run reduce API latency                       # routes to the optimize loop
 /build-loop:run compare queue providers                  # routes to research (no commits)
 /build-loop:run self-improve against recent runs         # runs Phase 6 Learn alone
+/build-loop:feedback the plan step skipped my constraint  # files a GitHub issue on build-loop
 ```
 
 Debugging is also auto-invoked by the loop itself on a review failure. The former mode and utility commands (`debug`, `research-run`, `test`, `self-improve`, `debugger*`, `assess`) are now internal, reached by intent rather than as separate commands.
@@ -140,7 +172,7 @@ The repo ships three agent surfaces from one source:
 - **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
 - **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
-Surface counts in this release: one command (`/build-loop:run`), 44 skills, 28 agents.
+Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 51 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
 
 ## Agent start protocol
 
@@ -246,7 +278,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.38.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+`npm install -g @tyroneross/build-loop@0.39.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
 
 ### How is it different from just letting an agent code directly?
 
@@ -327,7 +359,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.38.0 --branch main --remote origin --json
+python3 scripts/verify_release_surface.py --version v0.39.0 --branch main --remote origin --json
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.
