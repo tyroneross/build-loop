@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 51 skills · 421 scripts · 23 hooks** (auto-discovered 61b4f983)
+**29 agents · 51 skills · 424 scripts · 23 hooks** (auto-discovered 38e765c3)
 
 <details><summary>agents</summary>
 
@@ -25,7 +25,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `api-assessor` — sonnet · _updated 2026-07-02 by Tyrone Ross_ — Use this agent when the debugging symptom involves API endpoints, REST/GraphQL errors, request/response issues, authentication, rate limiting, or server-side route handlers. Examples - "500 error", "endpoint not found", "auth failed", "CORS error".
 - `architecture-scout` — sonnet · _updated 2026-07-07 by Tyrone Ross_ — Read-only architecture analyst. Dispatched by build-loop orchestrator with a task type ('baseline', 'chunk-impact', 'review-rules', 'iterate-subgraph', 'learn-sync'). Decides native engine vs NavGator escalation per task. Returns ≤500-word structured JSON envelope. Owns architecture-related side effects (violation capture, lessons sync).
 - `assessment-orchestrator` — opus · _updated 2026-06-24 by Tyrone Ross_ — Use this agent when debugging requires multi-domain analysis, when the symptom is unclear about which domain is affected, or when you need to coordinate parallel assessments across database, frontend, API, and performance domains.
-- `build-orchestrator` — opus · _updated 2026-08-25 by Tyrone Ross_ — Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
+- `build-orchestrator` — opus · _updated 2026-08-29 by Tyrone Ross_ — Coordinates the six-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate → mandatory Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
 - `database-assessor` — opus · _updated 2026-07-28 by Tyrone Ross_ — Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout", "vector search is stale".
 - `design-contract-specialist` — sonnet · _updated 2026-08-22 by Tyrone Ross_ — Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing…
 - `fact-checker` — opus · _updated 2026-08-16 by Tyrone Ross_ — Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
@@ -259,6 +259,9 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/judgment_gate.py`
 - `scripts/keyword_search.py`
 - `scripts/knowledge_review.py`
+- `scripts/learn/__init__.py`
+- `scripts/learn/__main__.py`
+- `scripts/learn/runner.py`
 - `scripts/learn_accruing.py`
 - `scripts/learning_to_draft.py`
 - `scripts/lessons_index/__init__.py`
@@ -710,12 +713,12 @@ phases:
     hasGate: true
     desc: "Always emits a ## Learn line. NEW: feeds the per-phase escape-rate control chart that adapts T2 sampling."
     in: ["run history (runs[])"]
-    out: ["## Learn line", "experimental drafts", "control-chart update"]
-    agents: [["recurring-pattern-detector", "", "Orchestrator"], ["self-improvement-architect", "", "Orchestrator"], ["promotion-reviewer", "", "Orchestrator"], ["retrospective-synthesizer", "", "Orchestrator"]]
+    out: ["Learn receipt", "agent work orders", "## Learn line"]
+    agents: [["self-improvement-architect", "", "Orchestrator"], ["promotion-reviewer", "", "Orchestrator"]]
     steps:
-      - { id: "p6.detect", name: "Cheap detector + consolidate (always)", kind: process, desc: "recurring-pattern-detector scans recent runs for repeating problems and the orchestrator consolidates the lessons into memory; this step always runs.", hooks: [], agents: [["recurring-pattern-detector", "", "Orchestrator"]] }
-      - { id: "p6.draft", name: "Draft experimental artifact", kind: dispatch, desc: "When a pattern recurs often enough, self-improvement-architect drafts a candidate new skill or agent to address it.", hooks: [], agents: [["self-improvement-architect", "", "Orchestrator"]] }
-      - { id: "p6.signoff", name: "Promotion signoff", kind: gate, tier: "T1", desc: "promotion-reviewer judges the draft, but turning it on for real always requires your confirmation.", hooks: [], agents: [["promotion-reviewer", "", "Orchestrator"]], branches: "approve → promote\nelse → keep experimental" }
+      - { id: "p6.detect", name: "Run deterministic Learn", kind: process, desc: "The host-neutral runner detects patterns, consolidates memory, records every stage, and returns agent work orders when judgment or authoring is required.", hooks: [], agents: [] }
+      - { id: "p6.draft", name: "Complete returned work orders", kind: dispatch, desc: "The orchestrator dispatches only roles returned by the receipt and attests their artifacts or verdicts.", hooks: [], agents: [["self-improvement-architect", "", "Orchestrator"], ["promotion-reviewer", "", "Orchestrator"]] }
+      - { id: "p6.signoff", name: "Close receipt", kind: gate, tier: "T1", desc: "Phase 6 closes only after all returned work orders are attested. Promotion still requires user confirmation.", hooks: [], agents: [["promotion-reviewer", "", "Orchestrator"]], branches: "complete → report\npending → keep run open" }
       - { id: "p6.chart", name: "Update escape-rate control chart", kind: new, desc: "build-loop tracks how often defects slip past each phase; when a phase's escape rate climbs too high, the auditor samples that phase more often on future runs.", hooks: [], agents: [] }
 
 # canonical aliases: chip display name -> agents/*.md basename (or "group" for synthetic multi-agent chips)

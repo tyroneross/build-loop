@@ -1,6 +1,6 @@
 ---
 name: build-loop:self-improve
-description: Scan recent build-loop runs for recurring patterns and auto-draft experimental skills/agents with A/B tracking. Fires automatically after Phase 6 Learn, or when the user says "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).
+description: Run mandatory Phase 6 Learn, then dispatch only returned experimental-draft or review work orders. Also handles "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).
 version: 0.1.0
 user-invocable: false
 ---
@@ -9,15 +9,21 @@ user-invocable: false
 
 # Build-Loop Self-Improvement (Phase 6 Learn)
 
-This skill runs after Review sub-step F (Report) completes, or on demand. It detects recurring patterns across recent build-loop runs, drafts experimental skills/agents to address them, and notifies the user for keep/remove decisions.
+This skill runs after Review-G completes, or on demand. The deterministic runner detects recurring patterns and returns explicit work orders only when judgment is required.
 
 **Principle:** auto-draft, notify, experiment, decide based on evidence. User can always remove. A/B comparison is small and focused — one metric, short sample, clear decision rule.
 
 ## When This Skill Runs
 
-- Automatically at end of every build-loop run (Phase 6 Learn, after Review sub-step F (Report))
+- Automatically at end of every build-loop run (Phase 6 Learn, after Review-G records the run)
 - On demand via `/build-loop:self-improve`
-- Skipped if `.build-loop/state.json.runs` has fewer than 3 entries — not enough signal
+- Accruing if `.build-loop/state.json.runs` has fewer than 3 entries; the phase still writes a receipt and mines toward the threshold
+
+## Entry point
+
+Every host uses `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source manual --json`. On-demand scans first create `<recorded-run-id>` with `scripts/append_run.py`; they never invent a receipt detached from `runs[]`.
+
+The command performs deterministic work and returns `work_orders[]` only when an agent role is needed. Dispatch the named role with the order payload, then record the result through `python3 scripts/learn/__main__.py attest --workdir "$PWD" --run-id <run-id> --work-order-id <id> --status complete [--artifact <path>] [--verdict <verdict>] --json`. The receipt must reach `status: complete`.
 
 ## Flow
 
@@ -25,14 +31,13 @@ This skill runs after Review sub-step F (Report) completes, or on demand. It det
 ┌──────────────────────────────────────────────────────────────┐
 │ Phase 6 Learn: REVIEW (this skill)                                  │
 ├──────────────────────────────────────────────────────────────┤
-│ 1. DETECT   → recurring-pattern-detector (Haiku)              │
-│              emits patterns[] JSON                            │
+│ 1. RUN      → deterministic Learn runner                      │
+│              emits receipt + bounded work_orders[]            │
 │ 2. FILTER   → keep only confidence:high or count >= threshold │
-│ 3. DRAFT    → for each kept pattern:                          │
-│              self-improvement-architect (Sonnet)              │
+│ 3. DRAFT    → returned self-improvement work orders only      │
 │              writes .build-loop/skills/experimental/<name>/   │
-│ 4. SIGNOFF  → build-orchestrator (Opus 4.7) reviews each:     │
-│              approve, revise, or discard                      │
+│ 4. SIGNOFF  → returned promotion-reviewer work order          │
+│              records approve, revise, or discard              │
 │ 5. TRACK    → record baseline in .build-loop/experiments/     │
 │ 6. NOTIFY   → synthesize 3-5 line summary to user             │
 │              (include removal command + A/B plan)             │
@@ -41,48 +46,34 @@ This skill runs after Review sub-step F (Report) completes, or on demand. It det
 
 ## Steps
 
-### 1. Detect recurring patterns
+### 1. Run and read the receipt
 
 ```
-Agent: recurring-pattern-detector (haiku)
-Input: read .build-loop/state.json
-Output: {scannedRuns, patterns: [...]}
+Input: `.build-loop/learn/<run-id>.json`
+Output: deterministic stage results plus bounded `work_orders[]`
 ```
 
-If `patterns.length === 0`, skip to step 6 (notify with "no patterns detected, N runs scanned"). End.
+If `work_orders[]` is empty, emit `learn_line` and close. This path uses no LLM.
 
-### 2. Filter
+### 2. Trust the runner boundary
 
-Keep patterns matching any of:
-- `confidence === "high"`
-- `count >= 4` regardless of confidence
-- `type === "manual_intervention"` (user time is expensive; lower threshold)
+The runner owns detection, filtering, deduplication, and the two-pattern cap. Do not repeat these decisions in the caller.
 
-Drop the rest. Log skipped patterns in `.build-loop/experiments/skipped.jsonl` with date + reason — lets us tune thresholds later without losing signal.
+### 3. Dispatch returned work
 
-### 3. Draft experimental artifacts
-
-For each kept pattern, dispatch:
-
-```
-Agent: self-improvement-architect (sonnet)
-Input: the pattern object + target type (skill or agent)
-Output:
-  - writes .build-loop/skills/experimental/<name>/SKILL.md (or agents/experimental/<name>.md)
-  - returns concise 3-4 line synthesis
-```
+Dispatch only roles returned in `work_orders[]`, using the included payload. A `self-improvement-architect` may write `.build-loop/skills/experimental/<name>/SKILL.md` or `.build-loop/agents/experimental/<name>.md`. An `implementer` may realize a returned enforcement specification.
 
 The architect agent includes an A/B Experiment section in every artifact it writes, and runs `python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply <written-path>` immediately after the write. A drafted skill is `user-invocable: false`; the harness computes `userInvocable ?? true`, so an unstamped draft would be publicly invocable the moment it lands somewhere loadable. If the architect returns without a `compliant`/`stamped` stamper status, re-run the command yourself before step 4.
 
-### 4. Opus 4.7 signoff
+### 4. Attest and review
 
-Build-orchestrator (Opus 4.7) reads each drafted artifact and decides:
+Attach the repository-relative draft with `attest`. The runner then creates a `promotion-reviewer` order. That reviewer decides:
 
 - **APPROVE** — artifact is coherent, pattern is real, A/B plan is measurable → proceed to track
-- **REVISE** — core idea is right, execution needs tightening → re-dispatch architect with specific feedback, max 1 revision pass
+- **REVISE** — core idea is right, execution needs tightening
 - **DISCARD** — pattern is noise or artifact is unusable → delete the file, log to `.build-loop/experiments/discarded.jsonl` with reason
 
-Opus signoff is the quality gate. Sonnet drafts fast; Opus ensures no garbage ships into `.build-loop/skills/experimental/`.
+Attach the verdict with `attest`. Pending or failed orders keep the receipt open. The host's normal model resolver selects any agent model.
 
 ### 5. Track baseline
 
@@ -102,7 +93,7 @@ After `sample_size_target` applied entries, Phase 6 Learn computes delta and emi
 
 ### 6. Notify user (concise synthesis)
 
-Emit exactly this format to the Review sub-step F report tail:
+Emit exactly this format to the Review-G report tail:
 
 ```
 ## Phase 6 Learn: Self-Improvement Review
@@ -160,9 +151,9 @@ count in the Phase 6 summary — never auto-resolves.
 
 ## Data Contracts
 
-### `.build-loop/state.json.runs[]` extensions (writer: build-orchestrator during Review sub-step F)
+### `.build-loop/state.json.runs[]` extensions (writer: build-orchestrator during Review-G)
 
-Review sub-step F (Report) must now append a run entry to `state.json.runs[]` before Phase 6 Learn runs. Schema:
+Review-G must append a run entry to `state.json.runs[]` before Phase 6 Learn runs. Schema:
 
 ```json
 {
@@ -311,17 +302,17 @@ The skill stops triggering immediately (no orchestrator restart needed).
 
 - Will not modify the build-loop plugin repo
 - Will not promote skills across projects without explicit user approval
-- Will not run if state.json has < 3 runs — insufficient signal
+- Will accrue when state.json has < 3 runs; deterministic Learn still runs and records its receipt
 - Will not retry pattern detection more than once per run
 - Will not write skills for patterns with confidence "low"
 
-## Model Tiering (this skill)
+## Agent dispatch (this skill)
 
-| Step | Agent / Model |
+| Step | Dispatch rule |
 |---|---|
-| 1. Detect | recurring-pattern-detector (haiku) |
-| 3. Draft | self-improvement-architect (sonnet) |
-| 4. Signoff | build-orchestrator (opus 4.7) |
-| 6. Notify | inline, no model |
+| 1. Detect | Deterministic runner; no agent or LLM |
+| 3. Draft | Dispatch only a returned `self-improvement-architect` work order |
+| 4. Signoff | Dispatch only a returned `promotion-reviewer` work order |
+| 6. Notify | Emit the receipt's deterministic `learn_line` |
 
-Haiku detect is the floor — scanning JSON for counts. Sonnet drafts because authoring SKILL.md needs judgment about trigger phrases and structure. Opus 4.7 signs off because a bad experimental skill silently contaminates future runs; wrong spec is catastrophic.
+The host resolves any returned agent role through its normal model policy. This protocol assigns no vendor-specific model.

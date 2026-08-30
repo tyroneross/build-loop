@@ -8,6 +8,7 @@ Triggers
 - post-push (build-loop run)  → orchestrator Phase 4G calls this.
 - post-push-armed (ad-hoc)    → session-start hook drains the armed baton.
 - phase-6-learn               → orchestrator's ``## Learn`` line uses this.
+- branch-collapse             → strict collapse records the run milestone.
 - ad-hoc                      → human-invoked one-off.
 
 Exit codes

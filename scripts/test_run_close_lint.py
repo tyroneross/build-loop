@@ -40,6 +40,15 @@ def _orchestrator_run(run_id: str, when: datetime = NOW) -> dict:
     return {"run_id": run_id, "date": _iso(when), "outcome": "pass", "goal": "g"}
 
 
+def _write_learn_receipt(workdir: Path, run_id: str, status: str = "complete") -> None:
+    path = workdir / ".build-loop" / "learn" / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": "build-loop.learn-receipt.v1", "run_id": run_id, "status": status}),
+        encoding="utf-8",
+    )
+
+
 def _floor_run(run_id: str, when: datetime = NOW) -> dict:
     """A Stop-hook record: append_run stamps ``source: append_run``."""
     return {"run_id": run_id, "date": _iso(when), "outcome": "pass", "source": "append_run"}
@@ -138,6 +147,52 @@ class RunCloseLintTest(unittest.TestCase):
         self.assertEqual(result["status"], "recorded")
         self.assertTrue(result["orchestrator_grade"])
         self.assertEqual(result["mode"], "run-id")
+
+    def test_require_learn_rejects_prose_only_run_close(self) -> None:
+        run = _orchestrator_run("bl-1")
+        self._write_state({"runs": [run]})
+        result = run_close_lint.check(self.workdir, run_id="bl-1", require_learn=True, now=NOW)
+        self.assertEqual(result["status"], "learn_missing")
+        self.assertIn("scripts/learn/__main__.py run", result["remediation"])
+
+    def test_require_learn_accepts_matching_complete_receipt_and_state_summary(self) -> None:
+        run = _orchestrator_run("bl-1")
+        run["learn"] = {
+            "schema": "build-loop.learn-receipt.v1",
+            "status": "complete",
+            "receipt": ".build-loop/learn/bl-1.json",
+        }
+        self._write_state({"runs": [run]})
+        _write_learn_receipt(self.workdir, "bl-1")
+        result = run_close_lint.check(self.workdir, run_id="bl-1", require_learn=True, now=NOW)
+        self.assertEqual(result["status"], "recorded")
+        self.assertTrue(result["learn_complete"])
+
+    def test_require_learn_refuses_run_id_path_escape(self) -> None:
+        run = _orchestrator_run("../escape")
+        run["learn"] = {
+            "schema": "build-loop.learn-receipt.v1",
+            "status": "complete",
+            "receipt": ".build-loop/learn/../escape.json",
+        }
+        self._write_state({"runs": [run]})
+        escaped = self.workdir / ".build-loop" / "escape.json"
+        escaped.write_text(
+            json.dumps({
+                "schema": "build-loop.learn-receipt.v1",
+                "run_id": "../escape",
+                "status": "complete",
+            }),
+            encoding="utf-8",
+        )
+
+        result = run_close_lint.check(
+            self.workdir, run_id="../escape", require_learn=True, now=NOW
+        )
+
+        self.assertEqual(result["status"], "learn_missing")
+        self.assertIn("escapes", result["reason"])
+        self.assertNotIn('"../escape"', result["remediation"])
 
     # ---- evidence-mode precedence -------------------------------------------
 
@@ -249,19 +304,23 @@ class RunCloseContractTest(unittest.TestCase):
         "agents/build-orchestrator.md": [
             "run_close_lint.py",
             "--require-orchestrator",
+            "--require-learn",
         ],
         "skills/build-loop/references/phase-4-review.md": [
             "run_close_lint.py",
             "--require-orchestrator",
+            "--require-learn",
             "non-invocation",
         ],
         "references/phase-gate-checklist.md": [
             "run_close_lint.py",
+            "--require-learn",
         ],
         # Parent verifies at the completion boundary.
         "skills/build-loop/references/verify-dispatch.md": [
             "run_close_lint.py",
             "--expect-recent-minutes",
+            "--require-learn",
         ],
     }
 

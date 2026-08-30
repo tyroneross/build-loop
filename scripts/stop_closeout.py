@@ -67,6 +67,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import append_run  # noqa: E402  (run-record writer + idempotent append)
 import judgment_gate  # noqa: E402  (Frontier-judgment gate evaluator)
+from learn import runner as learn_runner  # noqa: E402  (executable Phase 6 pipeline)
 
 # No-session fallback window: when the host did not pass a session id (e.g. a
 # Codex Stop hook), treat the run as "this session" only if its heartbeat is
@@ -320,9 +321,16 @@ def _derive_root_cause(state: dict) -> str:
     honestly contributes no cluster. Fail-open: any error -> ''.
     """
     try:
-        phases = state.get("phases")
         found = ""
-        if isinstance(phases, dict):
+        phase_maps = [state.get("phases")]
+        runs = state.get("runs")
+        if isinstance(runs, list):
+            phase_maps.extend(
+                row.get("phases") for row in runs if isinstance(row, dict)
+            )
+        for phases in phase_maps:
+            if not isinstance(phases, dict):
+                continue
             for ph in phases.values():
                 if not isinstance(ph, dict):
                     continue
@@ -439,102 +447,31 @@ def _lessons_artifact_exists(workdir: Path) -> bool:
         return False
 
 
-_LEARN_RUN_FLOOR = 3  # phase-6-learn.md: `runs[] >= 3` is the Full-Learn threshold.
-
-
-def _drafted_pattern_dirs(exp: Path) -> set[str]:
-    """Names of experimental-draft DIRECTORIES under ``skills/experimental``.
-
-    f2: filter non-directory entries so a stray metadata file (``.DS_Store``)
-    cannot masquerade as a draft and falsely clear owed. Each real experimental
-    skill is authored as its own directory (``<name>/SKILL.md``)."""
-    if not exp.is_dir():
-        return set()
+def _run_learn(workdir: Path, run_id: str) -> dict:
+    """Run the same receipt-backed Learn path used by Review-G."""
     try:
-        return {p.name for p in exp.iterdir() if p.is_dir()}
-    except OSError:
-        return set()
+        return learn_runner.run(workdir, run_id=run_id, source="stop", accrue=False)
+    except Exception as exc:  # noqa: BLE001 — Stop stays advisory, receipt failure stays visible
+        return {
+            "status": "error",
+            "learn_line": "Learn: error — runner unavailable",
+            "errors": [f"{type(exc).__name__}: {exc}"],
+            "work_orders": [],
+        }
 
 
-def _pattern_is_drafted(pattern_slug: str, drafted_dirs: set[str]) -> bool:
-    """Whether one recurring pattern already has an experimental draft.
-
-    The self-improvement-architect drafts each experimental skill FROM a
-    candidate whose ``name`` is ``procedural_governance.slug(root_cause)``
-    (``detect_patterns``), so the candidate slug is the reliable join key against
-    the draft directory name — NOT directory non-emptiness, which let a stale
-    draft for pattern A suppress a brand-new pattern B forever. Match is
-    BOUNDARY-ANCHORED: exact equality, or the FULL slug as a hyphen-delimited
-    prefix (``<slug>-v2``) / suffix (``exp-<slug>``). A bare substring match is
-    deliberately NOT used — it false-clears (hides undrafted work) when a short
-    slug appears mid-name in an unrelated draft, the opposite of f2's required
-    'err toward owed' bias. No match -> NOT drafted -> the pattern stays owed:
-    the safe direction surfaces a reminder rather than silently hiding work."""
-    if not pattern_slug:
-        return False
-    return any(
-        name == pattern_slug
-        or name.startswith(pattern_slug + "-")
-        or name.endswith("-" + pattern_slug)
-        for name in drafted_dirs
-    )
-
-
-def _learn_drafting_owed(workdir: Path) -> tuple[bool, str]:
-    """Whether Phase-6 Learn DRAFTING is owed for this inline run.
-
-    The mandatory Phase-6 contract runs the deterministic detector arm
-    (``procedural_governance detect-patterns``) — but that only fires inside the
-    orchestrator's Review-G, so an INLINE run's recurring signals were never
-    detected until the user asked (the ``.build-loop/learn/pending`` lane's own
-    "not yet an automated detector pass" TODO). This closes that: run the
-    deterministic arm here (idempotent — it dedupes into ``.procedural/
-    _candidates.jsonl``) and, when it finds a root-cause cluster >= threshold
-    that has NOT yet been drafted into an experimental skill, report it owed so
-    the marker surfaces "run ``/build-loop:run self-improve``" at the next
-    SessionStart. A Stop hook cannot dispatch the Sonnet architect, so like the
-    retro/lessons checks this is checked-for, not run.
-
-    Owed clears once an experimental draft exists (the "handled" signal, mirroring
-    ``_retro_artifact_exists``/``_lessons_artifact_exists``). Fail-open: any error
-    -> not owed (never block a Stop on a learning nicety)."""
-    try:
-        import procedural_governance as pg  # noqa: PLC0415 — lazy: fail-open if absent
-
-        runs = pg.load_runs(workdir)
-        if len(runs) < _LEARN_RUN_FLOOR:
-            return False, f"accruing ({len(runs)}/{_LEARN_RUN_FLOOR} runs)"
-        pg.detect_patterns(workdir)  # deterministic arm — persist candidates for /self-improve
-        clusters = pg.cluster_root_causes(runs)
-        patterns = [rc for rc, ids in clusters.items() if len(ids) >= pg.PATTERN_THRESHOLD]
-        if not patterns:
-            return False, f"0 patterns above threshold ({len(runs)} runs scanned)"
-        # f2: clear owed PER PATTERN, not on directory non-emptiness. A draft for
-        # pattern A must not suppress an undrafted pattern B, and a lone .DS_Store
-        # must not clear owed.
-        exp = workdir / ".build-loop" / "skills" / "experimental"
-        drafted_dirs = _drafted_pattern_dirs(exp)
-        undrafted = [rc for rc in patterns if not _pattern_is_drafted(pg.slug(rc), drafted_dirs)]
-        if not undrafted:
-            return False, f"{len(patterns)} pattern(s) above threshold — experimental draft present for each"
-        return True, (
-            f"{len(undrafted)} of {len(patterns)} recurring root-cause pattern(s) "
-            f"above threshold across {len(runs)} runs have no experimental draft yet"
-        )
-    except Exception:  # noqa: BLE001 — Learn detection is best-effort; never break Stop
-        return False, "detector-unavailable"
-
-
-def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
+def _write_marker(workdir: Path, decision: dict, verdict: dict, learn_receipt: dict) -> Path:
     marker = _marker_path(workdir, decision["run_id"])
     marker.parent.mkdir(parents=True, exist_ok=True)
     # EC-01 rca: verify the two owed closeout artifacts actually exist rather than
     # only listing them. `closeout_incomplete: true` means at least one is still owed.
     retro_done = _retro_artifact_exists(workdir, decision["run_id"])
     lessons_done = _lessons_artifact_exists(workdir)
-    # Phase-6 Learn: an inline run's detector arm never ran; fire it here and fold
-    # any owed DRAFTING into the same surfaced marker (a third checked-for item).
-    learn_owed, learn_reason = _learn_drafting_owed(workdir)
+    learn_status = str(learn_receipt.get("status") or "error")
+    # A pending accruing miner is best-effort, visible in the receipt, and must
+    # not keep an otherwise complete Stop closeout open. Agent work and errors do.
+    learn_owed = learn_status in {"awaiting_agents", "error"}
+    learn_reason = str(learn_receipt.get("learn_line") or "Learn: error — inspect receipt")
     closeout_incomplete = not (retro_done and lessons_done) or learn_owed
     retro_mark = "x" if retro_done else " "
     lessons_mark = "x" if lessons_done else " "
@@ -550,6 +487,7 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         f"retro_present: {str(retro_done).lower()}\n"
         f"lessons_present: {str(lessons_done).lower()}\n"
         f"learn_drafting_owed: {str(learn_owed).lower()}\n"
+        f"learn_status: {learn_status}\n"
         "source: stop_closeout\n"
         "---\n\n"
         f"# Closeout pending — {decision['run_id']}\n\n"
@@ -559,8 +497,8 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         "still owed (`[ ]`) in this session:\n\n"
         f"- [{retro_mark}] **retrospective-synthesizer** — write the 9-section retrospective.\n"
         f"- [{lessons_mark}] **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n"
-        f"- [{learn_mark}] **Phase-6 Learn drafting** — {learn_reason}."
-        + (" Run `/build-loop:run self-improve` to draft experimental skill(s) for the recurring pattern(s).\n\n"
+        f"- [{learn_mark}] **Phase-6 Learn** — {learn_reason}."
+        + (f" Inspect `.build-loop/learn/{decision['run_id']}.json` and complete its pending work orders.\n\n"
            if learn_owed else "\n\n")
         + ("**closeout_incomplete: true** — at least one item above is still owed.\n\n"
            if closeout_incomplete else
@@ -794,14 +732,22 @@ def run_stop(workdir: Path, session_id: str) -> dict:
         # asymmetry: this fires without the session-match gate — the record is
         # terminal, so the run is finished by definition regardless of which
         # session observes it; releasing a finished run's identity is safe.
+        terminal_record = decision.get("outcome") == "done"
+        if terminal_record and decision.get("run_id"):
+            learn_receipt = _run_learn(workdir, decision["run_id"])
+            if learn_receipt.get("status") in {"awaiting_agents", "error"}:
+                verdict = _run_gate(workdir, decision["run_id"])
+                _write_marker(workdir, decision, verdict, learn_receipt)
+                _write_judgment_followup(workdir, decision, verdict)
         if decision.get("outcome") == "done" and decision.get("run_id"):
             _release_identity(workdir, decision["run_id"])
         return {}
     # action == "record" — append_run appends the first time, merges on later
     # Stops (evidence accumulates and outcome can only improve).
     write_result = _record_run(workdir, decision, state)
+    learn_receipt = _run_learn(workdir, decision["run_id"])
     verdict = _run_gate(workdir, decision["run_id"])
-    _write_marker(workdir, decision, verdict)  # refreshed each Stop → tracks current outcome
+    _write_marker(workdir, decision, verdict, learn_receipt)  # refreshed each Stop
     _write_judgment_followup(workdir, decision, verdict)  # C2: owed judgment → Iterate-drained followup
     if decision["outcome"] == "done":
         # Terminal outcome recorded → close the run's identity so the next
@@ -852,8 +798,9 @@ def _sweep_orphan_run(workdir: Path) -> str | None:
         "note": "closeout:recorded-by-sessionstart-sweep (crash-orphan; no Stop fired)",
     }
     _record_run(workdir, decision, state)
+    learn_receipt = _run_learn(workdir, run_id)
     verdict = _run_gate(workdir, run_id)
-    _write_marker(workdir, decision, verdict)
+    _write_marker(workdir, decision, verdict, learn_receipt)
     return run_id
 
 

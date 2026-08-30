@@ -406,13 +406,13 @@ Follow the returned `action`: `auto` may proceed after Review passes; `confirm` 
 
 **Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. The orchestrator agent owns the invocation — see `agents/build-orchestrator.md` §G for the canonical call (including `--judge-decisions-json` and `--budget-summary-json`). Schema and flags are owned by `scripts/write_run_entry/__main__.py --help`; do not hand-write JSON.
 
-**Run-close assertion (MANDATORY every Phase 4G — the `runs[]` write is verified, not assumed).** Immediately after `write_run_entry` returns, assert the mutation actually landed:
+**Run-close assertion (MANDATORY every Phase 4G — run record and Learn receipt are verified, not assumed).** After `write_run_entry` and Phase 6 complete, assert both mutations landed:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
-  --workdir "$PWD" --run-id "<run_id>" --require-orchestrator --json
+  --workdir "$PWD" --run-id "<run_id>" --require-orchestrator --require-learn --json
 ```
 
-Exit 0 (`status: recorded`) → proceed to the milestone append. Exit 1 → the run is NOT closed, and the report may not be emitted until it is: `missing` means no `runs[]` entry carries this `run_id`; `floor_only` means only a hook-written floor record exists (`source: append_run`) and the Review-G write never landed; `no_state` means this workdir has no `.build-loop/state.json` at all — the run left no durable footprint, usually because Phase 1 wrote state somewhere else than the workdir being reported. Each failure carries `remediation` with the exact command; run it, then re-run the lint.
+Exit 0 (`status: recorded`) → proceed. Exit 1 means the report waits: `missing`/`floor_only`/`no_state` describe run-record failures; `learn_missing` means the runner, receipt, state summary, or agent attestations are incomplete. Run the returned remediation, then re-run the lint.
 
 Why this exists as a separate read rather than another clause inside the writer: the `runs[]` write already carried a "MUST fire on every Phase 4G regardless of dispatch path" rule and a `--scope build` review-completeness gate, and both are inside the write path, so both stay silent on **non-invocation** — the one failure mode observed on 2026-07-16, when six sequential dispatched orchestrators each returned a quality report and wrote no run record, retrospective, milestone, or feedback entry, starving Phase 6 Learn of a six-run day. A gate inside the script cannot fire when nobody runs the script, so the assertion reads durable state instead. The matching half is the dispatching parent's check at the completion boundary (`references/verify-dispatch.md` §6) — Review-G catches a write that failed, the parent catches an orchestrator that never reached Review-G. Contract locked by `scripts/test_run_close_lint.py`; lesson: `build-loop-memory/lessons/2026-07-17-lesson-dispatched-orchestrator-writes-no-run-records.md`.

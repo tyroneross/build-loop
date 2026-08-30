@@ -270,7 +270,7 @@ Key steps: prioritized work list (Validate failures → blocker UX → major UX 
 
 Detect recurring patterns across recent runs, auto-draft experimental skills/agents. **Always runs after Review-G** (v0.30.0+) and always emits a `## Learn` outcome line. Three outcome states: **accruing** (`runs[] < 3` → `Learn: accruing (N/3 runs)`), **deferred** (debug-only `closeout: false` or budget-exhausted → write `learn-deferred-<run-id>.md` marker → `Learn: deferred — <reason>`), or **full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred). Promotion to `active/` still requires explicit `/build-loop:promote-experiment` (safety boundary). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
 
-Key steps: recurring-pattern-detector (Haiku; reads run records, retrospective enforce-candidates, classified learning objects, and redacted tool-trace summaries) → filter (confidence: high OR count >= 4; `enforce_recurrence` >= 2 distinct run-ids; repeated identical tool calls >= 3 become evidence-aware retry candidates) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
+One command owns the sequence and proof: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Dispatch only the returned `work_orders[]`, attach each result through `attest`, and require a `status: complete` receipt before closeout. This keeps zero-pattern runs deterministic and token-free.
 
 **Load `skills/build-loop/references/phase-6-learn.md`** for the full gating-outcomes table, detect-filter-draft-signoff flow, auto-promote rules, and user control commands.
 

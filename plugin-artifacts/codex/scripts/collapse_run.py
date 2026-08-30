@@ -1976,7 +1976,7 @@ def enforce_terminal_memory_closeout(
         result["memory_closeout"] = run_memory_closeout(
             Path(workdir).resolve(),
             run_id=str(result["run_id"]),
-            source="phase-6-learn",
+            source="branch-collapse",
             memory_root=str(memory_root) if memory_root is not None else None,
         )
         milestone_status = (result["memory_closeout"].get("milestone") or {}).get("status")

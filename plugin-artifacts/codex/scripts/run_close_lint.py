@@ -38,6 +38,7 @@ Statuses (``status`` in the JSON envelope):
     skipped     exit 0  no run identity to check and no execution block — nothing ran here
     missing     exit 1  state.json is present but runs[] has no qualifying entry
     floor_only  exit 1  only a hook-written floor entry, and --require-orchestrator was set
+    learn_missing exit 1 run record exists but --require-learn found no complete receipt
     no_state    exit 1  no .build-loop/state.json in this workdir at all (the loudest case:
                         the run produced no durable footprint whatsoever)
 
@@ -56,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -155,13 +157,47 @@ def _execution_run_id(state: dict) -> str | None:
 
 def _remediation(workdir: Path, run_id: str | None) -> str:
     """The exact command that closes the gap."""
-    target = f' --run-id "{run_id}"' if run_id else ""
+    target = f" --run-id {shlex.quote(run_id)}" if run_id else ""
     return (
         'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py"'
-        f' --workdir "{workdir}" --goal "<goal>" --outcome <pass|fail|partial>'
+        f" --workdir {shlex.quote(str(workdir))} --goal \"<goal>\" --outcome <pass|fail|partial>"
         f" --scope build --files-touched-from-git{target}"
         "  # then re-run run_close_lint.py to confirm"
     )
+
+
+def _learn_remediation(workdir: Path, run_id: str) -> str:
+    return (
+        f"cd {shlex.quote(str(workdir))} && python3 scripts/learn/__main__.py run "
+        f"--workdir {shlex.quote(str(workdir))} --run-id {shlex.quote(run_id)} "
+        "--source review-g --json"
+        "  # complete and attest every returned work order, then re-run this lint"
+    )
+
+
+def _learn_complete(workdir: Path, entry: dict[str, Any]) -> tuple[bool, str]:
+    run_id = str(entry.get("run_id") or "")
+    summary = entry.get("learn")
+    if not isinstance(summary, dict):
+        return False, "runs[].learn is absent"
+    expected = f".build-loop/learn/{run_id}.json"
+    if summary.get("receipt") != expected:
+        return False, f"runs[].learn.receipt must equal {expected!r}"
+    learn_root = (workdir / ".build-loop" / "learn").resolve()
+    receipt_path = (workdir / expected).resolve()
+    try:
+        receipt_path.relative_to(learn_root)
+    except ValueError:
+        return False, "Learn receipt path escapes .build-loop/learn"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"Learn receipt is unreadable: {exc}"
+    if receipt.get("schema") != "build-loop.learn-receipt.v1" or receipt.get("run_id") != run_id:
+        return False, "Learn receipt identity/schema mismatch"
+    if receipt.get("status") != "complete" or summary.get("status") != "complete":
+        return False, f"Learn status is {receipt.get('status') or 'missing'}; expected complete"
+    return True, "matching complete Learn receipt and runs[].learn summary"
 
 
 def check(
@@ -169,6 +205,7 @@ def check(
     run_id: str | None = None,
     recent_minutes: int | None = None,
     require_orchestrator: bool = False,
+    require_learn: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assert a run-close record exists. Returns the JSON envelope (never raises).
@@ -248,6 +285,17 @@ def check(
                 remediation=_remediation(workdir, resolved_id),
             )
             return envelope
+        if require_learn:
+            complete, reason = _learn_complete(workdir, matches[-1])
+            if not complete:
+                envelope.update(
+                    status="learn_missing",
+                    reason=f"run_id {resolved_id!r} lacks executable Phase 6 proof: {reason}",
+                    remediation=_learn_remediation(workdir, resolved_id),
+                    learn_complete=False,
+                )
+                return envelope
+            envelope["learn_complete"] = True
         envelope.update(
             status="recorded",
             reason=f"run_id {resolved_id!r} present in state.json.runs[]",
@@ -275,6 +323,20 @@ def check(
                 remediation=_remediation(workdir, None),
             )
             return envelope
+        if require_learn:
+            fresh_with_learn = [r for r in fresh if _learn_complete(workdir, r)[0]]
+            if not fresh_with_learn:
+                newest_id = str(fresh[-1].get("run_id") or "")
+                envelope.update(
+                    status="learn_missing",
+                    run_id=newest_id or None,
+                    reason="recent run record exists but no matching complete Learn receipt was found",
+                    remediation=_learn_remediation(workdir, newest_id),
+                    learn_complete=False,
+                )
+                return envelope
+            fresh = fresh_with_learn
+            envelope["learn_complete"] = True
         envelope.update(
             status="recorded",
             run_id=fresh[-1].get("run_id"),
@@ -321,6 +383,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Reject a hook-written floor record; demand the Review-G write.",
     )
     parser.add_argument(
+        "--require-learn",
+        action="store_true",
+        help="Require a matching complete Learn receipt plus runs[].learn summary.",
+    )
+    parser.add_argument(
         "--advisory",
         action="store_true",
         help="Always exit 0 (for fail-open hook callers); status still reports the gap.",
@@ -333,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         run_id=args.run_id,
         recent_minutes=args.expect_recent_minutes,
         require_orchestrator=args.require_orchestrator,
+        require_learn=args.require_learn,
     )
     result["advisory"] = bool(args.advisory)
 

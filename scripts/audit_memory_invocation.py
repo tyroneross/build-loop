@@ -264,28 +264,24 @@ def probe_session_start_hook(workdir: Path) -> dict[str, Any]:
     }
 
 
-def probe_consolidate_memory(workdir: Path) -> dict[str, Any]:
-    """Verify the consolidate_memory.py script imports cleanly (Phase 6)."""
-    script = workdir / "scripts" / "consolidate_memory.py"
+def probe_learn_runner(workdir: Path) -> dict[str, Any]:
+    """Verify Phase 6 has its executable receipt boundary, not only leaf scripts."""
+    script = workdir / "scripts" / "learn" / "__main__.py"
     if not script.is_file():
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "consolidate_memory.py absent"}
+        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "learn/__main__.py absent"}
+    body = script.read_text(encoding="utf-8")
+    runner = workdir / "scripts" / "learn" / "runner.py"
+    wired = runner.is_file() and "runner.run" in body and "runner.attest" in body
     return {
         "invoked": True,
-        "result_count": 1,
-        "result_sample": {"path": str(script.relative_to(workdir)), "size": script.stat().st_size},
-        "verdict": "ok",
-    }
-
-
-def probe_procedural_governance(workdir: Path) -> dict[str, Any]:
-    script = workdir / "scripts" / "procedural_governance.py"
-    if not script.is_file():
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "procedural_governance.py absent"}
-    return {
-        "invoked": True,
-        "result_count": 1,
-        "result_sample": {"path": str(script.relative_to(workdir)), "size": script.stat().st_size},
-        "verdict": "ok",
+        "result_count": 2 if wired else 1,
+        "result_sample": {
+            "cli": str(script.relative_to(workdir)),
+            "runner": str(runner.relative_to(workdir)),
+            "receipt_schema": "build-loop.learn-receipt.v1",
+        },
+        "verdict": "ok" if wired else "error",
+        **({} if wired else {"error": "Learn CLI does not expose run plus attest"}),
     }
 
 
@@ -318,8 +314,7 @@ PROBES: list[tuple[str, str, str, Callable[[Path], dict[str, Any]]]] = [
     ("Phase 4 Review-F → native debugger store readiness", "phase-4-f", "best-effort", probe_debugger_mcp),
     ("Phase 4 Review-F → write_run_entry.py", "phase-4-f", "wired", probe_write_run_entry),
     ("Phase 5 Iterate → native debugger search (adapted symptom)", "phase-5", "best-effort", probe_debugger_mcp),
-    ("Phase 6 Learn → consolidate_memory.py", "phase-6", "wired", probe_consolidate_memory),
-    ("Phase 6 Learn → procedural_governance.py", "phase-6", "wired", probe_procedural_governance),
+    ("Phase 6 Learn → executable runner + receipt", "phase-6", "wired", probe_learn_runner),
 ]
 
 

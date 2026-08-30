@@ -46,7 +46,9 @@ from pathlib import Path
 from typing import Any
 
 CLOSEOUT_STATUSES = ("wrote_memory", "queued_pending_lesson", "no_durable_lesson")
-VALID_SOURCES = ("post-push", "post-push-armed", "phase-6-learn", "ad-hoc", "test")
+VALID_SOURCES = (
+    "post-push", "post-push-armed", "phase-6-learn", "branch-collapse", "ad-hoc", "test"
+)
 
 CLOSEOUT_DIRNAME = "closeout"
 PENDING_LESSONS_DIRNAME = "pending-lessons"
@@ -58,7 +60,7 @@ CLOSEOUT_PENDING_DIRNAME = "closeout-pending"
 # existing legacy checkout, else the neutral per-user default). Never hardcode
 # an address here: a literal default writes the maintainer's tree onto a user's disk.
 # Sources for which milestone enforcement + queue drain fire (a real shipped run).
-ENFORCE_SOURCES = ("post-push", "post-push-armed", "phase-6-learn")
+ENFORCE_SOURCES = ("post-push", "post-push-armed", "phase-6-learn", "branch-collapse")
 
 
 def _iso_now() -> str:
@@ -543,7 +545,7 @@ def run(
     Args:
         workdir:  build-loop project root (the repo containing ``.build-loop/``).
         run_id:   stable run identifier. When omitted, derives ``ts-source``.
-        source:   one of ``post-push | post-push-armed | phase-6-learn | ad-hoc | test``.
+        source:   one of ``post-push | post-push-armed | phase-6-learn | branch-collapse | ad-hoc | test``.
 
     Returns the envelope::
 

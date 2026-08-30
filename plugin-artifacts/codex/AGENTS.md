@@ -531,6 +531,8 @@ Log iteration state to `.build-loop/state.json`.
 
 Runs after Review sub-step G (Report) on **every** build. Cheap detector + `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` always fire. A `## Learn` outcome line is always emitted. Three outcome states:
 
+Run `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Dispatch only returned `work_orders[]`, attach results through `attest`, and require `status: complete` with `run_close_lint.py --require-learn`. The receipt is `.build-loop/learn/<run-id>.json`.
+
 - **Accruing** (`runs[] < 3`): cheap detector + consolidation only; report `Learn: accruing (N/3 runs)`.
 - **Deferred** (debug-only `closeout: false` in dispatch envelope OR budget-exhausted `budget_check.py` envelope `action == "finalize_and_stop"` at Phase 6 entry): cheap detector + consolidation; write `.build-loop/proposals/learn-deferred-<run-id>.md` marker with `{reason, runs_count, budget_action}`; skip Sonnet draft + Opus signoff so Learn never blows the budget ceiling. Report `Learn: deferred — <reason>`.
 - **Full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred): full flow below.
@@ -613,7 +615,7 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 2. **Run the judgment gate** — `python3 "$root"/scripts/judgment_gate.py --workdir "$PWD" --run-id <run-id> --agent-tool-available false --json`. On a stakes-gated run that stayed at the inline floor, it surfaces the skipped-Frontier-judgment WARN that the Stop hook would otherwise have surfaced.
 3. **Write the closeout status** — record `state.json.runs[N].closeout_status` (and the inline-path marker `.build-loop/closeout-pending/<run-id>.md` if a follow-up surface is needed), matching what `stop_closeout.py` would have written.
 4. **Finalize branch hygiene after merge and positive owner release** — from the integrating/primary worktree run `python3 "$root/scripts/collapse_run.py" --workdir "$PWD" --run-id <exact-run-id> --branch <exact-branch> --strict --merged-only --owner-released --release-source codex-manual --json`. Do not declare branch hygiene clean unless `strict_success:true`, `bundle_verified:true`, a terminal receipt, and `errors:[]` are present.
-5. **Phase 6 Learn recording** — run the cheap detector + consolidation and emit the `## Learn` outcome line (accruing / deferred / full) explicitly; it does not auto-fire without the hook.
+5. **Phase 6 Learn recording** — run `python3 "$root/scripts/learn/__main__.py" run --workdir "$PWD" --run-id <run-id> --source manual --json`; complete returned work orders and emit its `learn_line`.
 
 These are idempotent with the hook path (the marker is the inline sentinel; `runs[]` membership is the Phase-D sentinel), so a later host that DOES fire the hook will not double-record. The rule: **never let "the hook will catch it" stand in for run recording or branch finalization under Codex** — confirm the hook fired, or do the five steps by hand.
 

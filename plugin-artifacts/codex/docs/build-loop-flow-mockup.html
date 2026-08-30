@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "61b4f9836eb4325876e737bb8d94550706eddb8ff42bf88ca72a8de8e2848cc7"
+    "content_sha256": "38e765c350b81706a33d4f7b5950aa8ca5da06ba394bb50f5a2682a708bcfd7f"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -862,16 +862,11 @@
         "run history (runs[])"
       ],
       "out": [
-        "## Learn line",
-        "experimental drafts",
-        "control-chart update"
+        "Learn receipt",
+        "agent work orders",
+        "## Learn line"
       ],
       "agents": [
-        [
-          "recurring-pattern-detector",
-          "haiku",
-          "Orchestrator"
-        ],
         [
           "self-improvement-architect",
           "sonnet",
@@ -881,48 +876,42 @@
           "promotion-reviewer",
           "opus",
           "Orchestrator"
-        ],
-        [
-          "retrospective-synthesizer",
-          "sonnet",
-          "Orchestrator"
         ]
       ],
       "steps": [
         {
           "id": "p6.detect",
-          "name": "Cheap detector + consolidate (always)",
+          "name": "Run deterministic Learn",
           "kind": "process",
-          "desc": "recurring-pattern-detector scans recent runs for repeating problems and the orchestrator consolidates the lessons into memory; this step always runs.",
+          "desc": "The host-neutral runner detects patterns, consolidates memory, records every stage, and returns agent work orders when judgment or authoring is required.",
           "hooks": [],
-          "agents": [
-            [
-              "recurring-pattern-detector",
-              "haiku",
-              "Orchestrator"
-            ]
-          ]
+          "agents": []
         },
         {
           "id": "p6.draft",
-          "name": "Draft experimental artifact",
+          "name": "Complete returned work orders",
           "kind": "dispatch",
-          "desc": "When a pattern recurs often enough, self-improvement-architect drafts a candidate new skill or agent to address it.",
+          "desc": "The orchestrator dispatches only roles returned by the receipt and attests their artifacts or verdicts.",
           "hooks": [],
           "agents": [
             [
               "self-improvement-architect",
               "sonnet",
               "Orchestrator"
+            ],
+            [
+              "promotion-reviewer",
+              "opus",
+              "Orchestrator"
             ]
           ]
         },
         {
           "id": "p6.signoff",
-          "name": "Promotion signoff",
+          "name": "Close receipt",
           "kind": "gate",
           "tier": "T1",
-          "desc": "promotion-reviewer judges the draft, but turning it on for real always requires your confirmation.",
+          "desc": "Phase 6 closes only after all returned work orders are attested. Promotion still requires user confirmation.",
           "hooks": [],
           "agents": [
             [
@@ -931,7 +920,7 @@
               "Orchestrator"
             ]
           ],
-          "branches": "approve → promote\nelse → keep experimental"
+          "branches": "complete → report\npending → keep run open"
         },
         {
           "id": "p6.chart",
@@ -1121,11 +1110,11 @@
       },
       "build-orchestrator": {
         "model": "opus",
-        "description": "Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.",
+        "description": "Coordinates the six-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate → mandatory Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.",
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-08-29"
         }
       },
       "database-assessor": {
@@ -1446,7 +1435,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-23"
+          "date": "2026-08-29"
         }
       },
       "building-with-deepagents": {
@@ -1706,11 +1695,11 @@
         }
       },
       "self-improve": {
-        "description": "Scan recent build-loop runs for recurring patterns and auto-draft experimental skills/agents with A/B tracking. Fires automatically after Phase 6 Learn, or when the user says \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).",
+        "description": "Run mandatory Phase 6 Learn, then dispatch only returned experimental-draft or review work orders. Also handles \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).",
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-08-29"
         }
       },
       "spec-writing": {
@@ -1900,6 +1889,9 @@
       "scripts/judgment_gate.py": "judgment_gate.py — Phase 4 Review-G gate: did the Frontier judgment layer run?",
       "scripts/keyword_search.py": "Sparse-retrieval (tsvector + ts_rank) leg for hybrid recall.",
       "scripts/knowledge_review.py": "knowledge_review — surface review-needing items across episodic memory.",
+      "scripts/learn/__init__.py": "Executable Phase 6 Learn pipeline.\"\"\"",
+      "scripts/learn/__main__.py": "CLI for the executable Phase 6 Learn pipeline.\"\"\"",
+      "scripts/learn/runner.py": "Host-neutral Phase 6 Learn runner with durable receipts and work orders.\"\"\"",
       "scripts/learn_accruing.py": "learn_accruing.py — EC-01: Phase-6 ``accruing`` fires transcript mining.",
       "scripts/learning_to_draft.py": "learning_to_draft.py — turn retrospective learning-objects into drafter proposals.",
       "scripts/lessons_index/__init__.py": "lessons_index — portable SQLite/FTS5 lessons index for build-loop.",
