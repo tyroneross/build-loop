@@ -120,6 +120,13 @@ class GroundworkExchangeTests(unittest.TestCase):
             "deviations": [],
         }
 
+    def rebind_request(self, request: dict) -> dict:
+        request["taskDigest"] = gx.digest_normalized(request["tasks"])
+        request["requestDigest"] = gx.digest_normalized(
+            {key: value for key, value in request.items() if key != "requestDigest"}
+        )
+        return request
+
     def test_normalization_matches_javascript_contract_vectors(self) -> None:
         value = {"z": -0.0, "a": [1.0, 1e-7, 1e20, "é"], "nested": {"b": True, "a": None}}
         self.assertEqual(
@@ -284,6 +291,54 @@ class GroundworkExchangeTests(unittest.TestCase):
         dangling["requestDigest"] = gx.digest_normalized({key: value for key, value in dangling.items() if key != "requestDigest"})
         with self.assertRaisesRegex(gx.ExchangeError, "unknown local component component-missing"):
             gx.validate_request(dangling, dangling_spec)
+
+    def test_task_owned_files_are_optional_strict_and_digest_bound(self) -> None:
+        omitted = json.loads(json.dumps(self.request))
+        omitted_digest = omitted["requestDigest"]
+        validated_omitted = gx.validate_request(omitted, self.spec)
+        self.assertNotIn("ownedFiles", validated_omitted["tasks"][0])
+        self.assertEqual(validated_omitted["requestDigest"], omitted_digest)
+
+        owned = json.loads(json.dumps(self.request))
+        owned["tasks"][0]["ownedFiles"] = ["Sources/Planner/PlanView.swift", "Tests/PlanViewTests.swift"]
+        self.rebind_request(owned)
+        validated_owned = gx.validate_request(owned, self.spec)
+        self.assertEqual(validated_owned["tasks"][0]["ownedFiles"], owned["tasks"][0]["ownedFiles"])
+        self.assertEqual(validated_owned["taskDigest"], gx.digest_normalized(owned["tasks"]))
+        self.assertEqual(
+            validated_owned["requestDigest"],
+            gx.digest_normalized({key: value for key, value in owned.items() if key != "requestDigest"}),
+        )
+
+        with self.assertRaisesRegex(gx.ExchangeError, "specDigest"):
+            gx.validate_request(owned, {**self.spec, "name": "different"})
+
+    def test_task_owned_files_reject_empty_duplicate_and_unsafe_paths(self) -> None:
+        bad_values = [
+            ([], "at least 1"),
+            (["src/app.ts", "src/app.ts"], "duplicate"),
+            ([""], "non-empty"),
+            (["."], "unsafe path segment"),
+            ([".."], "unsafe path segment"),
+            (["src/../outside.ts"], "unsafe path segment"),
+            (["/tmp/app.ts"], "repository-relative"),
+            (["~/app.ts"], "repository-relative"),
+            (["https://example.com/app.ts"], "repository-relative forward-slash"),
+            ([r"src\app.ts"], "repository-relative forward-slash"),
+        ]
+        for owned_files, message in bad_values:
+            with self.subTest(owned_files=owned_files):
+                request = json.loads(json.dumps(self.request))
+                request["tasks"][0]["ownedFiles"] = owned_files
+                self.rebind_request(request)
+                with self.assertRaisesRegex(gx.ExchangeError, message):
+                    gx.validate_request(request, self.spec)
+
+        malformed = json.loads(json.dumps(self.request))
+        malformed["tasks"][0]["ownedFiles"] = "src/app.ts"
+        self.rebind_request(malformed)
+        with self.assertRaisesRegex(gx.ExchangeError, "must be an array"):
+            gx.validate_request(malformed, self.spec)
 
     def test_request_accepts_v3_exchange_state_refs_and_rejects_malformed_refs(self) -> None:
         component_a = {

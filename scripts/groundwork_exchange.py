@@ -599,9 +599,22 @@ def validate_request(request: Any, canonical_spec: Any) -> dict[str, Any]:
     _unique(manual_ids, "manual action ids")
     for index, raw in enumerate(tasks):
         task = _require_object(raw, f"tasks[{index}]")
-        _strict_keys(task, {"id", "title", "componentRefs", "contractRefs", "requirementIds", "dependsOn", "acceptanceCriterionIds"}, set(), f"tasks[{index}]")
+        _strict_keys(
+            task,
+            {"id", "title", "componentRefs", "contractRefs", "requirementIds", "dependsOn", "acceptanceCriterionIds"},
+            {"ownedFiles"},
+            f"tasks[{index}]",
+        )
         task_ids.append(_nonempty(task["id"], f"tasks[{index}].id"))
         _nonempty(task["title"], f"tasks[{index}].title")
+        if "ownedFiles" in task:
+            owned_files = [
+                _safe_repo_path(item, f"tasks[{index}].ownedFiles[{path_index}]")
+                for path_index, item in enumerate(_list(task["ownedFiles"], f"tasks[{index}].ownedFiles"))
+            ]
+            if not owned_files:
+                _fail(f"tasks[{index}].ownedFiles must contain at least 1 value(s)")
+            _unique(owned_files, f"tasks[{index}].ownedFiles")
         for list_key in ("requirementIds", "dependsOn", "acceptanceCriterionIds"):
             entries = [_nonempty(item, f"tasks[{index}].{list_key}") for item in _list(task[list_key], f"tasks[{index}].{list_key}")]
             _unique(entries, f"tasks[{index}].{list_key}")

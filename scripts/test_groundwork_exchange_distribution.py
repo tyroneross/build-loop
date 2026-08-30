@@ -127,6 +127,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                 "id": "task-parity", "title": "Implement parity", "componentRefs": [],
                 "contractRefs": [], "requirementIds": ["requirement-parity"],
                 "dependsOn": [], "acceptanceCriterionIds": ["acceptance-parity"],
+                "ownedFiles": ["src/app.ts"],
             }]
             request = {
                 "contract": gx.BUILD_REQUEST_CONTRACT, "runId": "run-parity", "specId": "spec-parity",
