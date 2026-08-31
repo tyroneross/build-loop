@@ -19,10 +19,16 @@
       --success: #3730a3;
       --error: #a23535;
       --radius: 18px;
+      --type-h1-size: clamp(2rem, 4vw, 2.8rem);
+      --type-h2-size: 1.2rem;
+      --type-h3-size: .94rem;
+      --type-h4-size: .78rem;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
+      overflow: hidden;
       background: var(--canvas);
       color: var(--ink);
       font-family: "Avenir Next", Avenir, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -32,19 +38,26 @@
     }
     button, textarea, input { font: inherit; }
     button, label, summary { -webkit-tap-highlight-color: transparent; }
-    .shell { display: grid; grid-template-columns: 238px minmax(0, 1fr); gap: 24px; width: min(1380px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 64px; }
-    .workspace { min-width: 0; }
-    .side-nav { position: sticky; top: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgb(49 52 56 / 5%); }
+    h1, h2, h3, h4, h5, [role="heading"] { font-family: inherit; }
+    h1 { color: var(--ink); font-size: var(--type-h1-size); font-weight: 700; }
+    h2, [role="heading"][aria-level="2"] { color: var(--accent-strong); font-size: var(--type-h2-size); font-weight: 700; }
+    h3, [role="heading"][aria-level="3"] { color: var(--ink); font-size: var(--type-h3-size); font-weight: 800; }
+    h4, [role="heading"][aria-level="4"] { color: var(--ink); font-size: var(--type-h4-size); font-weight: 800; }
+    .shell { display: grid; grid-template-columns: 238px minmax(0, 1fr); gap: 24px; width: min(1380px, calc(100% - 32px)); height: 100dvh; margin: 0 auto; padding: 24px 0; }
+    .workspace { min-width: 0; height: calc(100dvh - 48px); padding-right: 8px; overflow-y: auto; scrollbar-gutter: stable; }
+    .side-nav { position: sticky; top: 0; align-self: start; max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgb(49 52 56 / 5%); }
     .side-brand { padding: 20px 18px 14px; border-bottom: 1px solid var(--line); }
     .side-brand strong { display: block; font-size: .92rem; }
     .side-brand span { display: block; margin-top: 2px; color: var(--muted); font-size: .7rem; }
     .nav-list { margin: 0; padding: 8px; list-style: none; }
-    .nav-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 44px; padding: 9px 10px; border-radius: 10px; color: var(--ink); font-size: .78rem; font-weight: 750; text-decoration: none; }
-    .nav-link:hover, .nav-link:focus-visible { background: var(--accent-soft); outline: 0; }
+    .nav-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; min-height: 44px; padding: 9px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font-size: .78rem; font-weight: 750; text-align: left; }
+    .nav-link:hover { background: var(--accent-soft); color: var(--accent-strong); }
+    .nav-link:focus-visible { background: var(--accent-soft); color: var(--accent-strong); outline: 3px solid var(--accent); outline-offset: -3px; }
+    .nav-link[aria-current="page"] { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
     .nav-count { color: var(--muted); font-size: .68rem; font-weight: 700; }
     .nav-sublist { margin: 0 8px 8px 20px; padding: 0 0 0 10px; border-left: 1px solid var(--line); list-style: none; }
-    .nav-sublist a { display: block; min-height: 36px; padding: 8px 6px; overflow: hidden; color: var(--accent-strong); font-size: .68rem; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-    .nav-sublist a:hover, .nav-sublist a:focus-visible { color: var(--accent-strong); outline: 0; }
+    .loop-link { display: block; width: 100%; min-height: 36px; padding: 8px 6px; overflow: hidden; border: 0; border-radius: 7px; background: transparent; color: var(--accent-strong); font-size: .68rem; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+    .loop-link:hover, .loop-link:focus-visible { background: var(--accent-soft); color: var(--accent-strong); outline: 2px solid var(--accent); outline-offset: -2px; }
     .run-panel, .open-work-panel, .policy-panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -56,7 +69,7 @@
     .status-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; }
     .run-state { color: var(--accent-strong); font-size: .78rem; font-weight: 800; }
     .run-panel[data-status="blocked"] .run-state { color: var(--error); }
-    .status-head h2 { margin: 6px 0 0; font-size: clamp(1.45rem, 4vw, 2.3rem); letter-spacing: -.035em; line-height: 1.08; }
+    .status-head h3 { margin: 6px 0 0; letter-spacing: -.01em; line-height: 1.3; }
     .run-meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 16px; color: var(--muted); font-size: .74rem; }
     .run-meta strong { color: var(--ink); }
     .run-stats { display: grid; gap: 7px; min-width: 128px; text-align: right; }
@@ -79,7 +92,7 @@
     .phase-number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: .7rem; font-weight: 800; }
     .phase-card[data-status="complete"] .phase-number { border-color: var(--accent); background: var(--accent-gradient); color: white; }
     .phase-copy { min-width: 0; }
-    .phase-name { display: block; font-size: .84rem; font-weight: 800; }
+    .phase-name { display: block; }
     .phase-focus { display: block; margin-top: 2px; overflow-wrap: anywhere; font-size: .78rem; }
     .phase-location { display: block; margin-top: 2px; overflow-wrap: anywhere; color: var(--muted); font-size: .68rem; }
     .phase-state { color: var(--accent-strong); font-size: .68rem; font-weight: 800; text-align: right; }
@@ -90,7 +103,7 @@
     .phase-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 0; border-block: 1px solid var(--line); font-size: .7rem; }
     .phase-facts strong { color: var(--ink); }
     .phase-activity { padding-top: 12px; }
-    .phase-activity h3 { margin: 0 0 4px; font-size: .76rem; }
+    .phase-activity h5 { margin: 0 0 4px; color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
     .policy-head, .card-head { cursor: pointer; list-style: none; }
     .policy-head::-webkit-details-marker, .card-head::-webkit-details-marker { display: none; }
     .disclosure-label { color: var(--accent); font-size: .76rem; font-weight: 750; }
@@ -110,7 +123,7 @@
     .run-warning { margin: 20px 0 0; color: var(--error); font-size: .78rem; }
     .policy-panel { margin-top: 14px; overflow: hidden; }
     .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
-    .policy-head h2 { margin: 0; font-size: 1rem; }
+    .policy-head h2 { margin: 0; }
     .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
     .source-summary { margin: 14px 0 0; color: var(--muted); font-size: .7rem; }
     .policy-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
@@ -127,7 +140,7 @@
     .gap-card + .gap-card { border-top: 0; }
     .card-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 68px; padding: 12px 4px; }
     .priority { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; font-size: .68rem; font-weight: 800; }
-    .card-head h3 { margin: 0; font-size: .9rem; line-height: 1.3; }
+    .card-head h3 { margin: 0; line-height: 1.3; }
     .big-idea { margin: 0 0 14px; color: var(--muted); font-size: .78rem; }
     .card-meta { display: grid; min-width: 110px; gap: 2px; justify-items: end; }
     .selected-policy { color: var(--accent-strong); font-size: .72rem; font-weight: 800; text-align: right; }
@@ -138,7 +151,7 @@
     .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: var(--canvas); }
     .explain section { padding: 16px; }
     .explain section + section { border-left: 1px solid var(--line); }
-    .explain h4 { margin: 0 0 7px; color: var(--muted); font-size: .68rem; text-transform: uppercase; }
+    .explain h4 { margin: 0 0 7px; }
     .explain ul { margin: 0; padding-left: 17px; font-size: .78rem; }
     .explain li + li { margin-top: 4px; }
     .why { margin: 0; font-size: .78rem; }
@@ -168,13 +181,14 @@
     .applied-note strong { color: var(--success); }
     .applied-note p { margin: 2px 0 0; font-size: .76rem; }
     .applied-note code { color: var(--muted); font-size: .69rem; overflow-wrap: anywhere; }
-    .page-head { margin: 0 0 20px; }
-    .page-head h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.2rem); letter-spacing: -.045em; line-height: 1.02; }
+    .page-head { position: sticky; top: 0; z-index: 3; margin: 0 0 20px; padding: 0 0 16px; background: var(--canvas); }
+    .page-head h1 { margin: 0; letter-spacing: -.04em; line-height: 1.04; }
     .page-head p { max-width: 680px; margin: 8px 0 0; color: var(--muted); font-size: .86rem; }
-    .workspace-section { scroll-margin-top: 18px; }
+    .workspace-section { min-height: calc(100dvh - 164px); }
+    .workspace-section[hidden] { display: none !important; }
     .workspace-section + .workspace-section { margin-top: 28px; }
     .section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 2px 10px; }
-    .section-head h2 { margin: 0; font-size: 1.05rem; }
+    .section-head h2 { margin: 0; letter-spacing: -.01em; }
     .section-head p { margin: 2px 0 0; color: var(--muted); font-size: .74rem; }
     .section-count { color: var(--accent-strong); font-size: .74rem; font-weight: 800; }
     .loop-stack { display: grid; gap: 14px; }
@@ -184,20 +198,22 @@
     .group-card + .group-card { border-top: 1px solid var(--line); }
     .group-card > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; min-height: 52px; padding: 4px 0; cursor: pointer; list-style: none; }
     .group-card > summary::-webkit-details-marker { display: none; }
-    .group-copy strong { display: block; font-size: .82rem; }
-    .group-copy span { display: block; color: var(--muted); font-size: .68rem; }
+    .group-title { display: block; }
+    .group-source { display: block; color: var(--muted); font-size: .68rem; }
     .group-count { color: var(--accent-strong); font-size: .7rem; font-weight: 800; }
     .group-records { margin: 0; padding: 0 0 10px; list-style: none; }
     .empty-panel { margin: 0; padding: 22px; color: var(--muted); font-size: .8rem; }
     @media (max-width: 760px) {
-      .shell { grid-template-columns: 1fr; width: min(100% - 20px, 980px); padding-top: 10px; }
-      .side-nav { position: static; }
+      .shell { grid-template-rows: auto minmax(0, 1fr); grid-template-columns: 1fr; gap: 10px; width: min(100% - 20px, 980px); height: 100dvh; padding: 10px 0; }
+      .workspace { height: auto; min-height: 0; padding-right: 0; }
+      .side-nav { position: relative; top: 0; max-height: none; overflow: hidden; }
       .side-brand { padding: 14px 12px 10px; }
-      .nav-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
-      .nav-list > li:first-child { grid-column: 1 / -1; }
+      .nav-list { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+      .nav-list > li { flex: 0 0 auto; min-width: 136px; }
+      .nav-list > li:first-child { min-width: 210px; }
       .nav-sublist { display: flex; gap: 6px; margin: 0 8px 8px; padding: 0; overflow-x: auto; border-left: 0; scrollbar-width: thin; }
       .nav-sublist li { flex: 0 0 auto; }
-      .nav-sublist a { min-height: 44px; max-width: 220px; padding: 11px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent-soft); }
+      .loop-link { min-height: 44px; max-width: 220px; padding: 11px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent-soft); }
       .status-head { grid-template-columns: 1fr; }
       .run-stats { grid-template-columns: repeat(3, auto); justify-content: start; text-align: left; }
       .phase-card > summary { min-height: 82px; padding-inline: 12px; }
@@ -208,7 +224,7 @@
       .card-meta { grid-column: 2; justify-items: start; }
       .selected-policy, .status { text-align: left; }
       .note-row { grid-template-columns: 1fr; }
-      button { width: 100%; }
+      .decision button { width: 100%; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition-duration: .01ms !important; }
@@ -221,12 +237,12 @@
       <div class="side-brand"><strong>Build Loop</strong><span id="scope-label">Current repository</span></div>
       <nav>
         <ul class="nav-list">
-          <li><a class="nav-link" href="#in-progress"><span>In progress</span><span id="nav-active-count" class="nav-count">—</span></a><ul id="active-loop-nav" class="nav-sublist"></ul></li>
-          <li><a class="nav-link" href="#queued-work"><span>Queued work</span><span id="nav-queue-count" class="nav-count">—</span></a></li>
-          <li><a class="nav-link" href="#backlog"><span>Backlog</span><span id="nav-backlog-count" class="nav-count">—</span></a></li>
-          <li><a class="nav-link" href="#handoffs"><span>Handoffs</span><span id="nav-handoff-count" class="nav-count">—</span></a></li>
-          <li><a class="nav-link" href="#history"><span>History</span><span id="nav-history-count" class="nav-count">—</span></a></li>
-          <li><a class="nav-link" href="#policy-panel"><span>Policy</span><span class="nav-count">Optional</span></a></li>
+          <li><button class="nav-link" type="button" data-view="in-progress" aria-controls="in-progress" aria-pressed="true" aria-current="page"><span>In progress</span><span id="nav-active-count" class="nav-count">—</span></button><ul id="active-loop-nav" class="nav-sublist"></ul></li>
+          <li><button class="nav-link" type="button" data-view="queued-work" aria-controls="queued-work" aria-pressed="false"><span>Queued work</span><span id="nav-queue-count" class="nav-count">—</span></button></li>
+          <li><button class="nav-link" type="button" data-view="backlog" aria-controls="backlog" aria-pressed="false"><span>Backlog</span><span id="nav-backlog-count" class="nav-count">—</span></button></li>
+          <li><button class="nav-link" type="button" data-view="handoffs" aria-controls="handoffs" aria-pressed="false"><span>Handoffs</span><span id="nav-handoff-count" class="nav-count">—</span></button></li>
+          <li><button class="nav-link" type="button" data-view="history" aria-controls="history" aria-pressed="false"><span>History</span><span id="nav-history-count" class="nav-count">—</span></button></li>
+          <li><button class="nav-link" type="button" data-view="policy-panel" aria-controls="policy-panel" aria-pressed="false"><span>Policy</span><span class="nav-count">Optional</span></button></li>
         </ul>
       </nav>
     </aside>
@@ -234,7 +250,7 @@
     <main class="workspace">
       <header class="page-head">
         <h1>Build activity</h1>
-        <p>See what is running now, what may run next, and what completed before. Records refresh automatically.</p>
+        <p>Choose a workspace. Records refresh automatically.</p>
       </header>
 
       <section id="in-progress" class="workspace-section" aria-labelledby="in-progress-title">
@@ -242,27 +258,27 @@
         <div id="loop-panels" class="loop-stack" aria-live="polite"><div class="support-panel"><p class="empty-panel">Reading active loops.</p></div></div>
       </section>
 
-      <section id="queued-work" class="workspace-section" aria-labelledby="queued-work-title">
+      <section id="queued-work" class="workspace-section" aria-labelledby="queued-work-title" hidden>
         <div class="section-head"><div><h2 id="queued-work-title">Queued work</h2><p>Executable work that Build Loop may take next.</p></div><span id="queued-work-count" class="section-count">—</span></div>
         <div class="support-panel"><div id="queued-groups" class="support-body"><p class="empty-panel">Reading queued work.</p></div><p id="open-work-sources" class="source-summary"></p></div>
       </section>
 
-      <section id="backlog" class="workspace-section" aria-labelledby="backlog-title">
+      <section id="backlog" class="workspace-section" aria-labelledby="backlog-title" hidden>
         <div class="section-head"><div><h2 id="backlog-title">Backlog</h2><p>Recorded work that has not entered the execution queue.</p></div><span id="backlog-count" class="section-count">—</span></div>
         <div class="support-panel"><div id="backlog-groups" class="support-body"><p class="empty-panel">Reading backlog.</p></div></div>
       </section>
 
-      <section id="handoffs" class="workspace-section" aria-labelledby="handoffs-title">
+      <section id="handoffs" class="workspace-section" aria-labelledby="handoffs-title" hidden>
         <div class="section-head"><div><h2 id="handoffs-title">Handoffs</h2><p>Transfers and coordination records with dates and participants.</p></div><span id="handoff-count" class="section-count">—</span></div>
         <div class="support-panel"><div id="handoff-list" class="support-body"></div></div>
       </section>
 
-      <section id="history" class="workspace-section" aria-labelledby="history-title">
+      <section id="history" class="workspace-section" aria-labelledby="history-title" hidden>
         <div class="section-head"><div><h2 id="history-title">History</h2><p>Prior Build Loop outcomes and recorded review evidence.</p></div><span id="history-count" class="section-count">—</span></div>
         <div class="support-panel"><div id="history-list" class="support-body"></div></div>
       </section>
 
-      <details id="policy-panel" class="policy-panel workspace-section">
+      <details id="policy-panel" class="policy-panel workspace-section" hidden>
       <summary class="policy-head">
         <div><h2>Operating policy</h2><p id="policy-summary">Optional settings appear here.</p></div>
         <span class="disclosure-label"><span class="when-closed">Show decisions</span><span class="when-open">Hide decisions</span></span>
@@ -291,9 +307,30 @@
     const backlogGroups = document.querySelector('#backlog-groups');
     const handoffList = document.querySelector('#handoff-list');
     const historyList = document.querySelector('#history-list');
+    const workspaceElement = document.querySelector('.workspace');
+    const workspaceSections = [...document.querySelectorAll('.workspace-section')];
+    const workspaceButtons = [...document.querySelectorAll('.nav-link[data-view]')];
+    const workspaceScrollPositions = new Map();
     const timers = new Map();
     let workspaceRenderedAt = '';
+    let selectedWorkspace = 'in-progress';
     let state = { gaps: [], responses: {}, run: null };
+
+    function selectWorkspace(viewId, options = {}) {
+      if (!document.getElementById(viewId)) return;
+      workspaceScrollPositions.set(selectedWorkspace, workspaceElement.scrollTop);
+      selectedWorkspace = viewId;
+      workspaceSections.forEach(section => { section.hidden = section.id !== viewId; });
+      workspaceButtons.forEach(button => {
+        const selected = button.dataset.view === viewId;
+        button.setAttribute('aria-pressed', String(selected));
+        if (selected) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
+      });
+      workspaceElement.scrollTop = options.reset ? 0 : (workspaceScrollPositions.get(viewId) || 0);
+    }
+
+    workspaceButtons.forEach(button => { button.onclick = () => selectWorkspace(button.dataset.view); });
 
     function node(tag, attrs = {}, text = '') {
       const element = document.createElement(tag);
@@ -303,6 +340,30 @@
       });
       if (text) element.textContent = text;
       return element;
+    }
+
+    function semanticWorkspaceSignature(workspace, openWork) {
+      return JSON.stringify({ workspace, openWork }, (key, value) => (
+        ['generated_at', 'refreshed_at'].includes(key) ? undefined : value
+      ));
+    }
+
+    function captureDynamicViewState() {
+      const activeFocusKey = document.activeElement?.dataset.focusKey || '';
+      const openDisclosureKeys = new Set(
+        [...document.querySelectorAll('[data-disclosure-key][open]')].map(element => element.dataset.disclosureKey),
+      );
+      return { activeFocusKey, openDisclosureKeys, scrollTop: workspaceElement.scrollTop };
+    }
+
+    function restoreDynamicViewState(viewState) {
+      document.querySelectorAll('[data-disclosure-key]').forEach(element => {
+        element.open = viewState.openDisclosureKeys.has(element.dataset.disclosureKey);
+      });
+      workspaceElement.scrollTop = viewState.scrollTop;
+      if (viewState.activeFocusKey) {
+        document.querySelector(`[data-focus-key="${CSS.escape(viewState.activeFocusKey)}"]`)?.focus({ preventScroll: true });
+      }
     }
 
     function updateMetrics() {
@@ -372,7 +433,7 @@
     function appendPhaseRows(container, title, records, render) {
       if (!records.length) return;
       const section = node('section', { className: 'phase-activity' });
-      section.append(node('h3', {}, title));
+      section.append(node('h5', {}, title));
       const list = node('ul', { className: 'record-list' });
       records.forEach(record => list.append(render(record)));
       section.append(list);
@@ -389,6 +450,10 @@
 
     function workSource(surface) {
       return ({ operations_center: 'Operations Center', backlog: 'Build Loop backlog', memory_backlog: 'Project memory', status_current: 'Project status', queue: 'Build Loop queue', ux_queue: 'UX queue', issues: 'Build Loop issues', followup: 'Build Loop follow-up' })[surface] || (String(surface || '').startsWith('state.') ? 'Current run' : 'Build Loop');
+    }
+
+    function workSourceContext(surface) {
+      return ({ operations_center: 'Shared agent queue', backlog: 'Deferred Build Loop work', memory_backlog: 'Project memory backlog', status_current: 'Current run record', queue: 'Executable Build Loop queue', ux_queue: 'UX review queue', issues: 'Open Build Loop issues', followup: 'Build Loop follow-up' })[surface] || (String(surface || '').startsWith('state.') ? 'Current run record' : 'Recorded work source');
     }
 
     function slug(value) {
@@ -411,7 +476,7 @@
       const head = node('div', { className: 'status-head' });
       const heading = node('div');
       heading.append(node('div', { className: 'run-state', role: 'status' }, `${statusLabel(run.status)} · ${run.current_phase_name || 'No current phase'}`));
-      heading.append(node('h2', {}, sentence(run.goal, 'No goal is recorded')));
+      heading.append(node('h3', {}, sentence(run.goal, 'No goal is recorded')));
       const stats = node('div', { className: 'run-stats', 'aria-label': 'Run counts' });
       stats.append(node('strong', {}, `${run.metrics.phases_complete} of ${run.metrics.phases_total} phases`));
       stats.append(node('span', {}, countLabel(run.metrics.tasks_total, 'task')));
@@ -435,11 +500,12 @@
       run.phases.forEach(phase => {
         const records = phaseRecords(run, phase.id);
         const item = node('li', { className: 'phase-item' });
-        const details = node('details', { className: 'phase-card', 'data-status': phase.status });
-        const summary = node('summary');
+        const disclosureKey = `${panelId}:phase:${phase.id}`;
+        const details = node('details', { className: 'phase-card', 'data-status': phase.status, 'data-disclosure-key': disclosureKey });
+        const summary = node('summary', { 'data-focus-key': `${disclosureKey}:summary` });
         summary.append(node('span', { className: 'phase-number', 'aria-hidden': 'true' }, String(phase.number)));
         const copy = node('span', { className: 'phase-copy' });
-        copy.append(node('span', { className: 'phase-name' }, phase.name));
+        copy.append(node('span', { className: 'phase-name', role: 'heading', 'aria-level': '4' }, phase.name));
         copy.append(node('span', { className: 'phase-focus' }, sentence(phaseFocus(phase, records), 'No activity is recorded')));
         const activeAgent = ['active', 'blocked'].includes(phase.status) ? records.agents.find(agent => ['active', 'blocked', 'invoked'].includes(agent.status)) : null;
         const phaseJudge = records.agents.some(agent => agent.judge);
@@ -489,10 +555,11 @@
         groups.get(key).push(item);
       });
       groups.forEach((records, label) => {
-        const details = node('details', { className: 'group-card' });
-        const summary = node('summary');
+        const disclosureKey = `${container.id}:group:${slug(label)}`;
+        const details = node('details', { className: 'group-card', 'data-disclosure-key': disclosureKey });
+        const summary = node('summary', { 'data-focus-key': `${disclosureKey}:summary` });
         const copy = node('span', { className: 'group-copy' });
-        copy.append(node('strong', {}, label), node('span', {}, workSource(records[0].surface)));
+        copy.append(node('span', { className: 'group-title', role: 'heading', 'aria-level': '3' }, label), node('span', { className: 'group-source' }, workSourceContext(records[0].surface)));
         summary.append(copy, node('span', { className: 'group-count' }, countLabel(records.length, 'item')));
         details.append(summary);
         const list = node('ul', { className: 'group-records' });
@@ -510,10 +577,11 @@
       handoffList.replaceChildren();
       if (!records.length) return handoffList.append(node('p', { className: 'empty-panel' }, 'No handoff records are available.'));
       records.forEach(record => {
-        const details = node('details', { className: 'group-card' });
-        const summary = node('summary');
+        const disclosureKey = `handoff:${slug(record.path || record.title)}`;
+        const details = node('details', { className: 'group-card', 'data-disclosure-key': disclosureKey });
+        const summary = node('summary', { 'data-focus-key': `${disclosureKey}:summary` });
         const copy = node('span', { className: 'group-copy' });
-        copy.append(node('strong', {}, record.title), node('span', {}, localTime(record.date)));
+        copy.append(node('span', { className: 'group-title', role: 'heading', 'aria-level': '3' }, record.title), node('span', { className: 'group-source' }, localTime(record.date)));
         summary.append(copy, node('span', { className: 'group-count' }, statusLabel(record.status)));
         details.append(summary);
         const list = node('ul', { className: 'group-records' });
@@ -529,10 +597,11 @@
       historyList.replaceChildren();
       if (!records.length) return historyList.append(node('p', { className: 'empty-panel' }, 'No prior Build Loop runs are recorded.'));
       records.forEach(record => {
-        const details = node('details', { className: 'group-card' });
-        const summary = node('summary');
+        const disclosureKey = `history:${slug(record.run_id || record.date || record.goal)}`;
+        const details = node('details', { className: 'group-card', 'data-disclosure-key': disclosureKey });
+        const summary = node('summary', { 'data-focus-key': `${disclosureKey}:summary` });
         const copy = node('span', { className: 'group-copy' });
-        copy.append(node('strong', {}, sentence(record.goal, 'No goal recorded')), node('span', {}, [localTime(record.date), record.run_id].filter(Boolean).join(' · ')));
+        copy.append(node('span', { className: 'group-title', role: 'heading', 'aria-level': '3' }, sentence(record.goal, 'No goal recorded')), node('span', { className: 'group-source' }, [localTime(record.date), record.run_id].filter(Boolean).join(' · ')));
         summary.append(copy, node('span', { className: 'group-count' }, statusLabel(record.status)));
         details.append(summary);
         const list = node('ul', { className: 'group-records' });
@@ -553,14 +622,24 @@
       });
     }
 
+    function updateOpenWorkSummary(openWork, visibleItems) {
+      const sources = Object.entries(openWork.counts_by_surface || {}).map(([source, count]) => `${workSource(source)} ${count}`);
+      const coverage = openWork.operations_center?.status === 'available' ? 'Other-agent queue connected.' : 'Other-agent queue unavailable.';
+      const limit = openWork.truncated ? ` Showing ${visibleItems.length} highest-ranked items.` : '';
+      document.querySelector('#open-work-sources').textContent = `${coverage} ${sources.join(' · ') || 'No open work sources returned items.'}.${limit} Updated ${localTime(openWork.refreshed_at)}.`;
+    }
+
     function renderWorkspace(run) {
       if (!run) return;
       const workspace = run.workspace || { scope: 'Repository', active_loops: [], handoffs: [], history: [] };
       const openWork = run.open_work || { execution_queue_count: 0, deferred_count: 0, items: [], counts_by_surface: {} };
-      const signature = JSON.stringify([workspace, openWork.refreshed_at]);
-      if (signature === workspaceRenderedAt) return;
-      workspaceRenderedAt = signature;
+      const visibleItems = Array.isArray(openWork.items) ? openWork.items : [];
+      const signature = semanticWorkspaceSignature(workspace, openWork);
       state.run = run;
+      updateOpenWorkSummary(openWork, visibleItems);
+      if (signature === workspaceRenderedAt) return;
+      const viewState = captureDynamicViewState();
+      workspaceRenderedAt = signature;
       document.querySelector('#scope-label').textContent = workspace.scope || 'Current repository';
 
       const loops = Array.isArray(workspace.active_loops) ? workspace.active_loops : [];
@@ -570,13 +649,17 @@
         const { panel, panelId } = renderLoopPanel(loop, index);
         loopPanels.append(panel);
         const navItem = node('li');
-        navItem.append(node('a', { href: `#${panelId}` }, loop.goal || loop.run_id || `Loop ${index + 1}`));
+        const loopButton = node('button', { type: 'button', className: 'loop-link', 'data-loop-target': panelId, 'data-focus-key': `${panelId}:nav` }, loop.goal || loop.run_id || `Loop ${index + 1}`);
+        loopButton.onclick = () => {
+          selectWorkspace('in-progress');
+          document.getElementById(panelId)?.scrollIntoView({ block: 'start' });
+        };
+        navItem.append(loopButton);
         activeLoopNav.append(navItem);
       });
       if (!loops.length) loopPanels.append(node('div', { className: 'support-panel' }, ''));
       if (!loops.length) loopPanels.firstChild.append(node('p', { className: 'empty-panel' }, 'No active Build Loop is recorded for this repository.'));
 
-      const visibleItems = Array.isArray(openWork.items) ? openWork.items : [];
       const queued = visibleItems.filter(item => item.execution_eligible);
       const backlog = visibleItems.filter(item => !item.execution_eligible);
       renderWorkGroups(queuedGroups, queued, 'No executable work is queued.');
@@ -601,10 +684,7 @@
       document.querySelector('#nav-backlog-count').textContent = counts.backlog;
       document.querySelector('#nav-handoff-count').textContent = counts.handoff;
       document.querySelector('#nav-history-count').textContent = counts.history;
-      const sources = Object.entries(openWork.counts_by_surface || {}).map(([source, count]) => `${workSource(source)} ${count}`);
-      const coverage = openWork.operations_center?.status === 'available' ? 'Other-agent queue connected.' : 'Other-agent queue unavailable.';
-      const limit = openWork.truncated ? ` Showing ${visibleItems.length} highest-ranked items.` : '';
-      document.querySelector('#open-work-sources').textContent = `${coverage} ${sources.join(' · ') || 'No open work sources returned items.'}.${limit} Updated ${localTime(openWork.refreshed_at)}.`;
+      restoreDynamicViewState(viewState);
     }
 
     async function refreshRun() {
@@ -614,6 +694,7 @@
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Unable to refresh run state');
         renderWorkspace(body.run);
+        document.querySelector('#refresh-warning')?.remove();
       } catch (error) {
         const existing = document.querySelector('#refresh-warning');
         const warning = existing || node('p', { id: 'refresh-warning', className: 'run-warning' });
@@ -800,6 +881,11 @@
         loading.textContent = `The dashboard could not load because ${error.message}. Check the local server and try again.`;
       }
     }
+    const initialWorkspace = location.hash && document.getElementById(location.hash.slice(1))?.classList.contains('workspace-section')
+      ? location.hash.slice(1)
+      : 'in-progress';
+    if (location.hash) history.replaceState(null, '', `${location.pathname}${location.search}`);
+    selectWorkspace(initialWorkspace, { reset: true });
     load();
     setInterval(refreshRun, 5000);
   </script>

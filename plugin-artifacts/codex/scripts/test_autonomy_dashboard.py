@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import socket
+import subprocess
 import tempfile
 import threading
 import urllib.error
@@ -369,7 +372,20 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
         "workspace.active_loops", "judge_records", "Verdict: ${judge.verdict || 'Not recorded'}",
         "No judge record", "Model not recorded", "Models not recorded",
         "Transfers and coordination records with dates and participants.",
-        "const signature = JSON.stringify([workspace, openWork.refreshed_at]);",
+        "semanticWorkspaceSignature", "['generated_at', 'refreshed_at'].includes(key)",
+        "captureDynamicViewState", "restoreDynamicViewState", "data-disclosure-key", "data-focus-key",
+        "openDisclosureKeys", "focus({ preventScroll: true })", "updateOpenWorkSummary",
+        "--type-h1-size", "--type-h2-size", "--type-h3-size", "--type-h4-size",
+        "h3, [role=\"heading\"][aria-level=\"3\"]", "h4, [role=\"heading\"][aria-level=\"4\"]",
+        "body {", "overflow: hidden", "height: 100dvh", "overflow-y: auto", "scrollbar-gutter: stable",
+        "class=\"nav-link\" type=\"button\" data-view=\"in-progress\"", "aria-current=\"page\"",
+        "function selectWorkspace", "workspaceScrollPositions", "workspaceElement.scrollTop",
+        "section.hidden = section.id !== viewId", "button.setAttribute('aria-pressed', String(selected))",
+        "className: 'group-title'", "role: 'heading'", "'aria-level': '3'", "'aria-level': '4'",
+        "className: 'loop-link'", "data-loop-target", "history.replaceState",
+        "workspaceButtons.forEach(button => { button.onclick", "loopButton.onclick",
+        "function workSourceContext", "Shared agent queue", "Executable Build Loop queue",
+        ".nav-link:focus-visible", "outline: 3px solid var(--accent)",
     ):
         assert token in html
     assert '<details id="run-details" class="run-disclosure" open>' not in html
@@ -383,6 +399,125 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
     assert "<script src=" not in html
     assert "<link rel=" not in html
     assert "@import" not in html
+    for target in ("in-progress", "queued-work", "backlog", "handoffs", "history", "policy-panel"):
+        assert f'href="#{target}"' not in html
+
+
+@pytest.mark.skipif(shutil.which("ibr") is None, reason="IBR CLI is not installed")
+def test_browser_preserves_navigation_and_disclosure_state_across_refreshes(live_server: str) -> None:
+    started = subprocess.run(
+        ["ibr", "session:start", "-w", ".nav-link", live_server],
+        capture_output=True, text=True, timeout=20,
+    )
+    if started.returncode:
+        pytest.skip(f"IBR browser unavailable: {started.stderr.strip() or started.stdout.strip()}")
+    match = re.search(r"Session started: (\S+)", started.stdout)
+    assert match, started.stdout
+    session_id = match.group(1)
+
+    def ibr(*args: str) -> str:
+        completed = subprocess.run(
+            ["ibr", *args], capture_output=True, text=True, timeout=20, check=True,
+        )
+        return completed.stdout
+
+    def evaluate(script: str) -> dict:
+        return json.loads(ibr("session:eval", "--json", session_id, script))
+
+    try:
+        ibr("session:press", session_id, "Tab")
+        focus = evaluate("""(() => {
+          const element = document.activeElement;
+          const style = getComputedStyle(element);
+          return {
+            selected: element.getAttribute('aria-current'),
+            outlineStyle: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+          };
+        })()""")
+        assert focus == {"selected": "page", "outlineStyle": "solid", "outlineWidth": "3px"}
+
+        ibr("session:press", session_id, "Tab")
+        ibr("session:press", session_id, "Enter")
+        navigation = evaluate("""(() => ({
+          selectedWorkspace,
+          visible: [...document.querySelectorAll('.workspace-section')]
+            .filter(section => !section.hidden).map(section => section.id),
+          windowScroll: window.scrollY,
+        }))()""")
+        assert navigation == {"selectedWorkspace": "queued-work", "visible": ["queued-work"], "windowScroll": 0}
+
+        refreshed = evaluate("""(() => {
+          const projected = structuredClone(state.run);
+          const template = structuredClone(projected);
+          delete template.workspace;
+          delete template.open_work;
+          template.status = 'active';
+          template.current_phase_name = 'Execute';
+          template.goal = 'Browser refresh regression';
+          projected.workspace.active_loops = Array.from({ length: 4 }, (_, index) => ({
+            ...structuredClone(template),
+            run_id: `browser-regression-${index + 1}`,
+          }));
+          projected.workspace.generated_at = '2026-01-01T00:00:00Z';
+          projected.open_work.refreshed_at = '2026-01-01T00:00:00Z';
+          renderWorkspace(projected);
+          selectWorkspace('in-progress');
+
+          const workspace = document.querySelector('.workspace');
+          const disclosure = document.querySelector('.phase-card');
+          disclosure.open = true;
+          disclosure.querySelector('summary').focus();
+          workspace.scrollTop = Math.min(180, workspace.scrollHeight - workspace.clientHeight);
+          const expectedScroll = workspace.scrollTop;
+          const sourceSummaryBefore = document.querySelector('#open-work-sources').textContent;
+
+          const volatileOnly = structuredClone(projected);
+          volatileOnly.workspace.generated_at = '2026-01-02T00:00:00Z';
+          volatileOnly.open_work.refreshed_at = '2026-01-02T00:00:00Z';
+          renderWorkspace(volatileOnly);
+          const afterVolatile = document.querySelector('.phase-card');
+          const volatilePreserved = {
+            sameNode: afterVolatile === disclosure,
+            open: afterVolatile.open,
+            focused: document.activeElement === afterVolatile.querySelector('summary'),
+            scroll: workspace.scrollTop === expectedScroll,
+            timestampUpdated: document.querySelector('#open-work-sources').textContent !== sourceSummaryBefore,
+          };
+
+          const semanticChange = structuredClone(volatileOnly);
+          semanticChange.workspace.active_loops[0].phases[0].summary += ' Updated';
+          renderWorkspace(semanticChange);
+          const afterSemantic = document.querySelector('.phase-card');
+          return {
+            volatilePreserved,
+            semanticRebuilt: afterSemantic !== afterVolatile,
+            semanticOpen: afterSemantic.open,
+            semanticFocused: document.activeElement === afterSemantic.querySelector('summary'),
+            semanticScroll: workspace.scrollTop === expectedScroll,
+            semanticUpdated: afterSemantic.textContent.includes('Updated'),
+            selectedWorkspace,
+            windowScroll: window.scrollY,
+          };
+        })()""")
+        assert refreshed == {
+            "volatilePreserved": {
+                "sameNode": True, "open": True, "focused": True,
+                "scroll": True, "timestampUpdated": True,
+            },
+            "semanticRebuilt": True,
+            "semanticOpen": True,
+            "semanticFocused": True,
+            "semanticScroll": True,
+            "semanticUpdated": True,
+            "selectedWorkspace": "in-progress",
+            "windowScroll": 0,
+        }
+    finally:
+        subprocess.run(
+            ["ibr", "session:close", session_id],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
 
 
 def test_brand_gradient_keeps_white_small_text_at_wcag_aa_contrast() -> None:
