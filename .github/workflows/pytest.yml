@@ -117,7 +117,7 @@ jobs:
           uv run python scripts/ci_known_red_gate.py \
             --target scripts/ --target tests/ -- \
             scripts/ tests/ \
-            -p no:cacheprovider -q --no-header -rfE \
+            -p no:cacheprovider -q --no-header -rfEs \
             -m "not integration" \
             --timeout=60 --timeout-method=thread \
             --deselect scripts/rally_point/test_post_commit.py::test_plain_commit_writes_one_record \

@@ -196,10 +196,47 @@ class CostLedgerHookTest(unittest.TestCase):
         cmds = [hk.get("command", "") for grp in stop for hk in grp.get("hooks", [])]
 
         sweep = REPO / "hooks" / "stop-transcript-sweep.sh"
-        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c and "cost-ledger" in c]
+        sweep_src = sweep.read_text()
+        # d279e3f2 collapsed four separately-registered Stop sweeps into ONE
+        # invocation that takes a sweep name, so the registered command reads
+        # `stop-transcript-sweep.sh all` and no longer carries the literal
+        # string "cost-ledger". Asserting on that literal made this test fail
+        # against a hook that was working correctly.
+        #
+        # Both links of the activation path are still checked, so removing
+        # either still fails: the wrapper must be registered on Stop, AND the
+        # argument it is registered with must actually reach the cost-ledger
+        # branch — either named directly or dispatched through `all`.
+        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c]
         self.assertTrue(
             registered,
-            "cost-ledger sweep is not registered on the Stop event in hooks.json",
+            "stop-transcript-sweep.sh is not registered on the Stop event in hooks.json",
+        )
+        dispatches_cost_ledger = any(
+            "cost-ledger" in c
+            or ('" all' in c or "' all" in c or c.rstrip().endswith(" all"))
+            for c in registered
+        )
+        self.assertTrue(
+            dispatches_cost_ledger,
+            "the registered Stop sweep neither names cost-ledger nor passes `all`; "
+            f"registered commands: {registered}",
+        )
+        # `all` only counts while the wrapper's fan-out still includes it.
+        # Match the fan-out LIST, not the file text: the wrapper documents its
+        # own sweep names in a header comment, so a substring check passes even
+        # after the branch is renamed out of the loop (caught by mutation:
+        # renaming the case label to `_disabled_cost_ledger)` left the substring
+        # present and the test green).
+        fanout = re.search(r"for one in ([^;]+);", sweep_src)
+        self.assertIsNotNone(
+            fanout, "stop-transcript-sweep.sh has no `for one in ...` fan-out loop"
+        )
+        self.assertIn(
+            "cost-ledger",
+            fanout.group(1).split(),
+            "stop-transcript-sweep.sh `all` fan-out no longer includes cost-ledger; "
+            f"fan-out is: {fanout.group(1).strip()}",
         )
         self.assertIn(
             "cost_ledger_hook.py",

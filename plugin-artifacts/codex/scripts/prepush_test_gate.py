@@ -312,8 +312,15 @@ def expired_entries(entries: Iterable[dict[str, Any]], today: date) -> list[dict
 
 
 # pytest short-summary lines: "FAILED path::Class::test - AssertionError: ..." and
-# "ERROR path::test". `-r` defaults to `fE`, and the gate passes `-rfE` explicitly.
+# "ERROR path::test". `-r` defaults to `fE`; the gate passes `-rfEs` — the `s`
+# renders SKIPPED lines, without which a skipped baselined test is
+# indistinguishable from a passing one and gets reported as stale.
 _SUMMARY_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S.*)$")
+# `-rs` renders skips as `SKIPPED [1] path/to/test.py:12: reason`, so the
+# node is a FILE:LINE, not a node id. That is enough for staleness: a
+# baseline entry whose FILE never ran a passing copy of the test cannot be
+# judged stale from this run.
+_SKIPPED_RE = re.compile(r"^SKIPPED\s+(?:\[\d+\]\s*)?(\S+?\.py)[:\s]")
 
 
 def _strip_summary_message(rest: str) -> str:
@@ -355,6 +362,18 @@ def parse_failed_ids(output: str) -> list[str]:
         if node not in found:
             found.append(node)
     return found
+
+
+def parse_skipped_files(output: str) -> set[str]:
+    """Files that reported at least one SKIPPED test in this run.
+
+    A skipped test did not run, so it cannot be evidence that a baselined
+    failure is fixed. Needed because `stale_entries` previously inferred
+    "passing" from "absent from the failed list", which is also true of every
+    test that skipped, was deselected, or was never collected.
+    """
+    return {m.group(1) for line in (output or "").splitlines()
+            if (m := _SKIPPED_RE.match(line.strip()))}
 
 
 def _node_file(node_id: str) -> str:
@@ -415,15 +434,31 @@ def stale_entries(
     entries: list[dict[str, Any]],
     failed: Iterable[str],
     targets: Iterable[str],
+    skipped_files: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """Baseline entries whose test ran and did NOT fail — stale suppression."""
+    """Baseline entries whose test ran and did NOT fail — stale suppression.
+
+    `skipped_files` is what keeps that docstring true. Absence from the failed
+    list is NOT evidence a test passed: a skipped test is equally absent.
+
+    Observed 2026-08-31: `test_cross_backend_cosine_above_threshold` is guarded
+    by `skipUnless(mlx_importable() and ollama_up())`. On the Linux CI runner
+    neither backend exists, so it skips, and the gate reported it as a stale
+    suppression to be deleted. It is not stale — where it can actually run it
+    fails at cosine -0.0487 against a 0.95 threshold, and its own docstring says
+    "CURRENTLY RED, AND CORRECTLY SO". Deleting the entry on that advice would
+    have erased the only record of a real, deliberate red.
+    """
     failed = list(failed)
+    skipped_files = set(skipped_files)
     out: list[dict[str, Any]] = []
     for entry in entries:
         if not _entry_covered_by(entry, targets):
             continue
         if any(_entry_matches(entry, node) for node in failed):
             continue
+        if _node_file(entry.get("test", "")) in skipped_files:
+            continue  # skipped, not passing — no evidence either way
         out.append(entry)
     return out
 
@@ -557,7 +592,7 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
         # Exact CI parity — the full deterministic suite.
         argv = [
             interp, "-m", "pytest", "scripts/", "tests/",
-            "-p", "no:cacheprovider", "-q", "--no-header", "-rfE",
+            "-p", "no:cacheprovider", "-q", "--no-header", "-rfEs",
             "-m", "not integration",
             "--timeout=60", "--timeout-method=thread",
         ]
@@ -583,7 +618,7 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
                 # -rfE is pytest's default -r value, but the classifier parses the
                 # short-summary FAILED/ERROR lines, so make it explicit rather than
                 # inherited: a future ini change to -r must not silently blind it.
-                "-p", "no:cacheprovider", "-q", "--no-header", "-rfE",
+                "-p", "no:cacheprovider", "-q", "--no-header", "-rfEs",
             ],
             "requires": ["pytest"],
             # Block on 1 (failed) + 2 (collection error in a named file). 3/4/5 =
@@ -834,6 +869,12 @@ def evaluate(
         results: list[dict[str, Any]] = []
         classified_targets: list[str] = []
         all_failed: list[str] = []
+        # Skips must be collected from EVERY classified gate, including the ones
+        # that pass: a baselined test that skipped is absent from `all_failed`
+        # for the same reason a passing one is, and only this set tells them
+        # apart. `raw` below is per-spec and, before this, was only read on
+        # failure — so a green run had no skip information at all.
+        all_skipped: set[str] = set()
 
         for spec in specs:
             res = _run_gate(
@@ -852,6 +893,7 @@ def evaluate(
 
             if spec.get("classify") and res["status"] != "skip":
                 classified_targets.extend(spec.get("targets", ()))
+                all_skipped |= parse_skipped_files(raw)
 
             if res["status"] != "fail":
                 continue
@@ -905,7 +947,8 @@ def evaluate(
 
         # --- stale suppressions: listed, ran, and now green --------------------
         if classify_on and classified_targets:
-            for e in stale_entries(entries, all_failed, classified_targets):
+            for e in stale_entries(entries, all_failed, classified_targets,
+                                   all_skipped):
                 warnings.append(
                     f"STALE SUPPRESSION: {e['test']} now PASSES — delete this entry from "
                     f"{BASELINE_RELPATH} (owner={e['owner']}, expires={e['expires']})"

@@ -87,6 +87,7 @@ from prepush_test_gate import (  # noqa: E402  — path insert must precede impo
     classify_failures,
     expired_entries,
     load_baseline,
+    parse_skipped_files,
     stale_entries,
 )
 
@@ -170,6 +171,11 @@ def evaluate(
     Returns ``{"exit_code", "reason", "newly_red", "baseline_red", "stale"}``.
     """
     targets = list(targets)
+    # A skipped test is absent from the failed list for the same reason a
+    # passing one is. Without this, any baselined test whose guard skips it on
+    # the runner (no MLX, no Ollama, no GPU) is reported as a stale suppression
+    # and the advice is to delete a still-red entry.
+    skipped_files = parse_skipped_files(output)
 
     if rc == 0:
         return {
@@ -177,7 +183,7 @@ def evaluate(
             "reason": "test suite green",
             "newly_red": [],
             "baseline_red": [],
-            "stale": stale_entries(entries, [], targets),
+            "stale": stale_entries(entries, [], targets, skipped_files),
         }
 
     if rc != 1:
@@ -210,7 +216,7 @@ def evaluate(
             "stale": [],
         }
 
-    stale = stale_entries(entries, cls["failed"], targets)
+    stale = stale_entries(entries, cls["failed"], targets, skipped_files)
     if cls["newly_red"]:
         return {
             "exit_code": EXIT_BLOCK_TESTS,

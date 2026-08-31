@@ -101,12 +101,26 @@ def _read_db_url() -> str:
 
 
 def get_connection() -> Any:
-    """Return a process-local connection, opening it on first call."""
-    _require_psycopg()
+    """Return a process-local connection, opening it on first call.
+
+    The psycopg guard fires only when a NEW connection must be opened. An
+    already-cached connection is returned untouched, which is what lets a test
+    inject a fake into ``_CONN`` and exercise the commit/rollback contract on a
+    runner with no psycopg installed.
+
+    This ordering used to be reversed: ``_require_psycopg()`` ran first and
+    raised before the cache was consulted, so an injected connection was
+    unreachable. That defeated the guard's stated purpose ("lets tests that
+    mock the DB helpers collect and run without psycopg installed") and took
+    10 transaction-semantics tests in scripts/test_db.py red on CI, including
+    the rollback tests the file calls "the contract that matters".
+    """
     global _CONN
-    if _CONN is None or _CONN.closed:
-        _CONN = psycopg.connect(_read_db_url(), autocommit=False)
-        atexit.register(close_connection)
+    if _CONN is not None and not _CONN.closed:
+        return _CONN
+    _require_psycopg()
+    _CONN = psycopg.connect(_read_db_url(), autocommit=False)
+    atexit.register(close_connection)
     return _CONN
 
 
