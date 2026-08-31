@@ -1,6 +1,6 @@
 ---
 name: build-loop:self-improve
-description: Use when Phase 6 Learn fires, or when the user asks to "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Runs Learn, then dispatches only the experimental-draft or review work orders it returns.
+description: Use when Phase 6 Learn fires, or when the user asks to "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Detects a recurring pattern across recent runs, then dispatches only the experimental-draft or review work orders Learn returns.
 version: 0.1.0
 user-invocable: false
 ---

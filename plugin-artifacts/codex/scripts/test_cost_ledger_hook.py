@@ -196,11 +196,38 @@ class CostLedgerHookTest(unittest.TestCase):
         cmds = [hk.get("command", "") for grp in stop for hk in grp.get("hooks", [])]
 
         sweep = REPO / "hooks" / "stop-transcript-sweep.sh"
-        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c and "cost-ledger" in c]
+        sweep_text = sweep.read_text()
+
+        # The registered mode may name cost-ledger directly OR use `all`, which
+        # fans out to it. Grepping the hooks.json command for the literal string
+        # "cost-ledger" asserted an argument SPELLING rather than the activation
+        # path, so the broader and equally correct `all` registration failed the
+        # test while the hook was in fact wired and reachable.
+        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c]
         self.assertTrue(
             registered,
-            "cost-ledger sweep is not registered on the Stop event in hooks.json",
+            "stop-transcript-sweep.sh is not registered on the Stop event in hooks.json",
         )
+        def _mode(cmd: str) -> str:
+            """The sweep argument, past the closing quote of a quoted script path."""
+            m = re.search(r'stop-transcript-sweep\.sh"?\s+(\S+)', cmd)
+            return m.group(1) if m else ""
+
+        reaches_cost_ledger = [c for c in registered if _mode(c) in ("all", "cost-ledger")]
+        self.assertTrue(
+            reaches_cost_ledger,
+            "the Stop registration runs stop-transcript-sweep.sh in a mode that "
+            f"never reaches cost-ledger: {registered}",
+        )
+        # `all` is only a valid route while it still fans out to cost-ledger --
+        # otherwise this test would pass on a sweep that had quietly dropped it.
+        if not any("cost-ledger" in c for c in registered):
+            self.assertRegex(
+                sweep_text,
+                r'for one in [^\n]*\bcost-ledger\b',
+                f"{sweep} runs in `all` mode from hooks.json but `all` no longer "
+                "fans out to cost-ledger — the activation path is broken",
+            )
         self.assertIn(
             "cost_ledger_hook.py",
             sweep.read_text(),

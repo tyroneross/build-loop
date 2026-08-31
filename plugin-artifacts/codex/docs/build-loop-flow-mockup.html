@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "decec1107a38f7e8a4386805f3de019dd20b5aafdd6dd7bbf8231468a05e6107"
+    "content_sha256": "89c7936e4a73b85dc120359d9e2484cda4dfcc4cfd1303105cc9f4d214b1df7a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1487,11 +1487,11 @@
         }
       },
       "debugging-memory": {
-        "description": "Use when a crash, error, regression, or broken behavior appears: search Build Loop's native debugging memory before opening an investigation, then store the verified fix afterward. Not for implementing the fix itself; use debug-loop. Answers \"have we already solved this?\" before any time is spent re-deriving it.",
+        "description": "Use when a crash, error, regression, or broken behavior appears: search Build Loop's native debugging memory before you investigate, then store the verified fix afterward. Not for implementing the fix itself; use debug-loop. Answers \"have we already solved this?\" before time goes into re-deriving it.",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-08-30"
         }
       },
       "decision-queue": {
@@ -1703,11 +1703,11 @@
         }
       },
       "self-improve": {
-        "description": "Use when Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Runs Learn, then dispatches only the experimental-draft or review work orders it returns.",
+        "description": "Use when Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Detects a recurring pattern across recent runs, then dispatches only the experimental-draft or review work orders Learn returns.",
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-29"
+          "date": "2026-08-30"
         }
       },
       "spec-writing": {
