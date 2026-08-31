@@ -538,8 +538,8 @@ def test_synthetic_rid_no_shipped_run_stays_noop(tmp_path):
 
 
 def test_canonical_camel_case_run_recovers_strict_closeout_commit(tmp_path):
-    """Regression: reproduce the Atomize 157924 run-record shape exactly."""
-    run_id = "bl-atomize-157924"
+    """Regression: reproduce the affected run-record shape with generic data."""
+    run_id = "bl-sample-app-157924"
     commit = "030c4ac9f07aa4e4f7e7d2f768da14741b00d283"
     bl = tmp_path / ".build-loop"
     bl.mkdir(parents=True)

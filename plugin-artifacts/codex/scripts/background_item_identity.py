@@ -76,7 +76,6 @@ _TOKEN_NAMES = {
     "gh": "GitHub",
     "mcp": "MCP",
     "pmbl": "Prompt Model Benchmark Lab",
-    "productpilot": "ProductPilot",
     "rosslabs": "RossLabs",
     "selfreview": "Self Review",
 }

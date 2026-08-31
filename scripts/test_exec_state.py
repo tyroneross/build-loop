@@ -147,7 +147,7 @@ class ExecStateStartIdentityTests(unittest.TestCase):
             "start",
             run_id="bl-test-run",
             queued_chunks=["voice-review"],
-            file_ownership={"voice-review": ["SpeakSavvy/Services/RealtimeVoiceService.swift"]},
+            file_ownership={"voice-review": ["SampleApp/Services/RealtimeVoiceService.swift"]},
         )
 
         for key in (

@@ -24,7 +24,7 @@ def _plist(path: Path, label: str, arguments: list[str], **extra: object) -> byt
 
 
 def test_display_names_are_product_and_purpose_specific() -> None:
-    assert identity.display_name_for_label("ai.rosslabs.productpilot-backup") == "RossLabs ProductPilot Backup"
+    assert identity.display_name_for_label("ai.rosslabs.sample-backup") == "RossLabs Sample Backup"
     assert identity.display_name_for_label("com.tyroneross.buildloop.selfreview-deep") == "Build Loop Self Review Deep"
     assert identity.display_name_for_label("com.tyroneross.mcp-watchdog") == "MCP Watchdog"
 
