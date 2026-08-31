@@ -4,6 +4,7 @@ description: "Turn pending decisions — Operations Center tasks with status nee
 user-invocable: false
 companion_assets:
   - assets/template.html — tested, working page (styling, save/response plumbing, self-publish logic). Copy and adapt; never regenerate from scratch.
+  - scripts/regen_template_constants.py — regenerates the HEAD_HTML / SAVE_BAR_HTML self-publish constants from the authored markup. Run it after ANY CSS or save-bar edit; never hand-sync the two copies.
   - references/example-large-queue-batching.md — second worked example (2026-08-26, PersonalLLMWiki planner backlog): the large-queue variant, where items are classified into a few claims and ruled as batches instead of one card per item. Read it before building for a queue of 50+ items.
 ---
 
@@ -140,18 +141,25 @@ re-embed itself verbatim in the next version (the "quine" trick that keeps
 the page functional after every save without duplicating the render logic
 as a second string).
 
-If you ever edit the template's CSS or the save-bar markup: the change
-must land in **two** places — the literal `<style>`/`<div class="save-bar-shell">`
-markup in the file, AND the `HEAD_HTML`/`SAVE_BAR_HTML` template-literal
-constants inside `app-script`. Regenerate the constants from the real
-markup with a small script rather than hand-editing both copies:
+If you edit the template's CSS or the save-bar markup, the change must land in
+**two** places — the literal markup, and the `HEAD_HTML`/`SAVE_BAR_HTML`
+constants inside `app-script`. **Do not sync them by hand. Run:**
 
-```python
-import re
-head_block = re.search(r'(<title>.*?</style>)', html, re.S).group(1)
-save_bar_block = html[html.index('<div class="save-bar-shell"'):html.index('<script id="app-data">')].rstrip()
-# assert no backtick / ${ in either block before splicing into template literals
+```bash
+python3 skills/decision-queue/scripts/regen_template_constants.py          # rewrite
+python3 skills/decision-queue/scripts/regen_template_constants.py --check  # CI mode
 ```
+
+This section used to say "regenerate with a small script" and ship no script.
+What followed was predictable: `SAVE_BAR_HTML` sat as an empty string against
+382 characters of real markup, so `buildDocument()` emitted a page with no Save
+button, no status line and no counter — savable exactly once, then broken. Four
+static checks passed the whole time, because none of them ran `buildDocument()`
+and looked at the output. Found and fixed 2026-08-30.
+
+`tests/test_decision_queue_template.py` now fails on any drift, and
+`tests/test_decision_queue_render.py` runs the real script under Node and
+asserts on what it renders.
 
 ## Every interpolation is escaped — keep it that way
 
@@ -195,6 +203,22 @@ real file and fails if anything executes. It runs in CI. If you restructure the
 - **Read-only detection.** `not_writer` / `not_granted` / `not_declared` /
   `capability_disabled` all collapse to one read-only state: the Save
   button disables itself and says why, rather than pretending to save.
-- **XSS-safe rendering.** User-typed comments go through `escapeHtml()`
-  before being spliced into the `innerHTML` string; don't remove that when
-  editing `cardHtml()`.
+- **A standing "no longer relevant" response.** `optionsFor()` appends a `×`
+  option to every card automatically. Do not author your own — the point is that
+  a decision which stopped being a question can be closed without pretending one
+  of the real options was chosen.
+- **Staleness chip.** A card whose `touched` date is 14+ days old renders an
+  "Untouched N days" chip. This requires `opened`/`touched` to be **ISO dates**
+  (`2026-08-30`), not prose like "3 weeks ago" — a non-date is ignored, never
+  guessed at.
+- **Draft persistence.** Selections and comments mirror to `localStorage` on
+  every change and clear on a successful publish, so closing the tab mid-queue
+  no longer loses typed work. A restored draft never overwrites an answer that
+  already round-tripped through publish, and the status line says how many cards
+  were restored. Every storage access sits in try/catch — the viewer can throw
+  on storage during thumbnail capture or with site data blocked.
+- **Filter to unanswered.** A save-bar checkbox hides answered cards through a
+  body class. View-only; it never mutates an item.
+- **Radio-group semantics.** Options sit in a `fieldset` with a `legend` naming
+  the decision, so a screen reader announces each choice with its question
+  attached. `#save-status` carries `role="status" aria-live="polite"`.

@@ -12,6 +12,12 @@ You are walking the proposal-drain digest with the user. The drain script is
 items never re-surface). NEVER apply, edit, or delete a proposal without the
 user's explicit decision on that specific item.
 
+A decision is keyed to the finding's CONTENT, scoped to its repo — not to its
+filename. Producers re-emit the same finding under a fresh datestamped filename
+and the daily `drain_self_review_proposals.py` pass archives the superseded copy,
+so a decision recorded here holds across that cycle. The same finding in two
+repos stays two separate decisions, because each repo needs its own fix.
+
 ## Procedure
 
 1. Refresh the digest:

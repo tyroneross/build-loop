@@ -35,6 +35,15 @@ ALLOWED_PATHS = {
     ".codex/hooks.json",  # Codex Stop/SessionStart hook wiring → hooks/closeout.sh
 }
 
+# Directory prefixes whose contents are authored, reviewed, and shipped with the
+# repo rather than produced by a run. Same intent as ALLOWED_PATHS, but for trees
+# that grow: enumerating each file would guarantee the list goes stale. Trailing
+# slash is required so `.claude/commands-runtime/` is NOT matched by
+# `.claude/commands/`.
+ALLOWED_PREFIXES = (
+    ".claude/commands/",  # slash-command definitions: distributable config
+)
+
 
 def _git(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -78,7 +87,8 @@ def _all_tracked_files() -> list[str]:
 
 
 def _is_blocked_path(path: str) -> bool:
-    if PurePosixPath(path).as_posix() in ALLOWED_PATHS:
+    posix = PurePosixPath(path).as_posix()
+    if posix in ALLOWED_PATHS or posix.startswith(ALLOWED_PREFIXES):
         return False
     parts = PurePosixPath(path).parts
     return any(part in BLOCKED_SEGMENTS for part in parts)

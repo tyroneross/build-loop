@@ -136,6 +136,16 @@ def test_codex_hooks_json_allowed_but_other_codex_runtime_blocked() -> None:
     assert guard._is_blocked_path(".codex/state.json")
 
 
+def test_claude_commands_allowed_but_other_claude_runtime_blocked() -> None:
+    # Slash-command definitions are distributable config, not runtime state: they
+    # are authored, reviewed, and shipped with the repo. Vault repos have tracked
+    # them for months. Runtime state elsewhere under .claude/ stays blocked.
+    assert not guard._is_blocked_path(".claude/commands/recall.md")
+    assert not guard._is_blocked_path(".claude/commands/ingest.md")
+    assert guard._is_blocked_path(".claude/bookmarks/session.json")
+    assert guard._is_blocked_path(".claude/commands-runtime/state.json")
+
+
 def test_staged_update_to_head_tracked_runtime_path_is_grandfathered(repo: Path) -> None:
     # A private consumer repo deliberately tracks runtime paths (pre-policy
     # state, e.g. 84 grandfathered .build-loop files). Updating one must pass

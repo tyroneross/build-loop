@@ -33,6 +33,7 @@
     --good: #2C7A55;
     --good-soft: #E7F3ED;
     --neutral-chip: #EEF0F3;
+    --warn: #9A6212;
     --shadow: rgba(20, 24, 30, 0.10);
   }
 
@@ -52,6 +53,7 @@
       --danger: #E28C8C;
       --danger-soft: rgba(226, 140, 140, 0.12);
       --good: #7BCBA4;
+      --warn: #D9A441;
       --good-soft: rgba(123, 203, 164, 0.12);
       --neutral-chip: #232935;
       --shadow: rgba(0, 0, 0, 0.4);
@@ -228,6 +230,20 @@
   }
   .status-chip.saved { background: var(--good-soft); color: var(--good); }
   .status-chip.pending { background: var(--neutral-chip); color: var(--text-faint); }
+  /* Status carries in text colour, not a filled badge (Signal / S:N rule). */
+  .chip.stale { background: none; padding-left: 0; color: var(--warn); font-weight: 600; }
+  /* Options are a radio group: fieldset+legend give screen readers the question
+     that the choices belong to. Reset the UA chrome so it still looks flat. */
+  .options-group { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .options-group > legend { padding: 0; }
+  body.filter-unanswered .card.answered { display: none; }
+  .filter-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-faint); cursor: pointer;
+    min-height: 44px;
+  }
+  .filter-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .draft-note { color: var(--warn); }
 
   .section {
     margin-top: 16px;
@@ -411,8 +427,11 @@
   <div class="save-bar" id="save-bar">
     <div class="save-info">
       <div class="save-count" id="save-count">0 answered</div>
-      <div class="save-status" id="save-status">Select a response on any card, then save.</div>
+      <div class="save-status" id="save-status" role="status" aria-live="polite">Select a response on any card, then save.</div>
     </div>
+    <label class="filter-toggle" for="filter-unanswered">
+      <input type="checkbox" id="filter-unanswered"> Show unanswered only
+    </label>
     <button class="save-btn" id="save-btn" type="button">Save responses</button>
   </div>
 </div>
@@ -492,6 +511,7 @@ window.__ITEMS__ = [
     --good: #2C7A55;
     --good-soft: #E7F3ED;
     --neutral-chip: #EEF0F3;
+    --warn: #9A6212;
     --shadow: rgba(20, 24, 30, 0.10);
   }
 
@@ -511,6 +531,7 @@ window.__ITEMS__ = [
       --danger: #E28C8C;
       --danger-soft: rgba(226, 140, 140, 0.12);
       --good: #7BCBA4;
+      --warn: #D9A441;
       --good-soft: rgba(123, 203, 164, 0.12);
       --neutral-chip: #232935;
       --shadow: rgba(0, 0, 0, 0.4);
@@ -687,6 +708,20 @@ window.__ITEMS__ = [
   }
   .status-chip.saved { background: var(--good-soft); color: var(--good); }
   .status-chip.pending { background: var(--neutral-chip); color: var(--text-faint); }
+  /* Status carries in text colour, not a filled badge (Signal / S:N rule). */
+  .chip.stale { background: none; padding-left: 0; color: var(--warn); font-weight: 600; }
+  /* Options are a radio group: fieldset+legend give screen readers the question
+     that the choices belong to. Reset the UA chrome so it still looks flat. */
+  .options-group { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .options-group > legend { padding: 0; }
+  body.filter-unanswered .card.answered { display: none; }
+  .filter-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-faint); cursor: pointer;
+    min-height: 44px;
+  }
+  .filter-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .draft-note { color: var(--warn); }
 
   .section {
     margin-top: 16px;
@@ -863,7 +898,18 @@ window.__ITEMS__ = [
     .save-btn { width: 100%; }
   }
 </style>`;
-  var SAVE_BAR_HTML = ``;
+  var SAVE_BAR_HTML = `<div class="save-bar-shell" id="save-bar-shell">
+  <div class="save-bar" id="save-bar">
+    <div class="save-info">
+      <div class="save-count" id="save-count">0 answered</div>
+      <div class="save-status" id="save-status" role="status" aria-live="polite">Select a response on any card, then save.</div>
+    </div>
+    <label class="filter-toggle" for="filter-unanswered">
+      <input type="checkbox" id="filter-unanswered"> Show unanswered only
+    </label>
+    <button class="save-btn" id="save-btn" type="button">Save responses</button>
+  </div>
+</div>`;
 
   var artifactNS = null;
   var readOnly = false;
@@ -916,6 +962,28 @@ window.__ITEMS__ = [
     catch (e) { return iso; }
   }
 
+  // Days since an ISO date, or null when the field is not a parseable date.
+  // Queues rot: a decision nobody could answer for weeks is usually not the
+  // same decision any more, and the page should say so rather than present it
+  // as fresh.
+  var STALE_AFTER_DAYS = 14;
+  function daysSince(iso) {
+    if (!iso) return null;
+    var t = Date.parse(iso);
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  }
+
+  // Every queue needs a way to say "this stopped being a question" without
+  // pretending one of the real options was chosen. Appended here rather than
+  // asked of the author so it is present on every card by construction.
+  var MOOT_LETTER = "\u00D7";
+  function optionsFor(item) {
+    return (item.options || []).concat([
+      { letter: MOOT_LETTER, text: "No longer relevant — close without a decision." }
+    ]);
+  }
+
   function optionHtml(item, opt) {
     var checked = item.selected === opt.letter;
     return h`<label class="opt-label${checked ? " checked" : ""}" data-item="${item.id}" data-letter="${opt.letter}">`
@@ -933,7 +1001,12 @@ window.__ITEMS__ = [
       ? '<p class="inferred-note">Inferred — the source record’s own “why” field is unset for this item.</p>'
       : "";
 
-    return h`<div class="card" id="card-${item.id}">`
+    var age = daysSince(item.touched);
+    var staleChip = age !== null && age >= STALE_AFTER_DAYS
+      ? h`<span class="chip stale">Untouched ${age} days</span>`
+      : "";
+
+    return h`<div class="card${item.selected ? " answered" : ""}" id="card-${item.id}">`
       + '<div class="card-head"><div>'
       + h`<div class="card-num">${item.num} · opened ${item.opened} · last touched ${item.touched}</div>`
       + h`<h2 class="card-title">${item.title}</h2>`
@@ -942,14 +1015,16 @@ window.__ITEMS__ = [
       + h`<span class="chip repo">${item.repo}</span>`
       + h`<span class="chip${item.classChip ? " class-" + item.classChip : ""}">${item.typeLabel}</span>`
       + h`<span class="chip">${item.priority}</span>`
+      + raw(staleChip).__html
       + raw(statusChip).__html
       + "</div>"
       + h`<div class="section"><div class="section-label">The decision</div><p>${item.decision}</p></div>`
       + h`<div class="section"><div class="section-label">Why it needs you</div><p>${item.why}</p>${raw(inferredNote)}</div>`
       + h`<div class="section"><div class="section-label">Impact</div><p>${item.impact}</p></div>`
       + '<div class="section">'
-      + '<div class="section-label">Your response</div>'
-      + h`<div class="options">${raw(item.options.map(function (o) { return optionHtml(item, o); }).join(""))}</div>`
+      + h`<fieldset class="options-group"><legend class="section-label">Your response — ${item.title}</legend>`
+      + h`<div class="options">${raw(optionsFor(item).map(function (o) { return optionHtml(item, o); }).join(""))}</div>`
+      + "</fieldset>"
       + '<div class="comment-field">'
       + h`<label class="section-label" for="comment-${item.id}">Comment (optional)</label>`
       + h`<textarea class="comment-input" id="comment-${item.id}" data-item="${item.id}" placeholder="Add context, a counter-proposal, or a condition on approval…">${item.comment}</textarea>`
@@ -997,6 +1072,47 @@ window.__ITEMS__ = [
     }
   }
 
+  // Unsaved edits live only in memory until Save, so closing the tab loses
+  // everything typed. Mirror them into per-viewer browser storage. Every access
+  // is guarded: the artifact viewer can throw on storage in a thumbnail capture
+  // or a browser set to block site data, and a draft is never worth a dead page.
+  var DRAFT_KEY = "decision-queue-draft-v1";
+  function saveDraft() {
+    try {
+      var d = {};
+      items.forEach(function (it) {
+        if (it.selected || (it.comment && it.comment.trim())) {
+          d[it.id] = { selected: it.selected, comment: it.comment };
+        }
+      });
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    } catch (e) { /* storage unavailable — drafts are a convenience, not state */ }
+  }
+  function clearDraft() {
+    try { window.localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  }
+  // Returns how many cards were restored, so the UI can say so rather than
+  // silently resurrecting text the reader does not remember typing.
+  function restoreDraft() {
+    var d;
+    try { d = JSON.parse(window.localStorage.getItem(DRAFT_KEY) || "null"); }
+    catch (e) { return 0; }
+    if (!d) return 0;
+    var n = 0;
+    items.forEach(function (it) {
+      var saved = d[it.id];
+      if (!saved) return;
+      // The published page is the source of truth: only fill fields the saved
+      // version left empty, so a draft can never overwrite an answer that
+      // already round-tripped through publish().
+      var changed = false;
+      if (!it.selected && saved.selected) { it.selected = saved.selected; changed = true; }
+      if (!it.comment && saved.comment) { it.comment = saved.comment; changed = true; }
+      if (changed) n++;
+    });
+    return n;
+  }
+
   function findItem(id) {
     for (var i = 0; i < items.length; i++) { if (items[i].id === id) return items[i]; }
     return null;
@@ -1013,6 +1129,9 @@ window.__ITEMS__ = [
     for (var i = 0; i < group.length; i++) {
       group[i].classList.toggle("checked", group[i].getAttribute("data-letter") === item.selected);
     }
+    var card = document.getElementById("card-" + id);
+    if (card) card.classList.toggle("answered", !!item.selected);
+    saveDraft();
     updateSaveBar();
   }
 
@@ -1022,6 +1141,7 @@ window.__ITEMS__ = [
     if (!item) return;
     item.comment = e.target.value;
     pendingWrites = true;
+    saveDraft();
     updateSaveBar();
   }
 
@@ -1065,6 +1185,7 @@ window.__ITEMS__ = [
     artifactNS.publish(buildDocument(meta, items)).then(
       function () {
         // successful publish reloads this view automatically
+        clearDraft();
       },
       function (err) {
         btn.disabled = false;
@@ -1083,8 +1204,22 @@ window.__ITEMS__ = [
     );
   }
 
+  var restored = restoreDraft();
   paint();
   updateSaveBar();
+  if (restored) {
+    pendingWrites = true;
+    setStatus("Restored unsaved edits on " + restored + (restored === 1 ? " card" : " cards") + " — save to publish them.", "draft-note");
+  }
+
+  // Filter is a view concern only: it hides answered cards, never mutates them,
+  // so toggling it can't lose a response.
+  var filterBox = document.getElementById("filter-unanswered");
+  if (filterBox) {
+    filterBox.addEventListener("change", function () {
+      document.body.classList.toggle("filter-unanswered", filterBox.checked);
+    });
+  }
 
   var saveBtn = document.getElementById("save-btn");
   saveBtn.addEventListener("click", onSaveClick);
