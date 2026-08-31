@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "89c7936e4a73b85dc120359d9e2484cda4dfcc4cfd1303105cc9f4d214b1df7a"
+    "content_sha256": "ed82d57c9bc956f825afc32be69ae0fb931f8f9dcb70db3dc6dfde50a86b14a0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1474,7 +1474,7 @@
         }
       },
       "self-improve": {
-        "description": "Use when Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Detects a recurring pattern across recent runs, then dispatches only the experimental-draft or review work orders Learn returns.",
+        "description": "Use when the mandatory Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Detects a recurring pattern across recent runs, then dispatches only the experimental-draft or review work orders Learn returns.",
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
