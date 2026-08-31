@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "bd8e6ea74e6d7953ecb8cb956da15ad7dd05afd1dcac671418d755c6f6e93eb0"
+    "content_sha256": "b961e8af31c01b303d8ddd94b3c356f77fa6325fd49f75ea83b57551a759cb28"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1262,7 +1262,7 @@
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-08-30"
         }
       },
       "decision-queue": {
@@ -1478,7 +1478,7 @@
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-29"
+          "date": "2026-08-30"
         }
       },
       "spec-writing": {
