@@ -12,6 +12,17 @@ the assistant queue and emits ONE digest: per item — id, repo, one-line, age, 
 State is persisted (``drain-state.json``) keyed by a stable per-item key so an item
 that has been decided (applied / rejected / deferred) never re-surfaces as ``new``.
 
+That key is the finding's CONTENT identity, scoped to its repo — never its path.
+Producers re-emit the same finding under a fresh datestamped filename on every
+run, and ``drain_self_review_proposals.py`` archives the superseded copy, so a
+path-derived key voided every recorded decision on each dedup cycle (measured
+2026-08-30: 273 of 686 open build-loop findings had an archived predecessor under
+a different filename, and 5 of 16 recorded decisions had already been orphaned).
+The identity reuses the keys producers ALREADY stamp rather than minting a third:
+``finding_hash:`` frontmatter (auto-finding-sweep) and the ``kind::finding`` pair
+``drain_self_review_proposals.identity()`` collapses on. Use ``migrate`` to re-key
+decisions recorded under the old path-derived scheme.
+
 NEVER auto-applies a proposal. ``scan`` reads and reports; ``set`` records a human
 decision (driven by the ``/drain-proposals`` command or the weekly LaunchAgent digest).
 
@@ -27,6 +38,7 @@ Commands
     scan                produce the digest (JSON + markdown) at the state dir.
     list                print the current digest (new items first).
     set --key K --status S [--note ...]   record a decision for one item.
+    migrate [--apply]   re-key path-derived decisions onto content identities.
     path                print the resolved state dir + digest paths.
 
 Exit codes: 0 always on scan/list/path (advisory tool). ``set`` returns 1 if the key
@@ -80,6 +92,10 @@ def _registry_repos() -> list[dict[str, str]]:
 _FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _HTML_META_RE = re.compile(r"<!--\s*([a-zA-Z0-9_-]+)\s*:\s*(.+?)\s*-->")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+# The two identity shapes producers already stamp. Kept in sync with
+# drain_self_review_proposals.py's FINDING_RE / KIND_RE by construction.
+_FINDING_RE = re.compile(r"^##\s+Finding:\s*(.+?)\s*$", re.MULTILINE)
+_KIND_RE = re.compile(r"^\*\*Kind\*\*:\s*`([^`]+)`", re.MULTILINE)
 
 
 def _parse_meta(text: str) -> dict[str, str]:
@@ -114,9 +130,36 @@ def _item_id(path: Path, meta: dict[str, str]) -> str:
     return path.stem
 
 
-def _stable_key(repo: str, path: Path) -> str:
-    # Path is stable per item; content changes don't reset a decision.
-    return hashlib.sha1(f"{repo}::{path}".encode()).hexdigest()[:16]
+def _content_identity(text: str, meta: dict[str, str]) -> str | None:
+    """Return the identity a producer already stamped, or None if it stamped none.
+
+    Priority: ``finding_hash:`` frontmatter (auto-finding-sweep), then the
+    ``kind::finding`` pair that ``drain_self_review_proposals.identity()`` uses to
+    collapse re-emissions. Deliberately reuses those two keys instead of adding a
+    third — a second deduplicator beside a working one is how one closeout defect
+    produced four separate experimental skills.
+    """
+    for field in ("finding_hash", "finding_key"):
+        if meta.get(field):
+            return f"fh:{meta[field]}"
+    m = _FINDING_RE.search(text)
+    if m:
+        kind = _KIND_RE.search(text)
+        return f"{kind.group(1) if kind else 'unknown'}::{m.group(1).strip()}"
+    return None
+
+
+def _stable_key(repo: str, path: Path, identity: str | None = None) -> str:
+    """Decision key: repo-scoped content identity, falling back to repo-scoped path.
+
+    Repo scoping is load-bearing. The same ``finding_hash`` lands in several repos
+    (146 such clusters on 2026-08-30, every one spanning 2+ repos, none confined to
+    one), and each repo needs its own fix — so decisions must not collapse across
+    them. The path fallback keeps files that carry no producer identity on exactly
+    their previous key, so their recorded decisions survive untouched.
+    """
+    basis = f"{repo}::{identity}" if identity else f"{repo}::{path}"
+    return hashlib.sha1(basis.encode()).hexdigest()[:16]
 
 
 def _age_days(path: Path) -> int:
@@ -156,10 +199,13 @@ def _collect_items() -> list[dict[str, Any]]:
             except OSError:
                 continue
             meta = _parse_meta(text)
-            key = _stable_key(repo_label, path)
+            identity = _content_identity(text, meta)
             items.append(
                 {
-                    "key": key,
+                    "key": _stable_key(repo_label, path, identity),
+                    # The key this item had under the path-derived scheme. `migrate`
+                    # uses it to carry a recorded decision onto the content key.
+                    "legacy_key": _stable_key(repo_label, path),
                     "id": _item_id(path, meta),
                     "repo": repo_label,
                     "path": str(path),
@@ -168,7 +214,30 @@ def _collect_items() -> list[dict[str, Any]]:
                     "meta_status": (meta.get("status") or "").lower(),
                 }
             )
-    return items
+    return _collapse(items)
+
+
+def _collapse(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One decidable row per finding: keep the newest copy, count the rest.
+
+    Re-emissions normally reach here already thinned by the daily
+    drain_self_review_proposals pass, but a run between passes can leave two open
+    copies of one finding. Surfacing both would ask the human to decide the same
+    thing twice.
+    """
+    by_key: dict[str, dict[str, Any]] = {}
+    for it in items:
+        cur = by_key.get(it["key"])
+        if cur is None:
+            it["duplicate_count"] = 1
+            by_key[it["key"]] = it
+            continue
+        cur["duplicate_count"] += 1
+        # Newest copy represents the finding; age_days is mtime-derived.
+        if 0 <= it["age_days"] < cur["age_days"]:
+            it["duplicate_count"] = cur["duplicate_count"]
+            by_key[it["key"]] = it
+    return list(by_key.values())
 
 
 def _load_state(state_path: Path) -> dict[str, Any]:
@@ -233,6 +302,9 @@ def _render_md(digest: dict[str, Any]) -> str:
     for it in digest["items"]:
         age = f"{it['age_days']}d" if it["age_days"] >= 0 else "?"
         one = it["one_line"].replace("|", "\\|")
+        dup = it.get("duplicate_count", 1)
+        if dup > 1:
+            one = f"{one} _(×{dup} open copies)_"
         lines.append(
             f"| {it['status']} | {it['repo']} | {it['id']} | {age} | {one} | `{it['key']}` |"
         )
@@ -295,6 +367,74 @@ def cmd_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def migrate_state(state: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Carry decisions recorded under path keys onto their content keys.
+
+    Returns a report; does not write. A record is moved only when its key matches a
+    live item's ``legacy_key`` AND that item's content key differs. Records already
+    on a live key are left alone, and records matching nothing are KEPT as
+    ``orphaned`` — the file they named is gone from disk, so their identity cannot
+    be recovered, and dropping them would silently discard a human decision.
+    """
+    live_keys = {i["key"] for i in items}
+    by_legacy = {i["legacy_key"]: i for i in items}
+    migrated, kept, orphaned, collided = {}, [], [], []
+    for old_key, rec in state.items():
+        if old_key in live_keys:
+            migrated[old_key] = rec
+            kept.append(old_key)
+            continue
+        item = by_legacy.get(old_key)
+        if item is None:
+            migrated[old_key] = rec
+            orphaned.append(old_key)
+            continue
+        new_key = item["key"]
+        if new_key in migrated:
+            # Two path keys now name one finding: the newer decision wins.
+            prev = migrated[new_key]
+            if str(rec.get("decided_at", "")) < str(prev.get("decided_at", "")):
+                collided.append(old_key)
+                continue
+            collided.append(old_key)
+        migrated[new_key] = rec
+    return {
+        "state": migrated,
+        "remapped": [k for k in state if k not in live_keys and k in by_legacy],
+        "kept": kept,
+        "orphaned": orphaned,
+        "collapsed": collided,
+    }
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    state_dir = _state_dir(args.state_dir)
+    state_path = state_dir / "drain-state.json"
+    state = _load_state(state_path)
+    report = migrate_state(state, _collect_items())
+    summary = {
+        "state_file": str(state_path),
+        "records_before": len(state),
+        "records_after": len(report["state"]),
+        "remapped_to_content_key": len(report["remapped"]),
+        "already_current": len(report["kept"]),
+        "orphaned_kept": len(report["orphaned"]),
+        "collapsed_duplicates": len(report["collapsed"]),
+        "applied": bool(args.apply),
+    }
+    if args.apply:
+        if state:
+            _atomic_write(
+                state_dir / "drain-state.backup.json", json.dumps(state, indent=2, sort_keys=True)
+            )
+            summary["backup"] = str(state_dir / "drain-state.backup.json")
+        _atomic_write(state_path, json.dumps(report["state"], indent=2, sort_keys=True))
+    print(json.dumps(summary, indent=2))
+    if not args.apply:
+        print("\ndry run — re-run with --apply to write", file=sys.stderr)
+    return 0
+
+
 def cmd_path(args: argparse.Namespace) -> int:
     sd = _state_dir(args.state_dir)
     print(json.dumps({
@@ -342,6 +482,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="apply|reject|defer|review (or a raw VALID_STATUS)")
     p_set.add_argument("--note", default="")
     p_set.set_defaults(func=cmd_set)
+
+    p_mig = sub.add_parser("migrate", help="re-key path-derived decisions onto content keys")
+    p_mig.add_argument("--apply", action="store_true", help="write (default is a dry run)")
+    p_mig.set_defaults(func=cmd_migrate)
 
     p_path = sub.add_parser("path", help="print resolved paths")
     p_path.set_defaults(func=cmd_path)
