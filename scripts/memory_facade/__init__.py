@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -160,6 +161,36 @@ def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
         return None
 
 
+def _order(merged: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """Order merged candidates by relevance, falling back to recency.
+
+    This used to be ``merged.sort(key=_recency_ts, reverse=True)`` -- relevance
+    was never computed. Measured against the live store on 2026-08-31 over six
+    real runtime queries, the top result matched ZERO query terms in five of
+    them while a better match sat in the same pool. Graded on 33 real runtime
+    queries with an independent body-text oracle, relevance ordering lifted
+    P@1 from 0.030 to 0.455 and MRR from 0.104 to 0.575 (threshold 0.5), and
+    won at every threshold from 0.3 to 1.0.
+
+    Ordering only -- never filters, so recall cannot drop. Set
+    ``BUILD_LOOP_MEMORY_RANK=0`` to restore recency ordering.
+    """
+    if not merged:
+        return merged
+    if os.environ.get("BUILD_LOOP_MEMORY_RANK", "1") == "0":
+        return sorted(merged, key=lambda x: (x.get("_recency_ts") or 0), reverse=True)
+    try:
+        try:
+            from scripts import memory_rank as _mr  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import memory_rank as _mr  # type: ignore  # noqa: PLC0415
+        return _mr.rank(merged, query)
+    except Exception as exc:  # noqa: BLE001 — ordering must never break recall
+        print(f"WARN: memory_rank unavailable, using recency order: {exc}",
+              file=sys.stderr)
+        return sorted(merged, key=lambda x: (x.get("_recency_ts") or 0), reverse=True)
+
+
 def _fan_out(
     workdir: Path,
     query: str,
@@ -213,7 +244,7 @@ def recall(
     merged: List[Dict[str, Any]] = []
     for k in KINDS:
         merged.extend(results[k])
-    merged.sort(key=lambda x: (x.get("_recency_ts") or 0), reverse=True)
+    merged = _order(merged, query)
 
     return {
         "query": query,

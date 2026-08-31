@@ -743,6 +743,32 @@ def repo_local_context(workdir: Path, terms: list[str], max_chars: int) -> dict[
     }
 
 
+def _order_by_relevance(merged: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Order Phase-1 memory candidates by relevance, falling back to recency.
+
+    Second copy of the defect fixed in ``memory_facade._order``: this sorted by
+    ``_recency_ts`` alone, so the lessons surfaced into every run's starting
+    context were the newest ones that passed a loose substring filter, not the
+    ones matching the goal. Measured on the live store, the top-ranked result
+    matched zero query terms in five of six real queries.
+
+    Ordering only -- never filters, so recall cannot drop. Set
+    ``BUILD_LOOP_MEMORY_RANK=0`` to restore recency ordering.
+    """
+    if not merged:
+        return merged
+    if os.environ.get("BUILD_LOOP_MEMORY_RANK", "1") == "0":
+        return sorted(merged, key=lambda r: r.get("_recency_ts") or 0, reverse=True)
+    try:
+        import memory_rank as _mr  # noqa: PLC0415
+
+        return _mr.rank(merged, query)
+    except Exception as exc:  # noqa: BLE001 — ordering must never break bootstrap
+        print(f"WARN: memory_rank unavailable, using recency order: {exc}",
+              file=sys.stderr)
+        return sorted(merged, key=lambda r: r.get("_recency_ts") or 0, reverse=True)
+
+
 def canonical_memory_context(
     workdir: Path,
     query: str,
@@ -849,7 +875,7 @@ def canonical_memory_context(
             "merged": [],
             "reasons": [f"canonical_memory_error: {exc}"],
         }
-    merged.sort(key=lambda row: row.get("_recency_ts") or 0, reverse=True)
+    merged = _order_by_relevance(merged, query)
     if not include_postgres:
         reasons.append("skipped_postgres: context_bootstrap default file-backed pass")
     if not include_debugger:

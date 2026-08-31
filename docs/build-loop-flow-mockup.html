@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "613fe94f38ac780e11218e4b0ddee77aa9ed7326209277fbdeea20789b12eb43"
+    "content_sha256": "08a079ce7cd54ef1dac912fd519f9bda8b2a48151e6b22c1bbf7f2f9c658d805"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1927,6 +1927,7 @@
       "scripts/memory_consolidate/promote/__init__.py": "Promote: recurrence-gated project→global promotion.",
       "scripts/memory_consolidate/promote/promote.py": "Recurrence-gated project→global promotion.",
       "scripts/memory_context/__init__.py": "Fast, host-neutral context surface for build-loop-memory.",
+      "scripts/memory_effect.py": "Close the memory read->effect loop at the commit boundary.",
       "scripts/memory_facade/__init__.py": "Unified read facade over build-loop's memory surfaces.",
       "scripts/memory_facade/backlog.py": "Recall backlog items from canonical and personal-mirror stores by ID.\"\"\"",
       "scripts/memory_facade/common.py": "Shared helpers for memory_facade sub-modules.",
@@ -1936,8 +1937,11 @@
       "scripts/memory_facade/runs.py": "Backend 1: state.json runs[] reader for memory_facade.\"\"\"",
       "scripts/memory_facade/semantic.py": "Backend 3: local SQLite semantic index, with optional Postgres fallback.\"\"\"",
       "scripts/memory_graph/__init__.py": "Portable graph adapter for build-loop-memory.",
+      "scripts/memory_health.py": "Report the memory telemetry loop honestly, separating trustworthy rows from legacy.",
       "scripts/memory_index.py": "Append-only log of build-loop-memory writes for cross-session discovery.",
       "scripts/memory_locator.py": "Find a small set of canonical memory files without an LLM.",
+      "scripts/memory_rank.py": "Relevance scoring for memory recall results.",
+      "scripts/memory_rank_eval.py": "Grade recall ordering: current recency-sort vs relevance rank.",
       "scripts/memory_receipt_report.py": "memory_receipt_report.py — is the memory receipt safe to enforce yet?",
       "scripts/memory_staleness_check.py": "",
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
