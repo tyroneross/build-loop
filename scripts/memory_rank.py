@@ -79,8 +79,13 @@ W_TAGS = 2.0
 W_BODY = 1.0
 
 TITLE_FIELDS = ("title", "id", "canonical_id", "slug", "name")
+# `snippet` is load-bearing: the content backend returns the matched body text
+# there, and it is the ONLY body evidence any row carries. Omitting it ranked
+# content rows on their title alone, so widening retrieval flooded the top-k
+# with rows whose actual match evidence was invisible -- measured 2026-08-31:
+# precision@10 COLLAPSED 0.075 -> 0.013 as retrieval widened 10 -> 200.
 BODY_FIELDS = ("path", "legacy_path", "legacy_id", "status", "summary",
-               "body", "text", "why_durable", "reason")
+               "body", "text", "why_durable", "reason", "snippet", "excerpt")
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
