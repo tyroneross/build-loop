@@ -976,7 +976,13 @@ window.__ITEMS__ = [
   }
 
   function paint() {
-    document.getElementById("root").innerHTML = renderBody(meta, items);
+    // renderBody() builds every node through the h`` tagged template, which escapes
+    // each interpolation unless it is explicitly wrapped in raw(), so the value
+    // reaching innerHTML carries no unescaped caller data. Proven, not asserted:
+    // scripts/test_decision_queue_template_escaping.py renders a hostile item through
+    // this exact file and fails if anything executes -- 4 of its 7 assertions fail
+    // against the pre-fix template. Re-check that test before trusting this line.
+    document.getElementById("root").innerHTML = renderBody(meta, items); // nosec: escaped by construction in renderBody; see test_decision_queue_template_escaping.py
     wireEvents();
   }
 

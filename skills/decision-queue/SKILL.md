@@ -1,6 +1,6 @@
 ---
 name: decision-queue
-description: "Turn a set of pending decisions (Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment) into a single interactive page — one card per decision with the choice, why it needs the user, its impact, options, and a recommendation — that the user answers inline and Claude can read back later. Triggers: 'show me the decisions waiting on me', 'what needs my input', 'make a decision queue', 'launch a ui for these open questions'. Not for a one-off static report with no response capture — use a plain Artifact for that."
+description: "Turn pending decisions — Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment — into one interactive page the user answers inline and Claude reads back later. Not for a one-off static report with no response capture; use a plain Artifact instead. Each decision gets a card carrying the choice, why it needs the user, its impact, the options, and a recommendation. Triggers: 'show me the decisions waiting on me', 'what needs my input', 'make a decision queue', 'launch a ui for these open questions'."
 user-invocable: false
 companion_assets:
   - assets/template.html — tested, working page (styling, save/response plumbing, self-publish logic). Copy and adapt; never regenerate from scratch.

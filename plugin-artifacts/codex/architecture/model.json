@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f4f911cbeaa6c3c5160743ffb0ae5aebf6faf6c13162a74c0cfb93e9cc643851"
+    "content_sha256": "16c81cf07a3dd359267916a4f5fbfc0ef0e09b269e0b92f952b4bc31c3310365"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1266,7 +1266,7 @@
         }
       },
       "decision-queue": {
-        "description": "\"Turn a set of pending decisions (Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment) into a single interactive page — one card per decision with the choice, why it needs the user, its impact, options, and a recommendation — that the user answers inline and Claude can read back later. Triggers: 'show me the decisions waiting on me', 'what needs my in…",
+        "description": "\"Turn pending decisions — Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment — into one interactive page the user answers inline and Claude reads back later. Not for a one-off static report with no response capture; use a plain Artifact instead. Each decision gets a card carrying the choice, why it needs the user, its impact, the options, and a recom…",
         "file": "skills/decision-queue/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
