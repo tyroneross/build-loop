@@ -55,7 +55,36 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
         "tasks_total": 3,
         "agents_invoked": 2,
         "work_orders_pending": 0,
+        "open_work_total": 2,
+        "open_work_queued": 2,
+        "open_work_deferred": 0,
     }
+
+
+def test_open_work_projects_canonical_queues_with_refresh_metadata(tmp_path: Path, monkeypatch) -> None:
+    projection._OPEN_WORK_CACHE.clear()
+    monkeypatch.setattr(projection, "collect_task_surface", lambda **_kwargs: {
+        "open_count": 3,
+        "execution_queue_count": 2,
+        "deferred_count": 1,
+        "counts_by_surface": {"queue": 1, "operations_center": 1, "backlog": 1},
+        "items": [
+            {"id": "local", "title": "Local queue", "surface": "queue", "lifecycle": "queued", "execution_eligible": True},
+            {"id": "shared", "title": "Shared queue", "surface": "operations_center", "lifecycle": "review", "execution_eligible": True},
+            {"id": "later", "title": "Deferred work", "surface": "backlog", "lifecycle": "deferred", "execution_eligible": False},
+        ],
+        "truncated": False,
+        "operations_center": {"status": "available", "matched_count": 1},
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["schema_version"] == "1.1"
+    assert result["open_work"]["open_count"] == 3
+    assert result["open_work"]["refresh_interval_seconds"] == 30
+    assert result["open_work"]["refreshed_at"]
+    assert result["metrics"]["open_work_queued"] == 2
+    assert result["metrics"]["open_work_deferred"] == 1
 
 
 def test_current_run_notes_use_bounded_working_state_and_exclude_other_runs(tmp_path: Path) -> None:

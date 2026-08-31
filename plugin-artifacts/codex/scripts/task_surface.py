@@ -14,6 +14,8 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -30,6 +32,9 @@ ACTIVE_DIRS = [
 ]
 BACKLOG_DIR = ("backlog", ".build-loop/backlog", "deferred", 60)
 PROPOSAL_DIR = ("proposals", ".build-loop/proposals", "candidate", 90)
+OPERATIONS_CENTER_URL = "http://127.0.0.1:3766/api/tasks"
+MAX_OPERATIONS_CENTER_BYTES = 1024 * 1024
+TERMINAL_STATUSES = {"closed", "complete", "completed", "done", "dropped", "superseded", "wontfix"}
 
 SURFACE_RANK_BONUS = {
     "state.in_flight_chunks": 35,
@@ -44,6 +49,7 @@ SURFACE_RANK_BONUS = {
     "backlog": -20,
     "memory_backlog": 2,
     "proposals": -10,
+    "operations_center": 12,
 }
 
 SURFACE_ACTION = {
@@ -59,6 +65,7 @@ SURFACE_ACTION = {
     "backlog": "review_deferred_policy",
     "memory_backlog": "review_durable_backlog",
     "proposals": "review_proposal",
+    "operations_center": "continue_operations_center_task",
 }
 
 
@@ -103,13 +110,12 @@ def _frontmatter(path: Path) -> dict[str, str]:
 
 
 def _include_markdown_surface_item(surface: str, root: Path, path: Path) -> bool:
-    if surface != "backlog":
-        return True
-    relative_parts = path.relative_to(root).parts
-    if path.name == "INDEX.md" or "archive" in relative_parts:
-        return False
+    if surface == "backlog":
+        relative_parts = path.relative_to(root).parts
+        if path.name == "INDEX.md" or "archive" in relative_parts:
+            return False
     status = _frontmatter(path).get("status", "").lower()
-    return status not in {"done", "dropped"}
+    return status not in TERMINAL_STATUSES
 
 
 def _unchecked_items(path: Path) -> list[str]:
@@ -133,6 +139,8 @@ def _item(
     title: str,
     path: str,
     item_id: str,
+    owner: str = "",
+    created_by: str = "",
 ) -> dict[str, Any]:
     return {
         "surface": surface,
@@ -141,6 +149,8 @@ def _item(
         "title": title,
         "path": path,
         "id": item_id,
+        "owner": owner,
+        "created_by": created_by,
     }
 
 
@@ -161,17 +171,27 @@ def execution_items(workdir: Path) -> list[dict[str, Any]]:
         if not isinstance(values, list):
             continue
         for value in values:
+            record = value if isinstance(value, dict) else {}
+            item_id = str(record.get("chunk_id") or record.get("id") or record.get("task_id") or value)
+            title = str(record.get("title") or record.get("summary") or record.get("label") or item_id)
             rows.append(
                 _item(
                     surface=f"state.{key}",
                     lifecycle=lifecycle,
                     priority=priority,
-                    title=str(value),
+                    title=title,
                     path=str(workdir / ".build-loop" / "state.json"),
-                    item_id=str(value),
+                    item_id=item_id,
+                    owner=str(record.get("owner") or record.get("agent") or record.get("assigned_to") or ""),
+                    created_by="Build Loop",
                 )
             )
-    return rows
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        current = by_id.get(row["id"])
+        if current is None or row["priority"] < current["priority"]:
+            by_id[row["id"]] = row
+    return list(by_id.values())
 
 
 def iteration_summary(workdir: Path) -> dict[str, dict[str, Any]]:
@@ -246,6 +266,10 @@ def rank_task_items(
         item["execution_eligible"] = item.get("surface") not in {
             "backlog", "memory_backlog", "proposals"
         }
+        if item.get("surface") == "operations_center" and item.get("lifecycle") in {
+            "failed", "needs_input"
+        }:
+            item["execution_eligible"] = False
         if item.get("surface") == "backlog":
             item["pickup_policy"] = {
                 "planned": "promote-at-planning-boundary",
@@ -286,9 +310,11 @@ def markdown_surface_items(
                 continue
             if not _include_markdown_surface_item(surface, root, path):
                 continue
-            fm = _frontmatter(path) if surface == "backlog" else {}
+            fm = _frontmatter(path)
 
             def _append(row: dict[str, Any]) -> None:
+                row["owner"] = fm.get("owner") or fm.get("agent") or fm.get("assigned_to", "")
+                row["created_by"] = fm.get("created_by") or fm.get("source", "Build Loop")
                 if surface == "backlog":
                     row["bucket"] = fm.get("bucket") or (
                         "decision" if fm.get("type") == "decision" else "planned"
@@ -318,6 +344,63 @@ def markdown_surface_items(
                 )
                 _append(row)
     return rows
+
+
+def _operations_center_target_matches(workdir: Path, value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    target = value.strip()
+    if target.casefold() == workdir.name.casefold():
+        return True
+    try:
+        return Path(target).expanduser().resolve() == workdir
+    except OSError:
+        return False
+
+
+def operations_center_items(
+    *,
+    workdir: Path,
+    url: str = OPERATIONS_CENTER_URL,
+    timeout_seconds: float = 0.4,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Read bounded, repo-scoped tasks from the shared cross-agent queue."""
+    try:
+        with urlopen(url, timeout=timeout_seconds) as response:
+            raw = response.read(MAX_OPERATIONS_CENTER_BYTES + 1)
+        if len(raw) > MAX_OPERATIONS_CENTER_BYTES:
+            raise ValueError("response exceeded the read limit")
+        payload = json.loads(raw.decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, UnicodeError, ValueError) as exc:
+        return [], {"status": "unavailable", "detail": str(exc)}
+
+    tasks = payload.get("tasks", []) if isinstance(payload, dict) else payload
+    if not isinstance(tasks, list):
+        return [], {"status": "unavailable", "detail": "response did not contain a task list"}
+
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict) or not _operations_center_target_matches(workdir, task.get("target_repo")):
+            continue
+        status = str(task.get("status") or "todo").strip().lower()
+        if status in TERMINAL_STATUSES:
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id:
+            continue
+        priority = task.get("priority")
+        priority_rank = 12 + int(priority) if isinstance(priority, int) else 15
+        rows.append(_item(
+            surface="operations_center",
+            lifecycle=status,
+            priority=priority_rank,
+            title=str(task.get("title") or task_id),
+            path=url,
+            item_id=task_id,
+            owner="",
+            created_by=str(task.get("logged_by") or task.get("origin") or "Operations Center"),
+        ))
+    return rows, {"status": "available", "matched_count": len(rows)}
 
 
 def memory_backlog_items(
@@ -403,6 +486,8 @@ def collect_task_surface(
     memory_root: Path | None = None,
     include_memory: bool = True,
     include_proposals: bool = False,
+    include_operations_center: bool = False,
+    operations_center_url: str = OPERATIONS_CENTER_URL,
     max_items: int = 100,
 ) -> dict[str, Any]:
     wd = workdir.expanduser().resolve()
@@ -413,6 +498,13 @@ def collect_task_surface(
     if include_memory:
         items.extend(status_current_items(workdir=wd, memory_root=memory_root))
         items.extend(memory_backlog_items(workdir=wd, memory_root=memory_root))
+    operations_center = {"status": "not_requested", "matched_count": 0}
+    if include_operations_center:
+        external_items, operations_center = operations_center_items(
+            workdir=wd,
+            url=operations_center_url,
+        )
+        items.extend(external_items)
     summaries = iteration_summary(wd)
     ranked_items = rank_task_items(items, summaries)
     counts: dict[str, int] = {}
@@ -438,6 +530,7 @@ def collect_task_surface(
         "iteration_summary": summaries,
         "items": ranked_items[:max_items],
         "truncated": len(items) > max_items,
+        "operations_center": operations_center,
     }
 
 
@@ -447,6 +540,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--memory-root")
     parser.add_argument("--no-memory", action="store_true")
     parser.add_argument("--include-proposals", action="store_true")
+    parser.add_argument("--include-operations-center", action="store_true")
+    parser.add_argument("--operations-center-url", default=OPERATIONS_CENTER_URL)
     parser.add_argument("--max-items", type=int, default=100)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -456,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
         memory_root=Path(args.memory_root).expanduser().resolve() if args.memory_root else None,
         include_memory=not args.no_memory,
         include_proposals=args.include_proposals,
+        include_operations_center=args.include_operations_center,
+        operations_center_url=args.operations_center_url,
         max_items=max(1, args.max_items),
     )
     if args.json:

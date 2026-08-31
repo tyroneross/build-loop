@@ -36,7 +36,7 @@
     .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; margin-bottom: 12px; }
     .brand { font-size: .92rem; font-weight: 800; letter-spacing: -.01em; }
     .topbar p { margin: 0; color: var(--muted); font-size: .78rem; }
-    .run-panel, .policy-panel {
+    .run-panel, .open-work-panel, .policy-panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--surface);
@@ -104,10 +104,18 @@
     .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
     .work-column + .work-column { padding-left: 28px; border-left: 1px solid var(--line); }
     .run-warning { margin: 20px 0 0; color: var(--error); font-size: .78rem; }
-    .policy-panel { margin-top: 14px; overflow: hidden; }
-    .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
-    .policy-head h2 { margin: 0; font-size: 1rem; }
-    .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
+    .open-work-panel, .policy-panel { margin-top: 14px; overflow: hidden; }
+    .open-work-head, .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
+    .open-work-head h2, .policy-head h2 { margin: 0; font-size: 1rem; }
+    .open-work-head p, .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
+    .open-work-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
+    .open-work-metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+    .open-work-section { padding-top: 16px; }
+    .open-work-section h3 { margin: 0; font-size: .84rem; }
+    .nested-work { margin-top: 16px; border-top: 1px solid var(--line); }
+    .nested-work summary { display: flex; justify-content: space-between; gap: 16px; padding: 16px 0 6px; color: var(--ink); cursor: pointer; font-size: .84rem; font-weight: 750; list-style: none; }
+    .nested-work summary::-webkit-details-marker { display: none; }
+    .source-summary { margin: 14px 0 0; color: var(--muted); font-size: .7rem; }
     .policy-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
     .principle { margin: 18px 0; color: var(--muted); font-size: .78rem; }
     .principle strong { color: var(--ink); }
@@ -246,6 +254,29 @@
       </details>
     </section>
 
+    <details id="open-work-panel" class="open-work-panel">
+      <summary class="open-work-head">
+        <div><h2>Open work</h2><p id="open-work-summary">Reading queued work and backlog.</p></div>
+        <span class="disclosure-label"><span class="when-closed">Show work</span><span class="when-open">Hide work</span></span>
+      </summary>
+      <div class="open-work-body">
+        <div class="open-work-metrics" aria-label="Open work counts">
+          <div class="metric"><strong id="open-work-total">—</strong><span>open</span></div>
+          <div class="metric"><strong id="open-work-queued">—</strong><span>queued or active</span></div>
+          <div class="metric"><strong id="open-work-deferred">—</strong><span>backlog or waiting</span></div>
+        </div>
+        <section class="open-work-section" aria-labelledby="active-work-title">
+          <h3 id="active-work-title">Queued and active</h3>
+          <ul id="active-work-list" class="record-list"></ul>
+        </section>
+        <details class="nested-work">
+          <summary><span>Backlog and waiting</span><span id="deferred-work-count">—</span></summary>
+          <ul id="deferred-work-list" class="record-list"></ul>
+        </details>
+        <p id="open-work-sources" class="source-summary"></p>
+      </div>
+    </details>
+
     <details id="policy-panel" class="policy-panel">
       <summary class="policy-head">
         <div><h2>Operating policy</h2><p id="policy-summary">Optional settings appear here.</p></div>
@@ -275,7 +306,10 @@
     const agentList = document.querySelector('#agent-list');
     const workOrderList = document.querySelector('#work-order-list');
     const noteList = document.querySelector('#note-list');
+    const activeWorkList = document.querySelector('#active-work-list');
+    const deferredWorkList = document.querySelector('#deferred-work-list');
     const timers = new Map();
+    let openWorkRenderedAt = '';
     let state = { gaps: [], responses: {}, run: null };
 
     function node(tag, attrs = {}, text = '') {
@@ -299,7 +333,7 @@
     }
 
     function statusLabel(status) {
-      return ({ active: 'In progress', complete: 'Complete', pending: 'Upcoming', queued: 'Queued', blocked: 'Needs attention', invoked: 'Invoked', idle: 'Idle' })[status] || status || 'Unknown';
+      return ({ active: 'In progress', complete: 'Complete', pending: 'Upcoming', queued: 'Queued', blocked: 'Needs attention', invoked: 'Invoked', idle: 'Idle', 'in-flight': 'In progress', 'active-iterate': 'In progress', 'open-issue': 'Open issue', 'deferred-active': 'Follow-up', deferred: 'Backlog', 'durable-project-backlog': 'Backlog', 'code-grounded-status': 'Pending', todo: 'Queued', standing: 'Standing', working: 'In progress', review: 'In review', needs_input: 'Needs input', failed: 'Failed' })[status] || String(status || 'Unknown').replaceAll('_', ' ');
     }
 
     function localTime(value) {
@@ -320,6 +354,42 @@
 
     function emptyRecord(list, message) {
       list.replaceChildren(node('li', { className: 'empty-record' }, message));
+    }
+
+    function workSource(surface) {
+      return ({ operations_center: 'Operations Center', backlog: 'Build Loop backlog', memory_backlog: 'Project memory', status_current: 'Project status', queue: 'Build Loop queue', ux_queue: 'UX queue', issues: 'Build Loop issues', followup: 'Build Loop follow-up' })[surface] || (String(surface || '').startsWith('state.') ? 'Current run' : 'Build Loop');
+    }
+
+    function renderWorkRows(list, items, emptyMessage) {
+      list.replaceChildren();
+      if (!items.length) return emptyRecord(list, emptyMessage);
+      items.forEach(work => {
+        const item = node('li', { className: 'record-row' });
+        item.append(node('span', { className: 'record-title' }, sentence(work.title, work.id)));
+        item.append(node('span', { className: 'record-status' }, statusLabel(work.lifecycle)));
+        const details = [workSource(work.surface), work.owner ? `Owner: ${work.owner}` : '', work.created_by && work.created_by !== 'Build Loop' ? `Added by: ${work.created_by}` : '', work.id ? `ID: ${work.id}` : ''].filter(Boolean).join(' · ');
+        item.append(node('span', { className: 'record-meta' }, details));
+        list.append(item);
+      });
+    }
+
+    function renderOpenWork(openWork) {
+      const work = openWork || { open_count: 0, execution_queue_count: 0, deferred_count: 0, counts_by_surface: {}, items: [] };
+      if (work.refreshed_at && work.refreshed_at === openWorkRenderedAt) return;
+      openWorkRenderedAt = work.refreshed_at || '';
+      document.querySelector('#open-work-total').textContent = work.open_count;
+      document.querySelector('#open-work-queued').textContent = work.execution_queue_count;
+      document.querySelector('#open-work-deferred').textContent = work.deferred_count;
+      document.querySelector('#deferred-work-count').textContent = countLabel(work.deferred_count, 'item');
+      document.querySelector('#open-work-summary').textContent = `${countLabel(work.execution_queue_count, 'queued or active item')} · ${countLabel(work.deferred_count, 'backlog or waiting item')}.`;
+      const visibleItems = Array.isArray(work.items) ? work.items : [];
+      renderWorkRows(activeWorkList, visibleItems.filter(item => item.execution_eligible), 'No queued or active work is recorded.');
+      renderWorkRows(deferredWorkList, visibleItems.filter(item => !item.execution_eligible), 'No backlog or waiting work is recorded.');
+      const sources = Object.entries(work.counts_by_surface || {}).map(([source, count]) => `${workSource(source)} ${count}`);
+      const coverage = work.operations_center?.status === 'available' ? 'Other-agent queue connected.' : 'Other-agent queue unavailable.';
+      const limit = work.truncated ? ` Showing ${visibleItems.length} highest-ranked items.` : '';
+      const sourceText = sources.length ? `${sources.join(' · ')}.` : 'No open work sources returned items.';
+      document.querySelector('#open-work-sources').textContent = `${coverage} ${sourceText}${limit} Updated ${localTime(work.refreshed_at)}.`;
     }
 
     function renderRun(run) {
@@ -347,6 +417,7 @@
         countLabel(run.metrics.work_orders_pending, 'pending Learn order'),
         countLabel(run.notes.length, 'note'),
       ].join(' · ');
+      renderOpenWork(run.open_work);
 
       phaseList.replaceChildren();
       phaseOutputList.replaceChildren();

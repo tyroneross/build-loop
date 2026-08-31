@@ -6,15 +6,21 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from task_surface import collect_task_surface
 
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_PLAN_BYTES = 512 * 1024
 MAX_LEDGER_LINES = 5_000
 MAX_WORKING_STATE_LINES = 200
 MAX_RUN_NOTES = 20
+OPEN_WORK_CACHE_SECONDS = 30
+OPEN_WORK_MAX_ITEMS = 120
+_OPEN_WORK_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 PHASES: tuple[dict[str, Any], ...] = (
     {"id": "assess", "number": 1, "name": "Assess", "summary": "Understand the repository and define success.", "output": "State summary and goal"},
@@ -624,6 +630,39 @@ def _updated_at(sources: list[Path]) -> str | None:
     return datetime.fromtimestamp(max(mtimes), tz=timezone.utc).isoformat()
 
 
+def _open_work_projection(root: Path, warnings: list[str]) -> dict[str, Any]:
+    cache_key = str(root)
+    now = time.monotonic()
+    cached = _OPEN_WORK_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        payload = collect_task_surface(
+            workdir=root,
+            include_operations_center=True,
+            max_items=OPEN_WORK_MAX_ITEMS,
+        )
+    except Exception as exc:  # pragma: no cover - defensive boundary for the dashboard server
+        warnings.append(f"Open work could not be read: {exc}.")
+        payload = {
+            "open_count": 0,
+            "execution_queue_count": 0,
+            "deferred_count": 0,
+            "counts_by_surface": {},
+            "items": [],
+            "truncated": False,
+            "operations_center": {"status": "unavailable"},
+        }
+    payload = dict(payload)
+    payload["refreshed_at"] = _now()
+    payload["refresh_interval_seconds"] = OPEN_WORK_CACHE_SECONDS
+    operations_center = payload.get("operations_center")
+    if isinstance(operations_center, dict) and operations_center.get("status") == "unavailable":
+        warnings.append("Operations Center tasks are unavailable; local Build Loop work remains visible.")
+    _OPEN_WORK_CACHE[cache_key] = (now + OPEN_WORK_CACHE_SECONDS, payload)
+    return payload
+
+
 def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     """Return a bounded, read-only dashboard snapshot for ``workdir``."""
     root = Path(workdir).expanduser().resolve()
@@ -650,6 +689,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     agents.sort(key=lambda item: (item["last_seen"], item["name"]), reverse=True)
     notes = [*_working_notes(root, context, warnings, sources), *_learn_notes(learn_receipt)]
     notes = sorted(notes, key=lambda item: item["timestamp"], reverse=True)[:MAX_RUN_NOTES]
+    open_work = _open_work_projection(root, warnings)
     if context["active"] and not agents:
         warnings.append("No agent invocation records exist for this run yet.")
 
@@ -658,7 +698,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     blocked_tasks = sum(item["status"] == "blocked" for item in tasks)
     current_phase = next((item for item in phases if item["status"] in {"active", "blocked"}), None)
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "generated_at": _now(),
         "updated_at": _updated_at(sources),
         "status": context["status"],
@@ -671,6 +711,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
         "agents": agents,
         "work_orders": work_orders,
         "notes": notes,
+        "open_work": open_work,
         "metrics": {
             "phases_complete": sum(item["status"] == "complete" for item in phases),
             "phases_total": len(phases),
@@ -680,6 +721,9 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
             "tasks_total": len(tasks),
             "agents_invoked": len(agents),
             "work_orders_pending": sum(item["status"] in {"pending", "queued"} for item in work_orders),
+            "open_work_total": open_work["open_count"],
+            "open_work_queued": open_work["execution_queue_count"],
+            "open_work_deferred": open_work["deferred_count"],
         },
         "sources": [str(path.relative_to(root)) for path in dict.fromkeys(sources)],
         "warnings": list(dict.fromkeys(warnings)),

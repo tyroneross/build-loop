@@ -10,8 +10,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import task_surface as surface
+
 SCRIPT = HERE / "task_surface.py"
 
 
@@ -88,6 +94,27 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertEqual(payload["dry_run"]["next_item"]["rank"], 1)
         self.assertEqual(payload["iteration_summary"]["T-1"]["attempts"], 1)
         self.assertEqual(payload["iteration_summary"]["T-1"]["stop_reason"], "validator-failed")
+
+    def test_structured_execution_items_preserve_title_owner_and_source(self) -> None:
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"execution": {"queued_chunks": [{
+                "chunk_id": "T-2",
+                "title": "Render open work",
+                "owner": "dashboard-agent",
+            }]}}),
+            encoding="utf-8",
+        )
+
+        payload = surface.collect_task_surface(
+            workdir=self.workdir,
+            include_memory=False,
+        )
+
+        row = payload["items"][0]
+        self.assertEqual(row["id"], "T-2")
+        self.assertEqual(row["title"], "Render open work")
+        self.assertEqual(row["owner"], "dashboard-agent")
+        self.assertEqual(row["created_by"], "Build Loop")
 
     def test_memory_backlog_is_project_scoped(self) -> None:
         memory = self.root / "memory"
@@ -196,6 +223,85 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertNotIn("Dropped backlog item", titles)
         self.assertNotIn("Archived backlog item", titles)
         self.assertNotIn("Backlog", titles)
+
+    def test_terminal_status_is_excluded_from_active_surfaces(self) -> None:
+        issues = self.workdir / ".build-loop" / "issues"
+        issues.mkdir()
+        (issues / "open.md").write_text(
+            "---\nstatus: open\nowner: reviewer\nsource: Agent Rally\n---\n# Open issue\n",
+            encoding="utf-8",
+        )
+        (issues / "done.md").write_text(
+            "---\nstatus: done\n---\n# Completed issue\n",
+            encoding="utf-8",
+        )
+
+        payload = surface.collect_task_surface(workdir=self.workdir, include_memory=False)
+
+        self.assertEqual(payload["counts_by_surface"]["issues"], 1)
+        row = next(item for item in payload["items"] if item["surface"] == "issues")
+        self.assertEqual(row["title"], "Open issue")
+        self.assertEqual(row["owner"], "reviewer")
+        self.assertEqual(row["created_by"], "Agent Rally")
+
+    def test_operations_center_is_repo_scoped_and_fail_soft(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps([
+            {
+                "id": "oc-1",
+                "title": "Review dashboard queue",
+                "target_repo": "sample-repo",
+                "status": "review",
+                "priority": 1,
+                "agent_code": "pool-1",
+                "handler": "build-loop",
+                "logged_by": "claude-code",
+            },
+            {
+                "id": "oc-2",
+                "title": "Wait for direction",
+                "target_repo": str(self.workdir),
+                "status": "needs_input",
+                "origin": "codex",
+            },
+            {
+                "id": "oc-done",
+                "title": "Already done",
+                "target_repo": "sample-repo",
+                "status": "done",
+            },
+            {
+                "id": "other",
+                "title": "Different repository",
+                "target_repo": "other-repo",
+                "status": "todo",
+            },
+        ]).encode()
+
+        with patch.object(surface, "urlopen", return_value=response):
+            payload = surface.collect_task_surface(
+                workdir=self.workdir,
+                include_memory=False,
+                include_operations_center=True,
+            )
+
+        rows = [row for row in payload["items"] if row["surface"] == "operations_center"]
+        self.assertEqual([row["id"] for row in rows], ["oc-1", "oc-2"])
+        self.assertEqual(rows[0]["created_by"], "claude-code")
+        self.assertEqual(rows[0]["owner"], "")
+        self.assertTrue(rows[0]["execution_eligible"])
+        self.assertFalse(rows[1]["execution_eligible"])
+        self.assertEqual(payload["operations_center"], {"status": "available", "matched_count": 2})
+
+        with patch.object(surface, "urlopen", side_effect=TimeoutError("offline")):
+            unavailable = surface.collect_task_surface(
+                workdir=self.workdir,
+                include_memory=False,
+                include_operations_center=True,
+            )
+        self.assertEqual(unavailable["operations_center"]["status"], "unavailable")
+        self.assertEqual(unavailable["open_count"], 0)
 
     def test_legacy_flat_backlog_item_without_frontmatter_still_surfaces(self) -> None:
         backlog = self.workdir / ".build-loop" / "backlog"

@@ -284,6 +284,8 @@ def test_live_http_save_reload_and_queue(live_server: str, repo: Path) -> None:
     assert len(state["gaps"]) == 6
     assert state["run"]["status"] == "idle"
     assert len(state["run"]["phases"]) == 6
+    assert state["run"]["open_work"]["open_count"] == 0
+    assert state["run"]["open_work"]["refresh_interval_seconds"] == 30
     status, saved = _post(live_server, "/api/responses", {
         "gap_id": "bounded-related-work", "choice_id": "adaptive", "note": "Reserve capacity for discovered work."
     })
@@ -353,11 +355,13 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
         "applied-count", "Applied · validated",
         "const saved = await save(card, gap);", "if (!saved) return;",
         'id="run-panel"', 'id="phase-list"', 'id="task-list"', 'id="agent-list"', 'id="work-order-list"', 'id="note-list"',
+        'id="open-work-panel"', 'id="active-work-list"', 'id="deferred-work-list"',
         'id="run-details"', 'id="policy-panel"', "Show details", "Hide details", "Show decisions", "Hide decisions",
         ".when-open { display: none; }", "details[open] > summary .when-closed { display: none; }",
         "details[open] > summary .when-open { display: inline; }",
         "renderRun", "refreshRun", "setInterval(refreshRun, 5000)", "Track this run. It updates automatically.",
         "Major tasks", "Agents invoked", "Learn work orders", "Run notes", "No agents are recorded.",
+        "Open work", "Queued and active", "Backlog and waiting", "Other-agent queue connected.",
         "sentence(phase.output", "if (stateLabel.textContent !== nextStateLabel)", "function sentence",
         "statusLabel(currentPhase.status).toLowerCase()",
     ):
