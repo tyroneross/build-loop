@@ -463,16 +463,37 @@ def _summary(receipt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _canonical_run(runs: list[Any], run_id: str) -> dict[str, Any] | None:
+    """The LAST ``runs[]`` record carrying ``run_id`` — the canonical one.
+
+    A run_id can appear more than once: ``write_run_entry`` replaces a thin
+    Stop-hook row in place but blind-appends when the existing row is already a
+    richer orchestrator record, so two Review-G writes under one session id
+    leave two rows. The later row is the run currently closing.
+
+    ``run_close_lint.py`` grades ``matches[-1]``. This function is the writer
+    side of that same contract — keep them in step. Reading from the front
+    instead made Learn stamp ``learn`` onto an earlier duplicate while the lint
+    read the last one and returned ``learn_missing`` (observed 2026-08-31 on
+    run bl-20260831T070458Z-codex:01a0569d-buildloop-01-899329, rows 14 and 15).
+    """
+    for record in reversed(runs):
+        if isinstance(record, dict) and str(record.get("run_id")) == run_id:
+            return record
+    return None
+
+
 def _persist_state_summary(workdir: Path, run_id: str, receipt: dict[str, Any]) -> bool:
     state_path = workdir / ".build-loop" / "state.json"
     with LockedFile(state_path):
         state = _read_json(state_path, {})
-        for record in state.get("runs", []) if isinstance(state.get("runs"), list) else []:
-            if isinstance(record, dict) and str(record.get("run_id")) == run_id:
-                record["learn"] = _summary(receipt)
-                _write_json(state_path, state)
-                return True
-    return False
+        runs = state.get("runs")
+        record = _canonical_run(runs if isinstance(runs, list) else [], run_id)
+        if record is None:
+            return False
+        record["learn"] = _summary(receipt)
+        _write_json(state_path, state)
+        return True
 
 
 def _learn_line(outcome: str, runs_count: int, pattern_count: int, orders: list[dict[str, Any]], status: str, defer_reason: str) -> str:
@@ -541,11 +562,7 @@ def _load_run_context(root: Path, run_id: str) -> tuple[dict[str, Any], list[Any
         return {}, [], None, "state.json must contain an object"
     runs = state.get("runs", [])
     runs = runs if isinstance(runs, list) else []
-    current = next(
-        (row for row in runs if isinstance(row, dict) and str(row.get("run_id")) == run_id),
-        None,
-    )
-    return state, runs, current, ""
+    return state, runs, _canonical_run(runs, run_id), ""
 
 
 def _run_base_stages(

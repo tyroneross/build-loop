@@ -8,6 +8,7 @@
 - Claude and Codex artifacts ship the same stdlib-only exchange adapter and prove checksum plus execution parity in isolated caches.
 
 ### Fixed
+- Phase 6 Learn writes its `runs[].learn` summary to the LAST `state.json.runs[]` row carrying the run_id, matching the row `run_close_lint.py --require-learn` grades. `scripts/learn/runner.py::_persist_state_summary` and `_load_run_context` both took the FIRST match, so a run_id owning two rows (`write_run_entry` blind-appends when the existing row is already orchestrator-grade) left the graded row without a summary and `--require-learn` returned `learn_missing` on a run that had genuinely finished Phase 6. Observed 2026-08-31 on `bl-20260831T070458Z-codex:01a0569d-buildloop-01-899329`, rows 14 and 15. New `_canonical_run()` is the single writer-side rule; `scripts/test_run_close_lint.py::DuplicateRunIdTest` pins both consumers together and fails against the pre-fix front-scan.
 - `append_run` corroborates the caller's commit and goal before writing `state.json.runs[]` instead of trusting them (enforce-candidate E3). A SHA reachable from neither the run's push range nor HEAD is recorded as `pending`, with the refused value kept on `provenance.supplied_commit`; a goal that diverges from the run's own `intent.md` warns without changing the record. New `scripts/run_provenance.py` (ported from agent-rally-point, where the logic was first tested) plus `--push-range` / `--intent` / `--strict-provenance` flags.
 
 ### Changed

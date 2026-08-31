@@ -286,6 +286,11 @@ def check(
             )
             return envelope
         if require_learn:
+            # LAST match, not first: a run_id can own two rows (write_run_entry
+            # blind-appends when the existing row is already orchestrator-grade),
+            # and the later row is the run closing now. learn/runner.py's
+            # _canonical_run() is the writer half of this contract — move one and
+            # you must move the other, or Learn stamps a row this never reads.
             complete, reason = _learn_complete(workdir, matches[-1])
             if not complete:
                 envelope.update(

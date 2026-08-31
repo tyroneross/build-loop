@@ -3,12 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for run_close_lint.py + the run-close contract it enforces in the owned docs.
 
-Two classes, one file (fewer nodes, same coverage):
+Three classes, one file (fewer nodes, same coverage):
 
 * :class:`RunCloseLintTest` — the behavior of the assertion, including the exact shape
   of the 2026-07-16 failure it exists to catch (a dispatched orchestrator whose workdir
   has no ``.build-loop/`` at all, and a workdir whose ``runs[]`` holds only hook-written
   floor records).
+* :class:`DuplicateRunIdTest` — the 2026-08-31 failure: two ``runs[]`` rows share one
+  run_id, and Learn's writer must stamp the same row this lint grades. Cross-consumer
+  by design; it fails if either side drifts off the last match.
 * :class:`RunCloseContractTest` — the clauses that wire the lint into Review-G and into
   the dispatching parent's completion check. Locks them against silent removal, the same
   way ``test_auditor_dispatch_contract.py`` locks the GAP-1 contract.
@@ -24,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_close_lint  # noqa: E402
+from learn import runner as learn_runner  # noqa: E402
 
 # scripts/ -> repo root
 REPO = Path(__file__).resolve().parent.parent
@@ -290,6 +294,105 @@ class RunCloseLintTest(unittest.TestCase):
         self.assertTrue(run_close_lint.is_orchestrator_grade({"run_id": "a"}))
         self.assertFalse(run_close_lint.is_orchestrator_grade({"source": "append_run"}))
         self.assertFalse(run_close_lint.is_orchestrator_grade("not-a-dict"))
+
+
+class DuplicateRunIdTest(unittest.TestCase):
+    """Learn's writer and this lint must resolve one run_id to the SAME record.
+
+    ``write_run_entry`` replaces a thin Stop-hook row in place but blind-appends
+    when the existing row is already a richer orchestrator record, so two
+    Review-G writes under one session id leave two ``runs[]`` rows. The lint
+    grades ``matches[-1]``; ``learn/runner.py`` used to stamp the FIRST match and
+    return. Observed 2026-08-31 on run
+    bl-20260831T070458Z-codex:01a0569d-buildloop-01-899329 — the Learn receipt and
+    row 14 were both complete, row 15 carried no ``learn``, and ``--require-learn``
+    returned ``learn_missing`` on a run that had genuinely finished Phase 6.
+    """
+
+    RUN_ID = "bl-dup"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.state_path = self.workdir / ".build-loop" / "state.json"
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _write_duplicate_state(self) -> None:
+        first = _orchestrator_run(self.RUN_ID)
+        first["goal"] = "earlier Review-G write"
+        last = _orchestrator_run(self.RUN_ID, NOW + timedelta(hours=4))
+        last["goal"] = "the run currently closing"
+        self.state_path.write_text(
+            json.dumps({"runs": [_orchestrator_run("bl-other"), first, last]}),
+            encoding="utf-8",
+        )
+
+    def _runs(self) -> list[dict]:
+        return json.loads(self.state_path.read_text(encoding="utf-8"))["runs"]
+
+    def _receipt(self) -> dict:
+        return {
+            "schema": "build-loop.learn-receipt.v1",
+            "run_id": self.RUN_ID,
+            "status": "complete",
+            "outcome": "full",
+            "learn_line": "Learn: 0 patterns above threshold (3 runs scanned)",
+            "input_digest": "deadbeef",
+            "work_orders": [],
+        }
+
+    def test_learn_summary_lands_on_the_record_the_lint_grades(self) -> None:
+        self._write_duplicate_state()
+        _write_learn_receipt(self.workdir, self.RUN_ID)
+
+        self.assertTrue(
+            learn_runner._persist_state_summary(self.workdir, self.RUN_ID, self._receipt())
+        )
+
+        runs = self._runs()
+        self.assertNotIn("learn", runs[1], "the earlier duplicate must be left alone")
+        self.assertEqual(runs[2]["learn"]["status"], "complete")
+
+        result = run_close_lint.check(
+            self.workdir, run_id=self.RUN_ID, require_learn=True, now=NOW
+        )
+        self.assertEqual(result["status"], "recorded")
+        self.assertTrue(result["learn_complete"])
+
+    def test_summary_on_the_first_duplicate_alone_is_learn_missing(self) -> None:
+        """Pins the failure direction: the pre-fix write is what the lint rejects."""
+        self._write_duplicate_state()
+        _write_learn_receipt(self.workdir, self.RUN_ID)
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        state["runs"][1]["learn"] = {
+            "schema": "build-loop.learn-receipt.v1",
+            "status": "complete",
+            "receipt": f".build-loop/learn/{self.RUN_ID}.json",
+        }
+        self.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        result = run_close_lint.check(
+            self.workdir, run_id=self.RUN_ID, require_learn=True, now=NOW
+        )
+        self.assertEqual(result["status"], "learn_missing")
+        self.assertIn("runs[].learn is absent", result["reason"])
+
+    def test_load_run_context_resolves_the_last_duplicate(self) -> None:
+        """The receipt's own ``record`` stage must name the same row."""
+        self._write_duplicate_state()
+        _, runs, current, error = learn_runner._load_run_context(self.workdir, self.RUN_ID)
+        self.assertEqual(error, "")
+        self.assertEqual(len(runs), 3)
+        assert current is not None
+        self.assertEqual(current["goal"], "the run currently closing")
+
+    def test_absent_run_id_still_reports_no_record(self) -> None:
+        self._write_duplicate_state()
+        self.assertFalse(
+            learn_runner._persist_state_summary(self.workdir, "bl-absent", self._receipt())
+        )
+        self.assertIsNone(learn_runner._load_run_context(self.workdir, "bl-absent")[2])
 
 
 class RunCloseContractTest(unittest.TestCase):
