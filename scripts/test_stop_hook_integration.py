@@ -137,6 +137,31 @@ def _stop_payload(transcript: Path, cwd: Path) -> str:
 
 
 @pytest.mark.live
+
+def _wait_for_bg_scan_to_finish(timeout_s: float = 200.0) -> None:
+    """Block until /tmp/build-loop-scan.lock is no longer held, or timeout."""
+    import fcntl
+    import time
+
+    lock_path = Path("/tmp/build-loop-scan.lock")
+    if not lock_path.exists():
+        return
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            fd = os.open(str(lock_path), os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                return  # lock free, no bg scan running
+            finally:
+                os.close(fd)
+        except BlockingIOError:
+            time.sleep(0.5)
+        except OSError:
+            return  # lock file gone or unreadable
+
+
 class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
     """Live integration test. Slow (~30-60s). Requires Ollama + qwen3:8b-q4_K_M."""
 
@@ -148,7 +173,17 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
                 "Run `ollama pull qwen3:8b-q4_K_M` and ensure `ollama serve` is up."
             )
 
+    def _wait_for_bg_scan_to_finish(self, timeout_s: float = 200.0) -> None:
+        """Delegate to the module-level helper, which StopHookHardeningTests
+        also needs. Kept as a method so existing self. call sites still work."""
+        _wait_for_bg_scan_to_finish(timeout_s)
+
     def setUp(self) -> None:
+        # The hook BACKGROUNDS its scan, so the previous test's scan can still
+        # hold the machine-wide /tmp/build-loop-scan.lock while this one starts.
+        # This helper existed for exactly that and had zero call sites, so the
+        # contention it was written to prevent reached every test after the first.
+        _wait_for_bg_scan_to_finish()
         # MemIsolationMixin.setUp isolates AGENT_MEMORY_ROOT to a tmpdir.
         # Call super() BEFORE setting up self.workdir since _events_path()
         # requires self.workdir.
@@ -189,28 +224,6 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         self.tmp.cleanup()
         super().tearDown()
 
-    def _wait_for_bg_scan_to_finish(self, timeout_s: float = 200.0) -> None:
-        """Block until /tmp/build-loop-scan.lock is no longer held, or timeout."""
-        import fcntl
-        import time
-
-        lock_path = Path("/tmp/build-loop-scan.lock")
-        if not lock_path.exists():
-            return
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                fd = os.open(str(lock_path), os.O_RDWR)
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                    return  # lock free, no bg scan running
-                finally:
-                    os.close(fd)
-            except BlockingIOError:
-                time.sleep(0.5)
-            except OSError:
-                return  # lock file gone or unreadable
 
     def _snapshot_production_subjects(self) -> dict[str, set[str]]:
         """Return baseline ids per production-schema name (Phase B may write
@@ -400,6 +413,11 @@ class StopHookHardeningTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # The hook BACKGROUNDS its scan, so the previous test's scan can still
+        # hold the machine-wide /tmp/build-loop-scan.lock while this one starts.
+        # This helper existed for exactly that and had zero call sites, so the
+        # contention it was written to prevent reached every test after the first.
+        _wait_for_bg_scan_to_finish()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
