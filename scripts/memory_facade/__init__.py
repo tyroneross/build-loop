@@ -83,7 +83,7 @@ from .backlog import read_backlog  # noqa: E402
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_LIMIT = 10
-KINDS = ("runs", "decisions", "lessons", "backlog", "semantic", "debugger")
+KINDS = ("runs", "decisions", "lessons", "backlog", "semantic", "debugger", "content")
 KIND_ALIASES = {
     "decision": "decisions",
     "lesson": "lessons",
@@ -91,6 +91,9 @@ KIND_ALIASES = {
     "backlogs": "backlog",
     "semantic_facts": "semantic",
     "debug": "debugger",
+    "body": "content",
+    "fulltext": "content",
+    "fts": "content",
     # Research/reference recall stays in the lessons lane; deferred work has a
     # dedicated backlog lane so derived INDEX files cannot hide it.
     "research": "lessons",
@@ -161,6 +164,46 @@ def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
         return None
 
 
+def read_content(
+    workdir: Path,
+    query: str,
+    limit: int,
+    project: Optional[str],
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Backend 7: FTS5 full-text index over document BODIES.
+
+    Exists because every other file-backed backend searches a metadata surface
+    (id / title / status / tags). Measured 2026-08-31: only 0.07% of
+    body-relevant documents are findable from that surface, median 0.0000 --
+    a structural recall ceiling no matching-semantics change can beat. The
+    semantic backend that was meant to cover content has no database on disk
+    and returns sqlite_semantic_empty on every query.
+
+    Degrades to an empty result with a reason rather than raising; this is on
+    the recall hot path and must never be able to break it.
+    """
+    if os.environ.get("BUILD_LOOP_MEMORY_CONTENT", "1") == "0":
+        return [], ["content_index_disabled: BUILD_LOOP_MEMORY_CONTENT=0"]
+    try:
+        try:
+            from scripts import content_index as _ci  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import content_index as _ci  # type: ignore  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return [], [f"content_index_unavailable: {exc}"]
+    try:
+        db = _ci.default_db_path(workdir)
+        if not Path(db).is_file():
+            return [], [
+                "content_index_absent: no FTS index on disk; build it with "
+                "`python3 scripts/content_index.py build`"
+            ]
+        rows = _ci.query(query, limit=limit, project=project, db_path=db)
+        return list(rows), ([] if rows else ["content_index_empty_result"])
+    except Exception as exc:  # noqa: BLE001
+        return [], [f"content_index_error: {exc}"]
+
+
 def _order(merged: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     """Order merged candidates by relevance, falling back to recency.
 
@@ -207,6 +250,7 @@ def _fan_out(
         "backlog":   lambda: read_backlog(workdir, query, limit, project),
         "semantic":  lambda: read_semantic(workdir, query, limit, project, skip_postgres=skip_postgres),
         "debugger":  lambda: read_debugger(workdir, query, limit, project),
+        "content":   lambda: read_content(workdir, query, limit, project),
     }
     results: Dict[str, List[Dict[str, Any]]] = {k: [] for k in KINDS}
     reasons: List[str] = []

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "08a079ce7cd54ef1dac912fd519f9bda8b2a48151e6b22c1bbf7f2f9c658d805"
+    "content_sha256": "23da3f68468c21d8c61f0b401c3ed3deb6c67b093b41ff00c47be709f8b3dac0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1601,6 +1601,7 @@
       "scripts/consent_ask.py": "Host-specific ask adapter for the CLI dispatch consent gate.",
       "scripts/consent_conformance.py": "Language-neutral conformance runner for the CLI dispatch consent contract.",
       "scripts/consolidate_memory.py": "Memory consolidation pass.",
+      "scripts/content_index.py": "Lexical FTS5 index for markdown documents in build-loop-memory.",
       "scripts/context_bootstrap.py": "Build a Phase 1 context packet from all memory surfaces.",
       "scripts/context_snapshot.py": "Write non-blocking Build Loop context snapshots.",
       "scripts/contextual_prepend.py": "Contextual Retrieval prepend for write-time context (Phase D).",
