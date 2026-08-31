@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2da6faaf666ae3574c3a3a2d4b5d5a8c49513df7217c92c4013b76669153208a"
+    "content_sha256": "e1ce518010b8023a1149da04974056560e9292d3d5fab8d07fe201da859771fb"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1258,7 +1258,7 @@
         }
       },
       "debugging-memory": {
-        "description": "Use when a crash, error, regression, or broken behavior appears: search Build Loop's native debugging memory before you investigate, then store the verified fix afterward. Not for implementing the fix itself; use debug-loop. Answers \"have we already solved this?\" before time goes into re-deriving it.",
+        "description": "Search Build Loop's native debugging memory before you investigate a bug, then store the verified fix afterward. Use when the user reports a crash, error, regression, or broken behavior — check what already failed this way before re-deriving it. Not for implementing the fix itself; use debug-loop.",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1474,7 +1474,7 @@
         }
       },
       "self-improve": {
-        "description": "Use when the mandatory Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Detects a recurring pattern across recent runs, then dispatches only the experimental-draft or review work orders Learn returns.",
+        "description": "Run mandatory Phase 6 Learn, then dispatch only the returned experimental-draft or review work orders. Use after a run closes, or when the user asks to \"scan recent runs\" or \"improve build-loop\" — it looks for a recurring pattern across runs worth promoting into a skill or agent. Not for a deliberate whole-project retrospective (use `recursive-retrospective`).",
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

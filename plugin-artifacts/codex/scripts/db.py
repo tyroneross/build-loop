@@ -103,13 +103,17 @@ def _read_db_url() -> str:
 def get_connection() -> Any:
     """Return a process-local connection, opening it on first call.
 
-    The driver requirement guards the OPEN, not the return. An already-open
-    connection is handed back without importing psycopg: we plainly do not need
-    the driver to return an object we are already holding. That ordering is
-    what lets the helper tests install a fake connection and exercise the
-    commit/rollback logic on a machine without the optional `.[db]` extra —
-    which CI deliberately does not install. With the check first, 11 tests that
-    never touch a real database failed with ImportError instead of running.
+    The psycopg guard fires only when a NEW connection must be opened. An
+    already-cached connection is returned untouched, which is what lets a test
+    inject a fake into ``_CONN`` and exercise the commit/rollback contract on a
+    runner with no psycopg installed.
+
+    This ordering used to be reversed: ``_require_psycopg()`` ran first and
+    raised before the cache was consulted, so an injected connection was
+    unreachable. That defeated the guard's stated purpose ("lets tests that
+    mock the DB helpers collect and run without psycopg installed") and took
+    10 transaction-semantics tests in scripts/test_db.py red on CI, including
+    the rollback tests the file calls "the contract that matters".
     """
     global _CONN
     if _CONN is not None and not _CONN.closed:
