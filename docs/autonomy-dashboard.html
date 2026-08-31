@@ -32,10 +32,19 @@
     }
     button, textarea, input { font: inherit; }
     button, label, summary { -webkit-tap-highlight-color: transparent; }
-    .shell { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 64px; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; margin-bottom: 12px; }
-    .brand { font-size: .92rem; font-weight: 800; letter-spacing: -.01em; }
-    .topbar p { margin: 0; color: var(--muted); font-size: .78rem; }
+    .shell { display: grid; grid-template-columns: 238px minmax(0, 1fr); gap: 24px; width: min(1380px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 64px; }
+    .workspace { min-width: 0; }
+    .side-nav { position: sticky; top: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgb(49 52 56 / 5%); }
+    .side-brand { padding: 20px 18px 14px; border-bottom: 1px solid var(--line); }
+    .side-brand strong { display: block; font-size: .92rem; }
+    .side-brand span { display: block; margin-top: 2px; color: var(--muted); font-size: .7rem; }
+    .nav-list { margin: 0; padding: 8px; list-style: none; }
+    .nav-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 44px; padding: 9px 10px; border-radius: 10px; color: var(--ink); font-size: .78rem; font-weight: 750; text-decoration: none; }
+    .nav-link:hover, .nav-link:focus-visible { background: var(--accent-soft); outline: 0; }
+    .nav-count { color: var(--muted); font-size: .68rem; font-weight: 700; }
+    .nav-sublist { margin: 0 8px 8px 20px; padding: 0 0 0 10px; border-left: 1px solid var(--line); list-style: none; }
+    .nav-sublist a { display: block; min-height: 36px; padding: 8px 6px; overflow: hidden; color: var(--accent-strong); font-size: .68rem; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-sublist a:hover, .nav-sublist a:focus-visible { color: var(--accent-strong); outline: 0; }
     .run-panel, .open-work-panel, .policy-panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -47,8 +56,7 @@
     .status-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; }
     .run-state { color: var(--accent-strong); font-size: .78rem; font-weight: 800; }
     .run-panel[data-status="blocked"] .run-state { color: var(--error); }
-    .status-head h1 { margin: 6px 0 0; font-size: clamp(1.9rem, 5vw, 3.15rem); letter-spacing: -.04em; line-height: 1.05; }
-    .run-goal { max-width: 720px; margin: 14px 0 0; color: var(--muted); font-size: 1rem; }
+    .status-head h2 { margin: 6px 0 0; font-size: clamp(1.45rem, 4vw, 2.3rem); letter-spacing: -.035em; line-height: 1.08; }
     .run-meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 16px; color: var(--muted); font-size: .74rem; }
     .run-meta strong { color: var(--ink); }
     .run-stats { display: grid; gap: 7px; min-width: 128px; text-align: right; }
@@ -83,19 +91,8 @@
     .phase-facts strong { color: var(--ink); }
     .phase-activity { padding-top: 12px; }
     .phase-activity h3 { margin: 0 0 4px; font-size: .76rem; }
-    .run-disclosure { border-top: 0; }
-    .disclosure-head, .open-work-head, .policy-head, .card-head { cursor: pointer; list-style: none; }
-    .disclosure-head::-webkit-details-marker, .open-work-head::-webkit-details-marker, .policy-head::-webkit-details-marker, .card-head::-webkit-details-marker { display: none; }
-    .disclosure-head {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 16px;
-      align-items: center;
-      min-height: 56px;
-      padding: 0 clamp(22px, 5vw, 42px);
-    }
-    .disclosure-copy strong { display: block; font-size: .88rem; }
-    .disclosure-copy span { color: var(--muted); font-size: .72rem; }
+    .policy-head, .card-head { cursor: pointer; list-style: none; }
+    .policy-head::-webkit-details-marker, .card-head::-webkit-details-marker { display: none; }
     .disclosure-label { color: var(--accent); font-size: .76rem; font-weight: 750; }
     .when-open { display: none; }
     details[open] > summary .when-closed { display: none; }
@@ -103,31 +100,18 @@
     .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
     details[open] > summary .disclosure-label::after { transform: rotate(180deg); }
     summary:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
-    .detail-body { padding: 6px clamp(22px, 5vw, 42px) 28px; border-top: 1px solid var(--line); }
-    .detail-section { padding-top: 22px; }
-    .detail-section + .detail-section { margin-top: 20px; border-top: 1px solid var(--line); }
-    .detail-section h2, .work-column h2 { margin: 0 0 8px; font-size: .9rem; }
-    .phase-output-list, .record-list { margin: 0; padding: 0; list-style: none; }
+    .record-list { margin: 0; padding: 0; list-style: none; }
     .record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
     .record-row:first-child { border-top: 0; }
     .record-title { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; font-weight: 750; }
     .record-status { color: var(--accent-strong); font-size: .69rem; font-weight: 800; text-align: right; text-transform: capitalize; }
     .record-meta { grid-column: 1 / -1; color: var(--muted); font-size: .7rem; }
     .empty-record { padding: 10px 0; color: var(--muted); font-size: .78rem; }
-    .work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
-    .work-column + .work-column { padding-left: 28px; border-left: 1px solid var(--line); }
     .run-warning { margin: 20px 0 0; color: var(--error); font-size: .78rem; }
-    .open-work-panel, .policy-panel { margin-top: 14px; overflow: hidden; }
-    .open-work-head, .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
-    .open-work-head h2, .policy-head h2 { margin: 0; font-size: 1rem; }
-    .open-work-head p, .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
-    .open-work-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
-    .open-work-metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; border-bottom: 1px solid var(--line); }
-    .open-work-section { padding-top: 16px; }
-    .open-work-section h3 { margin: 0; font-size: .84rem; }
-    .nested-work { margin-top: 16px; border-top: 1px solid var(--line); }
-    .nested-work summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; padding: 10px 0; color: var(--ink); cursor: pointer; font-size: .84rem; font-weight: 750; list-style: none; }
-    .nested-work summary::-webkit-details-marker { display: none; }
+    .policy-panel { margin-top: 14px; overflow: hidden; }
+    .policy-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; min-height: 72px; padding: 14px 22px; }
+    .policy-head h2 { margin: 0; font-size: 1rem; }
+    .policy-head p { margin: 2px 0 0; color: var(--muted); font-size: .76rem; }
     .source-summary { margin: 14px 0 0; color: var(--muted); font-size: .7rem; }
     .policy-body { padding: 0 22px 24px; border-top: 1px solid var(--line); }
     .principle { margin: 18px 0; color: var(--muted); font-size: .78rem; }
@@ -184,16 +168,42 @@
     .applied-note strong { color: var(--success); }
     .applied-note p { margin: 2px 0 0; font-size: .76rem; }
     .applied-note code { color: var(--muted); font-size: .69rem; overflow-wrap: anywhere; }
+    .page-head { margin: 0 0 20px; }
+    .page-head h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.2rem); letter-spacing: -.045em; line-height: 1.02; }
+    .page-head p { max-width: 680px; margin: 8px 0 0; color: var(--muted); font-size: .86rem; }
+    .workspace-section { scroll-margin-top: 18px; }
+    .workspace-section + .workspace-section { margin-top: 28px; }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 2px 10px; }
+    .section-head h2 { margin: 0; font-size: 1.05rem; }
+    .section-head p { margin: 2px 0 0; color: var(--muted); font-size: .74rem; }
+    .section-count { color: var(--accent-strong); font-size: .74rem; font-weight: 800; }
+    .loop-stack { display: grid; gap: 14px; }
+    .support-panel { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgb(49 52 56 / 5%); }
+    .support-body { padding: 8px 22px 22px; }
+    .support-panel > .source-summary { padding: 0 22px 18px; }
+    .group-card + .group-card { border-top: 1px solid var(--line); }
+    .group-card > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; min-height: 52px; padding: 4px 0; cursor: pointer; list-style: none; }
+    .group-card > summary::-webkit-details-marker { display: none; }
+    .group-copy strong { display: block; font-size: .82rem; }
+    .group-copy span { display: block; color: var(--muted); font-size: .68rem; }
+    .group-count { color: var(--accent-strong); font-size: .7rem; font-weight: 800; }
+    .group-records { margin: 0; padding: 0 0 10px; list-style: none; }
+    .empty-panel { margin: 0; padding: 22px; color: var(--muted); font-size: .8rem; }
     @media (max-width: 760px) {
-      .shell { width: min(100% - 20px, 980px); padding-top: 12px; }
-      .topbar { align-items: flex-start; flex-direction: column; gap: 0; }
+      .shell { grid-template-columns: 1fr; width: min(100% - 20px, 980px); padding-top: 10px; }
+      .side-nav { position: static; }
+      .side-brand { padding: 14px 12px 10px; }
+      .nav-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+      .nav-list > li:first-child { grid-column: 1 / -1; }
+      .nav-sublist { display: flex; gap: 6px; margin: 0 8px 8px; padding: 0; overflow-x: auto; border-left: 0; scrollbar-width: thin; }
+      .nav-sublist li { flex: 0 0 auto; }
+      .nav-sublist a { min-height: 44px; max-width: 220px; padding: 11px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent-soft); }
       .status-head { grid-template-columns: 1fr; }
       .run-stats { grid-template-columns: repeat(3, auto); justify-content: start; text-align: left; }
       .phase-card > summary { min-height: 82px; padding-inline: 12px; }
       .phase-detail { margin-left: 48px; padding-right: 12px; }
-      .work-grid, .choices, .explain { grid-template-columns: 1fr; }
-      .work-column + .work-column, .explain section + section { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
-      .work-column + .work-column { padding-top: 20px; }
+      .choices, .explain { grid-template-columns: 1fr; }
+      .explain section + section { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
       .card-head { grid-template-columns: auto minmax(0, 1fr); }
       .card-meta { grid-column: 2; justify-items: start; }
       .selected-policy, .status { text-align: left; }
@@ -206,86 +216,53 @@
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand">Build Loop</div>
-      <p>Track this run. It updates automatically.</p>
-    </header>
+  <div class="shell">
+    <aside class="side-nav" aria-label="Dashboard navigation">
+      <div class="side-brand"><strong>Build Loop</strong><span id="scope-label">Current repository</span></div>
+      <nav>
+        <ul class="nav-list">
+          <li><a class="nav-link" href="#in-progress"><span>In progress</span><span id="nav-active-count" class="nav-count">—</span></a><ul id="active-loop-nav" class="nav-sublist"></ul></li>
+          <li><a class="nav-link" href="#queued-work"><span>Queued work</span><span id="nav-queue-count" class="nav-count">—</span></a></li>
+          <li><a class="nav-link" href="#backlog"><span>Backlog</span><span id="nav-backlog-count" class="nav-count">—</span></a></li>
+          <li><a class="nav-link" href="#handoffs"><span>Handoffs</span><span id="nav-handoff-count" class="nav-count">—</span></a></li>
+          <li><a class="nav-link" href="#history"><span>History</span><span id="nav-history-count" class="nav-count">—</span></a></li>
+          <li><a class="nav-link" href="#policy-panel"><span>Policy</span><span class="nav-count">Optional</span></a></li>
+        </ul>
+      </nav>
+    </aside>
 
-    <section id="run-panel" class="run-panel" aria-labelledby="run-title" data-status="loading">
-      <div class="run-overview">
-        <div class="status-head">
-          <div>
-            <div id="run-state-label" class="run-state" role="status" aria-live="polite">Reading local records.</div>
-            <h1 id="run-title">Loading the run.</h1>
-          </div>
-          <div class="run-stats" aria-label="Run counts">
-            <strong id="phase-progress">— phases</strong>
-            <span id="task-count">— tasks</span>
-            <span id="agent-count">— agents</span>
-          </div>
-        </div>
-        <p id="run-goal" class="run-goal">The dashboard is reading the current goal.</p>
-        <div class="run-meta">
-          <span><strong>Run</strong> <span id="run-id">—</span></span>
-          <span><strong>Updated</strong> <span id="run-updated">—</span></span>
-        </div>
-        <ol id="phase-list" class="phase-list" aria-label="Build Loop phases"></ol>
-      </div>
+    <main class="workspace">
+      <header class="page-head">
+        <h1>Build activity</h1>
+        <p>See what is running now, what may run next, and what completed before. Records refresh automatically.</p>
+      </header>
 
-      <details id="run-details" class="run-disclosure">
-        <summary class="disclosure-head">
-          <div class="disclosure-copy"><strong>Run details</strong><span id="detail-summary">Phase outputs, tasks, agent work, and notes.</span></div>
-          <span class="disclosure-label"><span class="when-closed">Show details</span><span class="when-open">Hide details</span></span>
-        </summary>
-        <div class="detail-body">
-          <section class="detail-section work-grid">
-            <div class="work-column" aria-labelledby="tasks-title">
-              <h2 id="tasks-title">Major tasks</h2>
-              <ul id="task-list" class="record-list"></ul>
-            </div>
-            <div class="work-column" aria-labelledby="agents-title">
-              <h2 id="agents-title">Agents invoked</h2>
-              <ul id="agent-list" class="record-list"></ul>
-            </div>
-          </section>
-          <section class="detail-section" aria-labelledby="work-orders-title">
-            <h2 id="work-orders-title">Learn work orders</h2>
-            <ul id="work-order-list" class="record-list"></ul>
-          </section>
-          <section class="detail-section" aria-labelledby="notes-title">
-            <h2 id="notes-title">Run notes</h2>
-            <ul id="note-list" class="record-list"></ul>
-          </section>
-          <p id="run-warning" class="run-warning" hidden></p>
-        </div>
-      </details>
-    </section>
+      <section id="in-progress" class="workspace-section" aria-labelledby="in-progress-title">
+        <div class="section-head"><div><h2 id="in-progress-title">In progress</h2><p>Each active loop keeps its own phase record.</p></div><span id="active-loop-count" class="section-count">—</span></div>
+        <div id="loop-panels" class="loop-stack" aria-live="polite"><div class="support-panel"><p class="empty-panel">Reading active loops.</p></div></div>
+      </section>
 
-    <details id="open-work-panel" class="open-work-panel">
-      <summary class="open-work-head">
-        <div><h2>Open work</h2><p id="open-work-summary">Reading queued work and backlog.</p></div>
-        <span class="disclosure-label"><span class="when-closed">Show work</span><span class="when-open">Hide work</span></span>
-      </summary>
-      <div class="open-work-body">
-        <div class="open-work-metrics" aria-label="Open work counts">
-          <div class="metric"><strong id="open-work-total">—</strong><span>open</span></div>
-          <div class="metric"><strong id="open-work-queued">—</strong><span>queued or active</span></div>
-          <div class="metric"><strong id="open-work-deferred">—</strong><span>backlog or waiting</span></div>
-        </div>
-        <section class="open-work-section" aria-labelledby="active-work-title">
-          <h3 id="active-work-title">Queued and active</h3>
-          <ul id="active-work-list" class="record-list"></ul>
-        </section>
-        <details class="nested-work">
-          <summary><span>Backlog and waiting</span><span id="deferred-work-count">—</span></summary>
-          <ul id="deferred-work-list" class="record-list"></ul>
-        </details>
-        <p id="open-work-sources" class="source-summary"></p>
-      </div>
-    </details>
+      <section id="queued-work" class="workspace-section" aria-labelledby="queued-work-title">
+        <div class="section-head"><div><h2 id="queued-work-title">Queued work</h2><p>Executable work that Build Loop may take next.</p></div><span id="queued-work-count" class="section-count">—</span></div>
+        <div class="support-panel"><div id="queued-groups" class="support-body"><p class="empty-panel">Reading queued work.</p></div><p id="open-work-sources" class="source-summary"></p></div>
+      </section>
 
-    <details id="policy-panel" class="policy-panel">
+      <section id="backlog" class="workspace-section" aria-labelledby="backlog-title">
+        <div class="section-head"><div><h2 id="backlog-title">Backlog</h2><p>Recorded work that has not entered the execution queue.</p></div><span id="backlog-count" class="section-count">—</span></div>
+        <div class="support-panel"><div id="backlog-groups" class="support-body"><p class="empty-panel">Reading backlog.</p></div></div>
+      </section>
+
+      <section id="handoffs" class="workspace-section" aria-labelledby="handoffs-title">
+        <div class="section-head"><div><h2 id="handoffs-title">Handoffs</h2><p>Transfers and coordination records with dates and participants.</p></div><span id="handoff-count" class="section-count">—</span></div>
+        <div class="support-panel"><div id="handoff-list" class="support-body"></div></div>
+      </section>
+
+      <section id="history" class="workspace-section" aria-labelledby="history-title">
+        <div class="section-head"><div><h2 id="history-title">History</h2><p>Prior Build Loop outcomes and recorded review evidence.</p></div><span id="history-count" class="section-count">—</span></div>
+        <div class="support-panel"><div id="history-list" class="support-body"></div></div>
+      </section>
+
+      <details id="policy-panel" class="policy-panel workspace-section">
       <summary class="policy-head">
         <div><h2>Operating policy</h2><p id="policy-summary">Optional settings appear here.</p></div>
         <span class="disclosure-label"><span class="when-closed">Show decisions</span><span class="when-open">Hide decisions</span></span>
@@ -301,22 +278,21 @@
         <div id="loading" role="status">Loading operating decisions.</div>
         <div id="cards" class="cards"></div>
       </div>
-    </details>
-  </main>
+      </details>
+    </main>
+  </div>
 
   <script>
     const cards = document.querySelector('#cards');
     const loading = document.querySelector('#loading');
-    const runPanel = document.querySelector('#run-panel');
-    const phaseList = document.querySelector('#phase-list');
-    const taskList = document.querySelector('#task-list');
-    const agentList = document.querySelector('#agent-list');
-    const workOrderList = document.querySelector('#work-order-list');
-    const noteList = document.querySelector('#note-list');
-    const activeWorkList = document.querySelector('#active-work-list');
-    const deferredWorkList = document.querySelector('#deferred-work-list');
+    const loopPanels = document.querySelector('#loop-panels');
+    const activeLoopNav = document.querySelector('#active-loop-nav');
+    const queuedGroups = document.querySelector('#queued-groups');
+    const backlogGroups = document.querySelector('#backlog-groups');
+    const handoffList = document.querySelector('#handoff-list');
+    const historyList = document.querySelector('#history-list');
     const timers = new Map();
-    let openWorkRenderedAt = '';
+    let workspaceRenderedAt = '';
     let state = { gaps: [], responses: {}, run: null };
 
     function node(tag, attrs = {}, text = '') {
@@ -345,6 +321,10 @@
 
     function localTime(value) {
       if (!value) return 'No timestamp recorded';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const [year, month, day] = value.split('-').map(Number);
+        return new Date(year, month - 1, day).toLocaleDateString([], { dateStyle: 'medium' });
+      }
       const parsed = new Date(value);
       return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     }
@@ -411,66 +391,47 @@
       return ({ operations_center: 'Operations Center', backlog: 'Build Loop backlog', memory_backlog: 'Project memory', status_current: 'Project status', queue: 'Build Loop queue', ux_queue: 'UX queue', issues: 'Build Loop issues', followup: 'Build Loop follow-up' })[surface] || (String(surface || '').startsWith('state.') ? 'Current run' : 'Build Loop');
     }
 
-    function renderWorkRows(list, items, emptyMessage) {
-      list.replaceChildren();
-      if (!items.length) return emptyRecord(list, emptyMessage);
-      items.forEach(work => {
-        const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, sentence(work.title, work.id)));
-        item.append(node('span', { className: 'record-status' }, statusLabel(work.lifecycle)));
-        const details = [workSource(work.surface), work.owner ? `Owner: ${work.owner}` : '', work.created_by && work.created_by !== 'Build Loop' ? `Added by: ${work.created_by}` : '', work.id ? `ID: ${work.id}` : ''].filter(Boolean).join(' · ');
-        item.append(node('span', { className: 'record-meta' }, details));
-        list.append(item);
+    function slug(value) {
+      return String(value || 'loop').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+
+    function agentEvidence(agent) {
+      return [
+        agent.role,
+        `Judge: ${agent.judge ? 'Yes' : 'No'}`,
+        `Model: ${agent.model || 'Not recorded'}`,
+        agent.source,
+      ].filter(Boolean).join(' · ');
+    }
+
+    function renderLoopPanel(run, index) {
+      const panelId = `loop-${slug(run.run_id || index + 1)}`;
+      const panel = node('article', { id: panelId, className: 'run-panel', 'data-status': run.status });
+      const overview = node('div', { className: 'run-overview' });
+      const head = node('div', { className: 'status-head' });
+      const heading = node('div');
+      heading.append(node('div', { className: 'run-state', role: 'status' }, `${statusLabel(run.status)} · ${run.current_phase_name || 'No current phase'}`));
+      heading.append(node('h2', {}, sentence(run.goal, 'No goal is recorded')));
+      const stats = node('div', { className: 'run-stats', 'aria-label': 'Run counts' });
+      stats.append(node('strong', {}, `${run.metrics.phases_complete} of ${run.metrics.phases_total} phases`));
+      stats.append(node('span', {}, countLabel(run.metrics.tasks_total, 'task')));
+      stats.append(node('span', {}, countLabel(run.metrics.agents_invoked, 'agent')));
+      stats.append(node('span', {}, countLabel(run.metrics.judges_used || 0, 'judge')));
+      stats.append(node('span', {}, run.metrics.models_used ? countLabel(run.metrics.models_used, 'model') : 'Models not recorded'));
+      head.append(heading, stats);
+      overview.append(head);
+      const meta = node('div', { className: 'run-meta' });
+      [
+        ['Scope', run.scope || 'Repository'],
+        ['Run', run.run_id || 'Not recorded'],
+        ['Updated', localTime(run.updated_at)],
+      ].forEach(([label, value]) => {
+        const part = node('span');
+        part.append(node('strong', {}, label), document.createTextNode(` ${value}`));
+        meta.append(part);
       });
-    }
-
-    function renderOpenWork(openWork) {
-      const work = openWork || { open_count: 0, execution_queue_count: 0, deferred_count: 0, counts_by_surface: {}, items: [] };
-      if (work.refreshed_at && work.refreshed_at === openWorkRenderedAt) return;
-      openWorkRenderedAt = work.refreshed_at || '';
-      document.querySelector('#open-work-total').textContent = work.open_count;
-      document.querySelector('#open-work-queued').textContent = work.execution_queue_count;
-      document.querySelector('#open-work-deferred').textContent = work.deferred_count;
-      document.querySelector('#deferred-work-count').textContent = countLabel(work.deferred_count, 'item');
-      document.querySelector('#open-work-summary').textContent = `${countLabel(work.execution_queue_count, 'queued or active item')} · ${countLabel(work.deferred_count, 'backlog or waiting item')}.`;
-      const visibleItems = Array.isArray(work.items) ? work.items : [];
-      renderWorkRows(activeWorkList, visibleItems.filter(item => item.execution_eligible), 'No queued or active work is recorded.');
-      renderWorkRows(deferredWorkList, visibleItems.filter(item => !item.execution_eligible), 'No backlog or waiting work is recorded.');
-      const sources = Object.entries(work.counts_by_surface || {}).map(([source, count]) => `${workSource(source)} ${count}`);
-      const coverage = work.operations_center?.status === 'available' ? 'Other-agent queue connected.' : 'Other-agent queue unavailable.';
-      const limit = work.truncated ? ` Showing ${visibleItems.length} highest-ranked items.` : '';
-      const sourceText = sources.length ? `${sources.join(' · ')}.` : 'No open work sources returned items.';
-      document.querySelector('#open-work-sources').textContent = `${coverage} ${sourceText}${limit} Updated ${localTime(work.refreshed_at)}.`;
-    }
-
-    function renderRun(run) {
-      if (!run) return;
-      state.run = run;
-      runPanel.dataset.status = run.status;
-      const current = run.current_phase_name;
-      const title = run.status === 'active' ? `${current || 'The run'} is in progress.` : run.status === 'blocked' ? `${current || 'The run'} needs attention.` : run.status === 'complete' ? 'The run is complete.' : 'No run is active.';
-      document.querySelector('#run-title').textContent = title;
-      const stateLabel = document.querySelector('#run-state-label');
-      const nextStateLabel = `${statusLabel(run.status)}.`;
-      if (stateLabel.textContent !== nextStateLabel) stateLabel.textContent = nextStateLabel;
-      document.querySelector('#run-goal').textContent = sentence(run.goal, 'No goal is recorded');
-      document.querySelector('#run-id').textContent = run.run_id || 'No run id';
-      document.querySelector('#run-updated').textContent = localTime(run.updated_at);
-      const currentPhase = run.phases.find(phase => phase.status === 'active' || phase.status === 'blocked');
-      document.querySelector('#phase-progress').textContent = currentPhase
-        ? `${run.metrics.phases_complete} complete · phase ${currentPhase.number} ${statusLabel(currentPhase.status).toLowerCase()}`
-        : `${run.metrics.phases_complete} of ${run.metrics.phases_total} complete`;
-      document.querySelector('#task-count').textContent = countLabel(run.metrics.tasks_total, 'task');
-      document.querySelector('#agent-count').textContent = countLabel(run.metrics.agents_invoked, 'agent');
-      document.querySelector('#detail-summary').textContent = [
-        countLabel(run.metrics.tasks_total, 'task'),
-        countLabel(run.metrics.agents_invoked, 'agent'),
-        countLabel(run.metrics.work_orders_pending, 'pending Learn order'),
-        countLabel(run.notes.length, 'note'),
-      ].join(' · ');
-      renderOpenWork(run.open_work);
-
-      phaseList.replaceChildren();
+      overview.append(meta);
+      const phaseList = node('ol', { className: 'phase-list', 'aria-label': `Phases for ${run.run_id || 'Build Loop'}` });
       run.phases.forEach(phase => {
         const records = phaseRecords(run, phase.id);
         const item = node('li', { className: 'phase-item' });
@@ -481,7 +442,13 @@
         copy.append(node('span', { className: 'phase-name' }, phase.name));
         copy.append(node('span', { className: 'phase-focus' }, sentence(phaseFocus(phase, records), 'No activity is recorded')));
         const activeAgent = ['active', 'blocked'].includes(phase.status) ? records.agents.find(agent => ['active', 'blocked', 'invoked'].includes(agent.status)) : null;
-        copy.append(node('span', { className: 'phase-location' }, [`Record: ${phase.location}`, activeAgent ? `Agent: ${activeAgent.name}` : ''].filter(Boolean).join(' · ')));
+        const phaseJudge = records.agents.some(agent => agent.judge);
+        copy.append(node('span', { className: 'phase-location' }, [
+          `Record: ${phase.location}`,
+          activeAgent ? `Agent: ${activeAgent.name}` : '',
+          activeAgent ? `Model: ${activeAgent.model || 'Not recorded'}` : '',
+          phaseJudge ? 'Judge used' : '',
+        ].filter(Boolean).join(' · ')));
         summary.append(copy, node('span', { className: 'phase-state' }, statusLabel(phase.status)));
         details.append(summary);
 
@@ -492,61 +459,152 @@
         facts.append(node('span', {}, `Record: ${phase.location}`));
         body.append(facts);
         appendPhaseRows(body, 'Tasks', records.tasks, task => phaseRecord(task.title, task.status, [`ID: ${task.id}`, task.owner ? `Owner: ${task.owner}` : ''].filter(Boolean).join(' · ')));
-        appendPhaseRows(body, 'Agents', records.agents, agent => phaseRecord(agent.name, agent.status, [agent.role, agent.source].filter(Boolean).join(' · ')));
+        appendPhaseRows(body, 'Agents', records.agents, agent => phaseRecord(agent.name, agent.status, agentEvidence(agent)));
         appendPhaseRows(body, 'Learn work orders', records.orders, order => phaseRecord(order.role, order.status, [order.pattern ? `Pattern: ${order.pattern}` : '', `Source: ${order.source}`].filter(Boolean).join(' · ')));
         appendPhaseRows(body, 'Notes', records.notes, note => phaseRecord(note.text, 'note', [note.author, localTime(note.timestamp)].filter(Boolean).join(' · ')));
         details.append(body);
         item.append(details);
         phaseList.append(item);
       });
+      overview.append(phaseList);
+      if (run.warnings.length) overview.append(node('p', { className: 'run-warning' }, sentence(run.warnings.join(' '), '')));
+      panel.append(overview);
+      return { panel, panelId };
+    }
 
-      taskList.replaceChildren();
-      if (!run.tasks.length) emptyRecord(taskList, 'No tasks are recorded.');
-      run.tasks.forEach(task => {
-        const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, sentence(task.title, task.id)));
-        item.append(node('span', { className: 'record-status' }, statusLabel(task.status)));
-        const details = [`ID: ${task.id}`, task.owner ? `Owner: ${task.owner}` : ''].filter(Boolean).join(' · ');
-        item.append(node('span', { className: 'record-meta' }, details));
-        taskList.append(item);
+    function workGroup(item) {
+      return item.phase || item.workstream || workSource(item.surface);
+    }
+
+    function renderWorkGroups(container, items, emptyMessage) {
+      container.replaceChildren();
+      if (!items.length) {
+        container.append(node('p', { className: 'empty-panel' }, emptyMessage));
+        return;
+      }
+      const groups = new Map();
+      items.forEach(item => {
+        const key = workGroup(item);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
       });
-
-      agentList.replaceChildren();
-      if (!run.agents.length) emptyRecord(agentList, 'No agents are recorded.');
-      run.agents.forEach(agent => {
-        const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, agent.name));
-        item.append(node('span', { className: 'record-status' }, statusLabel(agent.status)));
-        const details = [agent.role, agent.phase ? `phase ${agent.phase}` : '', agent.tier ? `tier ${agent.tier}` : '', agent.model ? `model ${agent.model}` : '', agent.source].filter(Boolean).join(' · ');
-        item.append(node('span', { className: 'record-meta' }, details));
-        agentList.append(item);
+      groups.forEach((records, label) => {
+        const details = node('details', { className: 'group-card' });
+        const summary = node('summary');
+        const copy = node('span', { className: 'group-copy' });
+        copy.append(node('strong', {}, label), node('span', {}, workSource(records[0].surface)));
+        summary.append(copy, node('span', { className: 'group-count' }, countLabel(records.length, 'item')));
+        details.append(summary);
+        const list = node('ul', { className: 'group-records' });
+        records.forEach(work => list.append(phaseRecord(work.title || work.id, work.lifecycle, [
+          work.owner ? `Owner: ${work.owner}` : 'Owner: Unassigned',
+          work.id ? `ID: ${work.id}` : '',
+          work.risk ? `Risk: ${work.risk}` : '',
+        ].filter(Boolean).join(' · '))));
+        details.append(list);
+        container.append(details);
       });
+    }
 
-      workOrderList.replaceChildren();
-      if (!run.work_orders.length) emptyRecord(workOrderList, 'No Learn work orders are recorded.');
-      run.work_orders.forEach(order => {
-        const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, order.role));
-        item.append(node('span', { className: 'record-status' }, statusLabel(order.status)));
-        const details = [order.pattern ? `Pattern: ${order.pattern}` : '', `Source: ${order.source}`].filter(Boolean).join(' · ');
-        item.append(node('span', { className: 'record-meta' }, details));
-        workOrderList.append(item);
+    function renderHandoffs(records) {
+      handoffList.replaceChildren();
+      if (!records.length) return handoffList.append(node('p', { className: 'empty-panel' }, 'No handoff records are available.'));
+      records.forEach(record => {
+        const details = node('details', { className: 'group-card' });
+        const summary = node('summary');
+        const copy = node('span', { className: 'group-copy' });
+        copy.append(node('strong', {}, record.title), node('span', {}, localTime(record.date)));
+        summary.append(copy, node('span', { className: 'group-count' }, statusLabel(record.status)));
+        details.append(summary);
+        const list = node('ul', { className: 'group-records' });
+        list.append(phaseRecord('Participants', 'recorded', record.participants.length ? record.participants.join(' · ') : 'Agent not recorded'));
+        if (record.status_detail) list.append(phaseRecord('Recorded status', record.status, record.status_detail));
+        list.append(phaseRecord('Source record', 'recorded', record.path));
+        details.append(list);
+        handoffList.append(details);
       });
+    }
 
-      noteList.replaceChildren();
-      if (!run.notes.length) emptyRecord(noteList, 'No notes are recorded.');
-      run.notes.forEach(note => {
-        const item = node('li', { className: 'record-row' });
-        item.append(node('span', { className: 'record-title' }, sentence(note.text, 'Run note')));
-        item.append(node('span', { className: 'record-status' }, note.phase || 'Run'));
-        const details = [note.author, localTime(note.timestamp)].filter(Boolean).join(' · ');
-        item.append(node('span', { className: 'record-meta' }, details));
-        noteList.append(item);
+    function renderHistory(records) {
+      historyList.replaceChildren();
+      if (!records.length) return historyList.append(node('p', { className: 'empty-panel' }, 'No prior Build Loop runs are recorded.'));
+      records.forEach(record => {
+        const details = node('details', { className: 'group-card' });
+        const summary = node('summary');
+        const copy = node('span', { className: 'group-copy' });
+        copy.append(node('strong', {}, sentence(record.goal, 'No goal recorded')), node('span', {}, [localTime(record.date), record.run_id].filter(Boolean).join(' · ')));
+        summary.append(copy, node('span', { className: 'group-count' }, statusLabel(record.status)));
+        details.append(summary);
+        const list = node('ul', { className: 'group-records' });
+        if (record.judge_records?.length) {
+          record.judge_records.forEach(judge => list.append(phaseRecord(judge.name, judge.status, [
+            `Verdict: ${judge.verdict || 'Not recorded'}`,
+            `Model: ${judge.model || 'Not recorded'}`,
+            judge.target ? `Target: ${judge.target}` : '',
+            judge.timestamp ? localTime(judge.timestamp) : '',
+          ].filter(Boolean).join(' · '))));
+        } else {
+          list.append(phaseRecord('Judge', 'pending', 'No judge record'));
+        }
+        list.append(phaseRecord('Models', 'recorded', record.models.length ? record.models.join(' · ') : 'Model not recorded'));
+        if (record.commit) list.append(phaseRecord('Commit', 'recorded', record.commit));
+        details.append(list);
+        historyList.append(details);
       });
+    }
 
-      const warning = document.querySelector('#run-warning');
-      warning.hidden = !run.warnings.length;
-      warning.textContent = sentence(run.warnings.join(' '), '');
+    function renderWorkspace(run) {
+      if (!run) return;
+      const workspace = run.workspace || { scope: 'Repository', active_loops: [], handoffs: [], history: [] };
+      const openWork = run.open_work || { execution_queue_count: 0, deferred_count: 0, items: [], counts_by_surface: {} };
+      const signature = JSON.stringify([workspace, openWork.refreshed_at]);
+      if (signature === workspaceRenderedAt) return;
+      workspaceRenderedAt = signature;
+      state.run = run;
+      document.querySelector('#scope-label').textContent = workspace.scope || 'Current repository';
+
+      const loops = Array.isArray(workspace.active_loops) ? workspace.active_loops : [];
+      loopPanels.replaceChildren();
+      activeLoopNav.replaceChildren();
+      loops.forEach((loop, index) => {
+        const { panel, panelId } = renderLoopPanel(loop, index);
+        loopPanels.append(panel);
+        const navItem = node('li');
+        navItem.append(node('a', { href: `#${panelId}` }, loop.goal || loop.run_id || `Loop ${index + 1}`));
+        activeLoopNav.append(navItem);
+      });
+      if (!loops.length) loopPanels.append(node('div', { className: 'support-panel' }, ''));
+      if (!loops.length) loopPanels.firstChild.append(node('p', { className: 'empty-panel' }, 'No active Build Loop is recorded for this repository.'));
+
+      const visibleItems = Array.isArray(openWork.items) ? openWork.items : [];
+      const queued = visibleItems.filter(item => item.execution_eligible);
+      const backlog = visibleItems.filter(item => !item.execution_eligible);
+      renderWorkGroups(queuedGroups, queued, 'No executable work is queued.');
+      renderWorkGroups(backlogGroups, backlog, 'No backlog work is recorded.');
+      renderHandoffs(workspace.handoffs || []);
+      renderHistory(workspace.history || []);
+
+      const counts = {
+        active: loops.length,
+        queue: Number(openWork.execution_queue_count || queued.length),
+        backlog: Number(openWork.deferred_count || backlog.length),
+        handoff: (workspace.handoffs || []).length,
+        history: (workspace.history || []).length,
+      };
+      document.querySelector('#active-loop-count').textContent = countLabel(counts.active, 'loop');
+      document.querySelector('#queued-work-count').textContent = countLabel(counts.queue, 'item');
+      document.querySelector('#backlog-count').textContent = countLabel(counts.backlog, 'item');
+      document.querySelector('#handoff-count').textContent = countLabel(counts.handoff, 'record');
+      document.querySelector('#history-count').textContent = countLabel(counts.history, 'run');
+      document.querySelector('#nav-active-count').textContent = counts.active;
+      document.querySelector('#nav-queue-count').textContent = counts.queue;
+      document.querySelector('#nav-backlog-count').textContent = counts.backlog;
+      document.querySelector('#nav-handoff-count').textContent = counts.handoff;
+      document.querySelector('#nav-history-count').textContent = counts.history;
+      const sources = Object.entries(openWork.counts_by_surface || {}).map(([source, count]) => `${workSource(source)} ${count}`);
+      const coverage = openWork.operations_center?.status === 'available' ? 'Other-agent queue connected.' : 'Other-agent queue unavailable.';
+      const limit = openWork.truncated ? ` Showing ${visibleItems.length} highest-ranked items.` : '';
+      document.querySelector('#open-work-sources').textContent = `${coverage} ${sources.join(' · ') || 'No open work sources returned items.'}.${limit} Updated ${localTime(openWork.refreshed_at)}.`;
     }
 
     async function refreshRun() {
@@ -555,11 +613,12 @@
         const response = await fetch('/api/state', { cache: 'no-store' });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Unable to refresh run state');
-        renderRun(body.run);
+        renderWorkspace(body.run);
       } catch (error) {
-        const warning = document.querySelector('#run-warning');
-        warning.hidden = false;
+        const existing = document.querySelector('#refresh-warning');
+        const warning = existing || node('p', { id: 'refresh-warning', className: 'run-warning' });
         warning.textContent = `Refresh failed: ${error.message}. The last state remains visible.`;
+        if (!existing) document.querySelector('.page-head').append(warning);
       }
     }
 
@@ -732,7 +791,7 @@
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Unable to load dashboard');
         state = body;
-        renderRun(body.run);
+        renderWorkspace(body.run);
         cards.replaceChildren();
         body.gaps.forEach(gap => cards.append(renderGap(gap)));
         loading.hidden = true;

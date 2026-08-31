@@ -60,6 +60,8 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
         "tasks_blocked": 0,
         "tasks_total": 3,
         "agents_invoked": 2,
+        "judges_used": 0,
+        "models_used": 1,
         "work_orders_pending": 0,
         "open_work_total": 2,
         "open_work_queued": 2,
@@ -85,12 +87,182 @@ def test_open_work_projects_canonical_queues_with_refresh_metadata(tmp_path: Pat
 
     result = projection.build_run_projection(tmp_path)
 
-    assert result["schema_version"] == "1.2"
+    assert result["schema_version"] == "1.3"
     assert result["open_work"]["open_count"] == 3
     assert result["open_work"]["refresh_interval_seconds"] == 30
     assert result["open_work"]["refreshed_at"]
     assert result["metrics"]["open_work_queued"] == 2
     assert result["metrics"]["open_work_deferred"] == 1
+
+
+def test_workspace_projects_multiple_active_worktrees_without_duplicate_ledgers(tmp_path: Path, monkeypatch) -> None:
+    projection._OPEN_WORK_CACHE.clear()
+    peer = tmp_path / ".build-loop/worktrees/run-peer"
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-root", "phase": "plan"},
+    })
+    _write_json(peer / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-peer", "phase": "execute"},
+    })
+    (tmp_path / ".build-loop/agent-ledger.jsonl").write_text(json.dumps({
+        "run_id": "run-root", "phase": "plan", "agent": "root-planner", "action": "author", "model": "root-model",
+    }) + "\n", encoding="utf-8")
+    (peer / ".build-loop/agent-ledger.jsonl").write_text(json.dumps({
+        "run_id": "run-peer", "phase": "execute", "agent": "peer-builder", "action": "execute", "model": "peer-model",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path, peer])
+    monkeypatch.setattr(projection, "collect_task_surface", lambda **_kwargs: {
+        "open_count": 0,
+        "execution_queue_count": 0,
+        "deferred_count": 0,
+        "counts_by_surface": {},
+        "items": [],
+        "truncated": False,
+        "operations_center": {"status": "not_requested"},
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert [(loop["run_id"], loop["scope"], loop["current_phase"]) for loop in result["workspace"]["active_loops"]] == [
+        ("run-root", "Repository", "plan"),
+        ("run-peer", ".build-loop/worktrees/run-peer", "execute"),
+    ]
+    assert all("open_work" not in loop for loop in result["workspace"]["active_loops"])
+    assert [[(agent["name"], agent["model"]) for agent in loop["agents"]] for loop in result["workspace"]["active_loops"]] == [
+        [("root-planner", "root-model")],
+        [("peer-builder", "peer-model")],
+    ]
+
+
+def test_agent_ledger_keeps_phase_identity_model_and_per_row_judge_status(tmp_path: Path) -> None:
+    rows = [
+        {"run_id": "run", "phase": "plan", "agent": "shared", "action": "author", "model": "plan-model", "ts": "1"},
+        {"run_id": "run", "phase": "plan", "agent": "shared", "action": "author", "model": "", "ts": "2"},
+        {"run_id": "run", "phase": "review", "agent": "shared", "action": "gate", "model": "judge-model", "ts": "3"},
+        {"run_id": "run", "phase": "execute", "agent": "builder", "action": "execute", "model": "build-model", "ts": "4"},
+    ]
+
+    agents = projection._agents_from_ledger(reversed(rows), "run")
+    by_identity = {(item["name"], item["phase"]): item for item in agents}
+
+    assert set(by_identity) == {("shared", "plan"), ("shared", "review"), ("builder", "execute")}
+    assert by_identity[("shared", "plan")]["model"] == "plan-model"
+    assert by_identity[("shared", "plan")]["judge"] is False
+    assert by_identity[("shared", "review")]["judge"] is True
+    assert by_identity[("builder", "execute")]["judge"] is False
+
+
+def test_judge_record_enriches_ledger_agent_and_preserves_recorded_model(tmp_path: Path, monkeypatch) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-judge", "phase": "review"},
+        "runs": [{
+            "run_id": "run-judge",
+            "goal": "Review the dashboard.",
+            "judge_decisions": [{
+                "judge_id": "independent-auditor",
+                "verdict": "yay",
+                "model": "gpt-5.6-sol",
+            }],
+        }],
+    })
+    ledger = tmp_path / ".build-loop/agent-ledger.jsonl"
+    ledger.write_text(json.dumps({
+        "run_id": "run-judge",
+        "phase": "review",
+        "agent": "independent-auditor",
+        "action": "verify",
+        "status": "active",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path])
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert len(result["agents"]) == 1
+    assert result["agents"][0]["judge"] is True
+    assert result["agents"][0]["model"] == "gpt-5.6-sol"
+    assert "run judge record" in result["agents"][0]["source"]
+    assert result["metrics"]["judges_used"] == 1
+    assert result["metrics"]["models_used"] == 1
+
+
+def test_workspace_projects_handoffs_and_prior_run_evidence(tmp_path: Path, monkeypatch) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "done-1",
+            "goal": "Ship the dashboard.",
+            "outcome": "pass",
+            "date": "2026-08-30T12:00:00Z",
+            "commit": "abc123",
+            "judge_decisions": [{
+                "judge_id": "review-judge",
+                "verdict": "nay",
+                "judge_model": "claude-opus",
+                "target": "dashboard",
+                "verdict_ts": "2026-08-30T12:05:00Z",
+            }],
+        }],
+    })
+    handoff = tmp_path / "docs/handoff/2026-08-30-dashboard.md"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text(
+        "# Dashboard handoff\n\n**Date:** 2026-08-30\n**From:** Codex\n**To:** Claude Code\n**Status:** complete\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path])
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["workspace"]["handoffs"] == [{
+        "id": "docs:handoff:2026-08-30-dashboard.md",
+        "title": "Dashboard handoff",
+        "date": "2026-08-30",
+        "participants": ["Codex", "Claude Code"],
+        "status": "complete",
+        "status_detail": "complete",
+        "path": "docs/handoff/2026-08-30-dashboard.md",
+    }]
+    assert result["workspace"]["history"] == [{
+        "run_id": "done-1",
+        "goal": "Ship the dashboard.",
+        "status": "complete",
+        "date": "2026-08-30T12:00:00Z",
+        "commit": "abc123",
+        "host": "",
+        "judges": ["review-judge"],
+        "judge_records": [{
+            "name": "review-judge",
+            "verdict": "nay",
+            "status": "blocked",
+            "target": "dashboard",
+            "timestamp": "2026-08-30T12:05:00Z",
+            "model": "claude-opus",
+        }],
+        "judge_used": True,
+        "models": ["claude-opus"],
+    }]
+
+
+def test_handoffs_cannot_follow_symlinks_outside_repository(tmp_path: Path, monkeypatch) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {"active": False, "execution": {}, "runs": []})
+    external = tmp_path.parent / f"{tmp_path.name}-external-handoff.md"
+    external.write_text("# Private handoff\n\n**From:** Outside\n", encoding="utf-8")
+    docs_link = tmp_path / "docs/handoff/leak.md"
+    coordination_link = tmp_path / ".build-loop/coordination/team-handoff.md"
+    docs_link.parent.mkdir(parents=True)
+    coordination_link.parent.mkdir(parents=True)
+    docs_link.symlink_to(external)
+    coordination_link.symlink_to(external)
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path])
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["workspace"]["handoffs"] == []
+    assert any("outside the repository" in warning for warning in result["warnings"])
 
 
 def test_current_run_notes_use_bounded_working_state_and_exclude_other_runs(tmp_path: Path) -> None:

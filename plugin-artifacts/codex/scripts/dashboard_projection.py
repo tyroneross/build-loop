@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,10 @@ MAX_WORKING_STATE_LINES = 200
 MAX_RUN_NOTES = 20
 OPEN_WORK_CACHE_SECONDS = 30
 OPEN_WORK_MAX_ITEMS = 120
+MAX_ACTIVE_LOOPS = 12
+MAX_HANDOFFS = 20
+MAX_HISTORY_RUNS = 30
+MAX_WORKTREES = 40
 _OPEN_WORK_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 PHASES: tuple[dict[str, Any], ...] = (
@@ -143,11 +148,14 @@ def _normalize_explicit_status(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     status = value.strip().lower().replace("-", "_").replace(" ", "_")
-    if status in {"pass", "passed", "done", "fixed", "complete", "completed", "success", "succeeded"}:
+    if status in {"pass", "passed", "done", "fixed", "complete", "completed", "success", "succeeded", "yay", "approve", "approved"}:
         return "complete"
     if status in {"active", "running", "started", "in_progress", "working"}:
         return "active"
-    if status in {"fail", "failed", "blocked", "error", "rejected", "needs_input", "partial", "incomplete"}:
+    if status in {
+        "fail", "failed", "blocked", "error", "reject", "rejected", "needs_input",
+        "partial", "incomplete", "nay", "suggest", "suggest_correction", "look_again",
+    }:
         return "blocked"
     if status in {"pending", "queued", "planned", "todo", "not_started"}:
         return "pending"
@@ -449,26 +457,37 @@ def _agents_from_ledger(rows: Iterable[dict[str, Any]], run_id: str | None) -> l
     if not run_id:
         return []
     selected = [row for row in rows if str(row.get("run_id") or "") == run_id]
-    latest: dict[str, dict[str, Any]] = {}
-    actions: dict[str, list[str]] = {}
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    actions: dict[tuple[str, str], list[str]] = {}
+    models: dict[tuple[str, str], str] = {}
+    tiers: dict[tuple[str, str], str] = {}
     for row in selected:
         name = str(row["agent"])
+        phase = _normalize_phase(row.get("phase")) or str(row.get("phase") or "")
+        identity = (name, phase)
         action = str(row.get("action") or "")
-        if action and action not in actions.setdefault(name, []):
-            actions[name].append(action)
-        latest[name] = row
+        if action and action not in actions.setdefault(identity, []):
+            actions[identity].append(action)
+        if row.get("model"):
+            models[identity] = str(row["model"])
+        if row.get("tier"):
+            tiers[identity] = str(row["tier"])
+        latest[identity] = row
     agents: list[dict[str, Any]] = []
-    for name, row in latest.items():
+    for identity, row in latest.items():
+        name, phase = identity
+        row_action = str(row.get("action") or "")
         explicit = _normalize_explicit_status(row.get("status"))
         agents.append({
             "name": name,
-            "role": _agent_role(row.get("action")),
+            "role": _agent_role(row_action),
             "status": explicit or "invoked",
-            "phase": _normalize_phase(row.get("phase")) or str(row.get("phase") or ""),
-            "tier": str(row.get("tier") or ""),
-            "model": str(row.get("model") or ""),
+            "phase": phase,
+            "tier": tiers.get(identity, ""),
+            "model": models.get(identity, ""),
+            "judge": bool(row.get("judge_id") or row.get("is_judge") is True or row_action in {"judge", "gate"}),
             "last_seen": str(row.get("ts") or ""),
-            "actions": actions.get(name, []),
+            "actions": actions.get(identity, []),
             "source": "agent-ledger",
         })
     return sorted(agents, key=lambda item: (item["last_seen"], item["name"]), reverse=True)
@@ -494,7 +513,8 @@ def _judge_agents(context: dict[str, Any]) -> list[dict[str, Any]]:
             "status": _normalize_explicit_status(verdict) or "invoked",
             "phase": "review",
             "tier": "",
-            "model": "",
+            "model": str(decision.get("model") or decision.get("judge_model") or decision.get("model_id") or ""),
+            "judge": True,
             "last_seen": str(decision.get("verdict_ts") or decision.get("ts") or ""),
             "actions": ["verify"],
             "source": "run judge record",
@@ -518,7 +538,8 @@ def _learn_agents(receipt: dict[str, Any]) -> list[dict[str, Any]]:
             "status": _normalize_explicit_status(order.get("status")) or "queued",
             "phase": "learn",
             "tier": "",
-            "model": "",
+            "model": str(order.get("model") or order.get("model_id") or ""),
+            "judge": role == "promotion-reviewer",
             "last_seen": str(order.get("attested_at") or receipt.get("updated_at") or receipt.get("created_at") or ""),
             "actions": ["verify" if role == "promotion-reviewer" else "execute"],
             "source": f"Learn attestation · {order.get('source') or 'pattern'}",
@@ -691,8 +712,22 @@ def _open_work_projection(root: Path, warnings: list[str]) -> dict[str, Any]:
     return payload
 
 
-def build_run_projection(workdir: Path | str) -> dict[str, Any]:
-    """Return a bounded, read-only dashboard snapshot for ``workdir``."""
+def _empty_open_work() -> dict[str, Any]:
+    return {
+        "open_count": 0,
+        "execution_queue_count": 0,
+        "deferred_count": 0,
+        "counts_by_surface": {},
+        "items": [],
+        "truncated": False,
+        "operations_center": {"status": "not_requested"},
+        "refreshed_at": None,
+        "refresh_interval_seconds": OPEN_WORK_CACHE_SECONDS,
+    }
+
+
+def _build_single_run_projection(workdir: Path | str, *, include_open_work: bool) -> dict[str, Any]:
+    """Return one bounded run projection without discovering peer worktrees."""
     root = Path(workdir).expanduser().resolve()
     warnings: list[str] = []
     sources: list[Path] = []
@@ -708,16 +743,22 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
         tasks = _enrich_task_titles(tasks, planned) if tasks else planned
     ledger_rows = _read_ledger(root, warnings, sources)
     agents = _agents_from_ledger(ledger_rows, context["run_id"])
-    known_agents = {(item["name"], item["phase"]) for item in agents}
+    agents_by_identity = {(item["name"], item["phase"]): item for item in agents}
     for agent in [*_judge_agents(context), *_learn_agents(learn_receipt)]:
         identity = (agent["name"], agent["phase"])
-        if identity not in known_agents:
+        existing = agents_by_identity.get(identity)
+        if existing:
+            existing["judge"] = bool(existing.get("judge") or agent.get("judge"))
+            existing["model"] = existing.get("model") or agent.get("model") or ""
+            if agent["source"] not in existing["source"]:
+                existing["source"] = f"{existing['source']} · {agent['source']}"
+        else:
             agents.append(agent)
-            known_agents.add(identity)
+            agents_by_identity[identity] = agent
     agents.sort(key=lambda item: (item["last_seen"], item["name"]), reverse=True)
     notes = [*_working_notes(root, context, warnings, sources), *_learn_notes(learn_receipt)]
     notes = sorted(notes, key=lambda item: item["timestamp"], reverse=True)[:MAX_RUN_NOTES]
-    open_work = _open_work_projection(root, warnings)
+    open_work = _open_work_projection(root, warnings) if include_open_work else _empty_open_work()
     if context["active"] and not agents:
         warnings.append("No agent invocation records exist for this run yet.")
 
@@ -726,7 +767,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     blocked_tasks = sum(item["status"] == "blocked" for item in tasks)
     current_phase = next((item for item in phases if item["status"] in {"active", "blocked"}), None)
     return {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "generated_at": _now(),
         "updated_at": _updated_at(sources),
         "status": context["status"],
@@ -748,6 +789,8 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
             "tasks_blocked": blocked_tasks,
             "tasks_total": len(tasks),
             "agents_invoked": len(agents),
+            "judges_used": sum(bool(item.get("judge")) for item in agents),
+            "models_used": len({item["model"] for item in agents if item.get("model")}),
             "work_orders_pending": sum(item["status"] in {"pending", "queued"} for item in work_orders),
             "open_work_total": open_work["open_count"],
             "open_work_queued": open_work["execution_queue_count"],
@@ -756,6 +799,206 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
         "sources": [str(path.relative_to(root)) for path in dict.fromkeys(sources)],
         "warnings": list(dict.fromkeys(warnings)),
     }
+
+
+def _git_worktree_paths(root: Path, warnings: list[str]) -> list[Path]:
+    try:
+        output = subprocess.check_output(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(root),
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        warnings.append("Other repository worktrees could not be inspected.")
+        return [root]
+    paths: list[Path] = []
+    for line in output.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        try:
+            path = Path(line.removeprefix("worktree ")).expanduser().resolve()
+        except OSError:
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths[:MAX_WORKTREES]
+
+
+def _loop_scope(root: Path, candidate: Path) -> str:
+    if candidate == root:
+        return "Repository"
+    try:
+        return str(candidate.relative_to(root))
+    except ValueError:
+        return candidate.name
+
+
+def _active_loop_projections(root: Path, primary: dict[str, Any], warnings: list[str]) -> list[dict[str, Any]]:
+    loops: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if primary["status"] in {"active", "blocked"}:
+        loop = {key: value for key, value in primary.items() if key != "open_work"}
+        loop["scope"] = "Repository"
+        loops.append(loop)
+        if primary.get("run_id"):
+            seen.add(str(primary["run_id"]))
+
+    for candidate in _git_worktree_paths(root, warnings):
+        if candidate == root:
+            continue
+        state_path = candidate / ".build-loop/state.json"
+        try:
+            if not state_path.is_file() or state_path.stat().st_size > MAX_JSON_BYTES:
+                continue
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        execution = state.get("execution") if isinstance(state.get("execution"), dict) else {}
+        run_id = execution.get("build_loop_id") or execution.get("run_id")
+        if not run_id or state.get("active", True) is False or str(run_id) in seen:
+            continue
+        loop = _build_single_run_projection(candidate, include_open_work=False)
+        if loop["status"] not in {"active", "blocked"}:
+            continue
+        loop.pop("open_work", None)
+        loop["scope"] = _loop_scope(root, candidate)
+        loops.append(loop)
+        seen.add(str(run_id))
+        if len(loops) >= MAX_ACTIVE_LOOPS:
+            warnings.append(f"Showing the first {MAX_ACTIVE_LOOPS} active loops.")
+            break
+    return loops
+
+
+def _first_markdown_value(text: str, labels: tuple[str, ...]) -> str:
+    for line in text.splitlines()[:80]:
+        stripped = line.strip()
+        for label in labels:
+            prefix = f"**{label}:**"
+            if stripped.lower().startswith(prefix.lower()):
+                return stripped[len(prefix):].strip()
+            plain_prefix = f"{label}:"
+            if stripped.lower().startswith(plain_prefix.lower()):
+                return stripped[len(plain_prefix):].strip().strip("\"'")
+    return ""
+
+
+def _handoff_projection(root: Path, warnings: list[str]) -> list[dict[str, Any]]:
+    candidates = [
+        *(root / "docs/handoff").glob("*.md"),
+        *(root / ".build-loop/coordination").glob("**/*handoff*.md"),
+    ]
+    records: list[dict[str, Any]] = []
+    for candidate in dict.fromkeys(candidates):
+        try:
+            path = candidate.resolve()
+            path.relative_to(root)
+            if not path.is_file() or path.stat().st_size > MAX_PLAN_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8")
+            modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        except ValueError:
+            warnings.append(f"Skipped handoff outside the repository: {candidate.name}.")
+            continue
+        except (OSError, RuntimeError, UnicodeError):
+            continue
+        title = next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), path.stem.replace("-", " ").title())
+        recorded_date = _first_markdown_value(text, ("Date",))
+        if not recorded_date:
+            match = re.search(r"20\d{2}-\d{2}-\d{2}", path.name)
+            recorded_date = match.group(0) if match else modified
+        participants = [
+            value for value in (
+                _first_markdown_value(text, ("From", "Author", "Agent")),
+                _first_markdown_value(text, ("To",)),
+            ) if value
+        ]
+        raw_status = _first_markdown_value(text, ("Status",))
+        normalized_status = _normalize_explicit_status(raw_status)
+        if not normalized_status and raw_status.lower().startswith("active"):
+            normalized_status = "active"
+        records.append({
+            "id": str(path.relative_to(root)).replace("/", ":"),
+            "title": title[:240],
+            "date": recorded_date,
+            "participants": participants,
+            "status": normalized_status or "recorded",
+            "status_detail": raw_status,
+            "path": str(path.relative_to(root)),
+        })
+    records.sort(key=lambda item: item["date"], reverse=True)
+    if len(records) > MAX_HANDOFFS:
+        warnings.append(f"Showing the {MAX_HANDOFFS} most recent handoffs.")
+    return records[:MAX_HANDOFFS]
+
+
+def _history_projection(state: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    runs = state.get("runs") if isinstance(state.get("runs"), list) else []
+    for run in reversed(runs):
+        if not isinstance(run, dict) or run.get("goal") == "(hook-only commit; no orchestrator run)":
+            continue
+        decisions = [item for item in run.get("judge_decisions", []) if isinstance(item, dict)] if isinstance(run.get("judge_decisions"), list) else []
+        judge_records = []
+        for item in decisions:
+            if not item.get("judge_id"):
+                continue
+            verdict = str(item.get("verdict") or "")
+            judge_records.append({
+                "name": str(item["judge_id"]),
+                "verdict": verdict or "not recorded",
+                "status": _normalize_explicit_status(verdict) or "invoked",
+                "target": str(item.get("target") or item.get("scope") or ""),
+                "timestamp": str(item.get("verdict_ts") or item.get("ts") or ""),
+                "model": str(item.get("model") or item.get("judge_model") or item.get("model_id") or ""),
+            })
+        judges = [item["name"] for item in judge_records]
+        models = {
+            str(value) for item in decisions
+            for value in (item.get("model"), item.get("judge_model"), item.get("model_id"))
+            if value
+        }
+        for value in (run.get("model"), run.get("model_id")):
+            if value:
+                models.add(str(value))
+        records.append({
+            "run_id": str(run.get("run_id") or ""),
+            "goal": str(run.get("goal") or "No goal recorded")[:400],
+            "status": _normalize_explicit_status(run.get("outcome")) or str(run.get("outcome") or "unknown"),
+            "date": str(run.get("completed_at") or run.get("date") or run.get("started_at") or ""),
+            "commit": str(run.get("commit") or ""),
+            "host": str(run.get("host") or run.get("started_by_tool") or ""),
+            "judges": list(dict.fromkeys(judges)),
+            "judge_records": judge_records,
+            "judge_used": bool(judges),
+            "models": sorted(models),
+        })
+        if len(records) >= MAX_HISTORY_RUNS:
+            break
+    return records
+
+
+def build_run_projection(workdir: Path | str) -> dict[str, Any]:
+    """Return a bounded, read-only dashboard workspace for ``workdir``."""
+    root = Path(workdir).expanduser().resolve()
+    result = _build_single_run_projection(root, include_open_work=True)
+    workspace_warnings: list[str] = []
+    raw_state = _read_json(root, ".build-loop/state.json", workspace_warnings, [])
+    state = raw_state if isinstance(raw_state, dict) else {}
+    active_loops = _active_loop_projections(root, result, workspace_warnings)
+    active_ids = {loop["run_id"] for loop in active_loops if loop.get("run_id")}
+    result["workspace"] = {
+        "scope": root.name,
+        "active_loops": active_loops,
+        "handoffs": _handoff_projection(root, workspace_warnings),
+        "history": [run for run in _history_projection(state) if run["run_id"] not in active_ids],
+    }
+    result["warnings"] = list(dict.fromkeys([*result["warnings"], *workspace_warnings]))
+    return result
 
 
 if __name__ == "__main__":
