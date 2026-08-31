@@ -60,33 +60,23 @@ def workdir_with_config(tmp_path: Path):
 
 class TestEffectiveMaxNoConfig:
     def test_no_config_adds_conservative_cloud_token_cap(self, tmp_workdir: Path) -> None:
-        cpu = os.cpu_count() or 4
-        budget = max(1, cpu - 2)
         token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
-        expected = max(1, min(DEFAULT_MAX, budget, HARD_CEILING, token_cap))
+        expected = max(1, min(DEFAULT_MAX, HARD_CEILING, token_cap))
         assert effective_max_implementers(tmp_workdir) == expected
 
 
 class TestEffectiveMaxWithConfig:
     def test_config_10_capped_by_budget(self, workdir_with_config) -> None:
-        cpu = os.cpu_count() or 4
-        if cpu < 4:
-            pytest.skip("machine has too few cores for this scenario")
         wd = workdir_with_config(10)
-        budget = max(1, cpu - 2)
         token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
-        expected = max(1, min(10, budget, HARD_CEILING, token_cap))
+        expected = max(1, min(10, HARD_CEILING, token_cap))
         assert effective_max_implementers(wd) == expected
 
-    def test_config_50_capped_at_hard_ceiling_or_budget(self, workdir_with_config) -> None:
-        cpu = os.cpu_count() or 4
+    def test_config_50_capped_at_hard_ceiling_or_cloud_token_budget(self, workdir_with_config) -> None:
         wd = workdir_with_config(50)
-        budget = max(1, cpu - 2)
         result = effective_max_implementers(wd)
-        # Must never exceed HARD_CEILING
-        assert result <= HARD_CEILING
-        # Must never exceed cpu_budget
-        assert result <= budget
+        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
+        assert result == min(50, HARD_CEILING, token_cap)
 
     def test_config_50_remains_cpu_bounded_on_local_machine(self, workdir_with_config) -> None:
         wd = workdir_with_config(50)

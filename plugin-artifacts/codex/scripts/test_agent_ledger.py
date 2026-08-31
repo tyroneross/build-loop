@@ -1225,6 +1225,30 @@ class AppendReadTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             path = agent_ledger.default_ledger_path(repo)
 
+            envelope = SimpleNamespace(
+                backend="rally",
+                resolved_via="test",
+                transport="rally-cli",
+                channel_dir=repo / ".rally",
+                app_slug="build-loop",
+                raw={"rally_binary": "/fake/rally"},
+            )
+
+            def fake_post(**kwargs):
+                native_kind, reason = post_mod._negotiated_native_kind(
+                    kwargs["kind"], "/fake/rally"
+                )
+                outcome = kwargs["outcome"]
+                outcome.update(backend="rally", transport="rally-cli")
+                if native_kind != "artifact":
+                    outcome.update(
+                        status="rejected",
+                        reason=f"unsupported native fact kind: {native_kind}",
+                    )
+                    return None
+                outcome.update(status="posted", revision=1, reason=reason)
+                return 1
+
             patches = [
                 mock.patch.object(
                     post_mod, "_static_native_kind", return_value="session.closed"
@@ -1235,6 +1259,16 @@ class AppendReadTests(unittest.TestCase):
                     return_value=(
                         frozenset({"claim", "release", "artifact"}) if gate else None
                     ),
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "_rally_adapter",
+                    return_value=(lambda _workdir: envelope, fake_post),
+                ),
+                mock.patch.object(
+                    agent_ledger,
+                    "_native_projection_receipts",
+                    return_value=(True, {}, None),
                 ),
             ]
 
