@@ -8,6 +8,7 @@ Stdlib only. Imported by every memory_facade/*.py module via relative import.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +37,18 @@ def _parse_iso(ts: Any) -> Optional[float]:
             return None
 
 
-def _q_match(text: str, query: str) -> bool:
+def _legacy_q_match(text: str, query: str) -> bool:
+    """Preserve the original token-OR substring recall filter."""
+    if not query:
+        return True
+    haystack = (text or "").lower()
+    tokens = [t for t in query.lower().split() if t]
+    if not tokens:
+        return True
+    return any(t in haystack for t in tokens)
+
+
+def _q_match(text: str, query: str, *, mode: Optional[str] = None) -> bool:
     """Case-insensitive token-OR match. Empty query matches everything.
 
     A query is split into whitespace tokens; the text matches if it contains
@@ -46,14 +58,39 @@ def _q_match(text: str, query: str) -> bool:
     decision's id+title+tags, so canonical recall returned 0 on every real run
     (audit 2026-05-31). Token-OR is the minimal fix that makes recall actually
     surface stored decisions/lessons; the merge layer ranks/dedups downstream.
+
+    ``BUILD_LOOP_MEMORY_MATCH=boundary`` opts into the ranker's word-boundary
+    matcher. All other values preserve the legacy filter so recall cannot fail
+    closed if the optional boundary path has an internal error.
     """
-    if not query:
-        return True
-    haystack = (text or "").lower()
-    tokens = [t for t in query.lower().split() if t]
-    if not tokens:
-        return True
-    return any(t in haystack for t in tokens)
+    legacy_result = _legacy_q_match(text, query)
+    try:
+        selected_mode = mode if mode is not None else os.environ.get(
+            "BUILD_LOOP_MEMORY_MATCH", "legacy"
+        )
+        if selected_mode != "boundary":
+            return legacy_result
+
+        # Keep candidate filtering aligned with the ranker's query and word
+        # matching rules. Import lazily so a ranker import failure cannot break
+        # the hot recall path.
+        from memory_rank import MIN_TOKEN_LEN, STOPWORDS, _WORD_RE, _term_hit, tokenize
+
+        terms = tokenize(query)
+        if not terms:
+            raw_terms = _WORD_RE.findall((query or "").lower())
+            # Stopword-only queries retain the established match-all contract.
+            # A short non-stopword (for example, ``ai``) is deliberately a
+            # non-match: allowing it through would reintroduce substring
+            # accidents such as ``ai`` matching ``main``.
+            return not any(
+                len(term) < MIN_TOKEN_LEN and term not in STOPWORDS
+                for term in raw_terms
+            )
+        words = set(tokenize(text))
+        return any(_term_hit(term, words) for term in terms)
+    except Exception:
+        return legacy_result
 
 
 def _read_jsonl(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:

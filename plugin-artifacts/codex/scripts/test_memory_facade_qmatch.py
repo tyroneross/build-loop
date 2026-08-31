@@ -9,8 +9,11 @@ canonical_memory.merged=0 on every real run). Token-OR matching fixes it.
 """
 from __future__ import annotations
 
+import builtins
+import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -51,6 +54,66 @@ def test_case_insensitive():
 def test_none_text_is_safe():
     assert _q_match(None, "rally") is False
     assert _q_match(None, "") is True
+
+
+def test_default_mode_is_byte_identical_to_legacy_token_or(monkeypatch):
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_MATCH", raising=False)
+    text = "main domain explain chain"
+    query = "ai unrelated"
+    expected = any(t in text.lower() for t in query.lower().split() if t)
+
+    assert _q_match(text, query) is expected
+
+
+def test_boundary_mode_rejects_short_substring_accidents():
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "boundary"}):
+        assert _q_match("main domain explain chain", "ai") is False
+
+
+def test_legacy_mode_keeps_short_substring_accidents():
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "legacy"}):
+        assert _q_match("main domain explain chain", "ai") is True
+
+
+@pytest.mark.parametrize(
+    ("text", "query"),
+    [
+        ("release migrations safely", "migration"),
+        ("deployment checklist", "deploy"),
+    ],
+)
+def test_boundary_mode_allows_prefix_morphology(text, query):
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "boundary"}):
+        assert _q_match(text, query) is True
+
+
+def test_boundary_stopword_only_query_matches_everything():
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "boundary"}):
+        assert _q_match("unrelated memory", "the of a") is True
+
+
+@pytest.mark.parametrize("mode", ["legacy", "boundary"])
+def test_empty_query_matches_everything_in_both_modes(mode):
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": mode}):
+        assert _q_match("anything at all", "") is True
+
+
+def test_unknown_mode_falls_back_to_legacy():
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "experimental"}):
+        assert _q_match("main domain explain chain", "ai") is True
+
+
+def test_boundary_import_failure_falls_back_to_legacy():
+    real_import = builtins.__import__
+
+    def fail_memory_rank_import(name, *args, **kwargs):
+        if name == "memory_rank":
+            raise ImportError("simulated memory_rank import failure")
+        return real_import(name, *args, **kwargs)
+
+    with patch.dict(os.environ, {"BUILD_LOOP_MEMORY_MATCH": "boundary"}):
+        with patch("builtins.__import__", side_effect=fail_memory_rank_import):
+            assert _q_match("main domain explain chain", "ai") is True
 
 
 if __name__ == "__main__":
