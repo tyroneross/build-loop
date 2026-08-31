@@ -20,7 +20,7 @@ Per ``man githooks``: pre-push receives ``<remote> <url>`` as argv, and four
 fields per ref on stdin: ``<local_ref> <local_sha> <remote_ref> <remote_sha>``.
 Exit non-zero → push is blocked.
 
-This hook runs TWO stages; either blocking stops the push:
+This hook runs composed stages; any blocking stage stops the push:
 
 1. Locates the repo (git rev-parse) and adds ``<repo>/scripts`` to sys.path.
 2. STAGE 1 — deploy-HOLD: ``push_hold.evaluate_push``. On ``block`` print the
@@ -29,8 +29,10 @@ This hook runs TWO stages; either blocking stops the push:
    the 2026-06-29 L2 RCA — red commits kept reaching origin/main because the
    deterministic suite ran only post-push in CI). On ``block`` print the failing
    gate to stderr and exit 1. Stage 2 COMPOSES with — never replaces — stage 1.
-4. On ``allow``/``bypass`` from both stages: arm closeout, exit 0 (push proceeds).
-5. On ANY internal exception (broken import, syntax error, OSError) in EITHER
+4. STAGE 3 — version gate: ``prepush_version_gate.evaluate``. Protected branch
+   pushes must advance the canonical plugin version beyond the remote version.
+5. When every stage allows: arm closeout, exit 0 (push proceeds).
+6. On ANY internal exception (broken import, syntax error, OSError) in ANY
    stage: log to stderr and exit 0.  A broken hook MUST NOT permanently wedge the
    user's ability to push — fail OPEN on internal errors, fail CLOSED on a real
    hold / a real deterministic test failure.
@@ -253,7 +255,28 @@ def main() -> int:
                 f"allowing push: {exc!r}\n"
             )
 
-        # Both stages passed (or the test gate failed open) → exit 0.
+        # --- STAGE 3: plugin VERSION gate ---
+        # A protected-branch push is one release unit. Compare the canonical
+        # manifest in the working tree with the manifest at the remote SHA and
+        # block when the version did not advance. Internal errors fail OPEN.
+        try:
+            import prepush_version_gate  # type: ignore
+
+            version_verdict = prepush_version_gate.evaluate(
+                repo, stdin_lines, env=os.environ
+            )
+            if version_verdict.get("action") == "block":
+                sys.stderr.write(
+                    prepush_version_gate.format_block_message(version_verdict)
+                )
+                return int(version_verdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — version-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] version gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
+        # Every stage passed (or an internal error failed open) → exit 0.
         # Arm the post-push closeout baton BEFORE the push completes — git has
         # no native client-side post-push hook, so the next session-start
         # drains the baton via ``python3 -m closeout --source post-push-armed``.

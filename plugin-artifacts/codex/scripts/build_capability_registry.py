@@ -259,6 +259,7 @@ CATEGORY_KEYWORDS = [
     ("testing",      ("test", "pytest", "jest", "vitest", "spec",
                       "verify gate", "spot-check", "perturbation")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",
+                      "version bump", "prepush_version_gate",
                       "version_advisor")),
     ("ux-ui",        ("ux", "ui", "ibr", "design", "accessibility", "a11y",
                       "calm-precision", "mockup")),

@@ -11,8 +11,18 @@ Last-bump source: prefer `git describe --tags --match 'v*' --abbrev=0`. Fall bac
 `git log -1 --pretty=%H -- .claude-plugin/plugin.json` when tags are absent or stale
 (common — many repos bump in commit messages without tagging).
 
-Bump-kind inference: walk commit messages since the last bump for Conventional Commits
-prefixes. `BREAKING CHANGE` or `!:` -> major, `feat:` -> minor, anything else -> patch.
+Bump kind is DECLARED, never inferred from commit content. A push is the unit of
+release, so N local commits produce one patch bump whatever they contain. The
+old rule walked Conventional Commit prefixes and escalated the whole batch to
+minor on a single `feat:` — which made the version track local authoring rather
+than releases (observed: 143 commits since 0.39.0 advising 0.40.0).
+
+To declare something other than patch, put `bump: minor` (or `major`) on a line
+in `.build-loop/release-pending.md`. Absent or unparseable -> patch.
+
+Breaking changes are still SURFACED — `breaking_commits` lists them so a release
+is never silently shipped as a patch — but they no longer move the number on
+their own. Deciding that is the release author's call, not a prefix's.
 
 Output: pure JSON to stdout. Never writes. Exit 0 always (advisory, non-blocking).
 Exit 2 only on usage error.
@@ -119,15 +129,30 @@ def commits_since(workdir: Path, sha: str) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
-def infer_bump_kind(messages: list[str]) -> str:
-    kind = "patch"
+VALID_KINDS = ("patch", "minor", "major")
+BUMP_DECL_RE = re.compile(r"^\s*bump\s*:\s*(patch|minor|major)\s*$",
+                          re.IGNORECASE | re.MULTILINE)
+
+
+def declared_bump_kind(marker_text: str) -> str:
+    """Bump kind from the release marker. Default patch — one push, one patch."""
+    m = BUMP_DECL_RE.search(marker_text or "")
+    return m.group(1).lower() if m else "patch"
+
+
+def breaking_commits(messages: list[str]) -> list[str]:
+    """Commits that LOOK breaking. Advisory only; they do not move the number.
+
+    Kept because dropping the signal entirely would let a breaking change ship
+    as a patch with nothing said. Reporting it puts the call in front of the
+    release author instead of a regex.
+    """
+    out = []
     for msg in messages:
         head = msg.split(":", 1)[0].strip()
         if "BREAKING CHANGE" in msg or head.endswith("!"):
-            return "major"
-        if head.startswith("feat") or head.startswith("feat("):
-            kind = "minor"
-    return kind
+            out.append(msg.splitlines()[0][:120])
+    return out
 
 
 def bump_version(current: str, kind: str) -> str:
@@ -158,14 +183,10 @@ def main() -> int:
         return 0
 
     last_bump = last_bump_from_tag(workdir, current) or last_bump_from_manifest(workdir)
-    if last_bump is None:
-        commits, kind = [], "patch"
-    else:
-        commits = commits_since(workdir, last_bump["sha"])
-        kind = infer_bump_kind(commits)
+    commits = [] if last_bump is None else commits_since(workdir, last_bump["sha"])
 
-    suggested = bump_version(current, kind)
-
+    # Marker first: it DECLARES the kind, so it must be read before the number
+    # is computed. Commit content is no longer an input to the version.
     marker = workdir / ".build-loop" / "release-pending.md"
     if marker.is_file():
         state = "suggest"
@@ -177,6 +198,10 @@ def main() -> int:
         state = "hold"
         release_notes = ""
 
+    kind = declared_bump_kind(release_notes)
+    suggested = bump_version(current, kind)
+    breaking = breaking_commits(commits)
+
     out = {
         "state": state,
         "current": current,
@@ -184,6 +209,7 @@ def main() -> int:
         "last_bump": last_bump,
         "suggested_version": suggested,
         "bump_kind": kind,
+        "breaking_commits": breaking,
         "release_notes": release_notes,
         "marker_path": str(marker),
     }

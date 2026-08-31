@@ -9,6 +9,7 @@ at it, so nothing here reads or writes the real repo.
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -152,6 +153,35 @@ class SyncTests(ManifestFixture):
         self.assertEqual(codex, "5.0.0")
         self.assertEqual(mk["metadata"]["version"], "5.0.0")
         self.assertEqual(mk["plugins"][0]["version"], "5.0.0")
+
+
+class ReleaseOperationTests(ManifestFixture):
+    def test_next_version_uses_declared_kind(self):
+        self.assertEqual(bump_version.next_version("1.2.3", "patch"), "1.2.4")
+        self.assertEqual(bump_version.next_version("1.2.3", "minor"), "1.3.0")
+        self.assertEqual(bump_version.next_version("1.2.3", "major"), "2.0.0")
+
+    def test_tag_points_at_already_committed_head(self):
+        self.seed("1.2.4", "1.2.4", "1.2.4", "1.2.4", "1.2.4")
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "release 1.2.4"], check=True)
+        head = subprocess.check_output(
+            ["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True
+        ).strip()
+
+        result = bump_version.create_tag("1.2.4")
+        tagged = subprocess.check_output(
+            ["git", "-C", str(self.root), "rev-list", "-n", "1", "v1.2.4"], text=True
+        ).strip()
+        self.assertEqual(result, {"tag": "v1.2.4", "created": True})
+        self.assertEqual(tagged, head)
+        self.assertEqual(
+            bump_version.create_tag("1.2.4"),
+            {"tag": "v1.2.4", "created": False, "reason": "already exists"},
+        )
 
 
 if __name__ == "__main__":

@@ -21,7 +21,19 @@ Modes:
     --check          exit 1 on any drift (cheap; wire into a hook or CI)
     --sync           write the canonical version into the other four fields
     --set X.Y.Z      set all five, canonical included
+    --patch          canonical Z+1  (the default release: one push, one patch)
+    --minor          canonical Y+1, Z=0  (declared functionality change)
+    --major          canonical X+1, Y=Z=0
+    --tag            create annotated tag vX.Y.Z at HEAD; writes no manifests
     --json           machine-readable result on stdout
+
+RELEASE MODEL. A push is the unit of release. Local commits carry only their
+SHA and touch no version field; the number moves once per push. --patch is
+therefore the normal path no matter how many commits are being pushed.
+
+Tags matter here: the manifest alone cannot say WHICH commit a version shipped
+from. Tagging is deliberately a separate operation so the version-bump commit
+exists before its tag is created.
 
 Pure stdlib. Python 3.11+. Never raises on a missing manifest — reports it.
 """
@@ -57,6 +69,37 @@ MIRRORS: list[tuple[str, Path, tuple[object, ...]]] = [
 ]
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def next_version(current: str, kind: str) -> str:
+    """Compute the next version. Pure arithmetic — no commit content consulted."""
+    major, minor, patch = (int(x) for x in current.split("."))
+    if kind == "major":
+        return f"{major + 1}.0.0"
+    if kind == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def create_tag(version: str) -> dict:
+    """Annotated tag vX.Y.Z at HEAD. Never pushes — that stays the caller's call.
+
+    Annotated (not lightweight) because a release marker should be a real git
+    object carrying who/when, and because `git describe --tags` — which
+    version_advisor.py relies on to find the last bump — reads these.
+    """
+    import subprocess
+    tag = f"v{version}"
+    exists = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--verify",
+                             "--quiet", f"refs/tags/{tag}"],
+                            capture_output=True, text=True)
+    if exists.returncode == 0:
+        return {"tag": tag, "created": False, "reason": "already exists"}
+    r = subprocess.run(["git", "-C", str(REPO_ROOT), "tag", "-a", tag,
+                        "-m", f"Release {version}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"tag": tag, "created": False, "reason": (r.stderr or "").strip()}
+    return {"tag": tag, "created": True}
 
 
 def _load(path: Path):
@@ -161,6 +204,11 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="exit 1 on drift; write nothing")
     mode.add_argument("--sync", action="store_true", help="propagate the canonical version to every mirror")
     mode.add_argument("--set", metavar="X.Y.Z", help="set all five fields to this version")
+    mode.add_argument("--patch", action="store_true", help="bump Z+1 (normal per-push release)")
+    mode.add_argument("--minor", action="store_true", help="bump Y+1, Z=0")
+    mode.add_argument("--major", action="store_true", help="bump X+1, Y=Z=0")
+    mode.add_argument("--tag", action="store_true",
+                      help="tag HEAD with the current canonical version; write nothing")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args()
 
@@ -189,9 +237,29 @@ def main() -> int:
             print(f"bump_version: all {len(MIRRORS) + 1} version fields agree at {state['canonical']}")
         return 1 if drifted else 0
 
-    version = args.set or state["canonical"]
-    changed = apply_version(version, set_canonical=bool(args.set))
-    result = {"mode": "set" if args.set else "sync", "version": version, "changed": changed}
+    if args.tag:
+        result = {"mode": "tag", "version": state["canonical"],
+                  "tag": create_tag(state["canonical"])}
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            tag = result["tag"]
+            verb = "created" if tag["created"] else tag.get("reason", "not created")
+            print(f"bump_version: {tag['tag']} {verb}")
+        return 0 if result["tag"]["created"] or result["tag"].get("reason") == "already exists" else 1
+
+    kind = next((k for k in ("patch", "minor", "major") if getattr(args, k)), None)
+    if kind:
+        version = next_version(state["canonical"], kind)
+        mode = kind
+    else:
+        version = args.set or state["canonical"]
+        mode = "set" if args.set else "sync"
+
+    changed = apply_version(version, set_canonical=bool(args.set or kind))
+    result = {"mode": mode, "version": version, "changed": changed,
+              "previous": state["canonical"]}
+
     if args.json:
         print(json.dumps(result, indent=2))
     else:

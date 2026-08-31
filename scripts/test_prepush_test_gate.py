@@ -260,9 +260,10 @@ def _load_hook():
     return mod
 
 
-def _install_fakes(monkeypatch, *, hold_action, test_action):
-    """Inject fake push_hold + prepush_test_gate modules the hook will import."""
-    calls = {"push_hold": False, "test_gate": False, "closeout": False}
+def _install_fakes(monkeypatch, *, hold_action, test_action, version_action="allow"):
+    """Inject fake push-hold, test, and version modules imported by the hook."""
+    calls = {"push_hold": False, "test_gate": False, "version_gate": False,
+             "closeout": False}
 
     fake_push_hold = types.ModuleType("push_hold")
     def _eval_push(repo, lines, **k):
@@ -280,8 +281,17 @@ def _install_fakes(monkeypatch, *, hold_action, test_action):
     fake_test_gate.evaluate = _eval_gate
     fake_test_gate.format_block_message = lambda v: "BLOCK BANNER\n"
 
+    fake_version_gate = types.ModuleType("prepush_version_gate")
+    def _eval_version(repo, lines, **k):
+        calls["version_gate"] = True
+        return {"action": version_action,
+                "exit_code": 1 if version_action == "block" else 0}
+    fake_version_gate.evaluate = _eval_version
+    fake_version_gate.format_block_message = lambda v: "VERSION BLOCK BANNER\n"
+
     monkeypatch.setitem(sys.modules, "push_hold", fake_push_hold)
     monkeypatch.setitem(sys.modules, "prepush_test_gate", fake_test_gate)
+    monkeypatch.setitem(sys.modules, "prepush_version_gate", fake_version_gate)
     return calls
 
 
@@ -307,6 +317,17 @@ def test_hook_test_gate_blocks_at_stage_two(tmp_path, monkeypatch):
     rc = _run_hook_main(monkeypatch, hook, tmp_path)
     assert rc == 1                      # test gate blocks
     assert calls["push_hold"] is True and calls["test_gate"] is True
+    assert calls["version_gate"] is False
+
+
+def test_hook_version_gate_blocks_at_stage_three(tmp_path, monkeypatch):
+    hook = _load_hook()
+    calls = _install_fakes(
+        monkeypatch, hold_action="allow", test_action="allow", version_action="block"
+    )
+    rc = _run_hook_main(monkeypatch, hook, tmp_path)
+    assert rc == 1
+    assert calls["push_hold"] and calls["test_gate"] and calls["version_gate"]
 
 
 def test_hook_both_pass_allows(tmp_path, monkeypatch):
@@ -318,7 +339,7 @@ def test_hook_both_pass_allows(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO(MAIN_PUSH_LINE))
     rc = hook.main()
     assert rc == 0
-    assert calls["push_hold"] and calls["test_gate"]
+    assert calls["push_hold"] and calls["test_gate"] and calls["version_gate"]
     assert armed["v"] is True           # closeout armed only on final allow
 
 

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e1ce518010b8023a1149da04974056560e9292d3d5fab8d07fe201da859771fb"
+    "content_sha256": "613fe94f38ac780e11218e4b0ddee77aa9ed7326209277fbdeea20789b12eb43"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1747,6 +1747,7 @@
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_judgment_gate.py": "prepush_judgment_gate.py — BLOCKING Frontier-judgment gate at the push boundary.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
+      "scripts/prepush_version_gate.py": "Pre-push STAGE 3 — one push, one version bump.",
       "scripts/prior_art.py": "Cross-project prior-art digest for Phase 1 Assess (P4).",
       "scripts/privacy.py": "privacy.py — reusable secret/PII deny-pattern scanner.",
       "scripts/privileged_audit.py": "Read-only forensics over privileged (admin-password) command traffic.",
