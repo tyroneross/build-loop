@@ -23,12 +23,12 @@ OPEN_WORK_MAX_ITEMS = 120
 _OPEN_WORK_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 PHASES: tuple[dict[str, Any], ...] = (
-    {"id": "assess", "number": 1, "name": "Assess", "summary": "Understand the repository and define success.", "output": "State summary and goal"},
-    {"id": "plan", "number": 2, "name": "Plan", "summary": "Map the work, ownership, dependencies, and checks.", "output": "Ordered task plan"},
-    {"id": "execute", "number": 3, "name": "Execute", "summary": "Build the planned change.", "output": "Working implementation"},
-    {"id": "review", "number": 4, "name": "Review", "summary": "Critique, validate, fact-check, simplify, and report.", "output": "Scorecard and evidence"},
-    {"id": "iterate", "number": 5, "name": "Iterate", "summary": "Fix review failures and re-check the result.", "output": "Resolved review findings"},
-    {"id": "learn", "number": 6, "name": "Learn", "summary": "Capture recurring lessons and improvement candidates.", "output": "Learning outcome"},
+    {"id": "assess", "number": 1, "name": "Assess", "summary": "Understand the repository and define success.", "output": "State summary and goal", "location": ".build-loop/goal.md"},
+    {"id": "plan", "number": 2, "name": "Plan", "summary": "Map the work, ownership, dependencies, and checks.", "output": "Ordered task plan", "location": ".build-loop/plan.md"},
+    {"id": "execute", "number": 3, "name": "Execute", "summary": "Build the planned change.", "output": "Working implementation", "location": ".build-loop/state.json"},
+    {"id": "review", "number": 4, "name": "Review", "summary": "Critique, validate, fact-check, simplify, and report.", "output": "Scorecard and evidence", "location": ".build-loop/evals/"},
+    {"id": "iterate", "number": 5, "name": "Iterate", "summary": "Fix review failures and re-check the result.", "output": "Resolved review findings", "location": ".build-loop/issues/"},
+    {"id": "learn", "number": 6, "name": "Learn", "summary": "Capture recurring lessons and improvement candidates.", "output": "Learning outcome", "location": ".build-loop/learn/"},
 )
 
 PHASE_ALIASES = {
@@ -188,9 +188,23 @@ def _run_context(state: dict[str, Any]) -> dict[str, Any]:
                     current_phase = _normalize_phase(phase_id)
     learn = selected_run.get("learn") if isinstance(selected_run.get("learn"), dict) else {}
     learn_status = str(learn.get("status") or "").strip().lower()
+    explicit_learn_status = None
+    for phases in (state.get("phases"), execution.get("phases"), selected_run.get("phases")):
+        if not isinstance(phases, dict) or "learn" not in phases:
+            continue
+        learn_phase = phases["learn"]
+        if isinstance(learn_phase, dict):
+            learn_phase = learn_phase.get("status") or learn_phase.get("outcome")
+        normalized = _normalize_explicit_status(learn_phase)
+        if normalized:
+            explicit_learn_status = normalized
     if run_id and learn_status in {"pending", "awaiting_agents"}:
-        status = "active"
-        current_phase = "learn"
+        if explicit_learn_status == "blocked":
+            status = "blocked"
+            current_phase = "learn"
+        elif explicit_learn_status not in {"complete", "blocked"}:
+            status = "active"
+            current_phase = "learn"
     elif run_id and learn_status == "error":
         status = "blocked"
         current_phase = "learn"
@@ -232,7 +246,12 @@ def _phase_projection(context: dict[str, Any], state: dict[str, Any], warnings: 
             normalized = _normalize_explicit_status(raw)
             if normalized:
                 phase_status = normalized
-        result.append({**phase, "status": phase_status})
+        if phase["id"] == current and phase_status == "pending" and status in {"active", "blocked"}:
+            phase_status = status
+        location = phase["location"]
+        if phase["id"] == "learn" and context.get("run_id"):
+            location = f".build-loop/learn/{context['run_id']}.json"
+        result.append({**phase, "location": location, "status": phase_status})
 
     if context["active"] and current_index is None:
         warnings.append("The run is active, but no recognized current phase was recorded.")
@@ -286,7 +305,13 @@ def _task_title(item: Any, task_id: str) -> str:
     return task_id.replace("_", " ").replace("-", " ").strip().capitalize()
 
 
-def _merge_task(tasks: dict[str, dict[str, Any]], item: Any, status: str, order: int) -> None:
+def _merge_task(
+    tasks: dict[str, dict[str, Any]],
+    item: Any,
+    status: str,
+    order: int,
+    default_phase: str,
+) -> None:
     task_id = _task_id(item, f"task-{order + 1}")
     explicit = _normalize_explicit_status(item.get("status")) if isinstance(item, dict) else None
     normalized = explicit or status
@@ -295,6 +320,7 @@ def _merge_task(tasks: dict[str, dict[str, Any]], item: Any, status: str, order:
         "title": _task_title(item, task_id),
         "status": normalized,
         "owner": str(item.get("owner") or item.get("agent") or "") if isinstance(item, dict) else "",
+        "phase": _normalize_phase(item.get("phase")) if isinstance(item, dict) else None,
         "order": order,
     }
     current = tasks.get(task_id)
@@ -303,6 +329,8 @@ def _merge_task(tasks: dict[str, dict[str, Any]], item: Any, status: str, order:
             candidate["order"] = current["order"]
             candidate["title"] = current["title"] if candidate["title"] == task_id else candidate["title"]
             candidate["owner"] = candidate["owner"] or current["owner"]
+            candidate["phase"] = candidate["phase"] or current["phase"]
+        candidate["phase"] = candidate["phase"] or default_phase
         tasks[task_id] = candidate
 
 
@@ -318,26 +346,26 @@ def _structured_tasks(state: dict[str, Any], context: dict[str, Any]) -> list[di
         values = execution.get(key)
         if isinstance(values, list):
             for item in values:
-                _merge_task(tasks, item, status, order)
+                _merge_task(tasks, item, status, order, "execute")
                 order += 1
 
     iterations = execution.get("item_iterations")
     if isinstance(iterations, dict):
         for item_id, attempts in iterations.items():
             latest = attempts[-1] if isinstance(attempts, list) and attempts else attempts
-            _merge_task(tasks, {"id": item_id, **(latest if isinstance(latest, dict) else {})}, "active", order)
+            _merge_task(tasks, {"id": item_id, **(latest if isinstance(latest, dict) else {})}, "active", order, "iterate")
             order += 1
 
     per_commit = state.get("perCommit")
     if isinstance(per_commit, dict):
         for item in per_commit.get("queued") or []:
-            _merge_task(tasks, item, "queued", order)
+            _merge_task(tasks, item, "queued", order, "execute")
             order += 1
         if per_commit.get("in_flight"):
-            _merge_task(tasks, per_commit["in_flight"], "active", order)
+            _merge_task(tasks, per_commit["in_flight"], "active", order, "execute")
             order += 1
         for item in per_commit.get("completed") or []:
-            _merge_task(tasks, item, "complete", order)
+            _merge_task(tasks, item, "complete", order, "execute")
             order += 1
 
     recorded_tasks = context["selected_run"].get("tasks")
@@ -345,7 +373,7 @@ def _structured_tasks(state: dict[str, Any], context: dict[str, Any]) -> list[di
         default_status = "complete" if context["status"] == "complete" else "pending"
         for item in recorded_tasks:
             explicit = item.get("status") if isinstance(item, dict) else None
-            _merge_task(tasks, item, _normalize_explicit_status(explicit) or default_status, order)
+            _merge_task(tasks, item, _normalize_explicit_status(explicit) or default_status, order, "execute")
             order += 1
     return sorted(({key: value for key, value in task.items() if key != "order"} for task in tasks.values()), key=lambda task: tasks[task["id"]]["order"])
 
@@ -371,7 +399,7 @@ def _plan_tasks(
         if task_id.lower().startswith("phase") or title.lower() in {"plan", "goal", "headline"} or task_id in seen:
             continue
         seen.add(task_id)
-        tasks.append({"id": task_id, "title": title, "status": "pending", "owner": ""})
+        tasks.append({"id": task_id, "title": title, "status": "pending", "owner": "", "phase": "execute"})
     if tasks and fallback:
         warnings.append("Major tasks came from plan headings because structured execution tasks were unavailable.")
     return tasks[:50]
@@ -698,7 +726,7 @@ def build_run_projection(workdir: Path | str) -> dict[str, Any]:
     blocked_tasks = sum(item["status"] == "blocked" for item in tasks)
     current_phase = next((item for item in phases if item["status"] in {"active", "blocked"}), None)
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "generated_at": _now(),
         "updated_at": _updated_at(sources),
         "status": context["status"],

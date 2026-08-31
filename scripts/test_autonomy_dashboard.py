@@ -362,7 +362,9 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
         "renderRun", "refreshRun", "setInterval(refreshRun, 5000)", "Track this run. It updates automatically.",
         "Major tasks", "Agents invoked", "Learn work orders", "Run notes", "No agents are recorded.",
         "Open work", "Queued and active", "Backlog and waiting", "Other-agent queue connected.",
-        "sentence(phase.output", "if (stateLabel.textContent !== nextStateLabel)", "function sentence",
+        "phaseRecords", "phaseFocus", "phase-card", "phase-location", "Record: ${phase.location}",
+        "['blocked', 'active'].includes(item.status)", "Waiting for ${order.role}",
+        "if (stateLabel.textContent !== nextStateLabel)", "function sentence",
         "statusLabel(currentPhase.status).toLowerCase()",
     ):
         assert token in html
@@ -371,6 +373,7 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
     assert "phase ${currentPhase.number} active" not in html
     assert 'id="run-refresh" role="status"' not in html
     assert '<div class="metrics" aria-live="polite">' not in html
+    assert 'id="phase-output-list"' not in html
     assert "innerHTML" not in html
     assert html.count("linear-gradient(") == 1
     assert "<script src=" not in html

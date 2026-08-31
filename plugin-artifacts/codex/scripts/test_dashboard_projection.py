@@ -43,7 +43,13 @@ def test_active_run_projects_one_current_phase_tasks_and_invoked_agents(tmp_path
         "State summary and goal", "Ordered task plan", "Working implementation",
         "Scorecard and evidence", "Resolved review findings", "Learning outcome",
     ]
+    assert [phase["location"] for phase in result["phases"]] == [
+        ".build-loop/goal.md", ".build-loop/plan.md", ".build-loop/state.json",
+        ".build-loop/evals/", ".build-loop/issues/",
+        ".build-loop/learn/run-current.json",
+    ]
     assert {task["id"]: task["status"] for task in result["tasks"]} == {"c1": "active", "c2": "queued", "c0": "complete"}
+    assert {task["id"]: task["phase"] for task in result["tasks"]} == {"c1": "execute", "c2": "execute", "c0": "execute"}
     assert [agent["name"] for agent in result["agents"]] == ["independent-auditor", "frontend-implementer"]
     assert result["agents"][0]["source"] == "agent-ledger"
     assert result["metrics"] == {
@@ -79,7 +85,7 @@ def test_open_work_projects_canonical_queues_with_refresh_metadata(tmp_path: Pat
 
     result = projection.build_run_projection(tmp_path)
 
-    assert result["schema_version"] == "1.1"
+    assert result["schema_version"] == "1.2"
     assert result["open_work"]["open_count"] == 3
     assert result["open_work"]["refresh_interval_seconds"] == 30
     assert result["open_work"]["refreshed_at"]
@@ -155,7 +161,48 @@ def test_task_status_precedence_prevents_conflicting_duplicates(tmp_path: Path) 
 
     result = projection.build_run_projection(tmp_path)
 
-    assert result["tasks"] == [{"id": "same", "title": "Fix dashboard", "status": "complete", "owner": ""}]
+    assert result["tasks"] == [{"id": "same", "title": "Fix dashboard", "status": "complete", "owner": "", "phase": "execute"}]
+
+
+def test_iteration_tasks_are_assigned_to_the_iterate_phase(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {
+            "build_loop_id": "run-1",
+            "phase": "iterate",
+            "item_iterations": {
+                "finding-1": [{"status": "active", "summary": "Fix review finding"}],
+            },
+        },
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["tasks"] == [{
+        "id": "finding-1",
+        "title": "Fix review finding",
+        "status": "active",
+        "owner": "",
+        "phase": "iterate",
+    }]
+
+
+def test_later_execute_record_does_not_move_iteration_task_between_phases(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {
+            "build_loop_id": "run-1",
+            "phase": "iterate",
+            "item_iterations": {
+                "finding-1": [{"status": "active", "summary": "Fix review finding"}],
+            },
+            "tasks": [{"id": "finding-1", "status": "complete"}],
+        },
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["tasks"][0]["phase"] == "iterate"
 
 
 def test_plan_headings_are_a_labeled_fallback_when_execution_has_no_tasks(tmp_path: Path) -> None:
@@ -171,6 +218,7 @@ def test_plan_headings_are_a_labeled_fallback_when_execution_has_no_tasks(tmp_pa
 
     assert [task["id"] for task in result["tasks"]] == ["C1", "C2"]
     assert all(task["status"] == "pending" for task in result["tasks"])
+    assert all(task["phase"] == "execute" for task in result["tasks"])
     assert any("plan headings" in warning for warning in result["warnings"])
 
 
@@ -324,6 +372,109 @@ def test_pending_learn_receipt_projects_phase_agents_and_comments(tmp_path: Path
     assert result["notes"][0]["text"] == "Review the recurring retry."
     assert result["notes"][0]["source"] == "Learn receipt"
     assert ".build-loop/learn/run-learn.json" in result["sources"]
+
+
+def test_awaiting_learn_agents_overrides_stale_pending_phase_status(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "phases": {"learn": {"status": "pending"}},
+            "learn": {
+                "status": "awaiting_agents",
+                "receipt": ".build-loop/learn/run-learn.json",
+            },
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "active"
+    assert result["current_phase"] == "learn"
+    assert result["phases"][-1]["status"] == "active"
+
+
+def test_awaiting_learn_agents_does_not_reopen_completed_learn_phase(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "phases": {"learn": {"status": "complete"}},
+            "learn": {"status": "awaiting_agents"},
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["current_phase"] is None
+    assert result["phases"][-1]["status"] == "complete"
+
+
+def test_awaiting_learn_agents_preserves_blocked_learn_phase(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "phases": {"learn": {"status": "blocked"}},
+            "learn": {"status": "awaiting_agents"},
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "blocked"
+    assert result["current_phase"] == "learn"
+    assert result["phases"][-1]["status"] == "blocked"
+
+
+def test_top_level_completed_learn_phase_is_not_reopened(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "phases": {"learn": {"status": "complete"}},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "learn": {"status": "awaiting_agents"},
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["current_phase"] is None
+    assert result["phases"][-1]["status"] == "complete"
+
+
+def test_top_level_blocked_learn_phase_remains_the_current_blocker(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "phases": {"learn": {"status": "blocked"}},
+        "runs": [{
+            "run_id": "run-learn",
+            "goal": "Finish Learn consistently.",
+            "outcome": "pass",
+            "learn": {"status": "awaiting_agents"},
+        }],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "blocked"
+    assert result["current_phase"] == "learn"
+    assert result["phases"][-1]["status"] == "blocked"
 
 
 def test_invalid_learn_receipt_does_not_claim_agent_activity(tmp_path: Path) -> None:
