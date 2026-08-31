@@ -115,6 +115,7 @@ import subprocess
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Iterable
 
 # Reuse push_hold's push-line parsing + protected-branch detection (DRY — one
@@ -415,8 +416,28 @@ def stale_entries(
     entries: list[dict[str, Any]],
     failed: Iterable[str],
     targets: Iterable[str],
+    outcomes: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Baseline entries whose test ran and did NOT fail — stale suppression."""
+    """Baseline entries whose test ran and PASSED — stale suppression.
+
+    Absence from ``failed`` is NOT evidence of a pass. A test can be missing
+    from the failure list because it was skipped, deselected, errored during
+    collection, or renamed. Target coverage rules out only the last of those:
+    it is a path check, not an execution check, so a skipped test sits inside
+    the targets and still never ran.
+
+    ``outcomes`` supplies positive evidence: a node id mapped to "passed",
+    "skipped", or any other pytest outcome. An entry is stale only when its
+    test is explicitly recorded as passed. When ``outcomes`` is None the caller
+    has no execution evidence and the older absence-of-failure rule applies —
+    callers that can probe should always pass it.
+
+    Observed 2026-08-30: test_cross_backend_cosine_above_threshold was reported
+    "now PASSES — delete this entry" while it was in fact SKIPPING with "need
+    both backends" on a machine without both. Acting on that would have deleted
+    a load-bearing suppression and turned CI red the moment both backends were
+    present.
+    """
     failed = list(failed)
     out: list[dict[str, Any]] = []
     for entry in entries:
@@ -424,6 +445,13 @@ def stale_entries(
             continue
         if any(_entry_matches(entry, node) for node in failed):
             continue
+        if outcomes is not None:
+            outcome = next(
+                (o for node, o in outcomes.items() if _entry_matches(entry, node)),
+                None,
+            )
+            if outcome != "passed":
+                continue
         out.append(entry)
     return out
 

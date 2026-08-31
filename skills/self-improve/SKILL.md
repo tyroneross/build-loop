@@ -1,6 +1,6 @@
 ---
 name: build-loop:self-improve
-description: Run mandatory Phase 6 Learn, then dispatch only returned experimental-draft or review work orders. Also handles "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).
+description: Use when Phase 6 Learn fires, or when the user asks to "scan recent runs" or "improve build-loop". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Runs Learn, then dispatches only the experimental-draft or review work orders it returns.
 version: 0.1.0
 user-invocable: false
 ---

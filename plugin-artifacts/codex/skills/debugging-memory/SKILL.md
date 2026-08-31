@@ -1,6 +1,6 @@
 ---
 name: debugging-memory
-description: Search Build Loop's native debugging memory before investigating a bug and store verified fixes afterward. Use first for crashes, errors, regressions, and broken behavior. Not for implementing the fix itself; use debug-loop.
+description: Use when a crash, error, regression, or broken behavior appears: search Build Loop's native debugging memory before opening an investigation, then store the verified fix afterward. Not for implementing the fix itself; use debug-loop. Answers "have we already solved this?" before any time is spent re-deriving it.
 version: 2.0.0
 user-invocable: false
 ---

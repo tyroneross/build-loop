@@ -310,8 +310,16 @@ class TestExitCodePolicy:
 # Stale suppressions (non-blocking signal)
 # ---------------------------------------------------------------------------
 
+def _write_probe_target(tmp_path: Path, body: str) -> None:
+    """Create a real scripts/test_alpha.py so the gate's probe has something to run."""
+    d = tmp_path / "scripts"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "test_alpha.py").write_text(body, encoding="utf-8")
+
+
 class TestStaleSuppression:
     def test_now_passing_entry_is_reported_but_does_not_block(self, tmp_path):
+        _write_probe_target(tmp_path, "def test_one():\n    assert True\n")
         _write_baseline(tmp_path, {"version": 1, "entries": [{
             "test": "scripts/test_alpha.py::test_one",
             "reason": "r", "owner": "tyroneross", "expires": "2026-08-13",
@@ -319,6 +327,41 @@ class TestStaleSuppression:
         code, out = _run_cli(tmp_path, "42 passed in 3s\n", 0)
         assert code == 0
         assert "STALE SUPPRESSION" in out
+
+    def test_a_skipped_baselined_test_is_not_called_stale(self, tmp_path):
+        """A skip is not a fix.
+
+        Regression for 2026-08-30: the gate told a maintainer to delete the
+        entry for test_cross_backend_cosine_above_threshold because it "now
+        PASSES". It was in fact SKIPPING with "need both backends" on a runner
+        without both. Deleting the entry would have removed a load-bearing
+        suppression and turned CI red the moment both backends were present.
+        Absence from the failure list is not evidence of a pass.
+        """
+        _write_probe_target(
+            tmp_path,
+            "import pytest\n\n\ndef test_one():\n"
+            "    pytest.skip('need both backends')\n",
+        )
+        _write_baseline(tmp_path, {"version": 1, "entries": [{
+            "test": "scripts/test_alpha.py::test_one",
+            "reason": "r", "owner": "tyroneross", "expires": "2026-08-13",
+        }]})
+        code, out = _run_cli(tmp_path, "42 passed in 3s\n", 0)
+        assert code == 0
+        assert "STALE SUPPRESSION" not in out
+        assert "NOT EXERCISED" in out
+
+    def test_an_uncollectable_baselined_test_is_not_called_stale(self, tmp_path):
+        """A renamed or deleted test is not a fixed one either."""
+        _write_probe_target(tmp_path, "def test_something_else():\n    assert True\n")
+        _write_baseline(tmp_path, {"version": 1, "entries": [{
+            "test": "scripts/test_alpha.py::test_one",
+            "reason": "r", "owner": "tyroneross", "expires": "2026-08-13",
+        }]})
+        code, out = _run_cli(tmp_path, "42 passed in 3s\n", 0)
+        assert code == 0
+        assert "STALE SUPPRESSION" not in out
 
     def test_entry_outside_the_run_targets_is_not_called_stale(self):
         """A test that did not run this time is not evidence of anything."""

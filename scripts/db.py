@@ -101,12 +101,22 @@ def _read_db_url() -> str:
 
 
 def get_connection() -> Any:
-    """Return a process-local connection, opening it on first call."""
-    _require_psycopg()
+    """Return a process-local connection, opening it on first call.
+
+    The driver requirement guards the OPEN, not the return. An already-open
+    connection is handed back without importing psycopg: we plainly do not need
+    the driver to return an object we are already holding. That ordering is
+    what lets the helper tests install a fake connection and exercise the
+    commit/rollback logic on a machine without the optional `.[db]` extra —
+    which CI deliberately does not install. With the check first, 11 tests that
+    never touch a real database failed with ImportError instead of running.
+    """
     global _CONN
-    if _CONN is None or _CONN.closed:
-        _CONN = psycopg.connect(_read_db_url(), autocommit=False)
-        atexit.register(close_connection)
+    if _CONN is not None and not _CONN.closed:
+        return _CONN
+    _require_psycopg()
+    _CONN = psycopg.connect(_read_db_url(), autocommit=False)
+    atexit.register(close_connection)
     return _CONN
 
 

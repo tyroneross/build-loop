@@ -70,6 +70,7 @@ import os
 import subprocess
 import sys
 from datetime import date
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -156,6 +157,55 @@ def run_pytest(pytest_args: list[str], *, workdir: Path, out=None) -> tuple[int,
 # ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------
+
+
+def probe_outcomes(
+    entries: list[dict[str, Any]],
+    *,
+    workdir: Path,
+    runner: Any = None,
+) -> dict[str, str]:
+    """Run each candidate baseline test alone and record what actually happened.
+
+    A suite run tells us which tests FAILED, never which ones passed, so a
+    baselined test that skipped is indistinguishable from one that was fixed.
+    Re-running the candidates alone is the cheapest source of positive
+    evidence, and there are only ever a handful: this costs seconds, which is
+    what the "a stale baseline must fail in seconds" contract requires.
+
+    Returns node id -> "passed" | "skipped" | "failed" | "missing".
+    """
+    run = runner or _probe_one
+    out: dict[str, str] = {}
+    for entry in entries:
+        node = entry.get("test", "")
+        if node:
+            out[node] = run(node, workdir)
+    return out
+
+
+def _probe_one(node: str, workdir: Path) -> str:
+    """Execute one node id and classify its outcome from pytest's own counters."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", node, "-q", "--no-header",
+             "-p", "no:cacheprovider", "-rs"],
+            cwd=str(workdir), text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=300,
+        )
+    except Exception:  # noqa: BLE001 — an unprobeable test is not a passing test
+        return "missing"
+    text = proc.stdout
+    if proc.returncode == 5 or "no tests ran" in text:
+        return "missing"
+    if re.search(r"\b\d+ failed", text) or re.search(r"\b\d+ error", text):
+        return "failed"
+    if re.search(r"\b\d+ skipped", text) and not re.search(r"\b\d+ passed", text):
+        return "skipped"
+    if re.search(r"\b\d+ passed", text):
+        return "passed"
+    return "missing"
+
 
 def evaluate(
     *,
@@ -256,6 +306,17 @@ def render(verdict: dict[str, Any], *, out=None) -> None:
             f"- known-red `{hit['node']}` — owner `{e['owner']}`, "
             f"expires `{e['expires']}` ({hit['days_left']}d left)"
         )
+
+    for item in verdict.get("stale_unproven", []):
+        e, outcome = item["entry"], item["outcome"]
+        _annotate(
+            "warning",
+            f"BASELINE NOT EXERCISED: {e['test']} did not run ({outcome}) — the "
+            f"suppression is neither confirmed nor stale. Whatever the entry "
+            f"describes is untested on this runner.",
+            out=stream,
+        )
+        summary.append(f"- baseline `{e['test']}` not exercised ({outcome})")
 
     for e in verdict["stale"]:
         _annotate(
@@ -361,6 +422,23 @@ def main(argv: list[str] | None = None) -> int:
         rc, output = run_pytest(pytest_args, workdir=workdir)
 
     verdict = evaluate(rc=rc, output=output, entries=entries, today=today, targets=targets)
+
+    # evaluate() is pure, so its "stale" list is only "covered by the run and not
+    # in the failure list" — which a skipped or uncollected test also satisfies.
+    # Probe the candidates for positive evidence before telling anyone to delete
+    # a suppression; a skip is not a fix.
+    if verdict["stale"]:
+        outcomes = probe_outcomes(verdict["stale"], workdir=workdir)
+        verdict["stale"] = [
+            entry for entry in verdict["stale"]
+            if outcomes.get(entry.get("test", "")) == "passed"
+        ]
+        verdict["stale_unproven"] = [
+            {"entry": entry, "outcome": outcomes.get(entry.get("test", ""), "missing")}
+            for entry in entries
+            if outcomes.get(entry.get("test", "")) not in (None, "passed")
+        ]
+
     render(verdict)
     return int(verdict["exit_code"])
 

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "16c81cf07a3dd359267916a4f5fbfc0ef0e09b269e0b92f952b4bc31c3310365"
+    "content_sha256": "decec1107a38f7e8a4386805f3de019dd20b5aafdd6dd7bbf8231468a05e6107"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1258,7 +1258,7 @@
         }
       },
       "debugging-memory": {
-        "description": "Search Build Loop's native debugging memory before investigating a bug and store verified fixes afterward. Use first for crashes, errors, regressions, and broken behavior. Not for implementing the fix itself; use debug-loop.",
+        "description": "Use when a crash, error, regression, or broken behavior appears: search Build Loop's native debugging memory before opening an investigation, then store the verified fix afterward. Not for implementing the fix itself; use debug-loop. Answers \"have we already solved this?\" before any time is spent re-deriving it.",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1474,7 +1474,7 @@
         }
       },
       "self-improve": {
-        "description": "Run mandatory Phase 6 Learn, then dispatch only returned experimental-draft or review work orders. Also handles \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective (use `recursive-retrospective`).",
+        "description": "Use when Phase 6 Learn fires, or when the user asks to \"scan recent runs\" or \"improve build-loop\". Not for a deliberate whole-project retrospective; use `recursive-retrospective`. Runs Learn, then dispatches only the experimental-draft or review work orders it returns.",
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
