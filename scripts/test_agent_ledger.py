@@ -71,6 +71,15 @@ class BuildRowTests(unittest.TestCase):
 
 
 class AppendReadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._rally_tool = mock.patch.dict(
+            os.environ,
+            {"BUILD_LOOP_RALLY_TOOL": "codex:test-agent-ledger"},
+            clear=False,
+        )
+        self._rally_tool.start()
+        self.addCleanup(self._rally_tool.stop)
+
     def test_append_then_read_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / ".build-loop" / "agent-ledger.jsonl"
@@ -1219,14 +1228,15 @@ class AppendReadTests(unittest.TestCase):
             patches = [
                 mock.patch.object(
                     post_mod, "_static_native_kind", return_value="session.closed"
-                )
+                ),
+                mock.patch.object(
+                    kind_capability,
+                    "supported_kinds",
+                    return_value=(
+                        frozenset({"claim", "release", "artifact"}) if gate else None
+                    ),
+                ),
             ]
-            if not gate:
-                patches.append(
-                    mock.patch.object(
-                        kind_capability, "supported_kinds", return_value=None
-                    )
-                )
 
             updates = {"HOME": str(home), "BUILD_LOOP_RALLY_TOOL": f"codex:{run_id}"}
             with mock.patch.dict(os.environ, updates, clear=False):

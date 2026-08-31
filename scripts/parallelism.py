@@ -249,8 +249,9 @@ def resolve_fanout(
     caps = {
         "requested_or_config": candidate,
         "hard_ceiling": HARD_CEILING,
-        "cpu": cpu_cap,
     }
+    if location == "local":
+        caps["cpu"] = cpu_cap
     if isinstance(independent_items, int) and independent_items >= 0:
         caps["independent_work"] = independent_items
     available_shared_capacity = None

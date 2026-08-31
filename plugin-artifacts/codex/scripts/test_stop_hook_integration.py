@@ -136,8 +136,6 @@ def _stop_payload(transcript: Path, cwd: Path) -> str:
     )
 
 
-@pytest.mark.live
-
 def _wait_for_bg_scan_to_finish(timeout_s: float = 200.0) -> None:
     """Block until /tmp/build-loop-scan.lock is no longer held, or timeout."""
     import fcntl
@@ -162,6 +160,7 @@ def _wait_for_bg_scan_to_finish(timeout_s: float = 200.0) -> None:
             return  # lock file gone or unreadable
 
 
+@pytest.mark.live
 class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
     """Live integration test. Slow (~30-60s). Requires Ollama + qwen3:8b-q4_K_M."""
 

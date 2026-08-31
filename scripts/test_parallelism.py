@@ -240,6 +240,21 @@ class TestResourceAwareFanout:
         assert profile["token_cap"] == 2
         assert profile["effective_max"] == 2
 
+    def test_cloud_fanout_is_not_limited_by_runner_cpu_count(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=2):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=20,
+                execution_location="cloud",
+                model_size="small",
+                token_budget=40_000,
+                independent_items=20,
+            )
+        assert profile["cpu_cap"] == 1
+        assert profile["token_cap"] == 5
+        assert profile["effective_max"] == 5
+        assert profile["limiting_factors"] == ["token"]
+
     def test_cloud_falls_back_to_model_and_output_tshirts(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=16):
             profile = resolve_fanout(
