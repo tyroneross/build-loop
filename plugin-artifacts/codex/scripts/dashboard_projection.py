@@ -152,7 +152,11 @@ def _latest_run(state: dict[str, Any]) -> dict[str, Any] | None:
     runs = state.get("runs")
     if not isinstance(runs, list):
         return None
-    return next((item for item in reversed(runs) if isinstance(item, dict)), None)
+    return next((
+        item for item in reversed(runs)
+        if isinstance(item, dict)
+        and item.get("goal") != "(hook-only commit; no orchestrator run)"
+    ), None)
 
 
 def _run_context(state: dict[str, Any]) -> dict[str, Any]:

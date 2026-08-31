@@ -188,6 +188,28 @@ def test_completed_run_uses_run_judges_without_claiming_an_active_phase(tmp_path
     assert result["agents"][0]["source"] == "run judge record"
 
 
+def test_hook_only_receipt_does_not_replace_latest_orchestrator_run(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": False,
+        "execution": {},
+        "runs": [
+            {"run_id": "done-1", "goal": "Finish dashboard.", "outcome": "pass"},
+            {
+                "run_id": "hook-1",
+                "goal": "(hook-only commit; no orchestrator run)",
+                "outcome": "partial",
+                "judge_decisions": [{"judge_id": "independent-auditor-hook", "verdict": "pending"}],
+            },
+        ],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["run_id"] == "done-1"
+    assert result["status"] == "complete"
+    assert result["agents"] == []
+
+
 def test_completed_run_does_not_show_plan_tasks_as_pending(tmp_path: Path) -> None:
     _write_json(tmp_path / ".build-loop/state.json", {
         "active": False,
