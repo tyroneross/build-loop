@@ -131,6 +131,21 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
 
         self.transcript = self.workdir / "transcript.jsonl"
         _seed_transcript(self.transcript)
+        # Per-test lock and log, exactly as the mock-LLM class below does.
+        # Without them these tests take the script's DEFAULT lock,
+        # /tmp/build-loop-scan.lock, which is deliberately machine-wide: it
+        # exists to stop concurrent SESSIONS contending. Any other scan holding
+        # it -- a sibling test, another worktree, a live Stop hook -- makes the
+        # script exit early with "another scan holds ...; skipping", and the
+        # assertion for "nothing to do" fails on a message about a lock rather
+        # than anything these tests are about.
+        self.log_file = self.workdir / "scan.log"
+        self.lock_file = self.workdir / "scan.lock"
+
+    def _isolated(self, argv: list[str]) -> list[str]:
+        """Append the per-test lock/log so a concurrent scan cannot pre-empt us."""
+        return argv + ["--log-file", str(self.log_file),
+                       "--lock-file", str(self.lock_file)]
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -146,7 +161,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
                 "--workdir", str(self.workdir),
                 "--transcript", str(self.transcript),
                 "--no-db",  # avoid touching production schema during tests
-            ],
+            ] + self._isolated([]),
             capture_output=True,
             text=True,
             env=env,
@@ -225,7 +240,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
                 "--workdir", str(self.workdir),
                 "--transcript", str(self.transcript),
                 "--no-db",
-            ],
+            ] + self._isolated([]),
             capture_output=True,
             text=True,
             env=env,
@@ -244,7 +259,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
                 "--workdir", str(self.workdir),
                 "--transcript", str(empty),
                 "--no-db",
-            ],
+            ] + self._isolated([]),
             timeout=15,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
@@ -266,7 +281,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
                 "--workdir", str(self.workdir),
                 "--transcript", str(bad),
                 "--no-db",
-            ],
+            ] + self._isolated([]),
             timeout=180,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")

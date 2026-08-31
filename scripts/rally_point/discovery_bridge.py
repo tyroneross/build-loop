@@ -947,17 +947,40 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     return envelope
 
 
+_MIGRATED_THIS_PROCESS: set[str] = set()
+_MIGRATED_THIS_PROCESS_MAX_ENTRIES = 256
+
+
 def clear_cache() -> None:
-    """Drop all cached envelopes. Primarily for tests."""
+    """Drop every piece of per-process rally state. Primarily for tests.
+
+    Three independent caches survive across tests in one pytest process: this
+    module's envelope cache, ``kind_capability._CACHE``, and the
+    ``_MIGRATED_THIS_PROCESS`` once-per-process migration guard below. Clearing
+    only the first left a test that called clear_cache() still holding the other
+    two, so a write whose store digest a previous test had already "migrated"
+    was silently skipped and the expected file never appeared.
+
+    One reset call that misses two of three caches is worse than no reset call,
+    because it reads at the call site as though isolation were handled.
+    """
     _CACHE.clear()
+    _MIGRATED_THIS_PROCESS.clear()
+    try:
+        from . import kind_capability
+    except ImportError:  # pragma: no cover — flat-module import fallback
+        try:
+            import kind_capability  # type: ignore[no-redef]
+        except ImportError:
+            kind_capability = None  # type: ignore[assignment]
+    if kind_capability is not None:
+        kind_capability.clear_cache()
 
 
 # Once-per-process guard so the seam does not re-shell on every coordination
 # write for the same exact fallback contents. migrate-legacy is itself
 # idempotent (event_id dedup), so this is an efficiency layer, not correctness.
 # Keys include the store digest; appending a fact creates a new sync attempt.
-_MIGRATED_THIS_PROCESS: set[str] = set()
-_MIGRATED_THIS_PROCESS_MAX_ENTRIES = 256
 
 
 def _remember_migrated(store_key: str) -> None:
