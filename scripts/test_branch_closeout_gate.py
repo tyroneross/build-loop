@@ -26,6 +26,13 @@ def _use_local_coordination_backend(
 ):
     """These assertions exercise the Build Loop-local fallback contract."""
     monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    # BUILD_LOOP_APPS_ROOT takes PRECEDENCE over AGENT_RALLY_APPS_ROOT in
+    # channel_paths._apps_root(), so setting only the legacy var leaves this
+    # fixture's isolation at the mercy of the ambient environment. CI exports
+    # BUILD_LOOP_APPS_ROOT globally (pytest.yml), which made every test in this
+    # file share one apps root: the first `channel.mkdir(parents=True)` won and
+    # the rest died on FileExistsError. Set both, highest-precedence first.
+    monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(tmp_path / "apps"))
     monkeypatch.setenv("AGENT_RALLY_APPS_ROOT", str(tmp_path / "apps"))
     discovery_bridge.clear_cache()
     yield
