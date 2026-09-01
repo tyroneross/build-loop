@@ -1584,16 +1584,26 @@ def emit_read_telemetry(
             # duplicate it as a second context_bootstrap read row.
             return str(locator["telemetry_correlation_id"])
 
+        # Ids AND paths, kept index-aligned. The path is the join key: a
+        # tool-trace span records the file a later Read opened, and carries no
+        # memory id, so a read row without paths can never be matched to it.
+        # `source_path` is already on the lesson; it was simply never passed.
         ids: list[str] = []
+        paths: list[str] = []
         for lesson in packet.get("lessons_progressive") or []:
             if not isinstance(lesson, dict):
                 continue
-            mid = lesson.get("source_path") or lesson.get("name")
-            if mid:
-                ids.append(str(mid))
-        # De-dup, preserve order.
+            source_path = lesson.get("source_path")
+            mid = source_path or lesson.get("name")
+            if not mid:
+                continue
+            ids.append(str(mid))
+            paths.append(str(source_path) if source_path else "")
+        # De-dup on id, preserving order AND the id/path alignment.
         seen: set[str] = set()
-        ids = [i for i in ids if not (i in seen or seen.add(i))]
+        keep = [i for i, mid in enumerate(ids) if not (mid in seen or seen.add(mid))]
+        ids = [ids[i] for i in keep]
+        paths = [paths[i] for i in keep]
         if not ids:
             return None
         # Do not CREATE the store: skip when the canonical root is absent, unless
@@ -1610,6 +1620,7 @@ def emit_read_telemetry(
             reader="context_bootstrap",
             query=str(packet.get("query") or ""),
             memory_ids_seen=ids,
+            returned_paths=[p for p in paths if p],
             reason="lessons surfaced into Phase-1 packet",
             telemetry_path=telemetry_path,
         )
@@ -1746,7 +1757,10 @@ def build_packet(
     packet["agent_brief"] = agent_brief(packet)
 
     # FIX-3: record a memory-read telemetry event for the surfaced lessons.
-    emit_read_telemetry(packet)
+    # Keep the correlation id ON the packet. It was generated and thrown away,
+    # so a consumer that later acted on these lessons had no id to join back to
+    # — the receipt existed and was unreachable.
+    packet["telemetry_correlation_id"] = emit_read_telemetry(packet)
 
     # f1 — deterministic prior-art delivery: write the digest into intent.md by
     # CODE so Phase 1 always has it, not just via the advisory brief pointer.

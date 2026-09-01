@@ -65,6 +65,11 @@ def read_backlog(
             if not _q_match(searchable, query):
                 continue
             row = {
+                # Every other backend stamps its lane here, and the merge layer
+                # plus every consumer reads it. Omitting it made backlog rows the
+                # only ones arriving with `_kind` None, which is a silent
+                # attribution hole rather than a crash.
+                "_kind": "backlog",
                 "id": iid,
                 "title": item.get("title"),
                 "status": item.get("status"),

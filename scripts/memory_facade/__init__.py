@@ -328,6 +328,12 @@ def recall(
         "kind_filter": kind,
         "project": project,
         "results_by_kind": results,
+        # NOT truncated in practice, and deliberately kept: each backend already
+        # caps its own return at `limit` and there are len(KINDS) backends, so
+        # this bound always equals the maximum possible length. Verified at
+        # limits 5/10/30 -> totals 14/24/64 against caps 35/70/210. It reads
+        # like a second safety limit and is a no-op; it stays only as the
+        # backstop for a future backend that ignores `limit`.
         "merged": merged[: limit * len(KINDS)],
         "reasons": reasons,
         "telemetry_correlation_id": _emit_telemetry(merged, query, project, workdir),

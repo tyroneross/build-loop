@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "8c96a036758efe3fab02321d6ce323a5baa3e84d26cd6f8445710da619c8b2af"
+    "content_sha256": "2db161515bb1193a15cc1b1fe86b13b27baf429b038b532007fe3726fb8e897a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1717,6 +1717,7 @@
       "scripts/memory_receipt_report.py": "memory_receipt_report.py — is the memory receipt safe to enforce yet?",
       "scripts/memory_reconcile.py": "Join memory retrievals to the file opens that followed them.",
       "scripts/memory_staleness_check.py": "",
+      "scripts/memory_store_stats.py": "One re-runnable command for every headline figure about the memory store.",
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
       "scripts/memory_update_ledger.py": "Global append-only update ledger for build-loop memory.",
       "scripts/memory_writer.py": "Canonical writer for build-loop-memory files with provenance frontmatter.",
