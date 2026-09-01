@@ -115,7 +115,9 @@ class MemoryEffectTest(unittest.TestCase):
         self.assertEqual(len(uses), 1)
         self.assertEqual(uses[0]["correlation_id"], "mt-aaa")
         self.assertEqual(uses[0]["memory_ids_used"], [MEM_ID])
-        self.assertEqual(uses[0]["effect"], "informed_decision")
+        self.assertIsNone(uses[0]["effect"],
+                          "a citation proves REFERENCED, not that it informed the "
+                          "decision; asserting an effect here would overclaim")
         self.assertIn(sha[:12], uses[0]["reason"])
 
     def test_unreferenced_memory_emits_nothing_and_is_never_labelled_ignored(self):

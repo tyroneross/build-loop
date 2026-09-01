@@ -276,7 +276,14 @@ def analyze_commit(repo: Path, store: Path, sha: str, *, emit: bool,
                 correlation_id=cid,
                 memory_ids_used=hits,
                 files_read=[],
-                effect="informed_decision",
+                # NO effect label. A literal citation proves the memory was
+                # REFERENCED; it does not prove it informed the decision. The
+                # effect vocabulary has no "referenced" value, and picking the
+                # nearest one ("informed_decision") asserts a causal claim the
+                # evidence cannot carry -- the same overclaim this module
+                # already refuses to make in the negative direction by never
+                # emitting "ignored". Effect stays for a human or a judge.
+                effect=None,
                 reason=f"referenced in commit {sha[:12]}",
                 telemetry_path=telemetry_path,
                 source=source,
