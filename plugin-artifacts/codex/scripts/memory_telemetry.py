@@ -169,6 +169,10 @@ def emit_read(
     returned_paths: list[str] | None = None,
     latency_ms: float | None = None,
     zero_result: bool | None = None,
+    ranks: list[int] | None = None,
+    scores: list[float | None] | None = None,
+    shown_count: int | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Emit a `memory-read` row. Returns a correlation_id for follow-up effect rows.
 
@@ -203,6 +207,26 @@ def emit_read(
         "latency_ms": latency_ms,
         "zero_result": bool(zero_result) if zero_result is not None else not memory_ids_seen,
     }
+    # Exposure record for propensity. `ranks[i]` is the position that
+    # `memory_ids_seen[i]` was shown at, `scores[i]` its relevance score, and
+    # `shown_count` how many candidates the caller received.
+    #
+    # These exist so a later `memory-use` row can be DEBIASED. Lower-ranked
+    # items are examined less regardless of their relevance, so "this memory was
+    # opened" is not equal evidence at rank 0 and rank 40; treating it as equal
+    # builds a rich-get-richer loop where the ranker learns to promote whatever
+    # it already promoted. Propensity cannot be reconstructed after the fact,
+    # so it is captured at surface time or not at all.
+    if ranks is not None:
+        row["ranks"] = list(ranks)
+    if scores is not None:
+        row["scores"] = list(scores)
+    if shown_count is not None:
+        row["shown_count"] = int(shown_count)
+    # Attribution. The store is shared and several agents run concurrently, so a
+    # join on time alone credits one session's activity to another session's read.
+    if session_id is not None:
+        row["session_id"] = str(session_id)
     _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
     return cid
 

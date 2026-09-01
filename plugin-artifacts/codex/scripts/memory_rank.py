@@ -209,7 +209,20 @@ def rank(rows: Iterable[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     ]
     # Sort key: relevance, then recency, then original order for full determinism.
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
-    return [r for _s, _ts, _i, r in scored]
+    # Attach the score and final rank to each row. The score is computed here
+    # regardless; discarding it made the exposure unreconstructable downstream.
+    # Propensity CANNOT be recovered after the fact -- once a use-signal exists,
+    # "this memory was opened" is uninterpretable without knowing the rank it
+    # was shown at, because lower-ranked items are examined less regardless of
+    # their relevance. Logging rank at surface time is the only moment this is
+    # cheap. Underscore-prefixed so it travels with the row without colliding
+    # with any backend's own fields.
+    ordered = []
+    for position, (score, _ts, _i, row) in enumerate(scored):
+        row["_rank_score"] = round(float(score), 6)
+        row["_rank"] = position
+        ordered.append(row)
+    return ordered
 
 
 def explain(row: Dict[str, Any], query: str,

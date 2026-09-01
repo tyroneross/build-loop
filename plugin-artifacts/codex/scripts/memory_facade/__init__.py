@@ -151,11 +151,23 @@ def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
         except ImportError:
             import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
         seen_ids = [r.get("id") or r.get("slug") or r.get("path") or "" for r in merged]
+        kept = [(i, r) for i, r in enumerate(merged)
+                if (r.get("id") or r.get("slug") or r.get("path"))]
+        # Exposure record. Position bias means a later use-signal ("this memory
+        # was opened") is uninterpretable without knowing WHERE it was shown --
+        # top-ranked items are examined more regardless of relevance, so naive
+        # feedback builds a rich-get-richer loop. Propensity cannot be
+        # reconstructed after the fact, so rank and score are captured here or
+        # never. Both are free: the list is already ordered, and memory_rank
+        # computes the score anyway.
         return _mt.emit_read(
             phase="unknown",
             reader="memory_facade.recall",
             query=query,
             memory_ids_seen=[s for s in seen_ids if s],
+            ranks=[i for i, _r in kept],
+            scores=[_r.get("_rank_score") for _i, _r in kept],
+            shown_count=len(merged),
             effect=None,
             reason="",
         )

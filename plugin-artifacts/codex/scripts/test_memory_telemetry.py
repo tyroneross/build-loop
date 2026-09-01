@@ -375,3 +375,41 @@ class RowShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ExposureFieldTests(unittest.TestCase):
+    """emit_read must persist the exposure record when given one, and stay
+    backward-compatible when not."""
+
+    def _emit(self, path, **kw):
+        return mt.emit_read(phase="p", reader="r", query="q",
+                            memory_ids_seen=["a-long-id-1", "a-long-id-2"],
+                            telemetry_path=path, source="test", **kw)
+
+    def test_exposure_fields_persisted(self):
+        import tempfile, json as _json
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as d:
+            p = _P(d) / "t.jsonl"
+            self._emit(p, ranks=[0, 1], scores=[0.9, 0.4], shown_count=2,
+                       session_id="sess-abc")
+            row = _json.loads(p.read_text().strip())
+            self.assertEqual(row["ranks"], [0, 1])
+            self.assertEqual(row["scores"], [0.9, 0.4])
+            self.assertEqual(row["shown_count"], 2)
+            self.assertEqual(row["session_id"], "sess-abc")
+
+    def test_absent_when_not_supplied(self):
+        """Backward compatibility: old callers must not gain empty fields."""
+        import tempfile, json as _json
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as d:
+            p = _P(d) / "t.jsonl"
+            self._emit(p)
+            row = _json.loads(p.read_text().strip())
+            for k in ("ranks", "scores", "shown_count", "session_id"):
+                self.assertNotIn(k, row)
+
+
+if __name__ == "__main__":
+    unittest.main()

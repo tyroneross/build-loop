@@ -154,6 +154,39 @@ class ExplainTest(unittest.TestCase):
         self.assertAlmostEqual(e["coverage"], 2 / 3, places=3)
 
 
+class ExposureTest(unittest.TestCase):
+    """rank() must expose the score and position it already computes.
+
+    Propensity cannot be reconstructed after the fact: once a use-signal exists,
+    "this memory was opened" means different things at rank 0 and rank 40.
+    """
+
+    def test_rank_attaches_score_and_position(self):
+        rows = [row(rid="a", title="ledger migration", ts=1),
+                row(rid="b", title="unrelated", ts=5)]
+        out = mr.rank(rows, "ledger migration")
+        self.assertEqual([r["_rank"] for r in out], [0, 1])
+        self.assertTrue(all("_rank_score" in r for r in out))
+
+    def test_scores_are_descending_and_match_order(self):
+        rows = [row(rid=f"r{i}", title=t, ts=1) for i, t in enumerate(
+            ["ledger migration reconciliation", "ledger migration", "ledger", "nothing"])]
+        out = mr.rank(rows, "ledger migration reconciliation")
+        scores = [r["_rank_score"] for r in out]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_rank_is_position_in_returned_order(self):
+        rows = [row(rid=f"r{i}", title="ledger", ts=i) for i in range(5)]
+        out = mr.rank(rows, "ledger")
+        self.assertEqual([r["_rank"] for r in out], list(range(5)))
+
+    def test_zero_match_row_still_carries_exposure(self):
+        """A row that matched nothing was still SHOWN; it needs a rank."""
+        out = mr.rank([row(rid="miss", title="nothing here", ts=1)], "ledger")
+        self.assertEqual(out[0]["_rank"], 0)
+        self.assertEqual(out[0]["_rank_score"], 0.0)
+
+
 class WiringTest(unittest.TestCase):
     """Both merge sites must rank by relevance and both must stay reversible."""
 
