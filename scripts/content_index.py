@@ -95,10 +95,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 def _indexable(path: Path, store: Path) -> bool:
     try:
-        relative = path.relative_to(store)
-    except ValueError:
+        resolved = path.resolve(strict=True)
+        relative = resolved.relative_to(store.resolve())
+    except (OSError, ValueError):
         return False
-    return path.suffix.lower() == ".md" and not any(part in _SKIP_PARTS for part in relative.parts)
+    return resolved.suffix.lower() == ".md" and not any(part in _SKIP_PARTS for part in relative.parts)
 
 
 def _markdown_files(store: Path) -> Iterator[Path]:

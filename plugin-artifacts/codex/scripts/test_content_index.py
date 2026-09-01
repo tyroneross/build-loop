@@ -203,6 +203,18 @@ class ContentIndexTests(unittest.TestCase):
         self.assertEqual(self.search("forbiddennodeword"), [])
         self.assertEqual([row["id"] for row in self.search("includedword")], ["included"])
 
+    def test_external_markdown_symlink_is_not_indexed(self) -> None:
+        outside = Path(self.tempdir.name) / "outside.md"
+        outside.write_text("externalsymlinkword", encoding="utf-8")
+        link = self.store / "linked.md"
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"symlinks unavailable: {exc}")
+
+        self.assertEqual(self.build()["total_docs"], 0)
+        self.assertEqual(self.search("externalsymlinkword"), [])
+
     def test_hyphen_quotes_and_operators_are_safe_terms(self) -> None:
         self.write("hyphen.md", "decision project build loop thing quote marker plain operator sentinel")
         self.build()
