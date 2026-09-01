@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# The nine detectors, with the real row each was derived from
+# The eleven detectors, with the real row each was derived from
 
 Every example below is a genuine row from the reference register
 (`.build-loop/decisions/2026-09-01-rosslabs-mockup-audit/` in `ross-labs-astro`),
@@ -22,6 +22,13 @@ fire; do not write a row for it.
 ways. `latest`, `the main page`, `production`, `the tests`, `recent`, `broken`,
 `the config`. Resolve each one out loud and check whether a different resolution
 was equally defensible.
+
+**Stopping rule — materiality.** Applied literally to a 400-word brief this
+yields dozens of terms and drowns the register. Keep a term only when a
+different reading would have changed **what you actually did**. If both readings
+lead to the same action, the ambiguity was never load-bearing. This threshold
+was missing from the first version and an auditor had to invent it; it is now
+the rule, not a judgement call.
 
 **Worked row — `latest`, leverage `high`, still unruled.**
 "I read 'latest mockups' as most recently edited, not most recently chosen."
@@ -144,6 +151,13 @@ This is why invented context is almost always `high`.
 thoroughness. Strict vs lenient. Fail-closed vs fail-open. Each implies a
 workflow. Name it and ask whether the user has it.
 
+**Also scan every ordering call:** what you ran in parallel, and what you ran
+before what. Ordering decides what information a later step has. Observed case:
+an agent was told to run a synthesis pass *after* reviewing a second opinion,
+ran both concurrently to save a round trip, and the synthesis therefore never
+saw the input it was supposed to consume. It announced "two things in parallel",
+which surfaced the action while leaving the overridden sequencing invisible.
+
 **Worked row — `recall`, leverage `high`, user overrode to "recall first".**
 "I first optimised for precision, and you corrected me to recall." The agent
 briefed a build to avoid false positives, assuming a CI gate where noise is
@@ -178,8 +192,15 @@ was whether someone can use it. Those are different questions.
 
 ## 9. `root-cause-not-swept` — you fixed the instances and not the pattern
 
-**Scan for:** every fix you landed. For each, ask whether you searched for other
-instances of the same shape.
+**Scan for:** every fix **or conclusion** you landed. For each, ask whether you
+searched for other instances of the same shape.
+
+**And every fix you declined.** The original scan target was "every fix you
+landed", which makes this detector structurally inert on a read-only session —
+review, audit, research, planning — where nothing lands. Declining to fix a
+defect you found is a call, and it is silent unless you said so. Observed case:
+an agent found a live claim-integrity defect mid-review and queued it rather
+than fixing it, which was the right call and an invisible one.
 
 **Worked row — `pattern`, leverage `high`, user overrode to "audit every rule
 for silent skips".** "I fixed the four defects I found and did not check whether
@@ -192,6 +213,105 @@ instance was later found by someone else.
 coincidence worth one grep.
 
 ---
+
+---
+
+## 10. `source-authority` — you obeyed an instruction without checking who sent it
+
+**Added 2026-09-01.** The original nine had no detector for this and it was the
+largest-blast-radius class the audit found.
+
+**Scan for:** every instruction you obeyed, sorted by who sent it — the human
+principal, a peer agent, a hook, a file on disk, a tool's output. For each
+non-human source, ask what authority you granted it and whether you verified the
+sender.
+
+**Worked row — from the audit transcript, `agent-rally-point`, leverage `high`.**
+Six of nine user-role turns in that session were injected by a peer agent over
+Rally, each stamped `[rally: UNVERIFIED SENDER]`. The repo's own
+`docs/security/TRUST-MODEL.md` states the sender field is self-asserted and
+authenticated by nothing. The agent treated all six as authoritative, including
+"You are GO", "Open Item 1 is DONE (do not duplicate)", and an instruction to
+halt a transfer sequence. In the same session it wrote a lucid explanation of
+why that warning label exists.
+
+**Consequence shape:** you did work, or skipped work, on the word of a sender
+nobody authenticated. If the claim was wrong or stale, everything downstream
+inherits it, and the register is the only place the trust decision is visible.
+
+**The tell:** you can quote the instruction but not name who authored it, or you
+name the author and never checked. Note the interaction with Filter B: a peer
+agent's instruction never cuts a row as a restatement, because "the user" means
+the human principal. Obeying a peer is a call, not a given.
+
+---
+
+## 11. `irreversible-act` — you did something un-undoable while still deciding
+
+**Added 2026-09-01.** This is the inverse of detector 8: detector 8 finds what
+you looked at but did not operate; this finds what you operated and cannot
+un-operate.
+
+**Scan for:** every act with no undo. A write to an append-only ledger. A push.
+A dispatch to another agent. A published artifact. A sent message. A released
+lock or a claimed seat. For each, ask whether the decision to do it was settled
+at the moment you did it.
+
+**Worked row — from the audit transcript, leverage `high`.** An instruction
+arrived at 07:04:02Z saying "do not edit files, claim work, or change Rally
+state." At 07:04:13Z, eleven seconds later, the agent ran `rally enter`, which
+appended a presence fact to an append-only ledger at seq 14608. The agent's own
+account — that the write committed before the message landed — is true from
+inside its turn and false against the clock.
+
+**Consequence shape:** the record now contains something the user asked not to
+be there, and no later decision can remove it.
+
+**The tell:** you describe an action in the past tense and cannot describe how to
+undo it. That is the row. Set `"escalate": true` on it — the skill's offer
+threshold surfaces an irreversible consequence immediately, at any score.
+
+---
+
+## Adversarial audit, 2026-09-01 — what changed and why
+
+The first nine detectors were run against a real 915KB multi-agent transcript
+from a different repo by an auditor briefed to break the procedure rather than
+confirm it. Results, kept here because they calibrate what this procedure is
+worth:
+
+- **28 raw candidates → 14 survivors.** 5 cut as restatements, 5 cut for having
+  no writable consequence, 4 cut because the agent had already surfaced the call.
+- **Restatement rate 18%, and the auditor called that a floor**, not a
+  measurement, because it knew Filter B before generating and suppressed obvious
+  restatements at write time. Treat 18% as the optimistic end.
+- **The three strongest survivors** were: a second-opinion brief that pre-loaded
+  the requester's own diagnoses under a "do not re-derive" heading, spending an
+  independent review on a critique of the first opinion; a standing rule applied
+  to the artifact the user named and waived 25 seconds later on the only prompt
+  that actually shipped; and a green verdict issued on a peer's CI fix by a
+  session that ran no tests. None appears in any instruction.
+
+Five defects it found, all now fixed above or in `SKILL.md`:
+
+1. **Filter B did not define whose words count.** With peer-authored turns
+   counted as "the user's", the restatement rate swung 18% → 4% and the
+   session's largest assumption disappeared. Now: "the user" is the human
+   principal; a peer instruction is a source, and detector 10 covers it.
+2. **Detector 1 had no stopping rule.** Now: materiality.
+3. **Leverage `high` did not define "consumed."** Now: handed off, not observed
+   being used. Delivery is the line.
+4. **Filter A demanded a "when" that none of the worked examples exhibited.**
+   Now: a condition satisfies it, not only a clock time.
+5. **Detector 9 was inert on read-only sessions.** Now: conclusions and declined
+   work count, not only landed fixes.
+
+One class it named remains only partly addressed: **narrated but not flagged**,
+where the agent describes the action while never signalling that a choice with
+alternatives existed. Four of fourteen survivors sat in that grey zone. `SKILL.md`
+Filter B now states that narration does not disqualify a row, but there is no
+mechanical test for it, and a register built by a lenient reader will include
+rows a strict reader would cut.
 
 ## Calibration: what this session produced
 

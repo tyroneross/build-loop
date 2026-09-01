@@ -679,7 +679,7 @@ meant, which viewports counted, who the audience was, whether to optimise for
 precision or recall. Each is defensible; none was surfaced. The user finds out
 only when a result is wrong, and then cannot tell which call caused it.
 
-The full procedure — the nine detectors and the two filters — is
+The full procedure — the eleven detectors and the two filters — is
 `skills/silent-assumptions/SKILL.md`, with worked examples in
 `skills/silent-assumptions/references/elicitation-detectors.md`. Both are plain
 markdown with no host-specific syntax, so Codex, Claude Code, and Cursor read the
@@ -703,7 +703,7 @@ mkdir -p "$DIR"
 
 python3 "$BL/scripts/assumption_register.py" new \
   --slug <slug> --title "<title>" --repo "$PWD" -o "$DIR/register.json"
-# … replace the example row with real rows elicited by the nine detectors …
+# … replace the example row with real rows elicited by the eleven detectors …
 
 python3 "$BL/scripts/assumption_register.py" check "$DIR/register.json"           # exit 1 on any error
 python3 "$BL/scripts/assumption_register.py" build "$DIR/register.json" --check   # render + lint

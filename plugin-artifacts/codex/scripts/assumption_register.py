@@ -43,7 +43,8 @@ SCHEMA = "build-loop.assumption-register/v1"
 
 LEVERAGE = ("high", "med", "low")
 
-# The nine detector classes from references/elicitation-triggers.md. Recorded on
+# The eleven detector classes from
+# skills/silent-assumptions/references/elicitation-detectors.md. Recorded on
 # each row so a later pass can audit which detectors ever fire — a class that
 # never fires across many registers is either dead or being skipped.
 TRIGGER_CLASSES = (
@@ -53,9 +54,15 @@ TRIGGER_CLASSES = (
     "tool-output-as-truth",
     "number-wrong-basis",
     "invented-context",
-    "assumed-workflow",
+    "assumed-workflow",      # incl. execution ORDER, not just optimisation target
     "static-for-dynamic",
     "root-cause-not-swept",
+    # Added 2026-09-01 after an adversarial audit of the first nine against a
+    # real multi-agent transcript found two classes with large blast radius that
+    # none of them located. Both are documented in
+    # skills/silent-assumptions/references/elicitation-detectors.md.
+    "source-authority",      # took an instruction as authoritative without checking who sent it
+    "irreversible-act",      # did something un-undoable while still deciding
     "other",
 )
 
@@ -326,10 +333,21 @@ def promote_args(reg: dict[str, Any], row: dict[str, Any], reg_path: str) -> lis
         "--alternatives", alts,
         "--consequences", str(row.get("consequence") or ""),
         "--notes", " · ".join(notes),
-        "--tags", f"process,silent-assumption,leverage-{row.get('leverage')},"
-                  f"{row.get('trigger_class')}",
+        # `process` is a real taxonomy tag. The subtype tags are NOT in the
+        # taxonomy, and the writer's own extension mechanism for that is the
+        # `proposed:` prefix — use it rather than widening the taxonomy, so a
+        # silent assumption stays a decision with a subtype and the shared
+        # vocabulary keeps one owner.
+        "--tags", ",".join([
+            "process",
+            "proposed:silent-assumption",
+            f"proposed:leverage-{row.get('leverage')}",
+            f"proposed:{row.get('trigger_class')}",
+        ]),
         "--primary-tag", "process",
-        "--entity", str(row.get("area") or "silent-assumptions"),
+        # One row = one decision. Keying dedup on the AREA collapsed 20 distinct
+        # calls into ~5 topics and the writer correctly refused the duplicates.
+        "--entity", f"silent-assumption:{row.get('id')}",
         "--confidence", confidence,
         "--status", status,
         "--source", "orchestrator",
