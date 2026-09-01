@@ -383,6 +383,22 @@ def _label(r: dict[str, Any]) -> str:
     return f"{str(r.get('leverage', '')).upper()} · {r.get('title', '')}"
 
 
+# A ruled row has had its say; leaving it interleaved with open ones buries the
+# calls that still need the user. dashboard_build renders groups in
+# FIRST-ENCOUNTER order (see its `order.push(k)`), so sorting the entities is
+# what puts the open sections above the ruled one.
+RULED_SECTION = "Ruled · already answered"
+_LEV_ORDER = {"high": 0, "med": 1, "medium": 1, "low": 2}
+
+
+def _section_sort_key(e: dict[str, Any]) -> tuple[int, int, str]:
+    return (
+        1 if e.get("reviewed") else 0,
+        _LEV_ORDER.get(str(e.get("leverage") or "").lower(), 3),
+        str(e.get("entity_id") or ""),
+    )
+
+
 def to_dashboard_data(reg: dict[str, Any]) -> dict[str, Any]:
     ents = []
     for r in reg.get("rows") or []:
@@ -405,10 +421,14 @@ def to_dashboard_data(reg: dict[str, Any]) -> dict[str, Any]:
         else:
             your = "not reviewed"
 
+        area = r.get("area", "(ungrouped)")
         ents.append({
             "entity_id": r["id"],
             "label": _label(r),
-            "area": r.get("area", "(ungrouped)"),
+            "area": area,
+            # Open rows keep their area so related calls read together; ruled
+            # rows collapse into one trailing section.
+            "section": RULED_SECTION if reviewed else f"Open · {area}",
             "reviewed": reviewed,
             # Priority = high leverage AND still unreviewed. This is the number
             # the summary strip must lead with.
@@ -424,6 +444,8 @@ def to_dashboard_data(reg: dict[str, Any]) -> dict[str, Any]:
             "your_call": your,
             "note": str(dec.get("note") or ""),
         })
+
+    ents.sort(key=_section_sort_key)
 
     body = json.dumps(ents, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return {
@@ -458,7 +480,10 @@ def to_dashboard_spec(reg: dict[str, Any]) -> dict[str, Any]:
         "status": {"field": "reviewed", "true": "Ruled", "false": "Not ruled"},
         "detail": ["leverage", "what_i_did", "why_and_cost", "consequence",
                    "evidence", "options", "my_call", "your_call", "note"],
-        "group": {"by": "area", "label": "Area"},
+        # Split open from ruled. Ruled rows collapse into one trailing section
+        # so the calls still awaiting a ruling are not buried among answered
+        # ones — on a mature register most rows are ruled.
+        "group": {"by": "section", "label": "Section"},
         # DB402: the runtime "as of" lands in the provenance strip via JS, which a
         # static lint cannot see. Repeating the date here is what makes a stale
         # snapshot legible without opening the file's mtime.
