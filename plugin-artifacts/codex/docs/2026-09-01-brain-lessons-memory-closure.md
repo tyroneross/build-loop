@@ -87,23 +87,40 @@ closure rate      : 0.0000%
 ```
 
 Split by tier: the clean tier (2026-08-21 onward) has 312 reads at a 73.7%
-return rate; the legacy tier has 40,843 reads at 11.4%. Something got
-substantially better around 2026-08-21, which is itself worth knowing, and
-neither tier has a single outcome label.
+return rate; the legacy tier has 40,843 reads at 11.4%.
 
-**This is a wiring gap, not a design gap.** `scripts/memory_telemetry.py`
-documents the contract ("`effect: null` and a follow-up `memory-effect` row once
-outcome is known, joining via `correlation_id`"), `scripts/memory_effect.py`
-exists, and `scripts/memory_health.py` already reports
-`reads_with_used / reads_with_effect`. A named search for callers found only
-`memory_health.py` itself and `test_memory_effect.py`. Nothing in production
-emits the outcome half.
+**Do not read that difference as improvement.** An earlier version of this
+section did. `.build-loop/intent.md` states the actual reason: "40,843 of 41,128
+rows are legacy fixtures and blending them measures the test suite." The legacy
+tier's 11.4% is a property of test data, not of the system, which is exactly why
+the health script splits tiers and why any rate quoted from the blended number
+would be meaningless. Neither tier has a single outcome label.
 
-**Consequence.** Without it, no recall can be scored, so nothing can be promoted,
-demoted, or retired on evidence. A memory that is never read and a memory that is
-read and useless are indistinguishable, which means the store can only grow. That
-also makes the 11.4% legacy return rate uninterpretable: it is not knowable
-whether the 88.6% that returned nothing were bad queries or missing content.
+**Corrected 2026-09-01, after reading `.build-loop/intent.md`.** An earlier
+version of this section said "nothing in production emits the outcome half".
+That overstates the gap. The active intent records that **the join is already
+proven end-to-end**; what it does not yet do is fire on ordinary work, only on
+retrievals a human triggers by hand. So the remaining gap is automatic emission
+during normal runs, which is narrower and further along than a cold wiring gap.
+
+The pieces: `scripts/memory_telemetry.py` documents the contract ("`effect: null`
+and a follow-up `memory-effect` row once outcome is known, joining via
+`correlation_id`"), `scripts/memory_effect.py` exists, and
+`scripts/memory_health.py` reports `reads_with_used / reads_with_effect`. A
+named search for callers found only `memory_health.py` and
+`test_memory_effect.py`, which is consistent with a join that exists and is
+exercised by hand rather than by the agent loop.
+
+**Consequence.** Until the signal is produced by ordinary work, no recall can be
+scored, so nothing can be promoted, demoted, or retired on evidence. A memory
+that is never read and a memory that is read and useless stay
+indistinguishable, and the store (about 22,000 files, per the intent) can only
+grow.
+
+**An invariant worth carrying into any work here**, taken from the same intent
+file: "An open proves INSPECTED, never HELPED. Never set `effect` on a use row."
+Conflating the two would manufacture a usefulness signal out of mere retrieval,
+which is worse than having none.
 
 ## Boundaries to keep
 
@@ -117,6 +134,16 @@ an unvetted model output cannot steer a later model merely by having been
 persisted. Closing the read-to-effect loop must not weaken that.
 
 ## In flight, checked 2026-09-01
+
+**This work is already in flight and further along than the measurement alone
+suggests.** `.build-loop/intent.md` and `.build-loop/goal.md` in build-loop
+target exactly this: "Emit memory-use rows from real agent activity with no
+manual seeding", across four MECE chunks (context_bootstrap join, caller audit,
+`memory_store_stats.py`, two small defects) with six acceptance criteria
+including mutation-testing every changed suite. Recent commit `ddb2dad8` ("Keep
+the correlation id, stamp the backlog lane, and make every figure re-runnable")
+is that work landing. Nothing in this document should be read as proposing a new
+effort.
 
 Rally shows one handoff (ACKed) and five artifacts, of which four are this
 session's own commits. Unmerged branches touching this area:
