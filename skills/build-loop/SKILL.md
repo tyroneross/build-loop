@@ -115,6 +115,17 @@ python3 scripts/waivers.py check --repo "$PWD" --rule <id> --path <file> [--anch
 python3 scripts/waivers.py new   --repo "$PWD" --rule <id> --path <file> --rationale "..." --authority "user|agent:<name>|decision:<path>" --expires "<date|version|until-file-changes>"
 ```
 
+**Before filing a finding that a value is factually WRONG about the world, search (C-CLAIMS/search_before_contradicting_code).**
+Company and product names, rebrands, acquisitions, model IDs, versions, pricing, API
+signatures, deprecations, legal names: all of these change after a model's cutoff, so
+disagreeing with one is a prompt to search, never a finding on its own. Two tells that
+the code is right and the model is stale: the value sits among siblings that are plainly
+correct, or a migration/repair script/test already treats the other value as legacy. A
+search costs seconds; a wrong correction to a world-fact ships a regression and fights
+whatever migration already encodes the new value. Walk the tree in
+`references/research-trigger-policy.md` §"Encounter Trigger" — it fires in ANY phase,
+including runs whose goal carries no research signal, which is exactly when this misses.
+
 An agent's own unrecorded "out of scope" or "not mine" is not a waiver, and a user's spoken waiver counts only once written. Every waiver names its expiry; absent one it defaults to re-surfacing the next time its covered file changes. Phase 4G carries the `## Findings disposition` table — one row per finding, its state, and the record it points at.
 
 ### Follow-up auto-drain at chunk boundary

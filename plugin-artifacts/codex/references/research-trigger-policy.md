@@ -39,6 +39,82 @@ signals:
 No trigger means no Research plugin run by default. A large T-shirt size alone
 does not make a local mechanical edit research-worthy.
 
+## Encounter Trigger: a world-fact in the code contradicts what I know
+
+Everything above is TASK-shaped. It fires in Phase 1 from the goal text. This one is
+ENCOUNTER-shaped and fires in any phase, including a run whose goal carries no
+research signal at all.
+
+It exists because a UI-only run on 2026-09-01 read
+`CANONICAL_VENDOR_NAMES.set('xai', 'SpaceXAI')`, judged it a typo from parametric
+memory, and filed a finding. The code was right: SpaceX absorbed xAI in Feb 2026 and
+the entity rebranded to SpaceXAI on 2026-07-06, after the model's cutoff. The fix
+would have reverted a company to its legacy name and fought the repair script that
+migrates away from it.
+
+**The asymmetry.** A search costs seconds. A wrong correction to a world-fact ships a
+regression, and where a migration already encodes the new value it fights that
+migration on every later run. Never trade the second for the regression.
+
+### The tree
+
+```
+1. Am I about to claim that a value in existing code, data, config, or a fixture
+   is factually WRONG about the world?
+   NO  -> stop. No gate. Almost every read exits here.
+   YES -> 2
+
+2. Is the value in a cutoff-sensitive category?
+   company/brand/product name, rebrand, acquisition, org structure, model ID,
+   version number, pricing, API or method signature, deprecation,
+   legal or regulatory name
+   NO  -> normal review. Judge it on the code.
+   YES -> 3. SEARCH BEFORE YOU ASSERT.
+
+3. Two tells that the code is right and I am stale. Either one raises the bar:
+   a. The value sits among siblings that are plainly correct
+      -> it is likely the same KIND of rule, not the one outlier.
+   b. A migration, repair script, test, or alias map already treats the other
+      value as legacy
+      -> someone reasoned about this deliberately. Go read that reasoning.
+
+4. Search, then branch on the result:
+   CODE WRONG   -> file the finding WITH its source and date.
+   CODE RIGHT   -> do not change it. Add a dated comment saying why it looks
+                   wrong. Retract the finding if one was already filed.
+   INCONCLUSIVE -> do not change it. Report it unverified and name what would
+                   settle it.
+```
+
+### The social case
+
+A user agreeing with a premise I supplied is not confirmation of that premise. When I
+sourced the claim, correcting the record outranks executing the request: say I was
+wrong, cite the source, and do not make the change. An approved fix built on my own
+bad information is still my error, not the user's decision.
+
+### Required action when the code was right
+
+The value looked wrong once and will look wrong again to the next reader whose
+knowledge predates the change. Leave the reason behind, dated:
+
+```
+// <current name>, not <legacy name>: <what changed and when>.
+// Verified <YYYY-MM-DD>. Do not "correct" this back; that is the legacy name,
+// and <path to migration> migrates away from it.
+```
+
+Then capture it so the next run does not re-search the same question:
+
+```bash
+python3 scripts/reference_capture.py capture \
+  --workdir "$PWD" --run-id "$RUN_ID" \
+  --topic "<entity> naming" \
+  --findings "<current name> since <date>; <legacy name> is the legacy name" \
+  --source "<url>|T1" \
+  --decision "kept the existing constant; added a dated comment" --json
+```
+
 ## Source tiering & claim verification
 
 When a packet makes external claims, the host LLM tiers its sources and grades
