@@ -7,6 +7,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -405,14 +406,27 @@ def test_html_has_semantic_controls_autosave_and_progressive_disclosure_contract
 
 @pytest.mark.skipif(shutil.which("ibr") is None, reason="IBR CLI is not installed")
 def test_browser_preserves_navigation_and_disclosure_state_across_refreshes(live_server: str) -> None:
-    started = subprocess.run(
+    output = tempfile.TemporaryFile(mode="w+")
+    started = subprocess.Popen(
         ["ibr", "session:start", "-w", ".nav-link", live_server],
-        capture_output=True, text=True, timeout=20,
+        stdout=output, stderr=subprocess.STDOUT, text=True,
     )
-    if started.returncode:
-        pytest.skip(f"IBR browser unavailable: {started.stderr.strip() or started.stdout.strip()}")
-    match = re.search(r"Session started: (\S+)", started.stdout)
-    assert match, started.stdout
+    deadline = time.monotonic() + 20
+    match = None
+    started_output = ""
+    while time.monotonic() < deadline:
+        output.seek(0)
+        started_output = output.read()
+        match = re.search(r"Session started: (\S+)", started_output)
+        if match or started.poll() is not None:
+            break
+        time.sleep(0.05)
+    if not match:
+        if started.poll() is None:
+            started.terminate()
+            started.wait(timeout=2)
+        output.close()
+        pytest.skip(f"IBR browser unavailable: {started_output.strip()}")
     session_id = match.group(1)
 
     def ibr(*args: str) -> str:
@@ -518,6 +532,10 @@ def test_browser_preserves_navigation_and_disclosure_state_across_refreshes(live
             ["ibr", "session:close", session_id],
             capture_output=True, text=True, timeout=20, check=False,
         )
+        if started.poll() is None:
+            started.terminate()
+            started.wait(timeout=2)
+        output.close()
 
 
 def test_brand_gradient_keeps_white_small_text_at_wcag_aa_contrast() -> None:
