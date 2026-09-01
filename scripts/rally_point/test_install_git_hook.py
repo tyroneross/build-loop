@@ -271,3 +271,55 @@ class PrivateSlugGuardScopeTests(unittest.TestCase):
         hook = (repo / ".git" / "hooks" / "pre-commit")
         self.assertTrue(hook.exists())
         self.assertIn("RUNTIME_MEMORY_GUARD", hook.read_text())
+
+
+class PrivateSlugGuardResilienceTest(unittest.TestCase):
+    """The guard must survive a plugin upgrade and must fail CLOSED.
+
+    A pinned versioned cache path bricked commits in three repos when the plugin
+    bumped 0.39.4 -> 0.40.0: the directory was replaced, the hook raised
+    FileNotFoundError, and the commit was refused with a traceback that never
+    mentioned private slugs.
+    """
+
+    def _guard_src(self):
+        import install_git_hook as igh
+        return igh._PRE_GUARD_SRC.format(checker="/nonexistent/pinned/check_private_slugs.py")
+
+    def test_guard_does_not_rely_on_the_pinned_path_alone(self):
+        src = self._guard_src()
+        self.assertIn("_candidates", src,
+                      "guard must resolve dynamically, not trust one pinned path")
+        self.assertIn("plugins", src, "guard must be able to search the plugin caches")
+
+    def test_guard_fails_closed_when_nothing_resolves(self):
+        """Exit 2, not 0. An advisory skip would silently drop a security guard."""
+        import subprocess, sys, tempfile, os
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            g = Path(d) / "guard.py"
+            g.write_text(self._guard_src())
+            env = dict(os.environ)
+            env["HOME"] = d
+            env["GIT_TOPLEVEL"] = d
+            env["BUILD_LOOP_SLUG_CHECKER"] = "/nonexistent/x.py"
+            r = subprocess.run([sys.executable, str(g)], capture_output=True,
+                               text=True, env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("Refusing the commit", r.stderr)
+
+    def test_guard_runs_a_resolvable_checker(self):
+        import subprocess, sys, tempfile, os
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            checker = Path(d) / "scripts" / "check_private_slugs.py"
+            checker.parent.mkdir(parents=True)
+            checker.write_text("import sys\nsys.exit(0)\n")
+            g = Path(d) / "guard.py"
+            g.write_text(self._guard_src())
+            env = dict(os.environ)
+            env["HOME"] = d
+            env["BUILD_LOOP_SLUG_CHECKER"] = str(checker)
+            r = subprocess.run([sys.executable, str(g)], capture_output=True,
+                               text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
