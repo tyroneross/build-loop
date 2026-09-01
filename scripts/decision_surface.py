@@ -107,6 +107,30 @@ VARIANTS: dict[str, dict[str, Any]] = {
 }
 
 
+# The capture layer. These two write records but render nothing, so they are not
+# surface variants — they are where a surface's rows come from. They belong in
+# this table anyway: an agent choosing a family member needs all four in one
+# place, or it reaches for the wrong one and rebuilds something that exists.
+CAPTURE: dict[str, dict[str, Any]] = {
+    "auto-decision-capture": {
+        "question": "What did we already settle, and where is it written down?",
+        "skill": "skills/auto-decision-capture/SKILL.md",
+        "blocking": False,
+        "renders": False,
+        "writes_to": "build-loop-memory/projects/<project>/decisions/",
+        "fires": "passively, when the user confirms a choice or states a constraint",
+    },
+    "auto-finding-capture": {
+        "question": "What concrete issues has anyone surfaced?",
+        "skill": "skills/auto-finding-capture/SKILL.md",
+        "blocking": False,
+        "renders": False,
+        "writes_to": ".build-loop/backlog/",
+        "fires": "passively, whenever an agent or critic states a severity-labeled finding",
+    },
+}
+
+
 class VariantError(Exception):
     """The variant cannot produce a correct surface. Fail closed."""
 
@@ -119,16 +143,33 @@ def get(variant: str) -> dict[str, Any]:
 
 
 def describe() -> list[dict[str, str]]:
-    """The selection table an authoring agent reads to choose a variant."""
-    return [
+    """The selection table an authoring agent reads to choose a family member.
+
+    Selection is by QUESTION, never by name. An agent that picks on name alone
+    reaches for the familiar one; an agent that matches the user's actual
+    question lands on the right layer.
+    """
+    rows = [
         {
-            "variant": k,
+            "member": k,
+            "layer": "surface",
             "answers": v["question"],
             "blocking": "yes — work has stopped" if v["blocking"] else "no — work continued",
             "skill": v["skill"],
         }
         for k, v in VARIANTS.items()
     ]
+    rows += [
+        {
+            "member": k,
+            "layer": "capture",
+            "answers": v["question"],
+            "blocking": f"no — {v['fires']}",
+            "skill": v["skill"],
+        }
+        for k, v in CAPTURE.items()
+    ]
+    return rows
 
 
 def spec_for(
@@ -179,6 +220,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--json":
         print(json.dumps(describe(), indent=2))
     else:
-        print(f"{'variant':<20} {'answers':<44} blocking")
+        print(f"  {'member':<22}{'layer':<10}{'answers'}")
         for r in describe():
-            print(f"  {r['variant']:<18} {r['answers']:<44} {r['blocking']}")
+            print(f"  {r['member']:<22}{r['layer']:<10}{r['answers']}")

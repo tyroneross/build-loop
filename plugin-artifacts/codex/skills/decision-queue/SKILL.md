@@ -1,6 +1,6 @@
 ---
 name: decision-queue
-description: "Turn pending decisions — Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment — into one interactive page the user answers inline and Claude reads back later. Not for a one-off static report with no response capture; use a plain Artifact instead. Each decision gets a card carrying the choice, why it needs the user, its impact, the options, and a recommendation. Triggers: 'show me the decisions waiting on me', 'what needs my input', 'make a decision queue', 'launch a ui for these open questions'."
+description: "Turn pending decisions — Operations Center tasks with status needs_input, a backlog of open questions, anything blocked on the user's judgment — into one interactive page the user answers inline and Claude reads back later. Not for a one-off static report with no response capture; use a plain Artifact instead. Each decision gets a card carrying the choice, why it needs the user, its impact, the options, and a recommendation. Triggers: 'show me the decisions waiting on me', 'what needs my input', 'make a decision queue', 'launch a ui for these open questions'. Not for a judgement call you already made and applied while work continued — that never blocks and belongs in `silent-assumptions`."
 user-invocable: false
 companion_assets:
   - assets/template.html — tested, working page (styling, save/response plumbing, self-publish logic). Copy and adapt; never regenerate from scratch.
@@ -222,3 +222,30 @@ real file and fails if anything executes. It runs in CI. If you restructure the
 - **Radio-group semantics.** Options sit in a `fieldset` with a `legend` naming
   the decision, so a screen reader announces each choice with its question
   attached. `#save-status` carries `role="status" aria-live="polite"`.
+
+## The decision-surface family — one core, several variants
+
+Four skills share one job: put a set of calls in front of the user and capture a
+ruling. They differ only in the KIND of call, so they share a core rather than
+forking one — the variant registry (`scripts/decision_surface.py`), the
+interactive page and its save/self-publish plumbing
+(`skills/decision-queue/assets/template.html`), and the durable writer
+(`scripts/write_decision/__main__.py`). **Adding a variant is a registry entry,
+never a fork of the core.**
+
+**Choose by the question the user is actually asking, never by name.** An agent
+that picks on name alone reaches for the one it already knows and rebuilds
+something that exists.
+
+| Member | Answers | Layer | Does work stop? |
+|---|---|---|---|
+| [`silent-assumptions`](../silent-assumptions/SKILL.md) | "What did you decide without me?" | surface | No — work continued under your default |
+| [`decision-queue`](../decision-queue/SKILL.md) | "What is waiting on me?" | surface | Yes — work has stopped |
+| [`auto-decision-capture`](../auto-decision-capture/SKILL.md) | "What did we already settle, and where is it written down?" | capture | No — fires passively |
+| [`auto-finding-capture`](../auto-finding-capture/SKILL.md) | "What concrete issues has anyone surfaced?" | capture | No — fires passively |
+
+`python3 scripts/decision_surface.py` prints this table (`--json` for machines).
+The registry is the one place a member is declared; this table is its prose
+mirror and must match it.
+
+**You are here: `decision-queue`.** Reach for `silent-assumptions` instead when the call was ALREADY MADE and applied and work never stopped — that surface exists to reverse a default after the fact, and it must never block.

@@ -1,6 +1,6 @@
 ---
 name: auto-finding-capture
-description: Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`).
+description: Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`) or for a judgement call the agent made without asking, which is not a defect and does not belong in the backlog (use `silent-assumptions`).
 user-invocable: false
 when_to_use: |
   - Any agent/audit/critic states a concrete, severity-labeled issue in the session
@@ -117,3 +117,30 @@ An LLM-judged extraction path (for findings stated without a severity label or a
 finding keyword) is a possible future extension. v1 is deterministic-only by
 design: it satisfies the acceptance contract, adds no dependency, and keeps
 precision high. Add the LLM path only against a named, observed miss in this repo.
+
+## The decision-surface family — one core, several variants
+
+Four skills share one job: put a set of calls in front of the user and capture a
+ruling. They differ only in the KIND of call, so they share a core rather than
+forking one — the variant registry (`scripts/decision_surface.py`), the
+interactive page and its save/self-publish plumbing
+(`skills/decision-queue/assets/template.html`), and the durable writer
+(`scripts/write_decision/__main__.py`). **Adding a variant is a registry entry,
+never a fork of the core.**
+
+**Choose by the question the user is actually asking, never by name.** An agent
+that picks on name alone reaches for the one it already knows and rebuilds
+something that exists.
+
+| Member | Answers | Layer | Does work stop? |
+|---|---|---|---|
+| [`silent-assumptions`](../silent-assumptions/SKILL.md) | "What did you decide without me?" | surface | No — work continued under your default |
+| [`decision-queue`](../decision-queue/SKILL.md) | "What is waiting on me?" | surface | Yes — work has stopped |
+| [`auto-decision-capture`](../auto-decision-capture/SKILL.md) | "What did we already settle, and where is it written down?" | capture | No — fires passively |
+| [`auto-finding-capture`](../auto-finding-capture/SKILL.md) | "What concrete issues has anyone surfaced?" | capture | No — fires passively |
+
+`python3 scripts/decision_surface.py` prints this table (`--json` for machines).
+The registry is the one place a member is declared; this table is its prose
+mirror and must match it.
+
+**You are here: `auto-finding-capture`.** Reach for `silent-assumptions` when the thing to surface is a judgement call YOU made rather than a defect you found; a silent assumption is not a finding and does not belong in the backlog.

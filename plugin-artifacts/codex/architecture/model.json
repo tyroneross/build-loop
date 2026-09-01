@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "80907c95d8335a62c64f79e343c70f8a8f5e8737ca79fc44ae37c1f9de4516f9"
+    "content_sha256": "9557441098b1de30c25403e0bc436765750d874e29e78454e53b241184426c6e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1186,7 +1186,7 @@
         }
       },
       "auto-decision-capture": {
-        "description": "Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`) or after-the-fact review (use `recursive-retrospective`). user-invocable: false",
+        "description": "Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`), after-the-fact review (use `recursive-retrospective`), or surfacing an unstated call the user never saw so he can reverse it (use `silent-assumptions`). user-invocable: fa…",
         "file": "skills/auto-decision-capture/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1194,7 +1194,7 @@
         }
       },
       "auto-finding-capture": {
-        "description": "Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`). user-invocable: false",
+        "description": "Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`) or for a judgement call the agent made without asking, which is not a defect and does not belong in the backlog (use `silent-assumptions`). user-invocable: false",
         "file": "skills/auto-finding-capture/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1485,8 +1485,8 @@
         "description": "\"Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Never blocks: you make the call, apply your default, and keep working; the register is a record of work already done. Triggers: 'what did you assume', 'what calls did you make', '…",
         "file": "skills/silent-assumptions/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-09-01"
         }
       },
       "spec-writing": {

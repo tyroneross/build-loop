@@ -263,3 +263,30 @@ is fatal:
 | `dashboard_build.py` missing | `build` still writes `register.json`, `spec.json`, `data.json`, `data.js` and exits 3 with the reason. The record survives; only the page is missing. |
 | Host cannot publish artifacts | Use the file path. It is the primary mechanism, not a fallback. |
 | User rules on nothing | Leave it. Do not re-offer, do not re-render, do not chase. |
+
+## The decision-surface family — one core, several variants
+
+Four skills share one job: put a set of calls in front of the user and capture a
+ruling. They differ only in the KIND of call, so they share a core rather than
+forking one — the variant registry (`scripts/decision_surface.py`), the
+interactive page and its save/self-publish plumbing
+(`skills/decision-queue/assets/template.html`), and the durable writer
+(`scripts/write_decision/__main__.py`). **Adding a variant is a registry entry,
+never a fork of the core.**
+
+**Choose by the question the user is actually asking, never by name.** An agent
+that picks on name alone reaches for the one it already knows and rebuilds
+something that exists.
+
+| Member | Answers | Layer | Does work stop? |
+|---|---|---|---|
+| [`silent-assumptions`](../silent-assumptions/SKILL.md) | "What did you decide without me?" | surface | No — work continued under your default |
+| [`decision-queue`](../decision-queue/SKILL.md) | "What is waiting on me?" | surface | Yes — work has stopped |
+| [`auto-decision-capture`](../auto-decision-capture/SKILL.md) | "What did we already settle, and where is it written down?" | capture | No — fires passively |
+| [`auto-finding-capture`](../auto-finding-capture/SKILL.md) | "What concrete issues has anyone surfaced?" | capture | No — fires passively |
+
+`python3 scripts/decision_surface.py` prints this table (`--json` for machines).
+The registry is the one place a member is declared; this table is its prose
+mirror and must match it.
+
+**You are here: `silent-assumptions`.** Reach for a sibling when the user is blocked and waiting on an answer (`decision-queue`), or when there is nothing to render and you only need the record written (`auto-decision-capture`, `auto-finding-capture`).

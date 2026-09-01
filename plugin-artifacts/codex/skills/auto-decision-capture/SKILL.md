@@ -1,6 +1,6 @@
 ---
 name: auto-decision-capture
-description: Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`) or after-the-fact review (use `recursive-retrospective`).
+description: Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`), after-the-fact review (use `recursive-retrospective`), or surfacing an unstated call the user never saw so he can reverse it (use `silent-assumptions`).
 user-invocable: false
 when_to_use: |
   - User issues a direct verbal marker ("let's go with X", "ship it", "use Y")
@@ -420,3 +420,30 @@ candidate, and promotes via `scripts/memory_writer.py --type lesson|feedback`
 complementary: this skill catches what you can see during the turn; the
 companion catches what the deterministic scanner can find at the end of
 the session.
+
+## The decision-surface family — one core, several variants
+
+Four skills share one job: put a set of calls in front of the user and capture a
+ruling. They differ only in the KIND of call, so they share a core rather than
+forking one — the variant registry (`scripts/decision_surface.py`), the
+interactive page and its save/self-publish plumbing
+(`skills/decision-queue/assets/template.html`), and the durable writer
+(`scripts/write_decision/__main__.py`). **Adding a variant is a registry entry,
+never a fork of the core.**
+
+**Choose by the question the user is actually asking, never by name.** An agent
+that picks on name alone reaches for the one it already knows and rebuilds
+something that exists.
+
+| Member | Answers | Layer | Does work stop? |
+|---|---|---|---|
+| [`silent-assumptions`](../silent-assumptions/SKILL.md) | "What did you decide without me?" | surface | No — work continued under your default |
+| [`decision-queue`](../decision-queue/SKILL.md) | "What is waiting on me?" | surface | Yes — work has stopped |
+| [`auto-decision-capture`](../auto-decision-capture/SKILL.md) | "What did we already settle, and where is it written down?" | capture | No — fires passively |
+| [`auto-finding-capture`](../auto-finding-capture/SKILL.md) | "What concrete issues has anyone surfaced?" | capture | No — fires passively |
+
+`python3 scripts/decision_surface.py` prints this table (`--json` for machines).
+The registry is the one place a member is declared; this table is its prose
+mirror and must match it.
+
+**You are here: `auto-decision-capture`.** Reach for `silent-assumptions` when the user never saw the call at all and you need it rendered for a ruling; this skill records a decision the user already made, it does not surface one he did not know about.
