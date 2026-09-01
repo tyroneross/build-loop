@@ -671,3 +671,69 @@ python3 -m retrospective.file_findings apply --retro <path> --plan plan.json --j
 Every retrospective ends with a `## Filed findings` section naming every id/path this run produced — the checkable artifact `lint` requires. `apply` writes it; you do not hand-author it. Lint fails when the section is missing, when it names no location other than the retro itself, or when it accounts for fewer findings than the retro names.
 
 `python3 -m retrospective` runs this lint automatically after writing a retrospective and reports the verdict as `filing` in its JSON envelope, so an unfiled finding surfaces without anyone choosing to check.
+
+## Silent assumptions — expose the calls you made without asking
+
+Doing ordinary work you make judgement calls the user never sees: what "latest"
+meant, which viewports counted, who the audience was, whether to optimise for
+precision or recall. Each is defensible; none was surfaced. The user finds out
+only when a result is wrong, and then cannot tell which call caused it.
+
+The full procedure — the nine detectors and the two filters — is
+`skills/silent-assumptions/SKILL.md`, with worked examples in
+`skills/silent-assumptions/references/elicitation-detectors.md`. Both are plain
+markdown with no host-specific syntax, so Codex, Claude Code, and Cursor read the
+same instructions. This section is the Codex-specific operating note.
+
+**This never blocks.** Make the call, apply your default, keep working. The
+register records work already done. It is the structural opposite of
+`skills/decision-queue/`, which exists because work has STOPPED and the user is
+blocked. Never merge the two.
+
+**The file-based path is primary, and it is the whole mechanism under Codex.**
+Codex cannot publish a self-saving artifact, so the interactive page is a
+Claude-only enhancement layered on top and is never required. `register.json`
+plus a generated `dashboard.html` need no artifact host, no browser, and no model
+tokens to refresh.
+
+```bash
+BL=<build-loop>
+DIR="$PWD/.build-loop/decisions/<YYYY-MM-DD>-<slug>"
+mkdir -p "$DIR"
+
+python3 "$BL/scripts/assumption_register.py" new \
+  --slug <slug> --title "<title>" --repo "$PWD" -o "$DIR/register.json"
+# … replace the example row with real rows elicited by the nine detectors …
+
+python3 "$BL/scripts/assumption_register.py" check "$DIR/register.json"           # exit 1 on any error
+python3 "$BL/scripts/assumption_register.py" build "$DIR/register.json" --check   # render + lint
+python3 "$BL/scripts/assumption_register.py" read  "$DIR/register.json"           # after the user edits
+python3 "$BL/scripts/assumption_register.py" promote "$DIR/register.json" --workdir "$PWD"
+```
+
+`check` enforces what a cold reader needs: a `consequence` naming what breaks,
+for whom and when; evidence pointing at a real path, selector, line or count;
+at least two real options with exactly one marked as the default you already
+applied. A row that cannot pass is deleted, not softened.
+
+**The user rules by editing the register**, setting `rows[].decision.pick` to a
+0-based index into that row's `options` and writing `rows[].decision.note`. Then
+`read` reports it, leading with the overrides. **Treat every note as a standing
+instruction, not a comment on that row** — in the reference register 8 of 14
+rulings carried notes and several were policy for all future work.
+
+**The one proactive behaviour is an offer, never a prompt.** Score unruled rows
+`high`=2, `med`=1, `low`=0 and offer at 6; any row marked `escalate` offers
+immediately regardless of score. `assumption_register.py offer <register>` exits
+0 when it is worth one ignorable sentence and 1 when it is not. Never
+`AskUserQuestion`, never mid-task, never twice for the same register.
+
+**Tracking across repos reuses the existing decision store.** `promote` calls
+`scripts/write_decision/__main__.py` — the same atomic writer
+`auto-decision-capture` uses — landing rows in
+`build-loop-memory/projects/<project>/decisions/` tagged `silent-assumption`. A
+silent assumption is a decision with a subtype, not a new record type. Do not
+build a second store.
+
+Reference register, 20 rows with the user's 14 real rulings:
+`/Users/tyroneross/dev/git-folder/ross-labs-astro/.build-loop/decisions/2026-09-01-rosslabs-mockup-audit/`.

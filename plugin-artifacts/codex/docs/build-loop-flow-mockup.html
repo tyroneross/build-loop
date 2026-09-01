@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2db161515bb1193a15cc1b1fe86b13b27baf429b038b532007fe3726fb8e897a"
+    "content_sha256": "80907c95d8335a62c64f79e343c70f8a8f5e8737ca79fc44ae37c1f9de4516f9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1710,6 +1710,14 @@
           "date": "2026-08-30"
         }
       },
+      "silent-assumptions": {
+        "description": "\"Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Never blocks: you make the call, apply your default, and keep working; the register is a record of work already done. Triggers: 'what did you assume', 'what calls did you make', '…",
+        "file": "skills/silent-assumptions/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "spec-writing": {
         "description": "Write a build-loop-compatible plan/spec. Walks the completeness checklist before drafting; runs plan-critic on output. Triggers when build-loop Phase 2 starts OR when the user says \"write a plan\", \"write a spec\", \"draft a plan for X\", \"spec out a feature\".",
         "file": "skills/spec-writing/SKILL.md",
@@ -1776,6 +1784,7 @@
       "scripts/archive_project_plan.py": "Archive ephemeral project plans into build-loop-memory before cleanup.\"\"\"",
       "scripts/artifact_guard.py": "artifact_guard.py — keep checked-in generated artifacts in sync at commit time.",
       "scripts/assess_grounding_score.py": "Score a candidate Phase-1 Assess output against a real run's recorded outcome.",
+      "scripts/assumption_register.py": "assumption_register — the file-based half of the silent-assumptions skill.",
       "scripts/atomic_io.py": "Shared atomic-write primitives for build-loop scripts.",
       "scripts/attestation_lint.py": "",
       "scripts/attribution_stamp.py": "Idempotent attribution stamper for Apache-2.0 repos.",
@@ -1845,6 +1854,7 @@
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
+      "scripts/decision_surface.py": "decision_surface — the shared core behind every decision-surface variant.",
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",
       "scripts/detect_attribution_layers.py": "Detect whether a repo carries the canonical four-layer attribution stack.",
       "scripts/detect_decision_rot.py": "Decision rot detector — flag decisions older than threshold-days.",
