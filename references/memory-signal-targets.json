@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "declared": "2026-09-01",
+  "purpose": "Executable targets for the memory usefulness signal. Prose targets rot silently; these are checked by `python3 scripts/memory_store_stats.py --check-targets`, so a claim about progress is a command, not an assertion.",
+  "scope_rule": "Every metric is computed on the CLEAN tier only (schema_version != 1.0 AND source == 'runtime'). 40,843 of 41,145 read rows are legacy test fixtures; blending them measures the test suite. memory_health.py and memory_store_stats.py share tier_of() so the two cannot disagree.",
+  "metrics": {
+    "hit_rate": {
+      "definition": "clean reads returning >=1 candidate / clean reads",
+      "computed_from": "memory-read rows, non-empty memory_ids_seen",
+      "baseline_2026_09_01": 0.737,
+      "target": 0.90,
+      "target_rationale": "A quarter of queries returning nothing is mostly retrieval failure, not genuine absence. Not 1.0: some questions legitimately have no stored answer, and forcing that to 1.0 would reward returning junk.",
+      "ceiling": 1.0,
+      "falsifier": "If hit rate rises while the join-confirmed usefulness rate falls, the gain is junk candidates, not better retrieval. Check both together."
+    },
+    "joinable_rate": {
+      "definition": "clean reads carrying returned_paths / clean reads",
+      "computed_from": "memory-read rows, non-empty returned_paths",
+      "baseline_2026_09_01": 0.263,
+      "baseline_among_reads_with_results": 0.357,
+      "target": "equal to hit_rate",
+      "target_rationale": "A zero-result read has no paths to carry, so hit_rate IS the ceiling. Any gap between joinable_rate and hit_rate is a caller not passing the join key. Judge rollout on the among-results figure; the headline understates it.",
+      "ceiling": "hit_rate",
+      "falsifier": "A caller added later that omits returned_paths reopens the hole silently. scripts/test_memory_join_contract.py audits callers structurally to prevent that."
+    },
+    "session_rate": {
+      "definition": "clean reads carrying session_id / clean reads",
+      "computed_from": "memory-read rows, non-empty session_id",
+      "baseline_2026_09_01": 0.030,
+      "target": 1.0,
+      "target_rationale": "Resolved automatically from the runtime environment, so anything below 1.0 is a caller path that bypasses resolve_session_id or a runtime that exports no id. Without it, a time-window join credits one agent's file-open to another agent's retrieval.",
+      "ceiling": 1.0,
+      "falsifier": "A runtime that exports no session id yields None BY DESIGN rather than a fabricated value. If session_rate stalls below 1.0, identify the runtime before assuming a bug."
+    },
+    "exposure_rate": {
+      "definition": "clean reads carrying ranks and scores / clean reads",
+      "computed_from": "memory-read rows, non-empty ranks",
+      "baseline_2026_09_01": 0.020,
+      "target": "equal to hit_rate",
+      "target_rationale": "Needed to correct a later use-signal for position bias. Known gap: memory_locator emits 0.0% ranks (73 rows at 98.6% paths), because only memory_facade.recall runs the ranker. Closing that gap is the named next step.",
+      "ceiling": "hit_rate",
+      "falsifier": "Propensity cannot be reconstructed after the fact. Every read emitted without ranks is permanently undebiasable, so this metric only ever measures rows going forward."
+    },
+    "use_rows": {
+      "definition": "count of memory-use rows across all lanes",
+      "computed_from": "kind == 'memory-use'",
+      "baseline_2026_09_01": 0,
+      "target": "> 0 and growing from ORDINARY work, with zero manual seeding",
+      "target_rationale": "The whole point. Until this is non-zero from unseeded traffic, memory cannot be ranked by usefulness, cannot be pruned, and no retrieval change can be judged against outcomes. Every other metric here is instrumentation waiting for this one.",
+      "ceiling": "join-confirmed subset of hit reads",
+      "falsifier": "A non-zero count produced by a human running the reconciler by hand proves the mechanism, NOT the loop. Check that matched reads carry session ids from sessions the human did not drive."
+    }
+  },
+  "invariants": {
+    "no_effect_on_use_rows": "An open proves INSPECTED, never HELPED. effect stays unset. Asserted by test_memory_effect and test_memory_reconcile.",
+    "opens_never_feed_ranking": "No consumer of memory-use may write to the ranker or the pruner. Position bias makes opens partly a function of rank; feeding them back builds a rich-get-richer loop.",
+    "no_negatives_fabricated": "A surfaced-and-unopened memory stays in the denominator and is never labelled 'ignored'. Silence is not evidence of non-use.",
+    "tier_separation": "No rate is ever reported blended across tiers.",
+    "test_telemetry_isolation": "BUILD_LOOP_TELEMETRY_SOURCE=test routes to a temp path; production store must show zero fixture rows."
+  },
+  "deferred_with_reasons": {
+    "raise_default_limit": "Spends tokens and latency on every read with no feedback signal to say whether slots 11-26 are ever used. Revisit after use_rows > 0.",
+    "embeddings": "The current lexical oracle structurally cannot evaluate them: it penalises exactly what embeddings add, topical match without literal terms. Needs ground truth first.",
+    "pruning": "No usefulness signal to prune BY. Would fall back on recency, which was removed from ranking for scoring P@1 0.030."
+  },
+  "how_to_audit": [
+    "python3 scripts/memory_store_stats.py --since 2026-09-01",
+    "python3 scripts/memory_store_stats.py --check-targets",
+    "python3 scripts/memory_health.py",
+    "python3 scripts/memory_reconcile.py                      # dry-run, all strategies",
+    "python3 -m pytest scripts/test_memory_*.py scripts/test_content_index.py -q"
+  ]
+}

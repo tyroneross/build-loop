@@ -179,5 +179,50 @@ class StoreStatsTest(unittest.TestCase):
         self.assertEqual(s["corpus"]["markdown_files"], 0)
 
 
+class TargetCheckTest(unittest.TestCase):
+    """Targets live in data so "are we on track" is a command, not an argument."""
+
+    def _stats(self, hit=0.8, joinable=0.5, session=1.0, exposure=0.4, use=0):
+        return {"telemetry": {"use_rows": use, "tiers": {"clean": {
+            "hit_rate": hit, "joinable_rate": joinable,
+            "session_rate": session, "exposure_rate": exposure}}}}
+
+    def test_declared_targets_parse_and_cover_every_reported_metric(self):
+        import json as _json
+        import memory_store_stats as mss
+        declared = _json.loads(mss.TARGETS_PATH.read_text())
+        self.assertEqual(
+            set(declared["metrics"]),
+            {"hit_rate", "joinable_rate", "session_rate", "exposure_rate", "use_rows"})
+        for name, spec in declared["metrics"].items():
+            self.assertIn("target_rationale", spec, f"{name} target has no stated reason")
+            self.assertIn("falsifier", spec, f"{name} has no falsifier")
+
+    def test_relative_target_resolves_against_live_hit_rate(self):
+        """joinable/exposure ceilings MOVE with retrieval quality: a zero-result
+        read has no paths to carry, so hit_rate is the ceiling, not 1.0."""
+        import memory_store_stats as mss
+        r = mss.check_targets(self._stats(hit=0.8, joinable=0.8))
+        self.assertEqual(r["metrics"]["joinable_rate"]["resolved_target"], 0.8)
+        self.assertEqual(r["metrics"]["joinable_rate"]["status"], "on_target")
+
+    def test_below_target_is_reported_not_hidden(self):
+        import memory_store_stats as mss
+        r = mss.check_targets(self._stats(hit=0.5))
+        self.assertEqual(r["metrics"]["hit_rate"]["status"], "below")
+
+    def test_use_rows_graded_on_being_nonzero(self):
+        import memory_store_stats as mss
+        self.assertEqual(
+            mss.check_targets(self._stats(use=0))["metrics"]["use_rows"]["status"], "below")
+        self.assertEqual(
+            mss.check_targets(self._stats(use=3))["metrics"]["use_rows"]["status"], "on_target")
+
+    def test_missing_targets_file_reports_rather_than_raises(self):
+        import memory_store_stats as mss
+        r = mss.check_targets(self._stats(), targets_path=Path("/nonexistent/t.json"))
+        self.assertIn("error", r)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -223,12 +223,82 @@ def render(s: dict) -> str:
     return "\n".join(L)
 
 
+TARGETS_PATH = HERE.parent / "references" / "memory-signal-targets.json"
+
+
+def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
+    """Compare live figures to the DECLARED targets.
+
+    Targets live in data, not prose, because a prose target rots silently: the
+    number drifts, nobody re-reads the paragraph, and the gap is discovered by
+    argument rather than by command. This makes "are we on track" a thing you
+    RUN.
+
+    Never gates. Reports `on_target` / `below` / `unmeasurable` per metric and
+    always exits 0 -- a target check that can fail a build turns a measurement
+    into a deadline.
+    """
+    path = targets_path or TARGETS_PATH
+    try:
+        declared = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"error": f"targets unreadable at {path}: {exc}"}
+
+    clean = (stats.get("telemetry", {}).get("tiers", {}) or {}).get("clean") or {}
+    hit = clean.get("hit_rate")
+    live = {
+        "hit_rate": hit,
+        "joinable_rate": clean.get("joinable_rate"),
+        "session_rate": clean.get("session_rate"),
+        "exposure_rate": clean.get("exposure_rate"),
+        "use_rows": stats.get("telemetry", {}).get("use_rows"),
+    }
+    out = {"targets_file": str(path), "declared": declared.get("declared"), "metrics": {}}
+    for name, spec in declared.get("metrics", {}).items():
+        target = spec.get("target")
+        value = live.get(name)
+        # A target expressed as "equal to hit_rate" resolves against the live
+        # hit rate, because its ceiling moves with retrieval quality.
+        resolved = hit if isinstance(target, str) and "hit_rate" in target else target
+        if name == "use_rows":
+            # Its target is prose by design ("growing from ordinary work"), so
+            # it is graded on the only mechanical part: is it non-zero at all.
+            status = "unmeasurable" if value is None else (
+                "on_target" if value > 0 else "below")
+        elif value is None or resolved is None or isinstance(resolved, str):
+            status = "unmeasurable"
+        else:
+            status = "on_target" if value >= resolved else "below"
+        out["metrics"][name] = {
+            "live": value, "target": target, "resolved_target": resolved,
+            "baseline": spec.get("baseline_2026_09_01"), "status": status,
+        }
+    return out
+
+
+def render_targets(t: dict) -> str:
+    if "error" in t:
+        return f"TARGETS: {t['error']}"
+    L = [f"TARGETS  (declared {t['declared']}, {Path(t['targets_file']).name})",
+         f"  {'metric':16s} {'baseline':>9s} {'live':>9s} {'target':>9s}  status"]
+    for name, m in t["metrics"].items():
+        f = lambda v: "-" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))  # noqa: E731
+        L.append(f"  {name:16s} {f(m['baseline']):>9s} {f(m['live']):>9s} "
+                 f"{f(m['resolved_target']):>9s}  {m['status']}")
+    L.append("  'unmeasurable' means the target resolves against another live metric "
+             "that is itself absent, not that the check failed.")
+    return "\n".join(L)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", default=None)
     ap.add_argument("--since", default=None, help="YYYY-MM-DD for churn figures")
     ap.add_argument("--no-join", action="store_true", help="skip join coverage (faster)")
+    ap.add_argument("--check-targets", action="store_true",
+                    help="compare live figures to references/memory-signal-targets.json")
+    ap.add_argument("--targets-file", default=None)
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
 
@@ -237,7 +307,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"memory store not found: {store}", file=sys.stderr)
         return 0
     s = collect(store, a.since, not a.no_join)
-    print(json.dumps(s, indent=2) if a.json else render(s))
+    if a.check_targets:
+        s["targets"] = check_targets(
+            s, Path(a.targets_file) if a.targets_file else None)
+    if a.json:
+        print(json.dumps(s, indent=2))
+    else:
+        print(render(s))
+        if a.check_targets:
+            print()
+            print(render_targets(s["targets"]))
     return 0
 
 
