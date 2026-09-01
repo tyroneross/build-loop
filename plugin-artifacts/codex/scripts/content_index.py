@@ -193,8 +193,9 @@ def build(store: Path, *, incremental: bool = True, db_path: Path | None = None,
     indexed = skipped = deleted = processed = 0
     try:
         if not incremental:
-            for table in ("content", "meta", "files"):
-                connection.execute(f"DELETE FROM {table}")
+            connection.execute("DELETE FROM content")
+            connection.execute("DELETE FROM meta")
+            connection.execute("DELETE FROM files")
         else:
             deleted = _delete_stale_rows(connection, store)
         for path in _markdown_files(store):
