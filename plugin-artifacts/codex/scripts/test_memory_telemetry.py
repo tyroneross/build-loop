@@ -399,16 +399,74 @@ class ExposureFieldTests(unittest.TestCase):
             self.assertEqual(row["shown_count"], 2)
             self.assertEqual(row["session_id"], "sess-abc")
 
-    def test_absent_when_not_supplied(self):
+    def test_exposure_fields_absent_when_not_supplied(self):
         """Backward compatibility: old callers must not gain empty fields."""
-        import tempfile, json as _json
+        import tempfile, json as _json, os
         from pathlib import Path as _P
         with tempfile.TemporaryDirectory() as d:
             p = _P(d) / "t.jsonl"
-            self._emit(p)
+            prev = {k: os.environ.pop(k, None) for k in mt.SESSION_ENV_VARS}
+            try:
+                self._emit(p)
+            finally:
+                for k, v in prev.items():
+                    if v is not None:
+                        os.environ[k] = v
             row = _json.loads(p.read_text().strip())
-            for k in ("ranks", "scores", "shown_count", "session_id"):
+            for k in ("ranks", "scores", "shown_count"):
                 self.assertNotIn(k, row)
+
+    def test_session_id_is_resolved_from_the_environment(self):
+        """The caller should not have to know its own session id -- the runtime
+        already exports it, and the trace hook records the SAME value."""
+        import tempfile, json as _json, os
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as d:
+            p = _P(d) / "t.jsonl"
+            prev = os.environ.get("BUILD_LOOP_SESSION_ID")
+            os.environ["BUILD_LOOP_SESSION_ID"] = "sess-from-env"
+            try:
+                self._emit(p)
+            finally:
+                if prev is None:
+                    os.environ.pop("BUILD_LOOP_SESSION_ID", None)
+                else:
+                    os.environ["BUILD_LOOP_SESSION_ID"] = prev
+            self.assertEqual(_json.loads(p.read_text().strip())["session_id"],
+                             "sess-from-env")
+
+    def test_session_id_absent_when_nothing_identifies_the_session(self):
+        """Never invent one. A wrong session id credits one agent's activity to
+        another, which is the exact failure the field exists to prevent."""
+        import tempfile, json as _json, os
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as d:
+            p = _P(d) / "t.jsonl"
+            prev = {k: os.environ.pop(k, None) for k in mt.SESSION_ENV_VARS}
+            try:
+                self._emit(p)
+            finally:
+                for k, v in prev.items():
+                    if v is not None:
+                        os.environ[k] = v
+            self.assertNotIn("session_id", _json.loads(p.read_text().strip()))
+
+    def test_explicit_session_id_wins_over_environment(self):
+        import tempfile, json as _json, os
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as d:
+            p = _P(d) / "t.jsonl"
+            prev = os.environ.get("BUILD_LOOP_SESSION_ID")
+            os.environ["BUILD_LOOP_SESSION_ID"] = "from-env"
+            try:
+                self._emit(p, session_id="explicit")
+            finally:
+                if prev is None:
+                    os.environ.pop("BUILD_LOOP_SESSION_ID", None)
+                else:
+                    os.environ["BUILD_LOOP_SESSION_ID"] = prev
+            self.assertEqual(_json.loads(p.read_text().strip())["session_id"],
+                             "explicit")
 
 
 if __name__ == "__main__":

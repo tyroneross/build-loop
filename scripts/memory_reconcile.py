@@ -59,8 +59,38 @@ if str(HERE) not in sys.path:
 import memory_telemetry as mt  # noqa: E402
 from _paths import memory_store_root  # noqa: E402
 
+TRACE_REL = Path(".build-loop/telemetry/tool-traces.jsonl")
 TRACE_GLOB = "*/.build-loop/telemetry/tool-traces.jsonl"
-DEFAULT_TRACE_ROOT = Path.home() / "dev" / "git-folder"
+
+# The trace hook writes to $CLAUDE_PROJECT_DIR/.build-loop/telemetry/, and that
+# directory is NOT always a repo under a single parent. A session whose project
+# dir is the home directory writes to ~/.build-loop/telemetry/ -- 10 MB and
+# 1,180 spans of it, entirely invisible to a glob rooted at the repo folder.
+# Discovery is therefore a LIST, and --trace-root repeats.
+DEFAULT_TRACE_ROOTS = (
+    Path.home(),                       # sessions whose project dir is $HOME
+    Path.home() / "dev" / "git-folder",  # per-repo sessions
+)
+
+
+def discover_traces(roots: Sequence[Path]) -> list[Path]:
+    """Every tool-trace file under any given root, deduped.
+
+    Checks both `<root>/.build-loop/...` (root IS the project dir) and
+    `<root>/*/.build-loop/...` (root CONTAINS project dirs), because both
+    layouts occur and assuming one silently drops the other.
+    """
+    found: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        root = Path(root).expanduser()
+        candidates = [root / TRACE_REL, *sorted(root.glob(TRACE_GLOB))]
+        for c in candidates:
+            key = str(c.resolve()) if c.exists() else str(c)
+            if c.is_file() and key not in seen:
+                seen.add(key)
+                found.append(c)
+    return found
 
 # A path-shaped token in free shell text. Deliberately conservative: absolute,
 # and ending in a file extension, so `cd /tmp` or a bare directory does not
@@ -231,10 +261,12 @@ def _epoch(ts: str) -> float:
         return 0.0
 
 
-def load_opens(trace_root: Path, since: float = 0.0,
+def load_opens(trace_roots: Sequence[Path] | Path, since: float = 0.0,
                store: Path | None = None) -> list[Open]:
+    if isinstance(trace_roots, (str, Path)):
+        trace_roots = [Path(trace_roots)]
     out: list[Open] = []
-    for trace in sorted(trace_root.glob(TRACE_GLOB)):
+    for trace in discover_traces(trace_roots):
         try:
             fh = trace.open(encoding="utf-8", errors="ignore")
         except OSError:
@@ -441,8 +473,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", default=None, help="memory store root")
-    ap.add_argument("--trace-root", default=str(DEFAULT_TRACE_ROOT),
-                    help="directory containing */.build-loop/telemetry/")
+    ap.add_argument("--trace-root", action="append", default=None,
+                    help="repeatable; a project dir OR a directory of project "
+                         "dirs. Defaults to $HOME and ~/dev/git-folder.")
     ap.add_argument("--strategy", default=DEFAULT_STRATEGY, choices=sorted(_STRATEGIES),
                     help="join strategy")
     ap.add_argument("--window", type=float, default=DEFAULT_WINDOW_S,
@@ -469,7 +502,8 @@ def main(argv: list[str] | None = None) -> int:
 
     store = Path(a.store).expanduser() if a.store else memory_store_root()
     reads = load_reads(store, since, runtime_only=not a.include_legacy)
-    opens = load_opens(Path(a.trace_root).expanduser(), since, store=store)
+    roots = [Path(r) for r in a.trace_root] if a.trace_root else list(DEFAULT_TRACE_ROOTS)
+    opens = load_opens(roots, since, store=store)
     summary = summarize(reads, opens, a.window)
 
     matches = reconcile(reads, opens, strategy_name=a.strategy, window=a.window)
@@ -492,6 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, indent=2))
         return 0
 
+    print(f"trace files      : {len(discover_traces(roots))}")
     print(f"reads with paths : {summary['reads_with_paths']}"
           f"   (with session id: {summary['reads_with_session']})")
     print(f"file opens       : {summary['opens']}"

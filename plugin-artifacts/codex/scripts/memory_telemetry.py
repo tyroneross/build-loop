@@ -110,6 +110,35 @@ VALID_EFFECTS = {
 }
 
 
+# Session identity, resolved from the runtime's own environment.
+# Ordered most-specific first. These names are what the host actually exports;
+# the tool-trace hook records the SAME value as `session.id` on every span, which
+# is what makes a read and a later file-open joinable at all.
+SESSION_ENV_VARS = (
+    "BUILD_LOOP_SESSION_ID",     # explicit override, always wins
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+)
+
+
+def resolve_session_id(explicit: str | None = None) -> str | None:
+    """Best-effort session identity. Returns None rather than inventing one.
+
+    A wrong session id is worse than no session id: it would silently credit one
+    agent's file-open to another agent's retrieval, which is exactly the
+    misattribution the field exists to prevent. So this never falls back to a
+    PID, a hostname, or a generated value.
+    """
+    if explicit:
+        return explicit
+    for name in SESSION_ENV_VARS:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
 def _iso_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -225,8 +254,9 @@ def emit_read(
         row["shown_count"] = int(shown_count)
     # Attribution. The store is shared and several agents run concurrently, so a
     # join on time alone credits one session's activity to another session's read.
-    if session_id is not None:
-        row["session_id"] = str(session_id)
+    resolved_session = resolve_session_id(session_id)
+    if resolved_session:
+        row["session_id"] = str(resolved_session)
     _append_row(telemetry_path or default_telemetry_path(resolved_source), row)
     return cid
 

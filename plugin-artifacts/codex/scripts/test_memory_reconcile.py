@@ -106,6 +106,48 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(mrc.normalize_path("", Path("/tmp")), "")
 
 
+class DiscoveryTest(unittest.TestCase):
+    """Trace files are NOT all under one parent.
+
+    The hook writes to $CLAUDE_PROJECT_DIR/.build-loop/telemetry/, and a session
+    whose project dir is the home directory writes there. A glob rooted only at
+    the repo folder missed 10 MB and 1,180 spans of live traffic.
+    """
+
+    def test_finds_traces_when_root_is_the_project_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            t = root / mrc.TRACE_REL
+            t.parent.mkdir(parents=True); t.write_text("")
+            self.assertEqual(mrc.discover_traces([root]), [t])
+
+    def test_finds_traces_when_root_contains_project_dirs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            t = root / "repo-a" / mrc.TRACE_REL
+            t.parent.mkdir(parents=True); t.write_text("")
+            self.assertEqual(mrc.discover_traces([root]), [t])
+
+    def test_finds_both_layouts_at_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            a = root / mrc.TRACE_REL
+            b = root / "repo-b" / mrc.TRACE_REL
+            for t in (a, b):
+                t.parent.mkdir(parents=True); t.write_text("")
+            self.assertEqual(len(mrc.discover_traces([root])), 2)
+
+    def test_deduplicates_overlapping_roots(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            t = root / mrc.TRACE_REL
+            t.parent.mkdir(parents=True); t.write_text("")
+            self.assertEqual(len(mrc.discover_traces([root, root])), 1)
+
+    def test_missing_root_is_not_an_error(self):
+        self.assertEqual(mrc.discover_traces([Path("/nonexistent-xyz")]), [])
+
+
 class StrategyTest(unittest.TestCase):
     def _rd(self, **kw):
         return mrc.Read(correlation_id="c", ts=100.0, query="q", ids=["m"],
