@@ -143,8 +143,24 @@ def read_debugger(
 # Top-level: recall()
 # ---------------------------------------------------------------------------
 
-def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
-    """Fire-and-forget telemetry emit.  Returns correlation_id or None."""
+def _emit_telemetry(merged: List[Dict[str, Any]], query: str,
+                    project: Optional[str] = None,
+                    workdir: Optional[Path] = None) -> Optional[str]:
+    """Fire-and-forget telemetry emit.  Returns correlation_id or None.
+
+    Emits `returned_paths` alongside `memory_ids_seen`. This is the join key,
+    and its absence was the single reason usefulness could not be measured.
+
+    A PostToolUse hook (`scripts/tool_trace.py`, registered in `hooks/hooks.json`
+    with an empty matcher) already records every tool call as an OTel span
+    carrying `session.id` and the file path. So the file-open half of the signal
+    has existed all along. The read row carried memory IDS and no PATHS; the
+    span carries PATHS and no ids. There was nothing to join on.
+
+    `memory_locator.locate()` already passed `returned_paths`, but it emitted 70
+    of 41,935 rows. This function emitted 39,987 and passed nothing, which is
+    also why `phase` is `unknown` on 97% of the corpus.
+    """
     try:
         try:
             from scripts import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
@@ -160,10 +176,15 @@ def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
         # reconstructed after the fact, so rank and score are captured here or
         # never. Both are free: the list is already ordered, and memory_rank
         # computes the score anyway.
+        # Absolute paths, aligned with `kept`. An offline reconciler joins these
+        # to tool-trace spans by (session, path, time-order) -- no agent
+        # cooperation, no convention to decay.
+        paths = [str(_r.get("path") or "") for _i, _r in kept]
         return _mt.emit_read(
             phase="unknown",
             reader="memory_facade.recall",
             query=query,
+            returned_paths=[p for p in paths if p],
             memory_ids_seen=[s for s in seen_ids if s],
             ranks=[i for i, _r in kept],
             scores=[_r.get("_rank_score") for _i, _r in kept],
@@ -309,7 +330,7 @@ def recall(
         "results_by_kind": results,
         "merged": merged[: limit * len(KINDS)],
         "reasons": reasons,
-        "telemetry_correlation_id": _emit_telemetry(merged, query),
+        "telemetry_correlation_id": _emit_telemetry(merged, query, project, workdir),
     }
 
 

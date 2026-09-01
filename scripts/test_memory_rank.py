@@ -154,6 +154,36 @@ class ExplainTest(unittest.TestCase):
         self.assertAlmostEqual(e["coverage"], 2 / 3, places=3)
 
 
+class JoinKeyTest(unittest.TestCase):
+    """recall() must emit returned_paths -- the join key to tool-trace spans.
+
+    A PostToolUse hook already records every file open with session.id and an
+    absolute path. The read row carried memory IDS and no PATHS, so there was
+    nothing to join on. That single gap, not missing instrumentation, is why
+    usefulness was unmeasurable.
+    """
+
+    def test_facade_emits_paths_aligned_with_ids(self):
+        import json, os, tempfile
+        import memory_facade as mf
+        with tempfile.TemporaryDirectory() as d:
+            tp = os.path.join(d, "t.jsonl")
+            prev = dict(os.environ)
+            os.environ["BUILD_LOOP_TELEMETRY_SOURCE"] = "test"
+            os.environ["BUILD_LOOP_TEST_TELEMETRY_PATH"] = tp
+            try:
+                merged = [row(rid="a", title="ledger", ts=1, path="/tmp/a.md"),
+                          row(rid="b", title="ledger migration", ts=2, path="/tmp/b.md")]
+                mf._emit_telemetry(mr.rank(merged, "ledger migration"), "ledger migration")
+                emitted = json.loads(open(tp).read().strip().splitlines()[-1])
+            finally:
+                os.environ.clear(); os.environ.update(prev)
+        self.assertEqual(len(emitted["returned_paths"]), len(emitted["memory_ids_seen"]),
+                         "paths must be index-aligned with ids or the join is wrong")
+        self.assertTrue(all(p.startswith("/") for p in emitted["returned_paths"]),
+                        "paths must be absolute to match tool-trace spans")
+
+
 class ExposureTest(unittest.TestCase):
     """rank() must expose the score and position it already computes.
 
