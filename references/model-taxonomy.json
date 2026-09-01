@@ -364,7 +364,7 @@
     },
     "fable": {
       "provider": "anthropic",
-      "label": "Claude Fable 5",
+      "label": "Claude Fable 5.1",
       "segment": "generative_reasoning",
       "tier": "T1",
       "tags": [
@@ -374,7 +374,12 @@
       ],
       "released": "2025-11-01",
       "status": "default",
+      "supersedes": "claude-fable-5",
+      "context_window": 1000000,
+      "max_output": 64000,
+      "spec_source": "Activation probe 2026-09-01 from this host: `claude -p --model claude-fable-5-1` and `--model fable` BOTH report modelUsage.canonicalModel=claude-fable-5-1, contextWindow=1000000, maxOutputTokens=64000, provider=firstParty. The short alias `fable` already lands on 5.1, so no dispatch-path change was needed; this entry records the version the alias actually reaches.",
       "aliases": [
+        "claude-fable-5-1",
         "claude-fable-5",
         "claude-fable-5-20251101"
       ]
