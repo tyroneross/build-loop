@@ -473,6 +473,14 @@ def to_dashboard_spec(reg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_dashboard_build(path: str):
+    """Import the renderer from another repo WITHOUT writing anything into it.
+
+    dashboard_build.py lives in interface-built-right, which this script reads
+    and invokes but must never modify. A plain import writes a .pyc into that
+    repo's scripts/__pycache__/ as a side effect — observed 2026-09-01. Suppress
+    bytecode for the duration of the import and restore the flag afterwards, so
+    a read-only dependency stays read-only.
+    """
     p = Path(path)
     if not p.is_file():
         return None
@@ -480,7 +488,12 @@ def _load_dashboard_build(path: str):
     if spec is None or spec.loader is None:
         return None
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = prev
     return mod
 
 
