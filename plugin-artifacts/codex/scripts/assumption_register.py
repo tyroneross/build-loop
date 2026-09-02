@@ -66,11 +66,21 @@ TRIGGER_CLASSES = (
     "other",
 )
 
-# Where dashboard_build.py lives. Env var wins so a consumer repo can point at
-# its own checkout; the default is the known local path.
+# Where dashboard_build.py lives. It ships in interface-built-right, a separate
+# repo, so there is no in-tree resolver to cite. IBR_DASHBOARD_BUILD wins; the
+# fallback guesses a sibling checkout beside this repo rather than naming a
+# maintainer-only address, which would send an installed user's agent chasing a
+# file that cannot exist. A wrong guess is not fatal: `build` reports
+# "dashboard_build.py not found at <path>" and exits 3.
+_SIBLING_DASHBOARD_BUILD = (
+    Path(__file__).resolve().parent.parent.parent
+    / "interface-built-right"
+    / "scripts"
+    / "dashboard_build.py"
+)
 DEFAULT_DASHBOARD_BUILD = os.environ.get(
     "IBR_DASHBOARD_BUILD",
-    "/Users/tyroneross/dev/git-folder/interface-built-right/scripts/dashboard_build.py",
+    str(_SIBLING_DASHBOARD_BUILD),
 )
 
 

@@ -192,7 +192,7 @@ available.
 ## Step 6 — Write, validate, render
 
 ```bash
-BL=/Users/tyroneross/dev/git-folder/build-loop
+BL="${CLAUDE_PLUGIN_ROOT:-.}"
 DIR="$PWD/.build-loop/decisions/<YYYY-MM-DD>-<slug>"
 mkdir -p "$DIR"
 python3 "$BL/scripts/assumption_register.py" new --slug <slug> --title "<title>" --repo "$PWD" -o "$DIR/register.json"
