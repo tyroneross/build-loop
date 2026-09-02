@@ -205,7 +205,7 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 - `@local` marketplace entries (e.g. local-dev symlinks under `installPath`) are skipped — local-dev iteration is not a drift target.
 - Plugins whose GitHub repo lacks `.claude-plugin/plugin.json` at the repo root (verified 2026-05-03 for `agent-builder`, `agent-astronomer`, `stratagem`) cannot be auto-updated by this script — the verify-before-swap step rejects them. Those repos need root-level `.claude-plugin/plugin.json` before the hook can update them.
 
-**Version-controlled 2026-06-09 (WP3c).** The canonical implementation now lives in this repo at `scripts/marketplace_autoupdate.py` (with `scripts/test_marketplace_autoupdate.py`). The host install at `~/.claude/scripts/hooks/marketplace-autoupdate.py` is now a thin pure-exec shim that execs the repo copy (per the hooks-hygiene lesson: a loose copy at a global path desyncs silently from its source). The shim resolves the canonical file via `$BUILD_LOOP_MARKETPLACE_AUTOUPDATE` → `~/dev/git-folder/build-loop/scripts/marketplace_autoupdate.py` → newest plugin-cache version dir, and exits 0 if none resolve. Edit the repo copy; the shim picks it up with no re-copy.
+**Version-controlled 2026-06-09 (WP3c).** The canonical implementation now lives in this repo at `scripts/marketplace_autoupdate.py` (with `scripts/test_marketplace_autoupdate.py`). The host install at `~/.claude/scripts/hooks/marketplace-autoupdate.py` is now a thin pure-exec shim that execs the repo copy (per the hooks-hygiene lesson: a loose copy at a global path desyncs silently from its source). The shim resolves the canonical file via `$BUILD_LOOP_MARKETPLACE_AUTOUPDATE` → this repo's `scripts/marketplace_autoupdate.py` → newest plugin-cache version dir, and exits 0 if none resolve. Edit the repo copy; the shim picks it up with no re-copy.
 
 **Resolution criteria.** Remove this entry once Claude Code's `autoUpdate: true` actually re-installs catalog drift into `installPath`. Then delete the repo script + test, replace the shim with `rm`, and remove the matching SessionStart entry from `~/.claude/settings.json`.
 
@@ -240,51 +240,9 @@ Pattern candidate (positive): the live decision-dashboard artifact with save-bac
 
 **Resolution criteria.** Items 1–4 each get a fix or an explicit wontfix rationale; item 4 is security-gated and should not wait.
 
-## 2026-08-30 — Automate recurring ritual (×9): exec → exec → exec — draft a script/hook
-
-_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
-
-**What happened.** Automate recurring ritual (×9): exec → exec → exec — draft a script/hook
-
-**When.** 2026-08-30
-
-**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
-
-**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
-
-**Why.** The deterministic retrospective detected this exact sequence ×9 times in the run trace.
-
-## 2026-08-30 — Automate recurring ritual (×4): exec → send_message → exec — draft a script/hook
-
-_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
-
-**What happened.** Automate recurring ritual (×4): exec → send_message → exec — draft a script/hook
-
-**When.** 2026-08-30
-
-**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
-
-**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
-
-**Why.** The deterministic retrospective detected this exact sequence ×4 times in the run trace.
-
-## 2026-08-30 — Automate recurring ritual (×3): exec → exec → send_message — draft a script/hook
-
-_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
-
-**What happened.** Automate recurring ritual (×3): exec → exec → send_message — draft a script/hook
-
-**When.** 2026-08-30
-
-**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
-
-**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
-
-**Why.** The deterministic retrospective detected this exact sequence ×3 times in the run trace.
-
 ## 2026-08-31 — Reported a stale CI result as the current one
 
-_Source: retrospective `/private/tmp/claude-501/-Users-tyroneross/1ae52149-6d7e-4c19-9a43-4391fdc3fd10/scratchpad/retro.md`_
+_Source: an ephemeral session scratchpad that no longer exists; provenance unresolvable_
 
 **What happened.** After pushing the fix, I polled `gh run list --limit 4` and told the user
 "Secret scan: completed failure". Those were the previous commit's runs; the
@@ -304,7 +262,7 @@ debugging a passing fix
 
 ## 2026-09-01 — Scope the pre-bash unbounded-wait guard to executable command text
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** It
 matched a duration-wait literal inside heredoc PROSE while this very
@@ -325,7 +283,7 @@ pattern trips it
 
 ## 2026-09-01 — Stop reporting a rendered defect count as a quality score
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** Tyrone ranked
 the five bake-off mockups and his ranking disagreed with the metric:
@@ -344,7 +302,7 @@ comprehension and thinness, which that rule cannot see
 
 ## 2026-09-01 — Fix the harness no-progress guard so it stops punishing self-verification
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** It aborted 2 of 7 bake-off runs on 3 repeated reads. gpt-oss:20b had ALREADY
 written its deliverable and was re-reading to check it; gemma4:26b was paging a
@@ -363,7 +321,7 @@ repetition that IS progress
 
 ## 2026-09-01 — Make retrospective narration produce fileable findings
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** This run generated
 26 findings and all 26 returned `fileable: False`, each missing impact,
@@ -382,7 +340,7 @@ enforced that narration ran
 
 ## 2026-09-01 — I pushed a broken main
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** A commit meant to add one documentation file
 contained 35 files and 1,521 insertions,
@@ -401,7 +359,7 @@ the airlock merge had staged uncommitted Aug-17 vault work. `audit.rs`,
 
 ## 2026-09-01 — Re-read the staged index immediately before any commit that follows a merge
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
 
 **What happened.** Re-read the staged index immediately before any commit that follows a merge
 or a stash-pop.**

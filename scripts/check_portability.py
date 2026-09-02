@@ -66,6 +66,10 @@ EXEMPT_PATHS: dict[str, str] = {
         "docstring documents the resolver's own fallback order",
     "scripts/_test_helpers.py":
         "asserts tests never touch the legacy root — naming it is the point",
+    "README.md":
+        "documents the real resolution order (legacy-if-present, else neutral) "
+        "that scripts/_paths.py:memory_store_root() implements — same "
+        "justification as scripts/install_memory.py",
     "templates/memory/README.md":
         "documents the legacy -> neutral migration path for users who have one",
     "scripts/transcript_pattern_miner/accuracy/TRANSPARENCY.md":
@@ -176,8 +180,21 @@ def _is_test_file(path: str) -> bool:
     )
 
 
+# Root-level markdown ships too. README.md, KNOWN-ISSUES.md and their siblings
+# are the first thing a visitor to a public repo reads, and KNOWN-ISSUES.md in
+# particular is written by an automated filer that pastes absolute source paths.
+# Observed 2026-09-01: ten maintainer paths, one naming a private project,
+# landed in KNOWN-ISSUES.md inside the very commit range that fixed two such
+# paths elsewhere. The scan could not convict them because the check below
+# splits on "/" and a root-level file has no leading directory, so it matched
+# no entry in SHIPPED_DIRS and was skipped in silence.
 def _in_shipped_surface(path: str) -> bool:
-    return path.split("/", 1)[0] in SHIPPED_DIRS and not _is_test_file(path)
+    if _is_test_file(path):
+        return False
+    head, sep, _ = path.partition("/")
+    if not sep:
+        return path.endswith(".md")
+    return head in SHIPPED_DIRS
 
 
 def _is_benign(line: str) -> bool:

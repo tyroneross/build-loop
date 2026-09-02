@@ -736,4 +736,4 @@ silent assumption is a decision with a subtype, not a new record type. Do not
 build a second store.
 
 Reference register, 20 rows with the user's 14 real rulings:
-`/Users/tyroneross/dev/git-folder/ross-labs-astro/.build-loop/decisions/2026-09-01-rosslabs-mockup-audit/`.
+the consuming project's `.build-loop/decisions/<date>-<slug>/`.
