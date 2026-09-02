@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Release staleness
+
+# Watches the release automation itself. release-please plus the weekly cut make
+# releases automatic; this makes their ABSENCE loud. The two-month outage that
+# motivated all of this was invisible precisely because no check compared the
+# newest release against what had landed on main.
+#
+# Runs the morning after the weekly cut, so a cut that silently failed to happen is
+# reported within hours rather than a week later.
+#     '0 16 * * 1' = Mondays 16:00 UTC = Mondays 09:00 America/Los_Angeles (PDT).
+#
+# Verdict logic and its tests: scripts/release_staleness.py,
+# scripts/test_release_staleness.py.
+
+on:
+  schedule:
+    - cron: '0 16 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: 'Release cadence stalled — commits on main are unreleased'
+    steps:
+      # Tags are what the check reads, and a shallow checkout has none of them.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Evaluate release cadence
+        id: check
+        run: |
+          set -euo pipefail
+          set +e
+          OUT=$(python3 scripts/release_staleness.py --workdir . --branch "$GITHUB_REF_NAME" --json)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          case "$CODE" in
+            0) echo "stale=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "stale=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::release_staleness.py could not run (exit $CODE)"; exit 1 ;;
+          esac
+          {
+            echo 'reason<<EOF'
+            python3 -c "import json,sys; print(json.loads(sys.argv[1])['reason'])" "$OUT"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the cadence issue
+        if: steps.check.outputs.stale == 'true'
+        env:
+          REASON: ${{ steps.check.outputs.reason }}
+        run: |
+          set -euo pipefail
+          BODY=$(printf '%s\n\n%s\n\n%s\n' \
+            "$REASON" \
+            "The weekly cut (\`release-weekly-merge.yml\`) either did not run or found no release PR to merge. Check that \`release-please.yml\` is opening a PR labelled \`autorelease: pending\`, and that the last weekly run succeeded." \
+            "Ship now without waiting for the cadence: \`gh workflow run release-weekly-merge.yml\`")
+          EXISTING=$(gh issue list --state open --search "$ISSUE_TITLE in:title" \
+                       --json number,title \
+                       --jq "[.[] | select(.title == env.ISSUE_TITLE)][0].number // empty")
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body "$BODY"
+          fi
+
+      - name: Close the cadence issue once releases resume
+        if: steps.check.outputs.stale == 'false'
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --state open --search "$ISSUE_TITLE in:title" \
+                       --json number,title \
+                       --jq "[.[] | select(.title == env.ISSUE_TITLE)][0].number // empty")
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --comment "Release cadence recovered — closing automatically."
+          else
+            echo "Release cadence is healthy."
+          fi

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "bfe619e600810673d3c7dd255f4ecc76717690c2b7354f94920c24b86af16bf8"
+    "content_sha256": "27a31637a375ed88668121c1acd1fe6c6af62eb0b936a3504bcc00fe5715055c"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1833,6 +1833,7 @@
       "scripts/reference_capture.py": "Reference capture CLI — persist research findings as dated reference files.",
       "scripts/reference_graph_orphans.py": "Reference-graph orphan check (WP-E item 2) — propose, never delete.",
       "scripts/regenerate_knowledge_index.py": "Regenerate `.episodic/decisions/INDEX.md` and `.episodic/issues/INDEX.md`.",
+      "scripts/release_staleness.py": "Detect the failure mode \"a week passed with merged commits and no release was cut\".",
       "scripts/report_lint.py": "User-facing output style lint for build-loop's Phase 4 Review-G draft.",
       "scripts/rerank.py": "Cross-encoder rerank for hybrid retrieval (Phase A chunk 4).",
       "scripts/research_packet.py": "research_packet.py — Research packet generation for build-loop.",

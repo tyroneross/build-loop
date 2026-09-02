@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-v-in-tag": true,
+  "packages": {
+    ".": {
+      "package-name": "@tyroneross/build-loop",
+      "changelog-path": "CHANGELOG.md",
+      "last-release-sha": "57fe7022c45172f3c8fd63f9d5712ebff92a83e7",
+      "extra-files": [
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".claude-plugin/marketplace.json", "jsonpath": "$.metadata.version" },
+        { "type": "json", "path": ".claude-plugin/marketplace.json", "jsonpath": "$.plugins[0].version" },
+        { "type": "json", "path": ".agents/plugins/marketplace.json", "jsonpath": "$.version" },
+        { "type": "generic", "path": "README.md" }
+      ]
+    }
+  }
+}
