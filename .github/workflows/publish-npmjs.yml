@@ -71,6 +71,29 @@ jobs:
             --skip-check remote_refs \
             --json
 
+      # Fail loudly on a bad credential BEFORE the publish, not inside it.
+      # v0.36.4 failed at the publish step on 2026-07-12 and npmjs has been stuck at
+      # 0.36.1 ever since — the registry the README tells users to install from. The
+      # error is now past log retention, so the cause cannot be read back; a preflight
+      # means the next failure names itself instead of becoming another silent gap.
+      # `npm whoami` is a read: it authenticates and publishes nothing.
+      - name: Verify the npmjs credential
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is not set on this repository — npmjs publish cannot work."
+            exit 1
+          fi
+          if ! WHO=$(npm whoami --registry=https://registry.npmjs.org 2>&1); then
+            echo "::error::NPM_TOKEN is set but not accepted by npmjs: $WHO"
+            echo "::error::Rotate it — npmjs > Access Tokens > Generate (Automation), then: gh secret set NPM_TOKEN"
+            exit 1
+          fi
+          echo "npmjs credential is valid for: $WHO"
+
       - name: Check npmjs version
         id: npmjs_version
         run: |

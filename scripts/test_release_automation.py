@@ -243,3 +243,58 @@ def test_cadence_failure_is_monitored() -> None:
     assert "schedule" in triggers and triggers["schedule"]
     body = (WORKFLOWS / "release-staleness.yml").read_text(encoding="utf-8")
     assert "release_staleness.py" in body
+
+
+# ---------------------------------------------------------------------------
+# Cross-workflow wiring. A workflow_run trigger names its upstream by DISPLAY
+# NAME, not by filename, so renaming a workflow silently severs the link: no
+# error, no warning, the downstream job simply never fires again.
+# ---------------------------------------------------------------------------
+
+def _declared_workflow_names() -> dict:
+    return {
+        (_wf(p.name).get("name") or p.stem): p.name
+        for p in sorted(WORKFLOWS.glob("*.yml"))
+    }
+
+
+def test_every_watched_workflow_name_still_exists() -> None:
+    """claude-on-ci-failure.yml watches upstreams by display name. A rename makes
+    that entry dead weight that looks alive."""
+    declared = _declared_workflow_names()
+    watched = _triggers(_wf("claude-on-ci-failure.yml"))["workflow_run"]["workflows"]
+    unknown = [n for n in watched if n not in declared]
+    assert not unknown, (
+        f"claude-on-ci-failure.yml watches workflows that do not exist: {unknown}. "
+        f"Declared names: {sorted(declared)}"
+    )
+
+
+def test_the_ci_triage_never_watches_itself_or_a_publish_workflow() -> None:
+    """Watching itself is an infinite loop; watching a publish is spend on a release."""
+    watched = set(_triggers(_wf("claude-on-ci-failure.yml"))["workflow_run"]["workflows"])
+    forbidden = {
+        _wf("claude-on-ci-failure.yml")["name"],
+        _wf("publish-npm.yml")["name"],
+        _wf("publish-npmjs.yml")["name"],
+    }
+    assert not (watched & forbidden), f"CI triage must not watch {watched & forbidden}"
+
+
+def test_the_claude_workflows_skip_cleanly_without_their_api_key() -> None:
+    """ANTHROPIC_API_KEY has never existed on this repo. Before the guard,
+    claude-on-ci-failure went red on every genuine main failure — a permanent red
+    run parked beside the real one, which is how a CI board stops being read."""
+    for name in ("claude.yml", "claude-on-ci-failure.yml"):
+        wf = _wf(name)
+        job = next(iter(wf["jobs"].values()))
+        assert job.get("env", {}).get("HAVE_ANTHROPIC_KEY"), (
+            f"{name}: the job must lift ANTHROPIC_API_KEY into env "
+            "(`secrets` is rejected in both job-level and step-level `if:`)"
+        )
+        step = next(
+            s for s in job["steps"] if "claude-code-action" in str(s.get("uses", ""))
+        )
+        assert "HAVE_ANTHROPIC_KEY" in str(step.get("if", "")), (
+            f"{name}: the claude-code-action step must be guarded on the key"
+        )

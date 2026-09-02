@@ -16,6 +16,12 @@ on:
       - "Private Slug Guard"
       - "Runtime Memory Guard"
       - "Verify @tyroneross/build-loop install"
+      - "Portability guard"
+      - "Verify manifests"
+      # A release cut that fails silently is exactly what this repo just spent two
+      # months not noticing, so both release workflows are watched.
+      - "release-please"
+      - "Weekly release cut"
     types: [completed]
 
 # One Claude run per failing workflow at a time; newer failures supersede.
@@ -30,6 +36,8 @@ jobs:
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    env:
+      HAVE_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     permissions:
       contents: write
       pull-requests: write
@@ -42,6 +50,16 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 1
       - uses: anthropics/claude-code-action@a92e7c70a4da9793dc164451d829089dc057a464 # v1
+        # ANTHROPIC_API_KEY has never been configured on this repo, so without this
+        # guard the action fails and the whole job goes red. A board carrying a
+        # permanent red run next to the genuine one is a board people stop reading.
+        # Skipping the step keeps the job green, and it starts working the moment the
+        # key is added — no edit required.
+        #
+        # The secret is read through a job-level `env` because actionlint (correctly)
+        # rejects a `secrets` reference in BOTH a job-level and a step-level `if:`;
+        # `env` is allowed in a step-level one.
+        if: env.HAVE_ANTHROPIC_KEY == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: "--max-turns 15"
