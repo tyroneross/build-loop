@@ -239,3 +239,199 @@ Four unfiled defects/gaps observed in live operation, plus one pattern candidate
 Pattern candidate (positive): the live decision-dashboard artifact with save-back loop (publish → owner picks → republish notification → agent acts, ADRs 013–019 in one evening) is a proven shape for the `decision-queue` skill's surfacing layer.
 
 **Resolution criteria.** Items 1–4 each get a fix or an explicit wontfix rationale; item 4 is security-gated and should not wait.
+
+## 2026-08-30 — Automate recurring ritual (×9): exec → exec → exec — draft a script/hook
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
+
+**What happened.** Automate recurring ritual (×9): exec → exec → exec — draft a script/hook
+
+**When.** 2026-08-30
+
+**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
+
+**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
+
+**Why.** The deterministic retrospective detected this exact sequence ×9 times in the run trace.
+
+## 2026-08-30 — Automate recurring ritual (×4): exec → send_message → exec — draft a script/hook
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
+
+**What happened.** Automate recurring ritual (×4): exec → send_message → exec — draft a script/hook
+
+**When.** 2026-08-30
+
+**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
+
+**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
+
+**Why.** The deterministic retrospective detected this exact sequence ×4 times in the run trace.
+
+## 2026-08-30 — Automate recurring ritual (×3): exec → exec → send_message — draft a script/hook
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/TruePace/.build-loop/retrospectives/2026-08-30/bl-20260830T101658Z-codex:terra-832465.md`_
+
+**What happened.** Automate recurring ritual (×3): exec → exec → send_message — draft a script/hook
+
+**When.** 2026-08-30
+
+**Impact.** Repeated manual command sequences can delay closeout and make evidence capture inconsistent.
+
+**Recommendation.** Evaluate one deterministic script or hook for this sequence; do not promote or implement it from this retrospective.
+
+**Why.** The deterministic retrospective detected this exact sequence ×3 times in the run trace.
+
+## 2026-08-31 — Reported a stale CI result as the current one
+
+_Source: retrospective `/private/tmp/claude-501/-Users-tyroneross/1ae52149-6d7e-4c19-9a43-4391fdc3fd10/scratchpad/retro.md`_
+
+**What happened.** After pushing the fix, I polled `gh run list --limit 4` and told the user
+"Secret scan: completed failure". Those were the previous commit's runs; the
+new ones had not registered yet. The fix had not failed, it had not started.
+
+**When.** 2026-08-31
+
+**Impact.** I stated a false failure to the user and only caught it
+
+**Recommendation.** always filter CI polls by `headSha` matching the pushed sha,
+never by `--limit` position, and treat "no runs yet for this sha" as a distinct
+state from "runs finished"
+
+**Why.** I
+re-checked with `headSha`. A reader acting on that line would have gone
+debugging a passing fix
+
+## 2026-09-01 — Scope the pre-bash unbounded-wait guard to executable command text
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** It
+matched a duration-wait literal inside heredoc PROSE while this very
+retrospective was being written, and rejected the write. It had already
+rejected the same literal twice when it appeared inside a Rust test fixture
+that spawned a long-lived process rather than waiting on one.
+
+**When.** 2026-09-01
+
+**Impact.** three false rejections in one session; the workaround is to obfuscate
+the string, which defeats the guard for anyone actually evading it
+
+**Recommendation.** parse the command and match only argv positions, not heredoc bodies or
+string literals
+
+**Why.** the check greps raw command text, so any content that merely mentions the
+pattern trips it
+
+## 2026-09-01 — Stop reporting a rendered defect count as a quality score
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** Tyrone ranked
+the five bake-off mockups and his ranking disagreed with the metric:
+gpt-oss:20b scored 1 defect (second best) and he ranked it LAST; gemma4:26b
+scored 3 (second worst) and he called its design acceptable.
+
+**When.** 2026-09-01
+
+**Impact.** the bench spec implies defect count ranks quality; it does not
+
+**Recommendation.** add substance and brief-coverage dimensions; keep defect count as a floor
+that convicts, never as a ranking
+
+**Why.** the oracle measures one stated rule, and the human was reacting to
+comprehension and thinness, which that rule cannot see
+
+## 2026-09-01 — Fix the harness no-progress guard so it stops punishing self-verification
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** It aborted 2 of 7 bake-off runs on 3 repeated reads. gpt-oss:20b had ALREADY
+written its deliverable and was re-reading to check it; gemma4:26b was paging a
+27,693-byte file that glm-5.2 handled with bash sed ranges.
+
+**When.** 2026-09-01
+
+**Impact.** it kills the exact behaviour that measurably reduces defects, and it
+cost the skill+plugin A/B its second arm, leaving that result at n=1
+
+**Recommendation.** exempt a read whose target changed since the last read, or that follows a
+write to the same path; reset the counter on any successful write
+
+**Why.** the guard counts call repetition, not progress, and reading to verify is
+repetition that IS progress
+
+## 2026-09-01 — Make retrospective narration produce fileable findings
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** This run generated
+26 findings and all 26 returned `fileable: False`, each missing impact,
+recommendation and why, so the retro failed its own lint.
+
+**When.** 2026-09-01
+
+**Impact.** the auto-capture path silently produces retros that cannot be filed,
+which is the failure the lint exists to catch
+
+**Recommendation.** have the deterministic pass emit the three segment headers as empty stubs,
+and fail loudly when a headless run leaves them empty
+
+**Why.** the deterministic layer captures and the LLM layer narrates, but nothing
+enforced that narration ran
+
+## 2026-09-01 — I pushed a broken main
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** A commit meant to add one documentation file
+contained 35 files and 1,521 insertions,
+
+**When.** 2026-09-01
+
+**Impact.** origin/main was broken between two pushes
+
+**Recommendation.** re-read `git diff --cached --name-only` immediately before every commit,
+and never commit after a merge-resolution sequence without doing so
+
+**Why.** an earlier `git add -u` during
+the airlock merge had staged uncommitted Aug-17 vault work. `audit.rs`,
+`lint.rs` and `verify.rs` landed importing `crate::contract` while
+`contract.rs` is untracked, so origin/main did not compile
+
+## 2026-09-01 — Re-read the staged index immediately before any commit that follows a merge
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-01/hook_20260901T173537Z.md`_
+
+**What happened.** Re-read the staged index immediately before any commit that follows a merge
+or a stash-pop.**
+
+**When.** 2026-09-01
+
+**Impact.** prevents exactly the broken-main push above
+
+**Recommendation.** a pre-commit assertion that the index matches what the session last
+explicitly added
+
+**Why.** conflict resolution widens the index invisibly
+
+### Verification output must block the next irreversible action (2026-09-01)
+
+**What happened.** During the privacy-airlock merge the staged-content gate was
+run before pushing, returned `rc 101`, and the push proceeded anyway. The gate
+had correctly caught a commit that did not compile.
+
+**When.** 2026-09-01, session b0c2e194, harness commit 9f8d46d (reverted by
+23fb968).
+
+**Impact.** origin/main was broken between two pushes. The signal that would
+have prevented it was produced and discarded, which is worse than not running
+the gate, because the report claimed verification had happened.
+
+**Recommendation.** Treat a non-zero return from any verification command as a
+hard stop before the next irreversible action, the same way the harness sandbox
+now fails closed rather than degrading. Encode it as a default rather than an
+intention.
+
+**Why.** An advisory gate gets ignored under momentum. The failure was not
+missing tooling; the tooling ran and produced the right answer.
