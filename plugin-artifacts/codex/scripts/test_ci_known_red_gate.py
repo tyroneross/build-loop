@@ -418,7 +418,12 @@ class TestWorkflowWiring:
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue
-                if re.search(r"\b(pytest|python -m unittest)\b", stripped):
+                # A workflow FILENAME is not an invocation. release-weekly-merge.yml
+                # names `pytest.yml` to read that workflow's conclusion before it
+                # merges a release PR — it reads a result, it does not run a suite,
+                # so matching it here would be a false positive that pushes the
+                # author toward deleting a real guard to get green.
+                if re.search(r"\b(pytest|python -m unittest)\b(?!\.(?:yml|yaml)\b)", stripped):
                     offenders.append(f"{path.name}: {stripped}")
         assert not offenders, (
             "another workflow runs tests without the known-red gate: " + "; ".join(offenders)
