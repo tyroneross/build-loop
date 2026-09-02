@@ -73,3 +73,68 @@ def test_block_message_keeps_tagging_separate_from_bump():
     assert "bump_version.py --patch" in message
     assert "bump_version.py --tag" in message
     assert "--patch --tag" not in message
+
+
+# ---------------------------------------------------------------------------
+# release-please mode. Added 2026-09-02 with the release automation. Before it,
+# this gate demanded a manual version bump on every push — correct under the old
+# "a push is one release" model, and wrong the moment release-please took
+# ownership of the number: it would force a hand-edit of a field an automation
+# owns and desync the very manifest release-please reads to pick the next
+# version. The rule flipped; the stage stayed.
+# ---------------------------------------------------------------------------
+
+def _release_please_repo(tmp_path: Path, manifest_v: str, package_v: str, plugin_v: str):
+    repo = tmp_path / "rp"
+    (repo / ".claude-plugin").mkdir(parents=True)
+    (repo / gate.RP_CONFIG).write_text(json.dumps({"packages": {".": {}}}))
+    (repo / gate.RP_MANIFEST).write_text(json.dumps({".": manifest_v}))
+    (repo / gate.PACKAGE_JSON).write_text(json.dumps({"version": package_v}))
+    (repo / gate.MANIFEST).write_text(json.dumps({"version": plugin_v}))
+    return repo
+
+
+def test_release_please_mode_allows_a_push_with_no_bump(tmp_path: Path):
+    """The whole point. Under release-please a push is a commit, not a release."""
+    repo = _release_please_repo(tmp_path, "0.42.5", "0.42.5", "0.42.5")
+    verdict = gate.evaluate(repo, ["refs/heads/main a refs/heads/main b\n"], {})
+    assert verdict["action"] == "allow"
+    assert "release-please owns the version" in verdict["reason"]
+
+
+def test_release_please_mode_blocks_a_desynced_manifest(tmp_path: Path):
+    """A manifest behind package.json makes release-please propose a version npm
+    already has, and the publish is rejected with nothing shipped."""
+    repo = _release_please_repo(tmp_path, "0.41.0", "0.42.5", "0.42.5")
+    verdict = gate.evaluate(repo, ["refs/heads/main a refs/heads/main b\n"], {})
+    assert verdict["action"] == "block"
+    assert verdict["mode"] == "release-please"
+
+
+def test_release_please_block_message_names_every_field_and_its_value(tmp_path: Path):
+    """A gate that blocks without saying which of three files is wrong costs more
+    time than it saves."""
+    repo = _release_please_repo(tmp_path, "0.41.0", "0.42.5", "0.42.5")
+    message = gate.format_block_message(
+        gate.evaluate(repo, ["refs/heads/main a refs/heads/main b\n"], {})
+    )
+    for token in (gate.RP_MANIFEST, gate.PACKAGE_JSON, gate.MANIFEST, "0.41.0", "0.42.5"):
+        assert token in message
+    assert "--patch" not in message, "the manual-bump instruction does not apply here"
+
+
+def test_legacy_mode_survives_for_repos_without_release_please(tmp_path: Path):
+    """This file ships to other repos. Removing release-please's config must
+    restore the one-push-one-bump rule exactly."""
+    repo, line = _repo(tmp_path)
+    assert not gate.release_please_owns_versioning(repo)
+    assert gate.evaluate(repo, [line], {})["action"] == "block"
+
+
+def test_the_bypass_still_wins_in_release_please_mode(tmp_path: Path):
+    repo = _release_please_repo(tmp_path, "0.41.0", "0.42.5", "0.42.5")
+    verdict = gate.evaluate(
+        repo, ["refs/heads/main a refs/heads/main b\n"],
+        {"BUILD_LOOP_SKIP_VERSION_GATE": "1"},
+    )
+    assert verdict["action"] == "allow"
