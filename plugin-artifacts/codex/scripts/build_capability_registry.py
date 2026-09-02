@@ -255,7 +255,13 @@ CATEGORY_KEYWORDS = [
                       "wikilink", "graph leg", "contextual retrieval",
                       # Phase C/G additions:
                       "rerank", "wiki", "rrf", "cross-encoder",
-                      "federation", "daemon", "lesson")),
+                      "federation", "daemon", "lesson",
+                      # The silent-assumptions register: a durable, reversible
+                      # record of judgement calls, sibling to the decision-queue
+                      # surfaces above (which already land in `memory`).
+                      "assumption register", "assumption_register",
+                      "assumption-register", "silent-assumptions",
+                      "silent assumptions")),
     ("testing",      ("test", "pytest", "jest", "vitest", "spec",
                       "verify gate", "spot-check", "perturbation")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "8c4568426003d6809bf7f969665ae3d30348382b422450b5f01daec8b1ceb15b"
+    "content_sha256": "bfe619e600810673d3c7dd255f4ecc76717690c2b7354f94920c24b86af16bf8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1482,7 +1482,7 @@
         }
       },
       "silent-assumptions": {
-        "description": "\"Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Never blocks: you make the call, apply your default, and keep working; the register is a record of work already done. Triggers: 'what did you assume', 'what calls did you make', '…",
+        "description": "\"Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Not for a decision the user is BLOCKED on and work has stopped for — that is `decision-queue`. Never blocks: you make the call, apply your default, and keep working; the register …",
         "file": "skills/silent-assumptions/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

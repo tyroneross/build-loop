@@ -1,6 +1,6 @@
 ---
 name: silent-assumptions
-description: "Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Never blocks: you make the call, apply your default, and keep working; the register is a record of work already done. Triggers: 'what did you assume', 'what calls did you make', 'silent assumptions', 'show me your assumptions', 'assumption register', or an offer at a run boundary when high-leverage calls have accumulated. Not for a decision the user is BLOCKED on and work has stopped for — that is `decision-queue`."
+description: "Surface the judgement calls you already made without asking — what 'latest' meant, which viewports counted, who the audience was, whether to optimise for precision or recall — as a register the user can rule on and reverse after the fact. Not for a decision the user is BLOCKED on and work has stopped for — that is `decision-queue`. Never blocks: you make the call, apply your default, and keep working; the register is a record of work already done. Triggers: 'what did you assume', 'what calls did you make', 'silent assumptions', 'show me your assumptions', 'assumption register', or an offer at a run boundary when high-leverage calls have accumulated."
 user-invocable: false
 companion_scripts:
   - scripts/assumption_register.py — the file-based half: new / check / build / read / promote / offer. Works identically under Claude and Codex.

@@ -81,10 +81,12 @@ The host owns install, versioning, and `/plugin update`. Restart the host to loa
 
 The legacy `build-loop-install` binary syncs the same files into the host caches manually. Prefer the marketplace above; use this only to pin an exact version or on a host without marketplace support.
 
+<!-- x-release-please-start-version -->
 ```bash
-npm install -g @tyroneross/build-loop@0.39.4
+npm install -g @tyroneross/build-loop@0.42.5
 build-loop-install --host all
 ```
+<!-- x-release-please-end -->
 
 Global install needs a writable npm prefix. If `npm -g` fails with `EACCES` (Node from the official `.pkg` installer targets root-owned `/usr/local`), avoid the global install entirely with `npx @tyroneross/build-loop build-loop-install --host all`, or set a user prefix: `npm config set prefix ~/.local`.
 
@@ -172,7 +174,7 @@ The repo ships three agent surfaces from one source:
 - **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
 - **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
-Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 52 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
+Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 53 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
 
 ## Agent start protocol
 
@@ -278,7 +280,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.39.4`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+`npm install -g @tyroneross/build-loop@0.42.5`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start). <!-- x-release-please-version -->
 
 ### How is it different from just letting an agent code directly?
 
@@ -359,7 +361,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.39.4 --branch main --remote origin --json
+python3 scripts/verify_release_surface.py --version v0.42.5 --branch main --remote origin --json  # x-release-please-version
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.
