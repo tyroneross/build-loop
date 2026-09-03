@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "a263d1015a10cec907e8bcecf7225d56ca9d6e8b17b369a718d504f8296de04d"
+    "content_sha256": "e4f77925f13ee3257f29e56cc038a72cdfa1568a8938b4bbc92e3fc9e5a35fb0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1664,6 +1664,7 @@
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
       "scripts/hooks/run_registration_gate.py": "run_registration_gate.py — warn, at commit time, that this run was never registered.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
+      "scripts/hooks/unbounded_load_gate.py": "Reject ad-hoc unbounded CPU probes and route callers to the owned supervisor.\"\"\"",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
       "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",

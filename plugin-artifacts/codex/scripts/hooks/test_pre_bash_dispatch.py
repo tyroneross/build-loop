@@ -150,6 +150,15 @@ class DispatchRoutingTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
         self.assertNotIn("Audit packet", r.stderr)
 
+    def test_unbounded_cpu_probe_is_rejected_with_bounded_rewrite(self) -> None:
+        r = run_dispatch(
+            self.repo,
+            "node -e 'while(true){Math.sqrt(Math.random())}' &",
+        )
+        self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
+        self.assertIn("unbounded CPU load rejected", r.stderr)
+        self.assertIn("build-loop-load-probe", r.stderr)
+
     def test_direct_background_inspection_is_denied_and_routed_to_the_broker(self) -> None:
         """A registry-listed privileged inspection is DENIED, not merely hinted.
 

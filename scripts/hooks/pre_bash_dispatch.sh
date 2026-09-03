@@ -289,6 +289,18 @@ esac
 
 # Resolve plugin root for locating sub-scripts.
 
+# ── Unbounded-load gate ──────────────────────────────────────────────────────
+# Reject exact executable forms of ad-hoc infinite CPU probes. The checked-in
+# supervisor is the only supported synthetic-load owner because it gives every
+# worker a deadline, stable title, and verified cleanup receipt.
+_LOAD_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_load_gate.py"
+if [ -f "$_LOAD_GATE" ]; then
+    if ! printf '%s' "$INPUT" | python3 "$_LOAD_GATE" >/dev/null; then
+        printf '{}'
+        exit 2
+    fi
+fi
+
 # ── Unbounded-wait gate ──────────────────────────────────────────────────────
 # Runs FIRST and cheap: a wait with no exit condition is wrong regardless of what
 # else the command does, and blocking it here costs one short subprocess.

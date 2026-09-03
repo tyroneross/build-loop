@@ -78,6 +78,23 @@ Every tool call and result reconciles into
 span. The supervisor consumes error, retry, 429, and latency summaries; Phase 6
 consumes the same signals for recursive learning.
 
+### Synthetic load safety
+
+Never launch an unbounded background CPU loop. Run load-sensitive checks through
+`build-loop-load-probe`, which caps admission, names every worker, gives each
+worker an internal hard deadline, and verifies cleanup:
+
+```bash
+build-loop-load-probe --workers 4 --duration-seconds 30 -- npm test -- --runInBand
+```
+
+The lifecycle receipt contains only a fixed product/purpose, opaque run id, PID
+birth identity, process group, timestamps, and cleanup result. It must never
+contain prompts, URLs, secrets, repository paths, or the wrapped command line.
+Host-wide cleanup may signal a probe only when its owned receipt, PID birth
+identity, process-group identity, marker, and expired deadline all match.
+Unknown or ambiguous processes remain advisory.
+
 ### Cloud inference: token-led
 
 1. Use the median measured raw tokens for the same model and agent from the
