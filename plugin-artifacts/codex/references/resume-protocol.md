@@ -70,6 +70,19 @@ If the resolver returns `decision: "prompt_user"`, the Skill body surfaces to th
 
 > "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
+Before interpreting heartbeat age, the resolver also checks for the narrower
+case where strict branch closeout already made the execution impossible to
+resume: the exact run has no queued or in-flight chunks, its canonical
+branch-closeout receipt records explicit owner release, every attributable ref
+is closed in both receipt and run ledger, every recovery bundle verifies at the
+recorded OID, and every recorded branch/worktree is absent. It then locks and
+re-reads `state.json`, archives that exact execution as
+`terminal_branch_closeout`, and clears the active identity. No-flag resolution
+returns `fresh`; an explicit resume returns `abort` because the named run is
+already closed. A prepared/retained receipt, surviving resource, missing
+bundle, mismatched identity, queued/in-flight work, or malformed history keeps
+the existing abort/prompt behavior.
+
 A terminal pre-schema crash is a separate, fail-closed path. The first read-only
 resolution returns `decision: "abort"` with
 `required_action: "archive_legacy_crash"`; the Skill body immediately reruns the
@@ -103,6 +116,7 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 | `""` + matching session id | nonterminal execution from the same host/thread | `resume` | continue the existing run; never mint a fresh identity                   |
 | `""` (no owner proof)| heartbeat fresh          | `abort`      | refuse; another invocation may still be active                           |
 | `""` (no owner proof)| heartbeat missing/unparseable | `abort` | refuse; liveness and ownership are unknown                               |
+| `""` (no flag)       | verified strict closeout residue | `fresh` | exact execution archived atomically; closed run is not misreported as incomplete |
 | `""` (no flag)       | heartbeat stale          | `prompt_user`| skill surfaces resume-or-fresh prompt                                    |
 | `""` (no flag)       | terminal schema-less crash residue | `abort` | rerun with `--archive-terminal-legacy-crash`; proceed only after applied `fresh` |
 | `""` (archive mode)  | terminal schema-less crash residue | `fresh` | exact execution archived atomically; fresh identity may now be minted    |
@@ -111,6 +125,7 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 | `"<run-id>"`         | run_id mismatch          | `abort`      | refuse with reason; user picks correct id or starts fresh                |
 | `"<run-id>"`         | schema_version mismatch  | `abort`      | refuse with reason; user upgrades or starts fresh                         |
 | `"<run-id>"`         | phase=report             | `abort`      | refuse — already complete                                                |
+| `"<run-id>"`         | verified strict closeout residue | `abort` | repair stale execution identity, then refuse — already closed            |
 | `"<run-id>"`         | match + incomplete       | `resume`     | dispatch orchestrator with RESUME_MODE prefix                             |
 | `"latest"`           | no incomplete run         | `abort`      | refuse — nothing to resume                                                |
 | `"latest"`           | one stale incomplete run | `resume`     | resolve to that run_id, then dispatch                                     |

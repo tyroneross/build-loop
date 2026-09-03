@@ -1196,6 +1196,235 @@ def _verified_receipt_bundle(
     )
 
 
+def _repo_path(workdir: Path, value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = workdir / path
+    return path.resolve()
+
+
+def _terminal_closeout_evidence(
+    workdir: Path,
+    run: dict[str, Any],
+    execution: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    """Prove that an active execution belongs to a fully closed run.
+
+    A completed receipt alone is insufficient because ``complete`` also covers
+    retained review branches. Automatic reconciliation is deliberately
+    narrower: no queued/in-flight work, exact run identity, every attributable
+    ref closed in both ledgers, every bundle verified, and every branch/path
+    gone. Any ambiguity leaves the execution untouched.
+    """
+    run_ids = _row_identities(run)
+    execution_ids = _row_identities(execution)
+    if len(run_ids) != 1 or execution_ids != run_ids:
+        return None, "active execution does not exactly match the selected run"
+    run_id = next(iter(run_ids))
+    if execution.get("schema_version") != 1:
+        return None, "active execution is not schema version 1"
+    if execution.get("queued_chunks") != [] or execution.get("in_flight_chunks") != []:
+        return None, "active execution still contains queued or in-flight work"
+
+    closeout = run.get("branch_closeout")
+    if not isinstance(closeout, dict) or closeout.get("status") != "complete":
+        return None, "run branch_closeout is not complete"
+    recorded_receipt = closeout.get("receipt_path")
+    if not isinstance(recorded_receipt, str) or not recorded_receipt:
+        return None, "run branch_closeout has no receipt path"
+    canonical_receipt_path = _receipt_path(workdir, run_id)
+    expected_receipt_path = canonical_receipt_path.resolve()
+    try:
+        if _repo_path(workdir, recorded_receipt) != expected_receipt_path:
+            return None, "run branch_closeout receipt path is not canonical"
+    except (OSError, RuntimeError):
+        return None, "run branch_closeout receipt path is unresolvable"
+    if not canonical_receipt_path.is_file() or canonical_receipt_path.is_symlink():
+        return None, "canonical branch-closeout receipt is absent or not a regular file"
+    try:
+        receipt = _load_receipt(canonical_receipt_path, run_id)
+    except ValueError as exc:
+        return None, str(exc)
+    if receipt.get("run_id") != run_id or receipt.get("status") != "complete":
+        return None, "branch-closeout receipt is not exactly terminal for the run"
+    owner_release = receipt.get("owner_release")
+    if (
+        not isinstance(owner_release, dict)
+        or owner_release.get("confirmed") is not True
+        or not isinstance(owner_release.get("source"), str)
+        or not owner_release["source"].strip()
+    ):
+        return None, "branch-closeout receipt lacks explicit owner release"
+
+    receipt_refs = receipt.get("refs")
+    ledger_refs = run.get("createdRefs")
+    if not isinstance(receipt_refs, list) or not receipt_refs:
+        return None, "branch-closeout receipt has no attributable refs"
+    if not isinstance(ledger_refs, list) or not ledger_refs:
+        return None, "run ledger has no attributable refs"
+    if any(not isinstance(entry, dict) for entry in receipt_refs + ledger_refs):
+        return None, "branch-closeout refs must be objects"
+
+    receipt_by_branch = {
+        entry.get("branch"): entry
+        for entry in receipt_refs
+        if isinstance(entry.get("branch"), str) and entry.get("branch")
+    }
+    ledger_by_branch = {
+        entry.get("branch"): entry
+        for entry in ledger_refs
+        if isinstance(entry.get("branch"), str) and entry.get("branch")
+    }
+    if (
+        len(receipt_by_branch) != len(receipt_refs)
+        or len(ledger_by_branch) != len(ledger_refs)
+        or set(receipt_by_branch) != set(ledger_by_branch)
+    ):
+        return None, "receipt and run-ledger refs are not a one-to-one match"
+
+    bundles_root = (workdir / ".build-loop" / "bundles").resolve()
+    for branch_name, receipt_ref in receipt_by_branch.items():
+        ledger_ref = ledger_by_branch[branch_name]
+        if receipt_ref.get("status") != "closed" or ledger_ref.get("status") != "closed":
+            return None, f"ref {branch_name} is not closed in both ledgers"
+        if receipt_ref.get("bundle_verified") is not True:
+            return None, f"ref {branch_name} receipt does not attest bundle verification"
+        if ledger_ref.get("bundle_verified") is not True:
+            return None, f"ref {branch_name} run ledger does not attest bundle verification"
+        expected_oid = receipt_ref.get("expected_oid")
+        if not isinstance(expected_oid, str) or ledger_ref.get("expected_oid") != expected_oid:
+            return None, f"ref {branch_name} expected OID differs across ledgers"
+        bundle_value = receipt_ref.get("bundle_path")
+        if not isinstance(bundle_value, str) or ledger_ref.get("bundle_path") != bundle_value:
+            return None, f"ref {branch_name} bundle path differs across ledgers"
+        lexical_bundle_path = Path(bundle_value)
+        if not lexical_bundle_path.is_absolute():
+            lexical_bundle_path = workdir / lexical_bundle_path
+        try:
+            bundle_path = lexical_bundle_path.resolve()
+        except (OSError, RuntimeError):
+            return None, f"ref {branch_name} bundle path is unresolvable"
+        if bundle_path.parent != bundles_root or lexical_bundle_path.is_symlink():
+            return None, f"ref {branch_name} bundle path is outside the canonical bundle root"
+        if not _verified_receipt_bundle(workdir, receipt_ref):
+            return None, f"ref {branch_name} bundle cannot be verified"
+
+        receipt_path_value = receipt_ref.get("path")
+        ledger_path_value = ledger_ref.get("path") or ledger_ref.get("worktree")
+        if bool(receipt_path_value) != bool(ledger_path_value):
+            return None, f"ref {branch_name} worktree path differs across ledgers"
+        if receipt_path_value and ledger_path_value:
+            try:
+                receipt_worktree = _repo_path(workdir, str(receipt_path_value))
+                ledger_worktree = _repo_path(workdir, str(ledger_path_value))
+                if receipt_worktree != ledger_worktree:
+                    return None, f"ref {branch_name} worktree path differs across ledgers"
+                if not _approved_run_worktree_path(workdir, str(receipt_worktree)):
+                    return None, f"ref {branch_name} worktree path is outside the run root"
+            except (OSError, RuntimeError):
+                return None, f"ref {branch_name} worktree path is unresolvable"
+        for path_value in (receipt_path_value, ledger_path_value):
+            if path_value:
+                try:
+                    lexical_path = Path(str(path_value))
+                    if not lexical_path.is_absolute():
+                        lexical_path = workdir / lexical_path
+                    if lexical_path.exists() or lexical_path.is_symlink():
+                        return None, f"ref {branch_name} worktree path still exists"
+                except (OSError, RuntimeError):
+                    return None, f"ref {branch_name} worktree path is unresolvable"
+        # Keep this check last: a recreated ref is an operative veto even when
+        # every persisted closeout artifact still describes the old branch.
+        if _branch_oid(workdir, branch_name) is not None:
+            return None, f"ref {branch_name} still exists"
+
+    execution_branch = execution.get("run_worktree_branch")
+    execution_path = execution.get("run_worktree_path")
+    if bool(execution_branch) != bool(execution_path):
+        return None, "active execution worktree identity is incomplete"
+    if execution_branch and execution_path:
+        if execution_branch not in receipt_by_branch:
+            return None, "active execution branch is absent from the closeout receipt"
+        try:
+            recorded_path = receipt_by_branch[execution_branch].get("path")
+            if not recorded_path or _repo_path(workdir, str(recorded_path)) != _repo_path(
+                workdir, str(execution_path)
+            ):
+                return None, "active execution worktree differs from the closeout receipt"
+        except (OSError, RuntimeError):
+            return None, "active execution worktree path is unresolvable"
+
+    return {
+        "run_id": run_id,
+        "receipt_path": str(expected_receipt_path),
+        "closed_branches": sorted(receipt_by_branch),
+    }, "verified terminal branch closeout"
+
+
+def reconcile_terminal_execution(workdir: Path, run_id: str) -> dict[str, Any]:
+    """Archive and clear only an exact execution with terminal closeout proof."""
+    workdir = Path(workdir).resolve()
+    state_path = workdir / STATE_REL
+    result: dict[str, Any] = {
+        "reconciled": False,
+        "run_id": run_id,
+        "reason": "terminal execution reconciliation was not attempted",
+        "receipt_path": None,
+    }
+    try:
+        with LockedFile(state_path):
+            state = _load_state(workdir)
+            run = _pick_run(state, run_id)
+            execution = state.get("execution")
+            if run is None:
+                result["reason"] = "no exact runs[] row exists for reconciliation"
+                return result
+            if not isinstance(execution, dict) or not execution:
+                result["reason"] = "no active execution requires reconciliation"
+                return result
+            evidence, reason = _terminal_closeout_evidence(
+                workdir,
+                run,
+                execution,
+            )
+            if evidence is None:
+                result["reason"] = reason
+                return result
+            history = state.get("historicalExecutions")
+            if history is not None and not isinstance(history, list):
+                result["reason"] = (
+                    "historicalExecutions is not a list; refusing a lossy reconciliation"
+                )
+                return result
+            archived = dict(execution)
+            archived.update(
+                archive_disposition="terminal_branch_closeout",
+                closed_at=_now_iso(),
+                branch_closeout_receipt=evidence["receipt_path"],
+            )
+            history_rows = list(history or [])
+            if not any(
+                isinstance(row, dict)
+                and _rows_share_identity(row, execution)
+                and row.get("archive_disposition") == "terminal_branch_closeout"
+                for row in history_rows
+            ):
+                history_rows.append(archived)
+            state["historicalExecutions"] = history_rows[-10:]
+            state["execution"] = {}
+            _write_state(workdir, state)
+            result.update(
+                reconciled=True,
+                reason=reason,
+                receipt_path=evidence["receipt_path"],
+                closed_branches=evidence["closed_branches"],
+            )
+            return result
+    except (OSError, TimeoutError, SystemExit, ValueError) as exc:
+        result["reason"] = f"terminal execution reconciliation failed: {exc}"
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Core collapse logic
 # ---------------------------------------------------------------------------
@@ -1245,6 +1474,7 @@ def collapse(
         "dry_run": dry_run,
         "strict": strict,
         "strict_success": False,
+        "execution_reconciliation": None,
         "ledger_updated": [],
         "claim_release_session_source": None,
         "claim_release_tool_source": None,
@@ -1327,6 +1557,11 @@ def collapse(
                     )
                 else:
                     result["strict_success"] = strict
+                if result["strict_success"] and not dry_run:
+                    result["execution_reconciliation"] = reconcile_terminal_execution(
+                        workdir,
+                        actual_run_id,
+                    )
                 return result
             result["errors"].append(
                 f"branch {branch} is not attributable to run {actual_run_id}"
@@ -1615,6 +1850,11 @@ def collapse(
                 result["receipt_path"] = str(receipt_path)
             result["strict_success"] = verified_terminal
             result["receipt_status"] = _receipt_status(receipt)
+            if result["strict_success"]:
+                result["execution_reconciliation"] = reconcile_terminal_execution(
+                    workdir,
+                    actual_run_id,
+                )
         return result
 
     expected_oids = {
@@ -1946,6 +2186,11 @@ def collapse(
                 or not Path(str(target_receipt["path"])).exists()
             )
         )
+        if result["strict_success"]:
+            result["execution_reconciliation"] = reconcile_terminal_execution(
+                workdir,
+                actual_run_id,
+            )
     return result
 
 

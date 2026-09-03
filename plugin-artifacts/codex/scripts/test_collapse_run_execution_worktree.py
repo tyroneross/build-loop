@@ -297,6 +297,163 @@ def _strict_close(repo: Path, run_id: str, branch: str, **kwargs) -> dict:
     )
 
 
+def _schema_v1_execution(run_id: str, wt_path: Path, wt_branch: str) -> dict:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "build_loop_id": run_id,
+        "phase": "execute",
+        "last_heartbeat_at": "2026-09-03T04:20:20Z",
+        "queued_chunks": [],
+        "in_flight_chunks": [],
+        "completed_chunks": [],
+        "file_ownership": {},
+        "run_worktree_path": str(wt_path.resolve()),
+        "run_worktree_branch": wt_branch,
+    }
+
+
+def _make_strict_terminal_run(
+    tmp_path: Path,
+    run_id: str,
+) -> tuple[Path, Path, str, dict, dict]:
+    repo = _make_repo(tmp_path)
+    wt_path, wt_branch = _make_run_worktree(repo, run_id)
+    _commit_run_work(wt_path)
+    _git(repo, "merge", "--no-ff", wt_branch, "-m", "merge terminal run")
+    execution = _schema_v1_execution(run_id, wt_path, wt_branch)
+    state = {
+        "execution": execution,
+        "runs": [{"run_id": run_id, "build_loop_id": run_id, "createdRefs": []}],
+    }
+    (repo / ".build-loop" / "state.json").write_text(json.dumps(state, indent=2))
+    result = _strict_close(repo, run_id, wt_branch)
+    return repo, wt_path, wt_branch, execution, result
+
+
+def test_strict_close_reconciles_matching_schema_v1_execution(tmp_path: Path) -> None:
+    run_id = "bl-20260903T042020Z-codex:embed-benchmark-20260902-2109-199295"
+    repo, wt_path, wt_branch, execution, result = _make_strict_terminal_run(
+        tmp_path,
+        run_id,
+    )
+
+    assert result["strict_success"] is True
+    assert result["bundle_verified"] is True
+    assert result["errors"] == []
+    assert result["execution_reconciliation"]["reconciled"] is True
+    final = json.loads((repo / ".build-loop" / "state.json").read_text())
+    assert final["execution"] == {}
+    archived = final["historicalExecutions"][-1]
+    assert archived["run_id"] == execution["run_id"]
+    assert archived["archive_disposition"] == "terminal_branch_closeout"
+    assert archived["branch_closeout_receipt"] == result["receipt_path"]
+    assert not wt_path.exists()
+    assert _git(
+        repo,
+        "show-ref",
+        "--verify",
+        f"refs/heads/{wt_branch}",
+        check=False,
+    ).returncode != 0
+
+
+def test_idempotent_strict_close_repairs_execution_left_after_closeout(
+    tmp_path: Path,
+) -> None:
+    run_id = "bl-20260903T042020Z-codex-199296"
+    repo, _wt_path, wt_branch, execution, first = _make_strict_terminal_run(
+        tmp_path,
+        run_id,
+    )
+    state_path = repo / ".build-loop" / "state.json"
+    state = json.loads(state_path.read_text())
+    state["execution"] = execution
+    state_path.write_text(json.dumps(state, indent=2))
+
+    second = _strict_close(repo, run_id, wt_branch)
+
+    assert first["strict_success"] is True
+    assert second["strict_success"] is True
+    assert second["already_closed"]
+    assert second["execution_reconciliation"]["reconciled"] is True
+    assert json.loads(state_path.read_text())["execution"] == {}
+
+
+@pytest.mark.parametrize(
+    "unsafe_evidence",
+    [
+        "queued_work",
+        "in_flight_work",
+        "prepared_receipt",
+        "missing_bundle",
+        "outside_bundle",
+        "recreated_branch",
+        "existing_worktree",
+        "nonmatching_identity",
+        "missing_owner_release_source",
+        "malformed_history",
+    ],
+)
+def test_terminal_reconciliation_preserves_ambiguous_execution(
+    tmp_path: Path,
+    unsafe_evidence: str,
+) -> None:
+    run_id = f"bl-20260903T042020Z-codex-{unsafe_evidence}"
+    repo, _wt_path, wt_branch, execution, result = _make_strict_terminal_run(
+        tmp_path,
+        run_id,
+    )
+    state_path = repo / ".build-loop" / "state.json"
+    state = json.loads(state_path.read_text())
+    state["execution"] = execution
+    if unsafe_evidence == "queued_work":
+        state["execution"]["queued_chunks"] = ["chunk-pending"]
+    elif unsafe_evidence == "in_flight_work":
+        state["execution"]["in_flight_chunks"] = ["chunk-running"]
+    elif unsafe_evidence == "nonmatching_identity":
+        state["execution"]["run_id"] = f"{run_id}-other"
+    elif unsafe_evidence == "malformed_history":
+        state["historicalExecutions"] = {"not": "a list"}
+    state_path.write_text(json.dumps(state, indent=2))
+
+    if unsafe_evidence == "prepared_receipt":
+        receipt_path = Path(result["receipt_path"])
+        receipt = json.loads(receipt_path.read_text())
+        receipt["status"] = "prepared"
+        receipt["refs"][0]["status"] = "prepared"
+        receipt_path.write_text(json.dumps(receipt, indent=2))
+    elif unsafe_evidence == "missing_bundle":
+        Path(result["bundle_path"]).unlink()
+    elif unsafe_evidence == "outside_bundle":
+        receipt_path = Path(result["receipt_path"])
+        receipt = json.loads(receipt_path.read_text())
+        outside_bundle = repo / "outside.bundle"
+        outside_bundle.write_bytes(Path(result["bundle_path"]).read_bytes())
+        receipt["refs"][0]["bundle_path"] = str(outside_bundle)
+        receipt_path.write_text(json.dumps(receipt, indent=2))
+        state = json.loads(state_path.read_text())
+        state["runs"][0]["createdRefs"][0]["bundle_path"] = str(outside_bundle)
+        state_path.write_text(json.dumps(state, indent=2))
+    elif unsafe_evidence == "recreated_branch":
+        expected_oid = state["runs"][0]["createdRefs"][0]["expected_oid"]
+        _git(repo, "branch", wt_branch, expected_oid)
+    elif unsafe_evidence == "existing_worktree":
+        Path(execution["run_worktree_path"]).mkdir(parents=True)
+    elif unsafe_evidence == "missing_owner_release_source":
+        receipt_path = Path(result["receipt_path"])
+        receipt = json.loads(receipt_path.read_text())
+        receipt["owner_release"].pop("source")
+        receipt_path.write_text(json.dumps(receipt, indent=2))
+
+    expected_execution = json.loads(state_path.read_text())["execution"]
+    reconciliation = collapse_run.reconcile_terminal_execution(repo, run_id)
+
+    assert reconciliation["reconciled"] is False
+    final = json.loads(state_path.read_text())
+    assert final["execution"] == expected_execution
+
+
 def test_legacy_run_id_only_completes_transaction(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
     run_id = "bl-20260711T105157Z-codex-441882"

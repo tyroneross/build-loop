@@ -965,6 +965,207 @@ def test_no_resume_stale_heartbeat_prompts_user(tmp_path):
     assert "incomplete build detected" in env["reason"]
 
 
+def _write_closed_schema_v1_execution(tmp_path: Path) -> tuple[Path, dict, str, Path]:
+    """Model the exact residue left when strict collapse finished but state did not."""
+    _make_git_repo(tmp_path)
+    (tmp_path / "base.txt").write_text("base\n")
+    subprocess.check_call(["git", "add", "base.txt"], cwd=tmp_path)
+    subprocess.check_call(["git", "commit", "-qm", "base"], cwd=tmp_path)
+    subprocess.check_call(["git", "branch", "-M", "main"], cwd=tmp_path)
+    run_id = "bl-20260903T042020Z-codex:embed-benchmark-20260902-2109-199295"
+    branch = "bl/run-199295"
+    subprocess.check_call(["git", "branch", branch], cwd=tmp_path)
+    expected_oid = subprocess.check_output(
+        ["git", "rev-parse", branch],
+        cwd=tmp_path,
+        text=True,
+    ).strip()
+    bundle_path = tmp_path / ".build-loop" / "bundles" / "collapse-199295.bundle"
+    bundle_path.parent.mkdir(parents=True)
+    subprocess.check_call(
+        ["git", "bundle", "create", str(bundle_path), f"refs/heads/{branch}"],
+        cwd=tmp_path,
+    )
+    subprocess.check_call(["git", "branch", "-D", branch], cwd=tmp_path)
+    vanished_worktree = tmp_path / ".build-loop" / "worktrees" / "run-199295"
+    execution = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "build_loop_id": run_id,
+        "phase": "execute",
+        "last_heartbeat_at": "2026-09-03T04:20:20Z",
+        "queued_chunks": [],
+        "in_flight_chunks": [],
+        "completed_chunks": [],
+        "file_ownership": {},
+        "run_worktree_path": str(vanished_worktree),
+        "run_worktree_branch": branch,
+    }
+    receipt_path = (
+        tmp_path
+        / ".build-loop"
+        / "branch-closeout"
+        / f"{run_id.replace(':', '-')}.json"
+    )
+    receipt_path.parent.mkdir(parents=True)
+    ref = {
+        "branch": branch,
+        "path": str(vanished_worktree),
+        "status": "closed",
+        "expected_oid": expected_oid,
+        "bundle_path": str(bundle_path),
+        "bundle_verified": True,
+        "merge_target": "main",
+    }
+    receipt_path.write_text(json.dumps({
+        "schema_version": 1,
+        "run_id": run_id,
+        "status": "complete",
+        "owner_release": {"confirmed": True, "source": "pytest"},
+        "refs": [ref],
+    }))
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.write_text(json.dumps({
+        "execution": execution,
+        "runs": [{
+            "run_id": run_id,
+            "build_loop_id": run_id,
+            "outcome": "partial",
+            "createdRefs": [dict(ref)],
+            "branch_closeout": {
+                "status": "complete",
+                "receipt_path": str(receipt_path),
+            },
+        }],
+    }))
+    return state_path, execution, branch, receipt_path
+
+
+def test_no_resume_reconciles_verified_terminal_execution_to_fresh(tmp_path):
+    state_path, execution, _branch, receipt_path = _write_closed_schema_v1_execution(
+        tmp_path
+    )
+
+    env = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 9, 3, 14, 30, tzinfo=timezone.utc),
+    )
+
+    assert env["decision"] == "fresh"
+    assert env["reconciliation_applied"] is True
+    assert env["reconciled_run_id"] == execution["run_id"]
+    state = json.loads(state_path.read_text())
+    assert state["execution"] == {}
+    archived = state["historicalExecutions"][-1]
+    assert archived["archive_disposition"] == "terminal_branch_closeout"
+    assert archived["branch_closeout_receipt"] == str(receipt_path)
+
+
+def test_explicit_resume_repairs_terminal_residue_then_refuses_resume(tmp_path):
+    state_path, execution, _branch, _receipt_path = _write_closed_schema_v1_execution(
+        tmp_path
+    )
+
+    env = resolve(tmp_path, execution["run_id"])
+
+    assert env["decision"] == "abort"
+    assert env["reconciliation_applied"] is True
+    assert "already closed" in env["reason"]
+    assert json.loads(state_path.read_text())["execution"] == {}
+
+
+def test_terminal_reconciliation_is_idempotent_across_resolver_calls(tmp_path):
+    state_path, execution, _branch, _receipt_path = _write_closed_schema_v1_execution(
+        tmp_path
+    )
+
+    first = resolve(tmp_path, "")
+    second = resolve(tmp_path, "")
+
+    assert first["reconciliation_applied"] is True
+    assert second["decision"] == "fresh"
+    assert "reconciliation_applied" not in second
+    state = json.loads(state_path.read_text())
+    assert state["execution"] == {}
+    assert [
+        row
+        for row in state["historicalExecutions"]
+        if row.get("run_id") == execution["run_id"]
+    ] == [state["historicalExecutions"][-1]]
+
+
+@pytest.mark.parametrize(
+    "unsafe_evidence",
+    [
+        "queued_work",
+        "in_flight_work",
+        "prepared_receipt",
+        "missing_bundle",
+        "outside_bundle",
+        "recreated_branch",
+        "existing_worktree",
+        "nonmatching_identity",
+        "missing_owner_release_source",
+        "malformed_history",
+    ],
+)
+def test_terminal_lookalikes_keep_existing_stale_run_guard(
+    tmp_path,
+    unsafe_evidence,
+):
+    state_path, execution, branch, receipt_path = _write_closed_schema_v1_execution(
+        tmp_path
+    )
+    state = json.loads(state_path.read_text())
+    if unsafe_evidence == "queued_work":
+        state["execution"]["queued_chunks"] = ["chunk-pending"]
+    elif unsafe_evidence == "in_flight_work":
+        state["execution"]["in_flight_chunks"] = ["chunk-running"]
+    elif unsafe_evidence == "nonmatching_identity":
+        state["execution"]["build_loop_id"] = f"{execution['run_id']}-other"
+    elif unsafe_evidence == "malformed_history":
+        state["historicalExecutions"] = {"not": "a list"}
+    state_path.write_text(json.dumps(state))
+    if unsafe_evidence == "prepared_receipt":
+        receipt = json.loads(receipt_path.read_text())
+        receipt["status"] = "prepared"
+        receipt["refs"][0]["status"] = "prepared"
+        receipt_path.write_text(json.dumps(receipt))
+    elif unsafe_evidence == "missing_bundle":
+        state = json.loads(state_path.read_text())
+        Path(state["runs"][0]["createdRefs"][0]["bundle_path"]).unlink()
+    elif unsafe_evidence == "outside_bundle":
+        state = json.loads(state_path.read_text())
+        outside_bundle = tmp_path / "outside.bundle"
+        original_bundle = Path(state["runs"][0]["createdRefs"][0]["bundle_path"])
+        outside_bundle.write_bytes(original_bundle.read_bytes())
+        state["runs"][0]["createdRefs"][0]["bundle_path"] = str(outside_bundle)
+        state_path.write_text(json.dumps(state))
+        receipt = json.loads(receipt_path.read_text())
+        receipt["refs"][0]["bundle_path"] = str(outside_bundle)
+        receipt_path.write_text(json.dumps(receipt))
+    elif unsafe_evidence == "recreated_branch":
+        subprocess.check_call(["git", "branch", branch], cwd=tmp_path)
+    elif unsafe_evidence == "existing_worktree":
+        Path(execution["run_worktree_path"]).mkdir(parents=True)
+    elif unsafe_evidence == "missing_owner_release_source":
+        receipt = json.loads(receipt_path.read_text())
+        receipt["owner_release"].pop("source")
+        receipt_path.write_text(json.dumps(receipt))
+
+    expected_execution = json.loads(state_path.read_text())["execution"]
+    env = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 9, 3, 14, 30, tzinfo=timezone.utc),
+    )
+
+    assert env["decision"] == "prompt_user"
+    assert env["run_id"] == execution["run_id"]
+    assert json.loads(state_path.read_text())["execution"] == expected_execution
+
+
 def test_no_resume_phase_report_returns_fresh(tmp_path):
     _setup_started_run(tmp_path)
     update_execution_state(tmp_path / ".build-loop" / "state.json", "complete")

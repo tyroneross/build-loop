@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from atomic_io import LockedFile, atomic_write_bytes
-from collapse_run import inspect_worktree_safety
+from collapse_run import inspect_worktree_safety, reconcile_terminal_execution
 from data_plane import DataPlaneError, check_terminal_manifest
 
 EXPECTED_SCHEMA_VERSION = 1
@@ -1023,6 +1023,31 @@ def resolve(
         structural_error = _validate_execution_v1(execution)
         if structural_error:
             return _abort_invalid_execution(execution, structural_error)
+
+        execution_run_id = execution["run_id"]
+        requested_run_matches = resume_arg in {"", "latest", execution_run_id}
+        if requested_run_matches:
+            reconciliation = reconcile_terminal_execution(workdir, execution_run_id)
+            if reconciliation["reconciled"]:
+                return {
+                    "decision": "abort" if resume_arg else "fresh",
+                    "reason": (
+                        f"run {execution_run_id} is already closed; repaired stale "
+                        "execution identity"
+                        if resume_arg
+                        else "verified terminal branch closeout; repaired stale "
+                        "execution identity"
+                    ),
+                    "run_id": execution_run_id if resume_arg else None,
+                    "remaining_chunks": [],
+                    "iterate_attempt": 0,
+                    "concurrent_modifications": [],
+                    "execution_block": execution,
+                    "envelopes": {},
+                    "reconciliation_applied": True,
+                    "reconciled_run_id": execution_run_id,
+                    "terminal_closeout": reconciliation,
+                }
 
     # No --resume: surface heartbeat staleness check (M4 primary signal).
     if not resume_arg:
