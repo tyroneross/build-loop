@@ -7,57 +7,57 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-architecture.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-retrieval.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-rally-point.sh\" 2>/dev/null; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-worktree-gc.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-git-hooks.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-plugin-drift.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-plugin-heal.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-memory.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 6000
+            "timeout": 6
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-closeout.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 3000
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" session-start </dev/null 2>/dev/null; exit 0",
-            "timeout": 3000
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-extensions.sh\" </dev/null 2>/dev/null; exit 0",
-            "timeout": 2000
+            "timeout": 2
           }
         ]
       },
@@ -66,7 +66,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-codex-hook-trust.sh\" </dev/null 2>/dev/null || printf '{}'",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       }
@@ -78,7 +78,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/route-guard.sh\" prompt-submit 2>/dev/null || printf '{}'",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -90,7 +90,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/route-guard.sh\" pre-skill 2>/dev/null || printf '{}'",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       },
@@ -100,12 +100,12 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-architecture.sh\" >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\"; exit 0",
-            "timeout": 2000
+            "timeout": 2
           }
         ]
       },
@@ -115,12 +115,12 @@
           {
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_dispatch.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
-            "timeout": 9000
+            "timeout": 9
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\"; exit 0",
-            "timeout": 2000
+            "timeout": 2
           }
         ]
       },
@@ -130,7 +130,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase start >/dev/null 2>&1 || true",
-            "timeout": 1000
+            "timeout": 1
           }
         ]
       }
@@ -142,12 +142,12 @@
           {
             "type": "command",
             "command": "[ -f .build-loop/state.json ] || exit 0; python3 -c \"import json,sys; s=json.load(open('.build-loop/state.json')); p7=s.get('phases',{}).get('fact_check',{}).get('completed',False); active=s.get('active',False); sys.exit(0 if (not active or p7) else 1)\" 2>/dev/null && exit 0; echo \"$TOOL_INPUT\" | grep -qE '\\b(git\\s+push|npm\\s+publish|vercel\\s+deploy|gh\\s+release)\\b' && echo 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.'; exit 0",
-            "timeout": 3000
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/post-push-closeout.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2000
+            "timeout": 2
           }
         ]
       },
@@ -157,7 +157,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase end >/dev/null 2>&1 || true",
-            "timeout": 1000
+            "timeout": 1
           }
         ]
       }
@@ -169,17 +169,17 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; printf '{}'",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/stop_finalize.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
-            "timeout": 30000
+            "timeout": 30
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" stop 2>/dev/null; exit 0",
-            "timeout": 6000
+            "timeout": 6
           }
         ]
       },
@@ -189,7 +189,7 @@
           {
             "type": "command",
             "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       },
@@ -199,7 +199,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" ingest >/dev/null 2>&1 || true; printf '{}'",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       },
@@ -208,7 +208,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/stop-transcript-sweep.sh\" all 2>/dev/null || printf '{}'",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       }
@@ -220,7 +220,7 @@
           {
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; s=\"$root/scripts/hooks/session_end_retro_sweep.py\"; tp=$(python3 -c 'import sys,json;print(json.load(sys.stdin).get(\"transcript_path\",\"\"))' 2>/dev/null); if [ -n \"$tp\" ] && [ -f \"$s\" ]; then nohup python3 \"$s\" \"$tp\" </dev/null >/dev/null 2>&1 & fi; exit 0",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       }
@@ -232,7 +232,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase error >/dev/null 2>&1 || true",
-            "timeout": 1000
+            "timeout": 1
           }
         ]
       }

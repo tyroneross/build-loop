@@ -28,7 +28,7 @@ def test_self_test_passes():
 
 def test_inline_inner_timeout_over_budget_flags_hb001(tmp_path):
     doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "timeout 30s python3 -c x", "timeout": 5000},
+        {"type": "command", "command": "timeout 30s python3 -c x", "timeout": 5},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert any(f["rule_id"] == "HB001" for f in findings)
@@ -36,7 +36,7 @@ def test_inline_inner_timeout_over_budget_flags_hb001(tmp_path):
 
 def test_inner_below_budget_is_clean(tmp_path):
     doc = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
-        {"type": "command", "command": "timeout 1 git status", "timeout": 2000},
+        {"type": "command", "command": "timeout 1 git status", "timeout": 2},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert findings == []
@@ -58,7 +58,7 @@ def test_referenced_script_inner_timeout_flags(tmp_path):
     doc = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
         {"type": "command",
          "command": 'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/slow.py"',
-         "timeout": 2000},
+         "timeout": 2},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert any(f["rule_id"] == "HB001" and f["script_path"] == "scripts/slow.py" for f in findings)
@@ -72,7 +72,7 @@ def test_backgrounded_inner_timeout_is_exempt(tmp_path):
     doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
         {"type": "command",
          "command": 'nohup python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/bg.py" >/dev/null 2>&1 & printf "{}"',
-         "timeout": 5000},
+         "timeout": 5},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert not any(f["rule_id"] == "HB001" for f in findings)
@@ -86,7 +86,7 @@ def test_redirect_not_misread_as_background(tmp_path):
     doc = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
         {"type": "command",
          "command": 'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/fg.py" 2>&1',
-         "timeout": 5000},
+         "timeout": 5},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert any(f["rule_id"] == "HB001" for f in findings)
@@ -102,7 +102,7 @@ def test_budget_derived_timeout_not_flagged(tmp_path):
     doc = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
         {"type": "command",
          "command": 'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/budget.py"',
-         "timeout": 3000},
+         "timeout": 3},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
     assert not any(f["rule_id"] == "HB001" for f in findings)
@@ -117,3 +117,36 @@ def test_shipped_hooks_json_passes_the_lint():
         + "\n".join(f"  [{f['rule_id']}] {f['event']} "
                     f"{f['script_path'] or '(inline)'}: {f['message']}" for f in findings)
     )
+
+
+def test_millisecond_shaped_timeout_flags_hb003(tmp_path):
+    """The field is seconds, so a ms-shaped value is hours. Make it unrepresentable.
+
+    This is the defect that put 30 entries in this repo's hooks.json at 1000-30000,
+    i.e. 16 minutes to 8.3 hours. Blocking hooks (UserPromptSubmit/PreToolUse/Stop)
+    make that budget the user's liveness guarantee, so past the 60s host default it
+    guards nothing at all.
+    """
+    doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
+        {"type": "command", "command": "echo hi", "timeout": 30000},
+    ]}]}}
+    findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
+    hb003 = [f for f in findings if f["rule_id"] == "HB003"]
+    assert hb003, findings
+    assert hb003[0]["severity"] == "error"
+    assert "SECONDS" in hb003[0]["message"]
+
+
+def test_timeout_at_the_ceiling_is_allowed(tmp_path):
+    """60s is the Claude Code default; at the ceiling is fine, over it is not."""
+    doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
+        {"type": "command", "command": "echo hi", "timeout": hbl.MAX_HOOK_TIMEOUT_S},
+    ]}]}}
+    findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
+    assert not [f for f in findings if f["rule_id"] == "HB003"], findings
+
+
+def test_shipped_hooks_json_declares_no_millisecond_budgets():
+    """Regression pin on the real file: all 30 conversions must stay converted."""
+    findings = hbl.lint_hooks(REPO / "hooks" / "hooks.json", repo_root=REPO)
+    assert not [f for f in findings if f["rule_id"] == "HB003"], findings

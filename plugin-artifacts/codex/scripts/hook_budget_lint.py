@@ -3,7 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.
 
-A Claude Code hook entry declares an outer ``timeout`` (milliseconds). The
+A Claude Code hook entry declares an outer ``timeout`` in SECONDS. This module
+previously documented and enforced it as milliseconds, which is how 30 entries in
+this repo came to hold millisecond-shaped values (1000..30000) that the host read
+as seconds -- up to 8.3 hours. Unit confirmed empirically: a hook declaring
+``timeout: 3`` produced the host error "timed out after 3s", and one declaring
+``timeout: 5`` produced "timed out after 5s". The
 command it runs may itself spawn subprocesses with their OWN timeouts. If any
 inner timeout is >= the outer hook timeout, the inner work can still be running
 when the harness kills the hook — the hook "fails open" (no result), silently
@@ -22,8 +27,14 @@ Rules (all severity=warn — build-loop's "judges route, never stop"):
     HB001 — inner subprocess timeout >= declaring hook's outer timeout
             Reads the referenced script; extracts Python ``timeout=N`` kwargs
             and shell ``timeout N`` invocations (seconds), compares against the
-            hook entry's ``timeout`` (ms). Inner_ms = N*1000.
+            hook entry's ``timeout`` (seconds).
     HB002 — hook entry declares no ``timeout`` field
+    HB003 — hook ``timeout`` exceeds MAX_HOOK_TIMEOUT_S. The field is seconds,
+            so a millisecond-shaped value (1000, 5000, 30000) silently becomes
+            16 minutes to 8.3 hours. UserPromptSubmit/PreToolUse/Stop hooks are
+            BLOCKING, so that budget is the user's liveness guarantee: past the
+            host default it is not a guard at all. This rule makes the wrong
+            unit unrepresentable rather than merely discouraged.
             An unbounded hook. Default harness timeout is implementation-
             defined; declare one explicitly.
 
@@ -79,6 +90,12 @@ _SCRIPT_REF_RE = re.compile(
 # subprocess's own timeout cannot hold the hook past its budget. `nohup ... &`
 # is the canonical fire-and-forget pattern; a trailing/embedded job-control `&`
 # (not the `&&`/`&>`/`2>&1` operators) also detaches. Such commands are exempt
+# Ceiling for a declared hook timeout, in seconds. 60 is the Claude Code default
+# hook timeout: a budget above it is looser than the host's own fallback and
+# therefore guards nothing. Every hook in this repo measures <=0.39s, so the
+# tightest budget here still carries >=10x headroom.
+MAX_HOOK_TIMEOUT_S = 60
+
 # from HB001 — their inner timeout is intentionally larger than the hook budget.
 _BACKGROUND_RE = re.compile(r"\bnohup\b|(?<![&>])&(?![&>])")
 
@@ -148,11 +165,11 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
 
     for event, matcher, entry in _iter_hook_entries(doc):
         command = str(entry.get("command", ""))
-        outer_ms = entry.get("timeout")
+        outer_s = entry.get("timeout")
         cmd_trunc = command[:200]
 
         # HB002 — no declared timeout.
-        if outer_ms is None:
+        if outer_s is None:
             findings.append({
                 "rule_id": "HB002",
                 "severity": "warn",
@@ -162,14 +179,30 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
                 "script_path": None,
                 "message": (
                     "hook entry declares no 'timeout' — an unbounded hook can "
-                    "stall the tool call; declare an explicit timeout (ms)."
+                    "stall the tool call; declare an explicit timeout (seconds)."
                 ),
-                "evidence": {"outer_timeout_ms": None, "inner_timeout_s": None},
+                "evidence": {"outer_timeout_s": None, "inner_timeout_s": None},
             })
             continue
 
         try:
-            outer_ms_val = float(outer_ms)
+            outer_s_val = float(outer_s)
+            if outer_s_val > MAX_HOOK_TIMEOUT_S:
+                findings.append({
+                    "rule_id": "HB003",
+                    "severity": "error",
+                    "event": event,
+                    "matcher": matcher,
+                    "command": cmd_trunc,
+                    "script_path": None,
+                    "message": (
+                        f"hook 'timeout' is {outer_s_val:g}s "
+                        f"({outer_s_val / 3600:.1f}h) — over the {MAX_HOOK_TIMEOUT_S}s "
+                        f"ceiling. The field is SECONDS; this looks like a "
+                        f"millisecond value. Divide by 1000."
+                    ),
+                    "evidence": {"outer_timeout_s": outer_s_val, "inner_timeout_s": None},
+                })
         except (TypeError, ValueError):
             findings.append({
                 "rule_id": "HB002",
@@ -178,8 +211,8 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
                 "matcher": matcher,
                 "command": cmd_trunc,
                 "script_path": None,
-                "message": f"hook 'timeout' is not numeric: {outer_ms!r}",
-                "evidence": {"outer_timeout_ms": outer_ms, "inner_timeout_s": None},
+                "message": f"hook 'timeout' is not numeric: {outer_s!r}",
+                "evidence": {"outer_timeout_s": outer_s, "inner_timeout_s": None},
             })
             continue
 
@@ -199,8 +232,7 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
 
         for text, script_rel in sources:
             for inner_s, snippet in _extract_inner_timeouts_seconds(text):
-                inner_ms = inner_s * 1000.0
-                if inner_ms >= outer_ms_val:
+                if inner_s >= outer_s_val:
                     findings.append({
                         "rule_id": "HB001",
                         "severity": "warn",
@@ -209,13 +241,13 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
                         "command": cmd_trunc,
                         "script_path": script_rel,
                         "message": (
-                            f"inner timeout {inner_s:g}s ({inner_ms:g}ms) >= hook "
-                            f"timeout {outer_ms_val:g}ms — the inner work can still "
+                            f"inner timeout {inner_s:g}s >= hook "
+                            f"timeout {outer_s_val:g}s — the inner work can still "
                             f"be running when the hook is killed (fail-open). Derive "
                             f"the inner timeout from the hook budget so inner < outer."
                         ),
                         "evidence": {
-                            "outer_timeout_ms": outer_ms_val,
+                            "outer_timeout_s": outer_s_val,
                             "inner_timeout_s": inner_s,
                             "snippet": snippet,
                         },
@@ -252,14 +284,14 @@ def _self_test() -> int:
                     {
                         "matcher": "Bash",
                         "hooks": [
-                            # HB001: inner 5s (5000ms) >= outer 2000ms
+                            # HB001: inner 5s >= outer 2s
                             {"type": "command",
                              "command": 'bash "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/slow.sh"',
-                             "timeout": 2000},
-                            # OK: inner 1s (1000ms) < outer 2000ms
+                             "timeout": 2},
+                            # OK: inner 1s < outer 2s
                             {"type": "command",
                              "command": 'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/fast.py"',
-                             "timeout": 2000},
+                             "timeout": 2},
                         ],
                     }
                 ],
@@ -282,13 +314,13 @@ def _self_test() -> int:
 
         # Inline shell timeout in the command itself should also be caught.
         doc2 = {"hooks": {"Stop": [{"matcher": "", "hooks": [
-            {"type": "command", "command": "timeout 30s python3 -c x", "timeout": 5000},
+            {"type": "command", "command": "timeout 30s python3 -c x", "timeout": 5},
         ]}]}}
         hp2 = root / "hooks" / "hooks2.json"
         hp2.write_text(json.dumps(doc2), encoding="utf-8")
         f2 = lint_hooks(hp2, repo_root=root)
         if not any(x["rule_id"] == "HB001" for x in f2):
-            failures.append("inline 'timeout 30s' under 5000ms hook should flag HB001")
+            failures.append("inline 'timeout 30s' under a 5s hook should flag HB001")
 
         # Budget-derived inner timeout (no numeric literal) must NOT flag.
         good = root / "scripts" / "budget.py"
@@ -315,7 +347,7 @@ def _self_test() -> int:
         doc4 = {"hooks": {"Stop": [{"matcher": "", "hooks": [
             {"type": "command",
              "command": 'nohup python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/bg.py" >/dev/null 2>&1 & printf \'{}\'',
-             "timeout": 5000},
+             "timeout": 5},
         ]}]}}
         hp4 = root / "hooks" / "hooks4.json"
         hp4.write_text(json.dumps(doc4), encoding="utf-8")
@@ -329,7 +361,7 @@ def _self_test() -> int:
         doc5 = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
             {"type": "command",
              "command": 'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/fg.py" 2>&1',
-             "timeout": 5000},
+             "timeout": 5},
         ]}]}}
         hp5 = root / "hooks" / "hooks5.json"
         hp5.write_text(json.dumps(doc5), encoding="utf-8")
