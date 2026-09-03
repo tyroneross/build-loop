@@ -298,3 +298,67 @@ def test_the_claude_workflows_skip_cleanly_without_their_api_key() -> None:
         assert "HAVE_ANTHROPIC_KEY" in str(step.get("if", "")), (
             f"{name}: the claude-code-action step must be guarded on the key"
         )
+
+
+# ── Trusted publishing (OIDC) ───────────────────────────────────────────────
+# npmjs publishing runs on a short-lived, workflow-scoped GitHub OIDC token
+# rather than a stored NPM_TOKEN. Each assertion below pins one precondition
+# that fails CONFUSINGLY at publish time if it drifts — the point is that the
+# failure names itself here instead of surfacing as an auth error weeks later,
+# which is exactly how npmjs sat at 0.36.1 for seven weeks.
+# https://docs.npmjs.com/trusted-publishers/
+
+NPMJS_WORKFLOW = "publish-npmjs.yml"
+
+
+def test_npmjs_publish_carries_no_long_lived_token() -> None:
+    """A token in the environment takes precedence over OIDC.
+
+    This is the subtle one: `id-token: write` can be set and correct while a
+    lingering NODE_AUTH_TOKEN quietly wins, so the workflow looks like trusted
+    publishing and never once exercises it.
+    """
+    text = (WORKFLOWS / NPMJS_WORKFLOW).read_text(encoding="utf-8")
+    offenders = [
+        line.strip()
+        for line in text.splitlines()
+        if "NODE_AUTH_TOKEN" in line and not line.lstrip().startswith("#")
+    ]
+    assert offenders == [], (
+        f"{NPMJS_WORKFLOW} sets NODE_AUTH_TOKEN, which takes precedence over OIDC "
+        f"and silently disables trusted publishing: {offenders}"
+    )
+
+
+def test_npmjs_publish_requests_an_oidc_token() -> None:
+    """Without id-token: write there is no OIDC token, and npm reports a 401."""
+    wf = _wf(NPMJS_WORKFLOW)
+    perms = wf.get("permissions") or {}
+    assert perms.get("id-token") == "write", (
+        f"{NPMJS_WORKFLOW} must declare 'permissions: id-token: write' — without it "
+        "npm cannot exchange an OIDC token and fails with a confusing auth error"
+    )
+
+
+def test_npmjs_publish_meets_the_documented_version_floors() -> None:
+    """npm >= 11.5.1 and Node >= 22.14.0.
+
+    Node 22 ships npm 10.x, so relying on the bundled npm silently lands under
+    the floor. The workflow must install npm explicitly.
+    """
+    text = (WORKFLOWS / NPMJS_WORKFLOW).read_text(encoding="utf-8")
+    assert "npm@^11.5.1" in text, (
+        f"{NPMJS_WORKFLOW} must install npm >= 11.5.1 explicitly; the version "
+        "bundled with Node is not guaranteed to clear the trusted-publishing floor"
+    )
+
+
+def test_npmjs_publish_runs_on_a_github_hosted_runner() -> None:
+    """npm only honours trusted publishing from GitHub-hosted runners."""
+    wf = _wf(NPMJS_WORKFLOW)
+    for job_name, job in (wf.get("jobs") or {}).items():
+        runner = job.get("runs-on", "")
+        assert isinstance(runner, str) and runner.startswith("ubuntu-"), (
+            f"job {job_name!r} runs on {runner!r}; npm trusted publishing is only "
+            "supported on GitHub-hosted runners"
+        )

@@ -35,8 +35,10 @@ jobs:
           scope: "@tyroneross"
           package-manager-cache: false
 
-      - name: Use npm 11
-        run: npm install -g npm@11
+      # 11.5.1 is the documented floor for trusted publishing, not a preference.
+      # https://docs.npmjs.com/trusted-publishers/
+      - name: Use npm >= 11.5.1 (trusted-publishing floor)
+        run: npm install -g npm@^11.5.1
 
       - name: Verify npm
         run: npm --version
@@ -71,28 +73,57 @@ jobs:
             --skip-check remote_refs \
             --json
 
-      # Fail loudly on a bad credential BEFORE the publish, not inside it.
-      # v0.36.4 failed at the publish step on 2026-07-12 and npmjs has been stuck at
-      # 0.36.1 ever since — the registry the README tells users to install from. The
-      # error is now past log retention, so the cause cannot be read back; a preflight
-      # means the next failure names itself instead of becoming another silent gap.
-      # `npm whoami` is a read: it authenticates and publishes nothing.
-      - name: Verify the npmjs credential
+      # Fail loudly on a misconfigured publisher BEFORE the publish, not inside it.
+      # v0.36.4 failed at the publish step on 2026-07-12 and npmjs sat at 0.36.1 for
+      # ~7 weeks — the registry the README tells users to install from. That error is
+      # now past log retention, so a preflight exists to make the next failure name
+      # itself instead of becoming another silent gap.
+      #
+      # There is no credential left to check. This publishes via npm TRUSTED
+      # PUBLISHING (OIDC): GitHub mints a short-lived, workflow-scoped token that
+      # npm exchanges for publish rights, so no long-lived NPM_TOKEN is stored,
+      # rotated, or leakable from this repository. What CAN still be wrong is the
+      # preconditions, and each of them fails silently or confusingly at publish
+      # time, so they are asserted here where the message can say what to fix.
+      - name: Verify trusted-publishing preconditions
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN is not set on this repository — npmjs publish cannot work."
+          # npm >= 11.5.1 and Node >= 22.14.0 are the documented floors.
+          # https://docs.npmjs.com/trusted-publishers/
+          NPM_V=$(npm --version)
+          NODE_V=$(node --version | sed 's/^v//')
+          echo "npm $NPM_V, node $NODE_V"
+          node -e '
+            const [npmV, nodeV] = process.argv.slice(1);
+            const lt = (a, b) => {
+              const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+              }
+              return false;
+            };
+            if (lt(npmV, "11.5.1")) {
+              console.log("::error::npm " + npmV + " is below the 11.5.1 trusted-publishing floor");
+              process.exit(1);
+            }
+            if (lt(nodeV, "22.14.0")) {
+              console.log("::error::node " + nodeV + " is below the 22.14.0 trusted-publishing floor");
+              process.exit(1);
+            }
+          ' "$NPM_V" "$NODE_V"
+          # OIDC is only reachable when the job requested id-token: write. Without it
+          # npm falls back to looking for a token and reports a confusing 401/ENEEDAUTH.
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::No OIDC token available — this job needs 'permissions: id-token: write'."
             exit 1
           fi
-          if ! WHO=$(npm whoami --registry=https://registry.npmjs.org 2>&1); then
-            echo "::error::NPM_TOKEN is set but not accepted by npmjs: $WHO"
-            echo "::error::Rotate it — npmjs > Access Tokens > Generate (Automation), then: gh secret set NPM_TOKEN"
-            exit 1
-          fi
-          echo "npmjs credential is valid for: $WHO"
+          echo "OIDC token endpoint present; publishing as a trusted publisher."
+          # A trusted publisher is configured on npmjs, NOT in this file, so a
+          # mismatch is invisible here. npmjs matches on owner + repo + WORKFLOW
+          # FILENAME, so renaming this file silently breaks publishing.
+          echo "npmjs must list: repo tyroneross/build-loop, workflow publish-npmjs.yml"
+
 
       - name: Check npmjs version
         id: npmjs_version
@@ -116,14 +147,14 @@ jobs:
 
       - name: Publish to npmjs (dry-run)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No NODE_AUTH_TOKEN: a token in the environment takes precedence and would
+        # quietly publish via the old path, so leaving one here would mean this
+        # workflow never actually exercises OIDC.
         run: npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org
 
       - name: Publish to npmjs
         if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')) && steps.npmjs_version.outputs.exists != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No NODE_AUTH_TOKEN — see the dry-run step above.
         run: npm publish --provenance --access public --registry=https://registry.npmjs.org
 
       - name: Skip npmjs publish
