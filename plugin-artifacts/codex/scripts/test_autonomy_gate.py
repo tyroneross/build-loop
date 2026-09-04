@@ -458,3 +458,60 @@ class DeployWithoutDeployTokenTests(unittest.TestCase):
         for cmd in ("npm test", "ls", "git status", "python3 -m pytest"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self._action(cmd), "auto", cmd)
+
+
+class MigrationAndPrMergeConfirmTests(unittest.TestCase):
+    """Migration-apply and PR-merge shapes must confirm, not auto-execute.
+
+    Measured 2026-09-04 against the pre-fix gate: `npx prisma migrate deploy`
+    returned action=auto with reason "no pattern matched; safe to execute", so
+    the loop would have applied a production migration with no operator in the
+    loop. `gh pr merge` did the same, reaching the protected branch that a plain
+    `git push origin main` already confirms on.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _action(self, command: str) -> dict:
+        return envelope(run(self.workdir, "run", command))
+
+    def test_migration_apply_shapes_confirm(self) -> None:
+        for cmd in (
+            "npx prisma migrate deploy",
+            "prisma migrate resolve --applied 20260904090000_x",
+            "npx prisma db push",
+            "supabase db push",
+            "supabase migration up",
+            "alembic upgrade head",
+            "atlas migrate apply --env prod",
+            "flyway -url=x migrate",
+            "dbmate up",
+            "knex migrate:latest",
+            "sqlx migrate run",
+            "goose postgres x up",
+        ):
+            with self.subTest(cmd=cmd):
+                data = self._action(cmd)
+                self.assertEqual(data["action"], "confirm", msg=str(data))
+
+    def test_pr_merge_confirms(self) -> None:
+        data = self._action("gh pr merge 24 --squash --delete-branch")
+        self.assertEqual(data["action"], "confirm", msg=str(data))
+
+    def test_local_and_rehearsal_shapes_stay_auto(self) -> None:
+        """The widening must not gate local development or unrelated commands."""
+        for cmd in (
+            "npx prisma migrate dev --name add_col",
+            "npx prisma generate",
+            "npm test",
+            "gh pr view 24",
+            "gh pr create --title x",
+        ):
+            with self.subTest(cmd=cmd):
+                data = self._action(cmd)
+                self.assertEqual(data["action"], "auto", msg=str(data))

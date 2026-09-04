@@ -82,6 +82,27 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     "wrangler pages deploy*",
     "*eas submit*",
     "railway up*",
+    # Schema/data MIGRATION APPLY. Measured 2026-09-04: `npx prisma migrate deploy`
+    # classified `auto` — the gate would have applied a production migration with no
+    # operator in the loop, which CLAUDE.md names explicitly as requiring
+    # confirmation. Migrations are the irreversible-leaning data-plane action; a
+    # rehearsal is auto, the apply confirms. Same safe direction as the deploy
+    # widening above: this can add a prompt, never permit a migration.
+    "*prisma migrate deploy*",
+    "*prisma migrate resolve*",
+    "*prisma db push*",
+    "*supabase db push*",
+    "*supabase migration up*",
+    "*alembic upgrade*",
+    "*atlas migrate apply*",
+    "*flyway* migrate*",
+    "*dbmate up*",
+    "*knex migrate:latest*",
+    "*sqlx migrate run*",
+    "*goose* up*",
+    # Merging a pull request writes to the branch it targets. `git push origin main`
+    # already confirms; the PR-merge shape reached the same branch as `auto`.
+    "gh pr merge*",
     # Destructive DATA deletion. Archive (reversible) is auto; the purge confirms.
     "DROP TABLE*",
     "DROP DATABASE*",
