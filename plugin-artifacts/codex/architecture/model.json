@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "0d4e8b559c76d89336cc052d11ce3be6acc4fcd9f76c8e49b025f472aeeb7788"
+    "content_sha256": "e2184db30d45bbb9cf4c329e7f6f74f31d893ea790f42645bf016024368cccd1"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -894,7 +894,7 @@
         "file": "agents/database-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-28"
+          "date": "2026-09-03"
         }
       },
       "design-contract-specialist": {
@@ -1253,8 +1253,8 @@
         "description": "\"Measure a database before changing it, and prove an object is dead before retiring it. Use when a build creates or alters a table, column, or index; when a query is slow or the user asks why the database is slow; or when someone proposes dropping an empty table. Runs the read-only attribution set, reads the runtime counters, and applies the retirement gate. The binding rules live in references/database-agent-consti…",
         "file": "skills/database-practice/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-09-03"
         }
       },
       "debug-loop": {

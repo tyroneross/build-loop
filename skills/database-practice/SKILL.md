@@ -44,13 +44,32 @@ not by textbook severity.
 
 | Share | Shape | Fingerprint | Fix |
 |---:|---|---|---|
-| 49.3% | Single-row inserts into an indexed table | `rows / calls = 1.00` on a high-call `INSERT`; 485,596 calls at 1,094 ms each | Batch: `createMany`, multi-row `VALUES`, or `COPY` |
+| 49.3% | Insert against a vector index larger than cache | 485,596 `INSERT`s at ~1,000 ms each into two pgvector tables; cost is nearly flat in row count | Split fixed from marginal cost first (below), then batch harder or shrink the index |
 | 14.8% | Predicate on a TOASTed column | mean in the tens of seconds on a table of only tens of thousands of rows; `pg_total_relation_size` far above heap + indexes | Derived scalar column (`content_length`), indexed, filtered on instead |
 | 8.9% | Per-row lookup through jsonb + trigram | high `calls`, mid-hundreds `mean_ms`, no supporting composite index | Composite index on the real filter columns; move the fuzzy match behind an exact one |
 | 4.5% | Vector similarity read | ~1 s mean against an HNSW index larger than `shared_buffers` | Size the graph to cache, or raise the cache |
 | — | Index maintenance charged to writes | index `idx_scan` near zero while its table takes hundreds of thousands of inserts | Drop it, or accept the write cost explicitly |
 
-Two numbers from the same instance make the last row concrete: a 2.31 GB HNSW
+### Split fixed from marginal before you "batch harder"
+
+`rows / calls = 1.00` looks like an unbatched loop and usually is. It was not
+here: the writer already batched, at four rows per statement, and the table
+simply produced one chunk for most articles.
+
+Regress `mean_exec_time` against `rows / calls` across the normalized statement
+variants pg_stat_statements already gives you for free. In this instance the
+call-weighted fit was **957 ms fixed per statement + 47 ms per row** — 95% fixed
+at one row per statement, still 84% fixed at the batch size actually in use. The
+fixed part is first-touch random I/O into an HNSW graph that cannot be cached;
+the marginal part is the real per-row index maintenance.
+
+That decomposition picks the fix. A high marginal cost means batch. A high fixed
+cost means the batch is too small for the overhead it is paying, or the index
+does not fit in cache — and raising this batch from 4 to 64 moves per-row cost
+from 286 ms to 62 ms without touching the index at all. Guessing which, without
+the split, optimizes the wrong term.
+
+Two numbers from the same instance make the index row concrete: a 2.31 GB HNSW
 index recorded **31 lifetime index scans across 214 days** while being maintained
 on 265,000 inserts, and a second HNSW index of 345 MB recorded **5**. Both were
 being paid for on every write. Meanwhile `shared_buffers` was 256 MB against a

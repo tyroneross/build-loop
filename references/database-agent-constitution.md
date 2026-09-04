@@ -158,9 +158,14 @@ enforceable with measurement. These are the measurements.
    de-TOAST of every row in the scan. Maintain a derived scalar beside the
    column, index that, and filter on it. Row count is not a proxy for scan cost
    when the row is wide.
-4. **Batch the write.** `rows / calls = 1.00` on a high-call `INSERT` in
-   `pg_stat_statements` is the single-row-loop fingerprint. Index maintenance
-   that dominates a single-row insert amortizes across a batch.
+4. **Split fixed from marginal write cost before batching.**
+   `rows / calls = 1.00` on a high-call `INSERT` usually means an unbatched
+   loop, but it also appears when the writer batches and the input happens to
+   produce one row. Regress `mean_exec_time` against `rows / calls` across the
+   normalized statement variants `pg_stat_statements` already separates. A high
+   marginal term means batch. A high fixed term means the batch is too small for
+   the per-statement overhead, or the index does not fit in cache. Choosing
+   without the split optimizes the wrong term.
 5. **Treat `temp_files` and `temp_bytes` as latency.** Spill is a first-class
    signal and almost never checked. Raise `work_mem` for the role or statement
    that spills; never globally without multiplying by `max_connections`.
