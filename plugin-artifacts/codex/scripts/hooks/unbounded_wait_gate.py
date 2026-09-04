@@ -64,6 +64,33 @@ _INFINITE_HEADER = re.compile(
 # Something that can end the loop from the inside.
 _ESCAPE = re.compile(r"\b(?:break|return|exit)\b|\bpkill\b", re.IGNORECASE)
 
+# A CONDITION-polling loop: `while <cmd>` / `until <cmd>` that is not one of the
+# literal-infinite headers above. These are the dangerous shape in practice,
+# because they LOOK bounded — there is a condition right there — while nothing
+# guarantees the condition can ever flip.
+#
+# Measured 2026-09-04: two watchers ran for TWO DAYS on
+#   until [ -s out.txt ] || ! pgrep -f "vitest run --reporter=dot"; do sleep 10; done
+# because `pgrep -f` matched the watcher's OWN command line (the pattern is in
+# its argv), so the negation was never true. `_INFINITE_HEADER` allowed it: the
+# header is `until [`, not `until false`. The condition existed and was
+# unsatisfiable, which is precisely the case a reader cannot check by eye.
+_POLL_HEADER = re.compile(
+    r"""(?:^|[;&|]|\bdo\b|\bthen\b|\s)\s*
+        (?: while | until ) \s+ (?! true\b | false\b | : )""",
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# An iteration bound makes a poll terminate regardless of the condition. A
+# `while read` loop counts: it is driven by input and ends at EOF, so it is
+# bounded by the stream rather than by a counter. Excluding it is not a
+# loophole — the loop cannot outlive its input.
+_ITERATION_BOUND = re.compile(
+    r"\bseq\s+\d|\bfor\s+\w+\s+in\b|\(\(\s*\w+\+\+"
+    r"|\b(?:while|until)\s+(?:IFS=\S*\s+)?read\b",
+    re.IGNORECASE,
+)
+
 _SLEEP = re.compile(r"\bsleep\s+([0-9]+(?:\.[0-9]+)?)\b", re.IGNORECASE)
 
 # A bare sleep this long is a duration-wait, not a pause. Chosen so the common
@@ -139,7 +166,26 @@ def evaluate(command: str, env: dict[str, str] | None = None) -> str | None:
         return None
 
     message = None
-    if _INFINITE_HEADER.search(command) and not _ESCAPE.search(command):
+    if (_POLL_HEADER.search(command)
+            and not _INFINITE_HEADER.search(command)
+            and not _ESCAPE.search(command)
+            and not _ITERATION_BOUND.search(command)):
+        message = (
+            "This loop polls a condition with no iteration bound and no way out "
+            "from the inside. It LOOKS bounded — there is a condition — but "
+            "nothing here guarantees that condition can ever become true.\n\n"
+            "That is not hypothetical: two watchers ran for TWO DAYS on\n"
+            "  `until [ -s out ] || ! pgrep -f \"vitest run ...\"; do sleep 10; done`\n"
+            "because `pgrep -f` matched the watcher's own command line, so the "
+            "negation was never true.\n\n"
+            "If you are waiting on work the harness tracks (a subagent, a "
+            "background Bash job), do not poll at all: you are re-invoked when "
+            "it finishes.\n\n"
+            "If you must poll something the harness cannot see, bound the "
+            "ITERATIONS so it ends even when the condition never flips:\n\n"
+            + _BOUNDED_IDIOM
+        )
+    elif _INFINITE_HEADER.search(command) and not _ESCAPE.search(command):
         message = (
             "This loop waits on a duration, not a condition — nothing in it can "
             "end it, so it runs until the harness kills it.\n\n"

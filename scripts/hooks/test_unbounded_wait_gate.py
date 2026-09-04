@@ -177,3 +177,57 @@ class HostResumeHint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConditionPollWithNoIterationBound(unittest.TestCase):
+    """The shape that actually cost two days, and the shapes that must stay allowed.
+
+    `_INFINITE_HEADER` only matches a LITERAL infinite header (`while true`,
+    `until false`). A condition-poll looks bounded — there is a condition right
+    there — while nothing guarantees the condition can flip. That is the harder
+    case to spot by eye, so the gate has to spot it.
+    """
+
+    def test_rejects_the_watcher_that_ran_for_two_days(self) -> None:
+        # Measured 2026-09-04. `pgrep -f` matched the watcher's OWN command line,
+        # because the pattern appears in its argv, so the negation was never true.
+        cmd = ('until [ -s /tmp/fails.txt ] || ! pgrep -f "vitest run --reporter=dot" '
+               '>/dev/null; do sleep 10; done; cat /tmp/fails.txt')
+        self.assertIsNotNone(
+            gate.evaluate(cmd),
+            "the exact loop that ran for two days must be rejected",
+        )
+
+    def test_rejects_a_plain_until_on_a_file(self) -> None:
+        self.assertIsNotNone(gate.evaluate("until [ -f /tmp/done ]; do sleep 5; done"))
+
+    def test_rejects_polling_a_port_forever(self) -> None:
+        self.assertIsNotNone(gate.evaluate("while ! curl -sf localhost:4200; do sleep 3; done"))
+
+    def test_allows_the_bounded_idiom_the_gate_itself_recommends(self) -> None:
+        # If this ever rejects, the gate is telling callers to write something it
+        # then refuses — the fastest way to make a guard get bypassed.
+        cmd = ('for i in $(seq 1 30); do curl -sf localhost:4200 && break; sleep 1; done')
+        self.assertIsNone(gate.evaluate(cmd))
+
+    def test_allows_an_iteration_bounded_poll_without_break(self) -> None:
+        cmd = ('for i in $(seq 1 40); do st=$(gh run list --json status); '
+               '[ "$st" = completed ] && break; sleep 12; done')
+        self.assertIsNone(gate.evaluate(cmd))
+
+    def test_allows_a_read_loop_which_is_bounded_by_its_input(self) -> None:
+        self.assertIsNone(
+            gate.evaluate('while read -r line; do echo "$line"; sleep 1; done < f.txt'))
+
+    def test_known_hole_the_word_break_in_a_comment_defeats_the_escape_check(self) -> None:
+        """Documented, not fixed — deliberately.
+
+        `_ESCAPE` is a text match, so the word `break` anywhere (a comment, a
+        quoted string) reads as an exit path. Tightening it to real syntax needs
+        a shell parser; a regex that tries will start rejecting legitimate
+        commands, and a gate with false positives gets bypassed, which costs more
+        than this hole does. Pinned so the behaviour is a known limitation rather
+        than a surprise, and so a future parser-based fix has a test to flip.
+        """
+        cmd = "until [ -s out.txt ]; do sleep 5; done  # no bound, no break"
+        self.assertIsNone(gate.evaluate(cmd), "documents the hole; flip when fixed")
