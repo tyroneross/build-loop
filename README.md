@@ -83,7 +83,7 @@ The legacy `build-loop-install` binary syncs the same files into the host caches
 
 <!-- x-release-please-start-version -->
 ```bash
-npm install -g @tyroneross/build-loop@0.42.5
+npm install -g @tyroneross/build-loop@0.43.0
 build-loop-install --host all
 ```
 <!-- x-release-please-end -->
@@ -280,7 +280,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.42.5`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start). <!-- x-release-please-version -->
+`npm install -g @tyroneross/build-loop@0.43.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start). <!-- x-release-please-version -->
 
 ### How is it different from just letting an agent code directly?
 
@@ -361,7 +361,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.42.5 --branch main --remote origin --json  # x-release-please-version
+python3 scripts/verify_release_surface.py --version v0.43.0 --branch main --remote origin --json  # x-release-please-version
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.
