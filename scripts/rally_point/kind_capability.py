@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 try:  # package import
@@ -111,12 +112,21 @@ def supported_kinds(binary: str | Path | None) -> frozenset[str] | None:
 
     result: frozenset[str] | None
     try:
-        proc = subprocess.run(
-            [str(path), "say", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
-        )
+        # cwd is pinned to a scratch directory, never inherited. This probe is a
+        # READ -- it asks the binary to print its fact-kind vocabulary -- but it
+        # inherited the caller's directory, so a binary that misinterpreted
+        # `say --help` as a post wrote into whatever repo the caller happened to
+        # be standing in. build-loop's own test stub did exactly that and
+        # poisoned this repo's .rally/log/repo.jsonl twice. A probe must not be
+        # able to name a real ledger, whatever the binary on the other end does.
+        with tempfile.TemporaryDirectory(prefix="rally-kind-probe-") as _probe_cwd:
+            proc = subprocess.run(
+                [str(path), "say", "--help"],
+                capture_output=True,
+                text=True,
+                cwd=_probe_cwd,
+                timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
+            )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         result = None
     else:
