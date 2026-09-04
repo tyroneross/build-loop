@@ -199,6 +199,26 @@ CONTRASTIVE_PIVOT_RES = [
     re.compile(r"\brather than\s+[^.\n]{1,40}\s*[—,]\s*", re.IGNORECASE),
 ]
 
+# Percentage-denominator: a stated "(N%)" must match the nearest preceding
+# "A of B" construction on the same line. On 2026-09-04 (run
+# bl-20260904T050714Z-claude_code-318862) a report and two module docstrings
+# all said "1,463 of 1,864 pages (73%)". 1463/1864 = 78.5%; 73% is
+# 1463/2003 — a different page population in the same repo. Numerator,
+# denominator, and percentage were each individually real and jointly wrong.
+# Only the LLM fact-check caught it; this is the cheap deterministic check
+# that would have caught it for free.
+#
+# A leading "~" or "approx" inside the parens marks the figure as explicitly
+# approximate — that is not a mismatch claim, so it is exempt.
+PERCENT_RE = re.compile(
+    r"\((?P<approx>~|approx\.?\s*)?(?P<pct>\d+(?:\.\d+)?)\s*%\)",
+    re.IGNORECASE,
+)
+_NUMBER_TOKEN = r"\d[\d,]*(?:\.\d+)?"
+A_OF_B_RE = re.compile(
+    rf"(?P<a>{_NUMBER_TOKEN})\s+of\s+(?P<b>{_NUMBER_TOKEN})", re.IGNORECASE
+)
+
 
 def _finding(
     *,
@@ -462,6 +482,57 @@ CALIBRATED_RE = re.compile(r"[✅⚠❓]|\bunverified\b|\bassumed\b|\binferred\b
 
 
 
+def lint_percentage_denominator(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """Cross-check a stated ``(N%)`` against its nearest preceding ``A of B`` on the same line.
+
+    ``jargon-blocklist`` and friends catch internal codenames; nothing checked
+    whether a percentage the author typed actually matches the fraction typed
+    beside it. A percentage with no preceding ``A of B`` on the line is not
+    checked — only same-line pairs are in scope. Tolerance is the rounding
+    envelope of the stated precision (half a unit in the last decimal place,
+    plus a small epsilon for float error), so ``73%`` accepts anything in
+    [72.5, 73.5) and ``78.5%`` accepts anything in [78.45, 78.55).
+
+    WARN only — it never blocks a report.
+    """
+    findings: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        if not line.strip():
+            continue
+        for pct_match in PERCENT_RE.finditer(line):
+            if pct_match.group("approx"):
+                continue
+            pct_str = pct_match.group("pct")
+            stated_pct = float(pct_str)
+            preceding = None
+            for ab_match in A_OF_B_RE.finditer(line, 0, pct_match.start()):
+                preceding = ab_match
+            if preceding is None:
+                continue
+            a_raw, b_raw = preceding.group("a"), preceding.group("b")
+            a = float(a_raw.replace(",", ""))
+            b = float(b_raw.replace(",", ""))
+            if b == 0:
+                continue
+            computed_pct = a / b * 100
+            decimals = len(pct_str.split(".")[1]) if "." in pct_str else 0
+            tolerance = 0.5 * (10 ** -decimals) + 1e-6
+            if abs(computed_pct - stated_pct) > tolerance:
+                findings.append(_finding(
+                    rule_id="percentage-denominator",
+                    severity="WARN",
+                    line=lineno,
+                    snippet=line.strip(),
+                    message=(
+                        f"Stated {pct_str}% does not match {a_raw} of {b_raw} "
+                        f"(computes to {computed_pct:.1f}%). Name the denominator "
+                        "the percentage actually came from, or correct one of "
+                        "the three numbers."
+                    ),
+                ))
+    return findings
+
+
 def lint_direct_language(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """Clear verb, clear outcome. Flags weak verbs, filler openers, and uncalibrated hedges."""
     findings: list[dict[str, Any]] = []
@@ -557,6 +628,7 @@ def run_lint(
     findings.extend(lint_mechanism_claim(lines))
     findings.extend(lint_jargon(lines))
     findings.extend(lint_contrastive_pivot(lines))
+    findings.extend(lint_percentage_denominator(lines))
     findings.extend(lint_direct_language(lines))
     findings.extend(lint_length(lines, cap=length_cap))
     findings.extend(lint_context_density(workdir))

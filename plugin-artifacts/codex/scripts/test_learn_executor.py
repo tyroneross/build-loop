@@ -451,3 +451,59 @@ def test_large_inputs_are_bounded_and_reported(tmp_path: Path) -> None:
     assert str(traces) in result["stages"]["collect"]["truncated_inputs"]
     assert ".build-loop/experiments/large.jsonl" in result["input_limits"]["truncated_files"]
     assert result["patterns_count"] <= runner.PATTERN_CAP
+
+
+def test_execute_tool_span_labels_are_excluded_from_tool_trace_patterns(tmp_path: Path) -> None:
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"name": "execute_tool exec"}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert patterns == []
+    assert count == 0
+
+
+def test_non_execute_tool_signature_still_emits_retry_pattern(tmp_path: Path) -> None:
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"tool": "repeat-call"}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-repeat-call"
+
+
+def test_mixed_execute_tool_and_real_signature_yields_only_the_real_pattern(tmp_path: Path) -> None:
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    rows = [json.dumps({"name": "execute_tool exec"}) for _ in range(5)]
+    rows.extend(json.dumps({"tool": "repeat-call"}) for _ in range(5))
+    traces.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-repeat-call"
+
+
+def test_execute_tool_signature_does_not_reach_patterns_count_end_to_end(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3)
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"name": "execute_tool exec"}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    result = runner.run(tmp_path, run_id=run_id, source="test")
+
+    assert result["stages"]["collect"]["tool_trace_patterns"] == 0
+    assert result["patterns_count"] == 0

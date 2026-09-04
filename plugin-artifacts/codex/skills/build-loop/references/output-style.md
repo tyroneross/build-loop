@@ -306,3 +306,16 @@ observations. A mechanism verb with no matching observation is the flag.
 Agreement between reviewers does not substitute. Where two agents disagreed the
 conflict surfaced and was settled; where several shared the same proxy, nothing
 caught it.
+
+## Percentage-denominator check (added 2026-09-04)
+
+`scripts/report_lint.py` cross-checks a stated `(N%)` against the nearest
+preceding `A of B` construction on the same line (`percentage-denominator`,
+WARN). In run `bl-20260904T050714Z-claude_code-318862` a report and two
+module docstrings all said "1,463 of 1,864 pages (73%)". 1463/1864 = 78.5%;
+73% is 1463/2003 — a different page population in the same repo. Numerator,
+denominator, and percentage were each individually real and jointly wrong.
+Only the LLM fact-check caught it; this is a cheap deterministic check that
+would have caught it for free. A percentage with no `A of B` on the same
+line is out of scope, and a `~`/`approx` prefix marks the figure as
+explicitly approximate, so neither is flagged.

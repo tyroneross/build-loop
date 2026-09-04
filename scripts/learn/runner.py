@@ -25,6 +25,10 @@ import procedural_governance  # noqa: E402
 
 SCHEMA = "build-loop.learn-receipt.v1"
 PATTERN_CAP = 2
+# `execute_tool <tool>` is the per-invocation OTel span label tool_trace.build_span()
+# writes for every tool call, not a recurring diagnostic pattern — exclude it so Learn
+# doesn't re-derive "you called Bash a lot" on every long run.
+EXECUTE_TOOL_SPAN_PREFIX = "execute_tool"
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_JSONL_BYTES = 512 * 1024
@@ -324,8 +328,12 @@ def _tool_trace_patterns(
         truncated_inputs,
     ):
         name = str(item.get("tool") or item.get("name") or item.get("operation") or "").strip()
-        if name:
-            trace_counts[name] += 1
+        if not name:
+            continue
+        signature = name.lower()
+        if signature == EXECUTE_TOOL_SPAN_PREFIX or signature.startswith(f"{EXECUTE_TOOL_SPAN_PREFIX} "):
+            continue
+        trace_counts[name] += 1
     patterns: list[dict[str, Any]] = []
     for name, count in trace_counts.items():
         if count >= 3:

@@ -27,6 +27,7 @@ from report_lint import (  # noqa: E402
     lint_jargon,
     lint_contrastive_pivot,
     lint_length,
+    lint_percentage_denominator,
     _strip_fenced_blocks,
 )
 
@@ -512,6 +513,89 @@ class TestMechanismClaim(unittest.TestCase):
             result = run_lint(path)
             self.assertIn("mechanism-claim-unobserved",
                           {f["rule_id"] for f in result["findings"]})
+        finally:
+            path.unlink()
+
+
+class TestPercentageDenominator(unittest.TestCase):
+    """Fixture is the real 2026-09-04 defect: 1,463 of 1,864 pages (73%).
+
+    1463/1864 = 78.5%; 73% is 1463/2003 — a different page population in the
+    same repo. Numerator, denominator, and percentage were each individually
+    real and jointly wrong.
+    """
+
+    def _lines(self, text):
+        return _strip_fenced_blocks(text)
+
+    def test_mismatched_percentage_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines("We indexed 1,463 of 1,864 pages (73%).\n")
+        )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["rule_id"], "percentage-denominator")
+
+    def test_precise_matching_percentage_passes(self):
+        out = lint_percentage_denominator(
+            self._lines("We indexed 1,463 of 1,864 pages (78.5%).\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_rounded_matching_percentage_passes(self):
+        # 1463/1864 = 78.48% -- within +/-0.5 of the stated 78%.
+        out = lint_percentage_denominator(
+            self._lines("We indexed 1,463 of 1,864 pages (78%).\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_small_integer_ratio_passes(self):
+        out = lint_percentage_denominator(
+            self._lines("The suite passed 3 of 4 runs (75%).\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_percentage_without_a_of_b_not_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines("Coverage improved to (73%) this quarter.\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_zero_of_zero_does_not_crash_or_flag(self):
+        out = lint_percentage_denominator(
+            self._lines("We indexed 0 of 0 items (0%).\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_fenced_block_ignored(self):
+        text = (
+            "Auditor now runs on every build commit.\n\n"
+            "```\n"
+            "We indexed 1,463 of 1,864 pages (73%).\n"
+            "```\n"
+        )
+        out = lint_percentage_denominator(self._lines(text))
+        self.assertEqual(out, [])
+
+    def test_approx_prefix_is_exempt(self):
+        out = lint_percentage_denominator(
+            self._lines("We indexed 1,463 of 1,864 pages (~73%).\n")
+        )
+        self.assertEqual(out, [])
+
+    def test_wired_into_run_lint(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+            fh.write(
+                "Auditor now runs on every build commit.\n\n"
+                "We indexed 1,463 of 1,864 pages (73%).\n\n"
+                "✅ Verified by pytest — passed.\n"
+            )
+            path = Path(fh.name)
+        try:
+            result = run_lint(path)
+            self.assertIn(
+                "percentage-denominator",
+                {f["rule_id"] for f in result["findings"]},
+            )
         finally:
             path.unlink()
 
