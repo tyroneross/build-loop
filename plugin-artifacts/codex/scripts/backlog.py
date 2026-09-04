@@ -2205,13 +2205,8 @@ def _print_list_text(result: dict[str, Any]) -> None:
         return
     for r in rows:
         gated = f" [gated:{r['gated']}]" if r.get("gated") and r["gated"] != "none" else ""
-        # Every field here is str()-wrapped on purpose. An item missing `id` or
-        # `priority` is a data problem worth SEEING in the listing, but a
-        # TypeError in the formatter hides the other 60 items behind it and
-        # makes the whole queue unreadable. Print "None" and move on.
-        print(f"{str(r.get('id')):<20} {str(r.get('priority')):<3} "
-              f"{str(r.get('bucket')):<10} {str(r.get('status')):<12} "
-              f"{str(r.get('area')):<14} {r.get('title')}{gated}")
+        print(f"{r['id']:<20} {r['priority']:<3} {str(r['bucket']):<10} "
+              f"{str(r['status']):<12} {str(r['area']):<14} {r['title']}{gated}")
     print(f"\n{result['count']} item(s)")
 
 

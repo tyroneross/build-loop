@@ -124,6 +124,17 @@ python3 scripts/report_lint.py <draft.md> --json
 
 The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured. Block-level framing is `skills/build-loop/references/status-output-format.md` — not lint-enforced, so it is the reviewer's check: every finding names who, names a specific object, and states its modality.
 
+**Claim-scope lint (MANDATORY, warn-mode)** — run on the same draft, in the same pass:
+
+```
+python3 scripts/claim_scope_lint.py <draft.md> --json
+→ count==0: emit as-is
+→ count>0: for EACH finding, either run the command the message names and restate the claim at the layer you now reached, or rewrite the claim down to the layer you actually checked and say so in the sentence. Re-run, then emit.
+→ script error: append "[warn] claim-scope lint skipped" and continue
+```
+
+Orthogonal to `report_lint.py`, and the two are not substitutes. `report_lint`'s `mechanism-claim-unobserved` grades evidence **strength and provenance** (was an instrument named; is it `[measured]`/`[correlated]`/`[reasoned]`) and accepts `grep` as satisfying. `claim_scope_lint` grades **reach** — whether the instrument named can see the layer the claim is about. A grep is a real measurement that is structurally blind to origin, other worktrees, and production, so a sentence can pass the first lint and still be false. Full method, the four layers, and the instrument→layer table: `skills/claim-scope/SKILL.md`.
+
 ### Mandatory `runs[]` write + `## Judge decisions` block (orchestrator-owned)
 
 `references/phase-gate-checklist.md` §G delegates these to the build-orchestrator agent; dispatch-path-independent, fire every time regardless of how the agent was invoked. Collect every judge/auditor verdict that fired this run (`plan-critic`, `independent-auditor`, `scope-auditor`, `fact-checker`, `mock-scanner`, `security-reviewer`, `synthesis-critic`, `architecture-scout`, `ui-validator`, etc.) into a JSON list at `.build-loop/judge-decisions.json` (shape per `agents/promotion-reviewer.md` §"Verdict envelope"); when no judge fired, write `[]` (the empty array is the signal). **Preserve the `independent-auditor`'s `oracle_completeness` object verbatim** — copy it onto that judge's `judge_decisions[]` entry so a green gate's oracle coverage (`full|partial|thin`) is recorded, not dropped (`write_run_entry` validates it; see `agents/independent-auditor.md` §"Oracle completeness"). Then run:

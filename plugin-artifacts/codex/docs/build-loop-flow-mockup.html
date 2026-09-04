@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "3f5a7a06d161daa01d63e0d2364b2298d849404d33e9a7ba132b464bedc0d2ce"
+    "content_sha256": "5e22845d49cd29b660ff73eb65a78ee8ea1988f06b692bde86181aafaab5520d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1454,6 +1454,14 @@
           "date": "2026-06-04"
         }
       },
+      "claim-scope": {
+        "description": "\"Before stating any fact about a system, name the LAYER the claim lives at (working tree / repository / deployed / live behavior) and check that the instrument you used can actually reach that layer. A grep proves what is in one checkout; it can say nothing about what is running. Verify right-to-left: start at observed behavior, walk back toward source. Triggers on any assertion word — is / is not / there is no / do…",
+        "file": "skills/claim-scope/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "color-engine": {
         "description": "Generate accessible color systems and solve contrast, instead of guessing hex values. Use when picking or fixing colors for any UI, chart, diagram, doc, or artifact — \"what colors should this use\", \"is this readable\", \"this text fails contrast\", \"make a dark theme\", \"pick an accent\". Also use before shipping any palette, to PROVE contrast rather than assert it. NOT for choosing layout, typography, or component struc…",
         "file": "skills/color-engine/SKILL.md",
@@ -1831,6 +1839,7 @@
       "scripts/check_private_slugs.py": "Pre-commit guard — fails a commit that stages a private app slug.",
       "scripts/check_runtime_memory_tracking.py": "Fail when runtime memory/state directories are tracked.",
       "scripts/ci_known_red_gate.py": "ci_known_red_gate.py — apply the known-red baseline to the CI test run.",
+      "scripts/claim_scope_lint.py": "claim_scope_lint.py — does the instrument reach the layer the claim is about?",
       "scripts/classify_action.py": "Classify an orchestrator action into one of four MECE labels.",
       "scripts/classify_model_tier.py": "Classify an unknown model id into a build-loop tier — host-neutral.",
       "scripts/cleanup_legacy_memory_stubs.py": "cleanup_legacy_memory_stubs.py — safely remove migration .MOVED.md stubs.",

@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 54 skills · 439 scripts · 23 hooks** (auto-discovered 3f5a7a06)
+**29 agents · 55 skills · 440 scripts · 23 hooks** (auto-discovered 5e22845d)
 
 <details><summary>agents</summary>
 
@@ -68,6 +68,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `build-loop`
 - `building-with-deepagents`
 - `capabilities`
+- `claim-scope`
 - `color-engine`
 - `cost-rca`
 - `data-plane-worktrees`
@@ -180,6 +181,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/check_private_slugs.py`
 - `scripts/check_runtime_memory_tracking.py`
 - `scripts/ci_known_red_gate.py`
+- `scripts/claim_scope_lint.py`
 - `scripts/classify_action.py`
 - `scripts/classify_model_tier.py`
 - `scripts/cleanup_legacy_memory_stubs.py`
