@@ -174,7 +174,7 @@ The repo ships three agent surfaces from one source:
 - **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
 - **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
-Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 53 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
+Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 54 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
 
 ## Agent start protocol
 

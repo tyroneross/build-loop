@@ -1,6 +1,6 @@
 ---
 name: build-loop:database-practice
-description: "Measure a database before changing it, and prove an object is dead before retiring it. Use when a build creates or alters a table, column, or index; when a query is slow or the user asks why the database is slow; or when someone proposes dropping an empty table. Runs the read-only attribution set, reads the runtime counters, and applies the retirement gate. The binding rules live in references/database-agent-constitution.md; this skill is the procedure that produces the evidence those rules require. Not for worktree/data-plane isolation (use data-plane-worktrees)."
+description: "Measure a database before changing it, and prove an object is dead before retiring it. Use when a build creates or alters a table, column, or index; when a query is slow or the user asks why the database is slow; or when someone proposes dropping an empty table. NOT for worktree or data-plane isolation (use data-plane-worktrees). Runs the read-only attribution set, reads the runtime counters, and applies the retirement gate. The binding rules live in references/database-agent-constitution.md; this skill is the procedure that produces the evidence those rules require."
 user-invocable: false
 ---
 
