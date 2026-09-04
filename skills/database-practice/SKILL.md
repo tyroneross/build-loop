@@ -63,6 +63,10 @@ at one row per statement, still 84% fixed at the batch size actually in use. The
 fixed part is first-touch random I/O into an HNSW graph that cannot be cached;
 the marginal part is the real per-row index maintenance.
 
+The fit is observational — it reads variants the workload happened to produce, so
+batch size may correlate with row width and the projection is a hypothesis, not a
+result. Rehearse the new batch size against a copy before shipping it.
+
 That decomposition picks the fix. A high marginal cost means batch. A high fixed
 cost means the batch is too small for the overhead it is paying, or the index
 does not fit in cache — and raising this batch from 4 to 64 moves per-row cost
