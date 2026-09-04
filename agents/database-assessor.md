@@ -34,7 +34,13 @@ fields the constitution's "Required Assessment Fields" section requires:
 `substrate_boundary` is **mandatory** — always name which store is canonical
 truth, which stores are derived indexes/caches, and which layer is memory
 policy; never leave it blank. The other seven may be `"none"` only when
-genuinely not applicable. Do not expand into implementation unless the
+genuinely not applicable.
+
+Two further fields are mandatory when the work adds a table or column, claims a
+query is slow, or proposes retiring an object: `population_contract` and
+`cost_attribution`. A slowness claim without a measured share of total execution
+time is not an assessment. Load `Skill("build-loop:database-practice")` for the
+procedure and the read-only query set that produce both. Do not expand into implementation unless the
 orchestrator explicitly assigns an implementation task.
 
 When the symptom or requested design touches Supabase, RLS, exposed schemas,

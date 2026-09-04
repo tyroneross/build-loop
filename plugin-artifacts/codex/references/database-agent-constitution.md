@@ -114,6 +114,78 @@ when query shape, scale, governance, or economics requires it.
    rollback behavior, query-result stability after index/schema changes, and
    migration idempotence.
 
+## Object Lifecycle And Population Contract
+
+An object is defined by its writer, not its schema. A column a reader consumes
+and no writer populates is a shipped defect, not an optional field. Shape
+validation cannot catch it and a nullable reader swallows it silently.
+
+1. **Declare the contract in the migration.** Every migration that adds a table
+   or column names `owner`, `writer` (the exact `file:function` that populates
+   it), `reader`, `lifecycle` (`active` | `planned` | `deprecated` |
+   `retained-for-rollback`), `backfill` (the plan for existing rows, or
+   `none — forward-only` with a reason), and `retire_when`.
+2. **Never ship a reader ahead of its writer.** If the write path is deferred,
+   the read path and the column are deferred with it. The API that converts a
+   never-populated null into a neutral value is the reason the gap survives.
+3. **Never let a structured column shadow a live JSON key.** Adding a column
+   beside a JSON blob that already carries the value creates two contracts for
+   one fact and populates one. Change the writer and backfill in the same
+   change, or do not add the column.
+4. **Provision only the surface that is being activated.** A migration that
+   creates six tables for a pipeline that lands two leaves four objects
+   indistinguishable from a mistake within a year.
+5. **Emptiness is a triage signal, never a verdict.** New, worker-never-shipped,
+   drained-queue, and created-by-mistake all look identical to `count(*)`.
+
+## Cost Attribution And Retirement
+
+Rule 6 of the Database Rules — optimize for observed query shapes — is only
+enforceable with measurement. These are the measurements.
+
+1. **Attribute before proposing.** Every performance claim in a plan, report, or
+   commit message names a measured share of total execution time from
+   `pg_stat_statements`, or it does not ship. "Slow" without a share is not a
+   finding.
+2. **Charge index maintenance to the write path.** Compare an index's
+   `pg_relation_size` against `shared_buffers` and its `idx_scan` against the
+   insert volume on its table. An HNSW or GIN index larger than
+   `shared_buffers` makes every insert a random-I/O graph traversal. An index
+   whose maintenance cost exceeds its read benefit is a liability with a
+   positive-sounding name.
+3. **Never predicate on a TOASTed column.** `length(wide_col)`,
+   `wide_col IS NULL OR length(...) < n`, and sorts on wide values force a
+   de-TOAST of every row in the scan. Maintain a derived scalar beside the
+   column, index that, and filter on it. Row count is not a proxy for scan cost
+   when the row is wide.
+4. **Batch the write.** `rows / calls = 1.00` on a high-call `INSERT` in
+   `pg_stat_statements` is the single-row-loop fingerprint. Index maintenance
+   that dominates a single-row insert amortizes across a batch.
+5. **Treat `temp_files` and `temp_bytes` as latency.** Spill is a first-class
+   signal and almost never checked. Raise `work_mem` for the role or statement
+   that spills; never globally without multiplying by `max_connections`.
+6. **Establish liveness from runtime counters, not from grep.** Static source
+   matching errs in both directions — it reads documentation and generated
+   clients as evidence of use, and it misses dynamic SQL. `idx_scan > 0` on
+   `pg_stat_user_tables` means an application issued a filtered query, because
+   audit scripts issue `count(*)`/`count(col)`, which are sequential scans.
+   `n_tup_ins > 0` with `n_live_tup = 0` is a drained queue, not a dead table.
+   State the counter window from `pg_postmaster_start_time()` and
+   `pg_stat_database.stats_reset` before quoting any counter.
+7. **Never decide emptiness from `n_live_tup`.** It is a stale planner estimate.
+   Use `count(*)`.
+8. **Retire through a gate, never on emptiness.** Owner confirmation; repository
+   search across raw SQL, ORM names, mapped names, generated clients, scripts,
+   tests, and docs; database dependencies across foreign keys, views,
+   materialized views, routines, triggers, policies, and publications; external
+   workers, crons, queues, dashboards, integrations; runtime counters showing
+   zero reads and writes across a stated window; retention, compliance, backup,
+   and restore resolved; and a staged rename → deny → observe → drop. A drop
+   that has not first survived a rename has not been tested.
+
+The read-only query set that produces this evidence lives in
+`skills/database-practice/references/diagnostic-queries.sql`.
+
 ## Supabase And RLS Addendum
 
 Use this addendum when the work touches Supabase, Postgres RLS, exposed schemas,
@@ -246,6 +318,11 @@ When a database or retrieval agent uses this reference, include:
 - `substrate_boundary`: which store is canonical truth, which stores are
   derived indexes/caches, and which layer is memory policy.
 - `governance`: permission, lineage, retention, deletion, and audit controls.
+- `population_contract`: for every added table or column — owner, writer
+  (`file:function`), reader, lifecycle, backfill plan, and retirement criterion.
+- `cost_attribution`: the change's measured share of total execution time from
+  `pg_stat_statements` before and after, plus `idx_scan` for every index added,
+  dropped, or served.
 - `supabase_security_check`: when Supabase/RLS/Data API/function work is in
   scope, include exposed schemas, RLS coverage, object grants, default
   privileges, privileged functions/views, `service_role` handling, live REST

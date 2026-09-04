@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 53 skills · 439 scripts · 23 hooks** (auto-discovered e4f77925)
+**29 agents · 54 skills · 439 scripts · 23 hooks** (auto-discovered 0d4e8b55)
 
 <details><summary>agents</summary>
 
@@ -71,6 +71,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `color-engine`
 - `cost-rca`
 - `data-plane-worktrees`
+- `database-practice`
 - `debug-loop`
 - `debugging-memory`
 - `decision-queue`
