@@ -515,3 +515,43 @@ class MigrationAndPrMergeConfirmTests(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 data = self._action(cmd)
                 self.assertEqual(data["action"], "auto", msg=str(data))
+
+
+class BranchDeletionConfirmTests(unittest.TestCase):
+    """Deleting a remote ref must confirm, not classify as a preview deploy.
+
+    Measured 2026-09-04: `git push origin --delete <branch>` returned
+    action=auto, matched_rule="preview", list_source="deployment_policy".
+    deployment_policy classified it by its target branch, so a non-production
+    branch read as a preview push and it never reached DEFAULT_CONFIRM_FOR's
+    `git push * --delete *` pattern, which exists for exactly this command.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _env(self, command: str) -> dict:
+        return envelope(run(self.workdir, "run", command))
+
+    def test_delete_flag_confirms_and_bypasses_deployment_policy(self) -> None:
+        data = self._env("git push origin --delete ui/brief-market-map-polish")
+        self.assertEqual(data["action"], "confirm", msg=str(data))
+        self.assertNotEqual(data["list_source"], "deployment_policy", msg=str(data))
+
+    def test_colon_syntax_delete_confirms(self) -> None:
+        data = self._env("git push origin :old-branch")
+        self.assertEqual(data["action"], "confirm", msg=str(data))
+
+    def test_ordinary_pushes_are_unchanged(self) -> None:
+        """The guard must not gate normal pushes or src:dst refspecs."""
+        for cmd, expected in (
+            ("git push origin feature/x", "auto"),
+            ("git push origin HEAD:refs/heads/scratch", "auto"),
+            ("git push origin main", "confirm"),
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._env(cmd)["action"], expected)

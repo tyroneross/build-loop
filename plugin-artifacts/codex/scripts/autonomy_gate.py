@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -109,6 +110,9 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     "TRUNCATE *",
     "git push * --delete *",
     "git push --delete *",
+    # Colon syntax deletes a remote ref too: `git push origin :branch`. The space
+    # before the colon is what distinguishes it from `git push origin src:dst`.
+    "git push * :*",
     "rm -rf *",
     # Acceptance-probe contract (gate #1): deferring a criterion whose probe still
     # returns its baseline-failure is a DECISION-class surface — explicit operator
@@ -254,6 +258,26 @@ def _looks_like_deployment_command(command: str) -> bool:
     return any(kw in lower for kw in _DEPLOYMENT_KEYWORDS)
 
 
+def _is_branch_deletion(command: str) -> bool:
+    """A push that DELETES a ref is not a deployment.
+
+    Measured 2026-09-04: `git push origin --delete <branch>` returned
+    action=auto, matched_rule="preview", because deployment_policy classifies it
+    by its target branch and a non-production branch is a preview push. It never
+    reached DEFAULT_CONFIRM_FOR's `git push * --delete *` pattern, which exists
+    for exactly this command. Deleting a ref removes history from the remote;
+    classifying it by deploy target answers the wrong question, so route it to
+    pattern matching instead.
+    """
+    low = f" {command.strip().lower()} "
+    if "git push" not in low:
+        return False
+    if " --delete " in low or " -d " in low or low.rstrip().endswith(" --delete"):
+        return True
+    # colon syntax: `git push origin :branch` deletes the remote ref
+    return bool(re.search(r"git\s+push\s+\S+\s+:\S+", low))
+
+
 def _invoke_deployment_policy(workdir: Path, command: str) -> dict[str, Any] | None:
     """Shell out to deployment_policy.py.  Returns a result dict, or None on error."""
     script = Path(__file__).resolve().parent / "deployment_policy.py"
@@ -343,7 +367,7 @@ def classify(
     # `production deploy*`, `npm publish*`, etc. via glob, so we don't lose
     # coverage by deferring. Only return early for recognized targets
     # (preview/testflight/production).
-    if _looks_like_deployment_command(command):
+    if _looks_like_deployment_command(command) and not _is_branch_deletion(command):
         dp_data = _invoke_deployment_policy(workdir, command)
         if dp_data is not None and dp_data.get("target") != "unknown":
             env = _deployment_policy_envelope(dp_data, action_label, command)
