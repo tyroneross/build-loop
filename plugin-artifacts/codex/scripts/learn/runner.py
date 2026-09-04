@@ -25,9 +25,14 @@ import procedural_governance  # noqa: E402
 
 SCHEMA = "build-loop.learn-receipt.v1"
 PATTERN_CAP = 2
-# `execute_tool <tool>` is the per-invocation OTel span label tool_trace.build_span()
-# writes for every tool call, not a recurring diagnostic pattern — exclude it so Learn
-# doesn't re-derive "you called Bash a lot" on every long run.
+# `execute_tool <tool>` is the per-invocation OTel span LABEL (tool_trace.py's
+# `name` field), not the tool identity — the real tool name lives at
+# `attributes["gen_ai.tool.name"]`. `_resolve_tool_signature()` prefers that real
+# name so a repeated FAILURE on the same tool (e.g. "Bash") is counted under its
+# own name, not folded into a per-invocation label. This prefix/exclusion is the
+# fallback for rows that resolve to nothing better than the raw span label
+# (legacy rows, or rows missing `attributes`) — it stops those from masquerading
+# as a real tool signature.
 EXECUTE_TOOL_SPAN_PREFIX = "execute_tool"
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 MAX_JSON_BYTES = 2 * 1024 * 1024
@@ -319,6 +324,37 @@ def _learning_object_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict
     return patterns, converted
 
 
+def _resolve_tool_signature(item: dict[str, Any]) -> str:
+    """The real tool identity for a trace row, preferring the least ambiguous field.
+
+    Order: explicit ``tool`` field, then the OTel ``attributes["gen_ai.tool.name"]``
+    tool_trace.build_span() stamps on every span, then the raw span ``name`` label,
+    then a legacy ``operation`` field. Hardened against malformed rows — no key is
+    assumed present or correctly typed, matching this file's other JSONL readers.
+    """
+    tool = item.get("tool")
+    if isinstance(tool, str) and tool.strip():
+        return tool.strip()
+    attributes = item.get("attributes")
+    if isinstance(attributes, dict):
+        gen_ai_name = attributes.get("gen_ai.tool.name")
+        if isinstance(gen_ai_name, str) and gen_ai_name.strip():
+            return gen_ai_name.strip()
+    name = item.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    operation = item.get("operation")
+    if isinstance(operation, str) and operation.strip():
+        return operation.strip()
+    return ""
+
+
+def _is_error_span(item: dict[str, Any]) -> bool:
+    """True only for a row whose OTel status is ERROR — see build_span()'s ``status``."""
+    status = item.get("status")
+    return isinstance(status, dict) and status.get("code") == "ERROR"
+
+
 def _tool_trace_patterns(
     workdir: Path, truncated_inputs: list[str]
 ) -> tuple[list[dict[str, Any]], int]:
@@ -327,7 +363,9 @@ def _tool_trace_patterns(
         workdir / ".build-loop" / "telemetry" / "tool-traces.jsonl",
         truncated_inputs,
     ):
-        name = str(item.get("tool") or item.get("name") or item.get("operation") or "").strip()
+        if not _is_error_span(item):
+            continue
+        name = _resolve_tool_signature(item)
         if not name:
             continue
         signature = name.lower()

@@ -599,6 +599,69 @@ class TestPercentageDenominator(unittest.TestCase):
         finally:
             path.unlink()
 
+    # --- Adjacency guard: unrelated A-of-B / percentage pairs in one sentence ---
+    # Independent audit reproduced these as false positives against commit
+    # 1f95a2a9: each contains an "A of B" and a "(N%)" on the same line that
+    # describe two DIFFERENT stats, joined by punctuation (comma/semicolon).
+
+    def test_unrelated_pair_across_comma_not_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines(
+                "Latency dropped on 3 of 5 endpoints, cutting p95 by 240ms (12%).\n"
+            )
+        )
+        self.assertEqual(out, [])
+
+    def test_unrelated_pair_across_semicolon_not_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines(
+                "We reverted 2 of 3 mutants; suite runtime grew 8s (11%).\n"
+            )
+        )
+        self.assertEqual(out, [])
+
+    def test_unrelated_pair_across_semicolon_second_clause_not_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines(
+                "Only 1 of 16 files is hand-written; the mirror is 9 files (56%).\n"
+            )
+        )
+        self.assertEqual(out, [])
+
+    def test_inline_code_span_not_flagged(self):
+        out = lint_percentage_denominator(
+            self._lines(
+                "The bug quotes `1,463 of 1,864 pages (73%)` verbatim in the doc.\n"
+            )
+        )
+        self.assertEqual(out, [])
+
+    # --- Mutation-resistance: pair-selection logic has an oracle now ---
+
+    def test_nearest_preceding_pair_used_not_first(self):
+        # Two "A of B" constructions precede one percentage; only the NEAREST
+        # (9 of 20 -> 45%) matches the stated 45%. The first (12 of 20 ->
+        # 60%) is adjacency-eligible too (short, punctuation-free gap; no
+        # thousands-separator commas to confound the gap scan) so this
+        # fixture isolates first-vs-nearest selection, not the adjacency
+        # guard.
+        out = lint_percentage_denominator(
+            self._lines(
+                "We had 12 of 20 items and 9 of 20 users (45%).\n"
+            )
+        )
+        self.assertEqual(out, [])
+
+    def test_a_of_b_only_after_percentage_not_flagged(self):
+        # The "A of B" is positionally AFTER the "(N%)" on the line, so it
+        # must not be treated as an explanation for it.
+        out = lint_percentage_denominator(
+            self._lines(
+                "Coverage sits at (12%), well below the 1 of 16 files needing review.\n"
+            )
+        )
+        self.assertEqual(out, [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

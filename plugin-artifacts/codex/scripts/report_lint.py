@@ -219,6 +219,32 @@ A_OF_B_RE = re.compile(
     rf"(?P<a>{_NUMBER_TOKEN})\s+of\s+(?P<b>{_NUMBER_TOKEN})", re.IGNORECASE
 )
 
+# Adjacency guard for percentage-denominator: an "A of B" only explains a
+# "(N%)" later on the line when the text connecting them reads as one clause
+# -- a short bridging phrase with no clause-ending punctuation. Without this
+# bound, ANY earlier "A of B" on the line pairs with the percentage even
+# across a full independent clause, e.g. "Latency dropped on 3 of 5
+# endpoints, cutting p95 by 240ms (12%)." -- the 12% has nothing to do with
+# 3-of-5, it is a *different* stat in the same sentence. The punctuation set
+# catches the clause break; the char cap is the backstop for a run that
+# lacks punctuation but has still changed subject over a long span.
+ADJACENCY_MAX_GAP_CHARS = 40
+ADJACENCY_BREAK_CHARS = frozenset(";,.:!?")
+ADJACENCY_DASH_RE = re.compile(r"[–—]")  # en dash, em dash
+
+# Inline code spans (`...`) quote text rather than assert it -- a doc
+# describing this very rule, or an example fixture, must not trip on its own
+# quoted figure. Local to this rule only: `_strip_fenced_blocks` is
+# block-level and consumed by seven other rules, so it is not touched here.
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def _blank_inline_code(line: str) -> str:
+    """Blank backtick-delimited spans, preserving length so match offsets
+    into the original ``line`` (used for the reported snippet) stay valid.
+    """
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line)
+
 
 def _finding(
     *,
@@ -493,21 +519,39 @@ def lint_percentage_denominator(lines: list[tuple[int, str]]) -> list[dict[str, 
     plus a small epsilon for float error), so ``73%`` accepts anything in
     [72.5, 73.5) and ``78.5%`` accepts anything in [78.45, 78.55).
 
+    Two guards keep this from flagging a correct sentence:
+
+    - **Adjacency**: the ``A of B`` must be the nearest preceding match AND
+      the text between it and the ``(N%)`` must be a short, punctuation-free
+      bridging phrase (``ADJACENCY_MAX_GAP_CHARS`` / ``ADJACENCY_BREAK_CHARS``
+      above) — otherwise the percentage is a different stat in the same
+      sentence, not that fraction restated.
+    - **Inline code**: backtick spans are blanked before matching, so a doc
+      quoting the defective figure is not itself flagged.
+
     WARN only — it never blocks a report.
     """
     findings: list[dict[str, Any]] = []
     for lineno, line in lines:
         if not line.strip():
             continue
-        for pct_match in PERCENT_RE.finditer(line):
+        scan_line = _blank_inline_code(line)
+        for pct_match in PERCENT_RE.finditer(scan_line):
             if pct_match.group("approx"):
                 continue
             pct_str = pct_match.group("pct")
             stated_pct = float(pct_str)
             preceding = None
-            for ab_match in A_OF_B_RE.finditer(line, 0, pct_match.start()):
+            for ab_match in A_OF_B_RE.finditer(scan_line, 0, pct_match.start()):
                 preceding = ab_match
             if preceding is None:
+                continue
+            gap = scan_line[preceding.end():pct_match.start()]
+            if len(gap) > ADJACENCY_MAX_GAP_CHARS:
+                continue
+            if any(ch in ADJACENCY_BREAK_CHARS for ch in gap):
+                continue
+            if ADJACENCY_DASH_RE.search(gap):
                 continue
             a_raw, b_raw = preceding.group("a"), preceding.group("b")
             a = float(a_raw.replace(",", ""))
@@ -524,10 +568,10 @@ def lint_percentage_denominator(lines: list[tuple[int, str]]) -> list[dict[str, 
                     line=lineno,
                     snippet=line.strip(),
                     message=(
-                        f"Stated {pct_str}% does not match {a_raw} of {b_raw} "
-                        f"(computes to {computed_pct:.1f}%). Name the denominator "
-                        "the percentage actually came from, or correct one of "
-                        "the three numbers."
+                        f"Stated {pct_str}% and {a_raw} of {b_raw} compute to "
+                        f"{computed_pct:.1f}%, not {pct_str}%. Verify which "
+                        "population the percentage came from and name it — "
+                        "only correct a number if the mismatch is real."
                     ),
                 ))
     return findings
