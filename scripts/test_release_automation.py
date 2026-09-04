@@ -75,6 +75,82 @@ def test_config_targets_this_package() -> None:
     assert root["package-name"] == "@tyroneross/build-loop"
 
 
+def test_last_release_sha_sits_at_the_root_where_release_please_reads_it() -> None:
+    """Nested inside `packages`, this key is silently ignored — valid JSON, no warning.
+
+    release-please's own schemas/config.json declares `last-release-sha` at the ROOT
+    only; the per-package `ReleaserConfigOptions` definition does not carry it. Nested,
+    it parses fine and does nothing.
+
+    Dormant here, because this repo has real release tags and release-please finds the
+    last release by tag without ever needing the option. Not dormant when copied: on
+    2026-09-04 the nesting was ported faithfully into six sibling repos and all six,
+    having no tags, fell back to scanning full history — 108 commits for mockup-gallery,
+    160 for claude-code-debugger — each proposing a MINOR bump computed from `feat:`
+    commits that had already shipped. Under this project's versioning a minor bump
+    claims a new capability, so the result was a false capability claim built by
+    re-counting old commits.
+
+    These release workflows are documented PORTABLE, so this file is read as the
+    reference implementation. A defect invisible in the source repo and load-bearing in
+    every destination repo is the class that spreads, which is why placement is asserted
+    here rather than left to review.
+    """
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    assert "last-release-sha" in cfg, (
+        "release-please-config.json lost its root-level last-release-sha; a repo "
+        "copying this file with no tags will scan its entire history"
+    )
+    nested = [p for p, entry in cfg["packages"].items() if "last-release-sha" in entry]
+    assert not nested, (
+        f"last-release-sha is nested under packages{nested} where release-please "
+        "silently ignores it — move it to the root, beside release-type"
+    )
+
+
+# The types release-please must never render into a changelog. An empty rendered
+# changelog makes release-please discard the release PR (src/strategies/base.ts), so
+# hiding these is exactly what keeps a docs-only or chore-only push from cutting a
+# version.
+SILENT_COMMIT_TYPES = ("docs", "style", "chore", "refactor", "test", "build", "ci")
+
+
+def test_docs_and_chore_commits_cannot_cut_a_release() -> None:
+    """The no-bump-on-docs guarantee has to live in this repo, not in a transitive dep.
+
+    Leaving `changelog-sections` unset does produce the right behaviour today — the
+    conventional-changelog-conventionalcommits preset hides all seven of these types by
+    default, and release-please omits `types` entirely when the option is absent
+    (src/changelog-notes/default.ts), so the preset default is what applies. But that is
+    a default in a dependency of a dependency: it can change in a version this repo
+    never chose, and a repo copying this config inherits whatever preset its own
+    release-please resolves.
+
+    The values pinned in release-please-config.json are byte-identical to that preset
+    default, so pinning them changed nothing at the time it was written. What it changes
+    is where the guarantee lives.
+    """
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    sections = cfg.get("changelog-sections")
+    assert sections, (
+        "release-please-config.json no longer pins changelog-sections, so whether a "
+        "docs-only push cuts a release is decided by a transitive dependency's default"
+    )
+
+    by_type = {s["type"]: s for s in sections}
+    exposed = [t for t in SILENT_COMMIT_TYPES if not by_type.get(t, {}).get("hidden")]
+    assert not exposed, (
+        f"these commit types would render into the changelog: {exposed}. A non-empty "
+        "changelog keeps the release PR alive, so a push of only these commits would "
+        'cut a version — mark each one "hidden": true'
+    )
+    for release_worthy in ("feat", "fix"):
+        assert not by_type.get(release_worthy, {}).get("hidden"), (
+            f"{release_worthy} is hidden, so a real change renders an empty changelog "
+            "and release-please discards the release PR — nothing would ever ship"
+        )
+
+
 def test_every_version_bearing_manifest_is_wired_into_release_please() -> None:
     """The five mirrors bump_version.py syncs must also be bumped by release-please.
 
