@@ -179,9 +179,13 @@ class DsnTests(unittest.TestCase):
     def test_redacts_the_password(self) -> None:
         self.assertEqual(
             MODULE.redact_dsn("postgres://user:secret@host:5432/db?sslmode=require"),
-            "postgres://user:***@host:5432/db",
+            "host:5432/db",
         )
         self.assertNotIn("secret", MODULE.redact_dsn("host=h password=secret"))
+        self.assertEqual(MODULE.redact_dsn("host=h port=5432 dbname=app password=secret"), "h:5432/app")
+        # No URL shape and no user survive: secret scanners flag both.
+        self.assertNotIn("://", MODULE.redact_dsn("postgres://user:secret@host:5432/db"))
+        self.assertNotIn("user", MODULE.redact_dsn("postgres://user:secret@host:5432/db"))
 
     def test_resolve_dsn_prefers_flag_then_env(self) -> None:
         env = {"DATABASE_URL": "a", "DIRECT_URL": "b"}

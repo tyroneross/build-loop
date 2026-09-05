@@ -122,16 +122,29 @@ def sanitize_dsn(dsn: str) -> str:
 
 
 def redact_dsn(dsn: str) -> str:
-    """Return the DSN with any password removed, safe to write into a report."""
+    """Describe the connection for a report as host[:port]/database only.
+
+    No scheme, no user, no password. A report line shaped like
+    ``postgresql://user:***@host/db`` still trips secret scanners (measured
+    2026-09-05: the in-house scanner in a consuming repo failed CI on the
+    redacted form), and the user segment of a hosted DSN carries the
+    project identifier, which is not the report's business either.
+    """
     if "://" not in dsn:
-        return re.sub(r"password=\S+", "password=***", dsn)
+        host = re.search(r"host=(\S+)", dsn)
+        port = re.search(r"port=(\S+)", dsn)
+        dbname = re.search(r"dbname=(\S+)", dsn)
+        out = host.group(1) if host else "?"
+        if port:
+            out += f":{port.group(1)}"
+        if dbname:
+            out += f"/{dbname.group(1)}"
+        return out
     parts = urlsplit(dsn)
-    netloc = parts.netloc
-    if "@" in netloc:
-        creds, host = netloc.rsplit("@", 1)
-        user = creds.split(":", 1)[0]
-        netloc = f"{user}:***@{host}"
-    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    host = parts.hostname or "?"
+    if parts.port:
+        host += f":{parts.port}"
+    return f"{host}{parts.path}"
 
 
 def resolve_dsn(explicit: str | None, env: dict[str, str] | None = None) -> str:
