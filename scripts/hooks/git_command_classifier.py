@@ -252,9 +252,12 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     # parse.) Recursing re-uses the whole classifier, so nesting and wrappers
     # inside the string are handled by construction, and the string shrinks each
     # time so the recursion terminates.
-    # Check the RAW head as well as the wrapper-stripped one. `su - deploy -c …`
-    # and `flock /tmp/l -c …` strip to their own arguments (`-`, `/tmp/l`), so the
-    # stripped head alone misses them; `nohup bash -c …` needs the stripped one.
+    #
+    # Both heads are checked: `su - deploy -c …` and `flock /tmp/l -c …` strip to
+    # their own arguments (`-`, `/tmp/l`), so the wrapper-stripped head alone
+    # misses them, while `nohup bash -c …` needs exactly that stripped head. A
+    # direct `git -c k=v push` never reaches here — the branch above returns first
+    # — so git's own `-c` is not mistaken for a command string.
     heads = {_cmd_basename(tokens[0])}
     if stripped:
         heads.add(_cmd_basename(stripped[0]))
