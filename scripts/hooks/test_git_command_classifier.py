@@ -316,6 +316,50 @@ class CouldInvokeGitTests(unittest.TestCase):
         self.assertEqual(gcc.classify_command(cmd), {"commit", "push"})
 
 
+class ShellInterpreterAndRunnerTests(unittest.TestCase):
+    """Auditor finding f11: a genuine push reached through a `-c` STRING was
+    missed on the PARSEABLE path at every revision, so neither the pre-push scan
+    nor the commit auditor ever ran on it. The conservatism contract in this
+    module's docstring says a miss is worse than a false fire; these are misses.
+    """
+
+    def test_shell_interpreter_dash_c_push_fires(self) -> None:
+        for cmd in ('bash -c "git push origin main"',
+                    "sh -c 'git push origin main'",
+                    'nohup bash -c "git push origin main"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gcc.classify_command(cmd), {"push"})
+
+    def test_shell_interpreter_dash_c_commit_fires(self) -> None:
+        self.assertEqual(gcc.classify_command('sh -c "git commit -m x"'), {"commit"})
+
+    def test_arg_taking_wrapper_dash_c_push_fires(self) -> None:
+        """`su` and `flock` strip to their OWN arguments, so the wrapper-stripped
+        head is `-` / `/tmp/l` — the raw head has to be checked as well."""
+        for cmd in ('su - deploy -c "git push origin main"',
+                    'flock /tmp/l -c "git push"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gcc.classify_command(cmd), {"push"})
+
+    def test_find_exec_push_survives_a_git_named_predicate(self) -> None:
+        """The wrapper scan returned on the FIRST token whose basename is `git`.
+        Here that is the `-name` predicate VALUE, and stopping there hid the real
+        push behind it."""
+        self.assertEqual(
+            gcc.classify_command("find /repos -name git -exec git push origin main \\;"),
+            {"push"},
+        )
+
+    def test_dash_c_recursion_does_not_false_fire(self) -> None:
+        """The guard on recursing into `-c`: the string still has to CONTAIN a
+        real invocation. `bash -c "echo git push"` prints text."""
+        for cmd in ('bash -c "ls -la"', 'bash -c "echo git push"',
+                    'su - deploy -c "ls"', 'watch -n 5 "git status"',
+                    'timeout 30 python3 -c "print(1)"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gcc.classify_command(cmd), set())
+
+
 class SubprocessRoundTripTests(unittest.TestCase):
     """Drive the classifier as the dispatcher does: event JSON on stdin → space-sep stdout."""
 

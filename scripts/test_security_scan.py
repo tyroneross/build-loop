@@ -591,6 +591,51 @@ class TestTrackedOnly(_DiffScanBase):
         self.assertEqual(rc, 0, f"stderr-free clean push expected; got {data}")
         self.assertFalse(self._has_secret(data, "mockup.ts"))
 
+    def test_subdirectory_path_root_still_finds_the_delta_secret(self):
+        """Auditor finding f7. `git log --name-only` emits repo-root-relative
+        paths, so without `--relative` they get joined onto a subdirectory
+        `--path` root — `sub/leak.py` becomes `<root>/sub/sub/leak.py`, a path
+        that exists nowhere. The secret then fell back to advisory SPOT depth and
+        the scan exited 0. `_git_diff_files` carries `--relative` for exactly this
+        reason; its new sibling inherited no such guard."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        base = self._commit(d, "baseline")
+        self._write(d, "sub/leak.ts", _SECRET_LINE)
+        self._commit(d, "add leak in a subdir")
+        self._git(d, "rm", "--cached", "sub/leak.ts")
+        self._git(d, "commit", "-q", "-m", "untrack it")
+        rc, data = self._scan(
+            d / "sub", "--diff", base, "--spot-check", "--tracked-only"
+        )
+        self.assertEqual(
+            rc, 1,
+            "a subdirectory --path root must reach the same verdict as the repo root",
+        )
+        self.assertTrue(self._has_secret(data, "leak.ts"))
+
+    def test_subdirectory_path_root_does_not_inflate_changed_files(self):
+        """The other half of f7: phantom paths inflated `changed_files`, so
+        `empty_diff` stayed False, the walk matched nothing, and the
+        belt-and-braces guard escalated to a FULL scan — hard-blocking on debt
+        entirely outside the pushed range."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        (d / "sub").mkdir()
+        self._write(d, "sub/old.ts", _SECRET_LINE)  # pre-existing debt
+        base = self._commit(d, "baseline")
+        self._write(d, "elsewhere.ts", "export const ok = true;\n")
+        self._commit(d, "change nothing under sub/")
+        rc, data = self._scan(d / "sub", "--diff", base)
+        self.assertEqual(data["diff"]["changed_files"], 0)
+        self.assertEqual(data["diff"]["mode"], "delta")
+        self.assertEqual(
+            rc, 0,
+            "a range that touched nothing under this subdir must not full-scan",
+        )
+
     def test_tracked_only_passes_no_others_to_git(self):
         """Unit-level: the flag is what removes `--others` from the argv."""
         seen: list[list[str]] = []

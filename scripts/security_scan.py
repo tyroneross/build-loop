@@ -279,8 +279,15 @@ def _git_range_touched_files(root: Path, ref: str) -> set[Path]:
     """
     try:
         result = subprocess.run(
+            # `--relative` for the same reason `_git_diff_files` carries it: without
+            # it git emits repo-root-relative paths, which then get joined onto a
+            # subdirectory ``--path`` root — `sub/leak.py` becomes
+            # `<root>/sub/sub/leak.py`, a path that exists nowhere. That both hid a
+            # delta secret (it fell back to advisory SPOT depth) and inflated
+            # `changed_files` enough to trip the belt-and-braces full-scan guard,
+            # hard-blocking on debt outside the range. Auditor finding f7.
             ["git", "-C", str(root), "log", "--name-only", "--format=", "-z",
-             f"{ref}..HEAD"],
+             "--relative", f"{ref}..HEAD"],
             capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.SubprocessError, ValueError):

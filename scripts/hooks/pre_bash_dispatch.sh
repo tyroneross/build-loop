@@ -490,13 +490,7 @@ case " $_GITCLASS " in
             # root normalisation matters because a subdirectory would scan only
             # part of the tree.
             _SCAN_TARGET=$(_bl_repo_root "$(_bl_effective_dir)")
-            # --tracked-only: a push ships COMMITTED content, so an untracked
-            # file cannot reach the remote and a finding in one is unactionable
-            # at push time. Named failure (2026-09-05, RossLabs Ambient Agent):
-            # 54 of the 57 HIGH findings that hard-blocked a push lived in
-            # untracked `.designdoc/*.html` mockups. The deploy gate below keeps
-            # untracked files, because a deploy DOES upload the working tree.
-            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check --tracked-only)
+            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check)
             # Human-readable reason for the delta-vs-full choice, carried into
             # the block message. Before this, an operator whose clean delta was
             # full-scanned had to read this file to find out why.
@@ -555,6 +549,9 @@ branch = os.environ.get("BRANCH", "")      # current branch, e.g. "feature"
 # The repo this scan actually resolved to. `git -C <path>` is only plain when it
 # names THIS path (see is_plain); empty means resolution failed → never plain.
 scan_target = os.environ.get("SCAN_TARGET", "")
+# Does ANY `git -C` appear in the whole command? If so, no push segment may rely
+# on $CWD, because the scan target was resolved from one specific `-C` (f10).
+_CMD_HAS_DASH_C = re.search(r"\bgit\s+(?:[^|;&]*\s)?-C\s", cmd) is not None
 rem, _, up_branch = upstream.partition("/")
 
 # h3 — ALLOWLIST polarity. Only flags positively known NOT to change the push
@@ -581,25 +578,43 @@ SAFE_VALUE = {"-o", "--push-option"}
 # the same tree with `--diff origin/main --spot-check` exited 0. Any redirected,
 # piped, or logged plain push hit this.
 #
-# The matcher is DELIBERATELY NARROW, because `git check-ref-format` PERMITS `<`
-# and `>` in a ref name (it forbids space, `~ ^ : ? * [ \` and control chars). An
-# earlier, looser `^(\d*)(>>|>&|>|<&|<)(.*)$` ate `<hotfix>` and `2>1` as
-# redirections, leaving `git push origin '<hotfix>'` classified plain and scoped
-# to `origin/main..HEAD` while a different branch shipped — a silent false
-# clearance found by the independent auditor on 2026-09-05, before this shipped.
-# Three unambiguous shapes only; anything else stays a positional, which makes
-# the push non-plain and full-scans (the fail-safe direction).
-_REDIR_BARE_RE = re.compile(r"^\d*(?:>>|>|<)$")            # `>` `>>` `<` `2>`
-_REDIR_FDDUP_RE = re.compile(r"^\d*(?:>&|<&)\d*$")          # `2>&1` `>&2` `<&0`
-_REDIR_TARGET_RE = re.compile(r"^\d*(?:>>|>|<)[/.~$]\S*$")  # `>/tmp/log` `2>>./out`
+# QUOTING is what separates a redirection from a ref, so the tokenizer must keep
+# it. `git check-ref-format` PERMITS `<` and `>` in a ref name (it forbids space,
+# `~ ^ : ? * [ \` and control chars), which makes `>out.log` genuinely ambiguous
+# once POSIX shlex has erased the quotes — and the shell resolved that ambiguity
+# already: an UNQUOTED `>out.log` is a redirection the shell consumes before git
+# ever sees it, while `'>out.log'` reaches git as a ref.
+#
+# So `is_plain` tokenizes with `posix=False` (quotes preserved) and only ever
+# treats an UNQUOTED token as a redirection. Two auditor findings collapse into
+# that one rule: a narrow character-class heuristic used to reject the ordinary
+# `2>err.txt` (a needless full scan, f8) while still eating a quoted
+# `'>/tmp/log'` ref (a false clearance, f9).
+_REDIR_BARE_RE = re.compile(r"^\d*(?:>>|>|<)$")       # `>` `>>` `<` `2>`
+_REDIR_FDDUP_RE = re.compile(r"^\d*(?:>&|<&)\d*$")     # `2>&1` `>&2` `<&0`
+_REDIR_TARGET_RE = re.compile(r"^\d*(?:>>|>|<)\S+$")   # `>out.log` `2>>/tmp/o`
+
+_QUOTE_CHARS = ("'", '"')
+
+def is_quoted(tok):
+    """True when the token reached git as a quoted word (so it is data, not syntax)."""
+    return bool(tok) and tok[0] in _QUOTE_CHARS
+
+def dequote(tok):
+    """Strip one matched pair of surrounding quotes, as the shell would have."""
+    if len(tok) >= 2 and tok[0] in _QUOTE_CHARS and tok[-1] == tok[0]:
+        return tok[1:-1]
+    return tok
 
 def strip_redirections(toks):
-    """Drop redirection operators (and their target tokens) from an argv list."""
+    """Drop redirection operators (and their target tokens) from a quoted-argv list."""
     out = []
     i, n = 0, len(toks)
     while i < n:
         t = toks[i]
-        if t.startswith("-"):
+        # A quoted token is a ref or a value the shell handed to git verbatim; it
+        # cannot be redirection syntax no matter what characters it contains.
+        if is_quoted(t) or t.startswith("-"):
             out.append(t)
             i += 1
             continue
@@ -616,7 +631,10 @@ def strip_redirections(toks):
 def is_plain(seg):
     """Return None when the segment is a plain push, else a short reason string."""
     try:
-        toks = strip_redirections(shlex.split(seg))
+        # posix=False keeps the quotes, so strip_redirections can tell syntax from
+        # data; every survivor is dequoted immediately after, restoring the values
+        # the rest of this function compares against.
+        toks = [dequote(t) for t in strip_redirections(shlex.split(seg, posix=False))]
     except ValueError:
         return "segment has unbalanced quotes"
     # `git -C <path> push` is plain ONLY when <path> IS the repo this scan
@@ -633,6 +651,15 @@ def is_plain(seg):
     # reason, not a strip, so the push full-scans. No other global option is
     # admitted — `-c remote.origin.pushurl=...` changes the destination, and
     # `--git-dir=<d>` names a repo the scan target does not follow.
+    # Auditor finding f10: the realpath guard below catches two `-C` paths that
+    # DISAGREE, but not a segment carrying no `-C` at all. `git push && git -C /b
+    # push` resolved the scan target from the LAST `-C` (the sed at
+    # _bl_effective_dir is greedy), so the bare first segment — which pushes $CWD,
+    # a different repo — was validated against /b's upstream and branch and never
+    # scanned. Once ANY `-C` appears, every push segment must name the scanned
+    # repo explicitly; a segment that does not is a reason, not a pass.
+    if "-C" not in toks and _CMD_HAS_DASH_C:
+        return "a `git -C` elsewhere in this command makes the target of this bare `git push` unprovable"
     while len(toks) >= 3 and toks[0] == "git" and toks[1] == "-C":
         if not scan_target:
             return "`git -C` used but the scan target could not be resolved"
@@ -738,8 +765,22 @@ PY
                 # is insufficient: the command can't see config, and config
                 # can't see a refspec/flag in the command.
                 if [ "$_PLAIN_VERDICT" = "yes" ] && [ "$_CFG_PLAIN" = "yes" ]; then
-                    _SCAN_ARGS+=(--diff "$_UPSTREAM")
-                    _SCOPE_NOTE="delta scan: $_UPSTREAM..HEAD (tracked files only)"
+                    # --tracked-only travels WITH --diff and never without it.
+                    # A push ships committed content, so an untracked file is
+                    # unactionable at push time — 54 of the 57 HIGH findings that
+                    # hard-blocked the 2026-09-05 push lived in untracked
+                    # `.designdoc/*.html` mockups. But the exemption that keeps
+                    # this safe is the delta itself (security_scan.py: a path the
+                    # pushed range touched survives the filter), so the flag has
+                    # no safe meaning without one.
+                    #
+                    # Coupling them is the fix for auditor finding f6: passing
+                    # --tracked-only on the FULL-SCAN arm made that arm scan LESS
+                    # than the delta arm it fell back from, inverting the safety
+                    # ordering. `git push origin main` blocked a secret while
+                    # `git push origin main 2>err.txt` cleared it.
+                    _SCAN_ARGS+=(--diff "$_UPSTREAM" --tracked-only)
+                    _SCOPE_NOTE="delta scan: $_UPSTREAM..HEAD (tracked files + everything the range touched)"
                 elif [ "$_PLAIN_VERDICT" != "yes" ]; then
                     _SCOPE_NOTE="full scan: push command not plain — $_PLAIN_REASON"
                 else

@@ -493,9 +493,14 @@ class SecurityPushClassifierConservatismTests(unittest.TestCase):
         self.assertIn("--mirror", r.stderr, "the reason must name the token")
 
     def test_untracked_file_does_not_block_a_push(self) -> None:
-        """A push ships committed content only, so an untracked file cannot
-        reach the remote. 54 of the 57 findings that blocked the reported push
-        lived in untracked `.designdoc/*.html` mockups."""
+        """A push ships committed content only, so an untracked file outside the
+        pushed range cannot reach the remote. 54 of the 57 findings that blocked
+        the reported push lived in untracked `.designdoc/*.html` mockups.
+
+        This must use a PLAIN push. `--tracked-only` travels with `--diff` and
+        only with it (auditor finding f6), because the exemption that keeps the
+        filter safe IS the delta.
+        """
         clean = make_buildloop_repo(self.tmp, name="clean")
         bare = self.tmp / "clean-origin.git"
         subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
@@ -503,13 +508,79 @@ class SecurityPushClassifierConservatismTests(unittest.TestCase):
         branch = _git(clean, "branch", "--show-current").stdout.strip()
         _git(clean, "push", "-u", "-q", "origin", branch)
         (clean / "mockup.ts").write_text(_SECRET_LINE, encoding="utf-8")  # never added
-        # `--mirror` forces the full-scan path, so this grades the untracked
-        # exclusion rather than the delta scoping.
-        r = run_dispatch(clean, "git push --mirror origin")
+        r = run_dispatch(clean, f"git push origin {branch}")
         self.assertEqual(
             r.returncode, 0,
-            f"an untracked file cannot reach the remote; stderr={r.stderr!r}",
+            f"an untracked file outside the range cannot reach the remote; "
+            f"stderr={r.stderr!r}",
         )
+
+    def test_untracked_secret_still_blocks_a_full_scan_push(self) -> None:
+        """Auditor finding f6, the sharpest regression in this series: passing
+        `--tracked-only` on the FULL-SCAN arm made that arm scan LESS than the
+        delta arm it fell back from, inverting the safety ordering. A push the
+        gate could not prove safe must never see less than one it could."""
+        clean = make_buildloop_repo(self.tmp, name="fullscanrepo")
+        bare = self.tmp / "fullscan-origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(clean, "remote", "add", "origin", str(bare))
+        branch = _git(clean, "branch", "--show-current").stdout.strip()
+        _git(clean, "push", "-u", "-q", "origin", branch)
+        (clean / "mockup.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        r = run_dispatch(clean, "git push --mirror origin")
+        self.assertEqual(
+            r.returncode, 2,
+            f"the full-scan arm must not skip untracked files; stderr={r.stderr!r}",
+        )
+
+    def test_redirected_plain_push_and_bare_push_agree(self) -> None:
+        """f6's failing input, stated as the invariant it violated: appending a
+        redirection must never turn a blocked push into an allowed one."""
+        clean = make_buildloop_repo(self.tmp, name="agreerepo")
+        bare = self.tmp / "agree-origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(clean, "remote", "add", "origin", str(bare))
+        branch = _git(clean, "branch", "--show-current").stdout.strip()
+        _git(clean, "push", "-u", "-q", "origin", branch)
+        (clean / "leak.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(clean, "add", "leak.ts")
+        _git(clean, "commit", "-q", "-m", "leak")
+        _git(clean, "rm", "-q", "--cached", "leak.ts")
+        _git(clean, "commit", "-q", "-m", "untrack")
+        bare_rc = run_dispatch(clean, f"git push origin {branch}").returncode
+        redir_rc = run_dispatch(clean, f"git push origin {branch} 2>err.txt").returncode
+        self.assertEqual(bare_rc, 2, "precondition: the bare push must block")
+        self.assertEqual(
+            redir_rc, bare_rc,
+            "a redirection changes where output goes, never what is scanned",
+        )
+
+    def test_relative_redirect_target_stays_delta_scoped(self) -> None:
+        """f8: `2>err.txt` is the ordinary spelling. A character-class heuristic
+        rejected any target not starting with `/ . ~ $`, so the commonest
+        redirection of all forced a needless full scan."""
+        for cmd in (f"git push origin {self.branch} 2>err.txt",
+                    f"git push origin {self.branch} >out.log"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_dispatch(self.repo, cmd).returncode, 0)
+
+    def test_quoted_ref_that_looks_like_a_redirect_target_full_scans(self) -> None:
+        """f9: `'>/tmp/log'` is a legal ref name, and quoting is what says so."""
+        self._assert_full_scan_blocks("git push origin '>/tmp/log'")
+
+    def test_bare_push_beside_a_dash_C_push_full_scans(self) -> None:
+        """f10 (partial): the scan target is resolved from the LAST `-C`, so a
+        bare `git push` in the same command operates on a repo the classifier
+        cannot name. It must therefore not classify plain.
+
+        The `-C` here points at THIS repo so the assertion is observable: without
+        the guard both segments classify plain and the scan scopes to the empty
+        delta (rc 0); with it the command full-scans and the inherited secret
+        blocks. The remaining half — the scan target itself being the wrong repo
+        when the two segments name DIFFERENT repos — is filed separately, since
+        one scan invocation cannot cover two repositories.
+        """
+        self._assert_full_scan_blocks(f"git push && git -C {self.repo} push")
 
     def test_committed_secret_still_blocks_a_full_scan_push(self) -> None:
         """The false-clearance guard for the untracked exclusion: content that

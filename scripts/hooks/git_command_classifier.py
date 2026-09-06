@@ -243,10 +243,36 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     stripped = _strip_leading_wrappers(tokens)
     if stripped and _cmd_basename(stripped[0]) == "git":
         return _subcommand_after_git(stripped)
+    # A shell interpreter (and several wrappers) run their `-c` STRING as a
+    # command, so the git call is a whole token rather than argv[0].
+    # `bash -c "git push origin main"`, `su - deploy -c "git push"`, and
+    # `flock /tmp/l -c "git push"` were missed on this parseable path at every
+    # revision — the gate simply never ran on them. (Auditor finding f11; the
+    # fallback guard already covered them, but only for commands that failed to
+    # parse.) Recursing re-uses the whole classifier, so nesting and wrappers
+    # inside the string are handled by construction, and the string shrinks each
+    # time so the recursion terminates.
+    # Check the RAW head as well as the wrapper-stripped one. `su - deploy -c …`
+    # and `flock /tmp/l -c …` strip to their own arguments (`-`, `/tmp/l`), so the
+    # stripped head alone misses them; `nohup bash -c …` needs the stripped one.
+    heads = {_cmd_basename(tokens[0])}
+    if stripped:
+        heads.add(_cmd_basename(stripped[0]))
+    if heads & (_SHELL_INTERPRETERS | _WRAPPER_COMMANDS):
+        for idx, tok in enumerate(tokens):
+            if tok == "-c" and idx + 1 < len(tokens):
+                for sub in SUBCOMMANDS_OF_INTEREST:
+                    if sub in classify_command(tokens[idx + 1]):
+                        return sub
     if _cmd_basename(tokens[0]) in _WRAPPER_COMMANDS:
+        # Scan PAST a `git` token whose next positional is not a subcommand of
+        # interest: in `find /repos -name git -exec git push \;` the first match
+        # is the `-name` predicate VALUE, and returning on it hid the real push.
         for idx in range(len(tokens)):
             if _cmd_basename(tokens[idx]) == "git":
-                return _subcommand_after_git(tokens[idx:])
+                sub = _subcommand_after_git(tokens[idx:])
+                if sub in SUBCOMMANDS_OF_INTEREST:
+                    return sub
     return None
 
 
