@@ -16,6 +16,34 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.43.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.42.5...build-loop-v0.43.0) (2026-09-06)
+
+
+### Features
+
+* **database-practice:** table map script, vector/graph tuning reference, Sonnet-tier runbook ([308949b](https://github.com/tyroneross/build-loop/commit/308949bde63d372b23e635b292ea76ea2cfa92a8))
+* **dispatch:** make every agent brief declare where it reports, before launch ([c04a803](https://github.com/tyroneross/build-loop/commit/c04a803102e7c36c004e8dc737ecf2215f515089))
+* **release:** cut a release automatically, once a week, and notice when it stops ([7820cea](https://github.com/tyroneross/build-loop/commit/7820cea89181ddf5682d10320a039d6b39eb1850))
+
+
+### Bug Fixes
+
+* **artifact:** the shipped Codex gate would auto-apply a production migration ([faa91ad](https://github.com/tyroneross/build-loop/commit/faa91ad27d4b647062ecc32c8b96109d55175def))
+* **ci:** make main green again — stale skill index, README skill count, claim-scope disambiguator past char 300 ([d2f64c2](https://github.com/tyroneross/build-loop/commit/d2f64c2ce2d672f78d304d1fddceb028be74e911))
+* **ci:** stop a workflow filename reading as a test invocation ([71a10b4](https://github.com/tyroneross/build-loop/commit/71a10b4f3e9f7c0a6d66a41ad74d595289b4c36e))
+* **ci:** stop two dead workflows going red, and name a bad npm token before it publishes ([d3440d0](https://github.com/tyroneross/build-loop/commit/d3440d026bad26cd105a35959a30c4fc338229c4))
+* **database-practice:** describe the connection as host:port/db, never as a URL ([7765cfa](https://github.com/tyroneross/build-loop/commit/7765cfad4dbc36e07d5120b8edfcc2512fb5923f))
+* **docs:** resync the surface counts, and unbury a new skill's routing boundary ([776a463](https://github.com/tyroneross/build-loop/commit/776a4632c38fbdce99b6928580a41d188f580439))
+* **hooks:** close five false-clearance paths the independent auditor found in the push-scan fix ([a6105a9](https://github.com/tyroneross/build-loop/commit/a6105a9bb4accd5410426a007f555bcab11ec36b))
+* **hooks:** couple --tracked-only to --diff, and close five more findings from the closure audit ([b50abee](https://github.com/tyroneross/build-loop/commit/b50abee81a9b85d9e27a61fd456da510f6d89405))
+* **hooks:** reject a condition-poll that cannot terminate, not just a literal infinite loop ([1d76b55](https://github.com/tyroneross/build-loop/commit/1d76b55e23808175ec9d28443b93c24158aa7337))
+* **hooks:** stop the pre-push scan from full-scanning a plain push and from blocking on untracked files ([e917dcf](https://github.com/tyroneross/build-loop/commit/e917dcf93f4c71a8b30e2c3ecc7f60e052052657))
+* **release:** do not treat a parked bot workflow run as a red release PR ([0bb00c6](https://github.com/tyroneross/build-loop/commit/0bb00c6199e1e13d1b45bc8f352b17fe64a66859))
+* **release:** flip the pre-push version gate to the invariant release-please needs ([50aef21](https://github.com/tyroneross/build-loop/commit/50aef21e99111e6f67f3fc7c9036ea8622011e69))
+* **release:** put last-release-sha where the schema reads it ([8772a0f](https://github.com/tyroneross/build-loop/commit/8772a0f5625dc030154ac4c74aee274a8b2a23e4))
+* **resume:** reconcile terminal closeout residue ([b93ebb8](https://github.com/tyroneross/build-loop/commit/b93ebb8e97a019ffce2afb9b810ec873e68df21e))
+* **runtime:** bound and identify synthetic load probes ([9909821](https://github.com/tyroneross/build-loop/commit/99098216c3cb5ff29c2a7069d8787b99e9fc7446))
+
 ## 0.36.4 — 2026-07-11
 
 First published release since v0.36.1. The 0.36.2/0.36.3 entries below were
