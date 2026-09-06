@@ -1,6 +1,6 @@
 ---
 name: claim-scope
-description: "Before stating any fact about a system, name the LAYER the claim lives at (working tree / repository / deployed / live behavior) and check that the instrument you used can actually reach that layer. A grep proves what is in one checkout; it can say nothing about what is running. Verify right-to-left: start at observed behavior, walk back toward source. Triggers on any assertion word — is / is not / there is no / does not exist / never / only / settled / confirmed / verified / impossible / cannot — and on any question of the form 'does X exist', 'is X deployed', 'did X ship', 'why does X do Y'. Not for grading evidence STRENGTH ([measured]/[correlated]/[reasoned]) — that is report_lint's mechanism-claim rule, which this extends with reach."
+description: "Name the LAYER a claim lives at (working tree / repository / deployed / live behavior) and check that your instrument can reach it, before stating any fact about a system. Triggers on assertion words (is / never / only / verified / cannot) and on 'does X exist', 'did X ship'. Not for grading evidence STRENGTH ([measured]/[correlated]/[reasoned]) — that is report_lint's mechanism-claim rule, which this extends with reach. A grep proves what is in one checkout; it can say nothing about what is running. Verify right-to-left: start at observed behavior, walk back toward source."
 user-invocable: false
 companion_scripts:
   - scripts/claim_scope_lint.py — the deterministic half. Flags a claim whose subject layer exceeds the reach of every instrument named on the line.
