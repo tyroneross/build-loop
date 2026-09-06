@@ -171,7 +171,11 @@ def _emit(
     line_no: int,
     **kw: Any,
 ) -> list[dict[str, Any]]:
-    """Emit one finding unless the anchor line is `nosec:`-suppressed."""
+    """Emit one finding unless the anchor line carries a `nosec` suppression.
+
+    Delegates to ``security_common.suppressed``, which accepts either the prose
+    form (``# nosec: <reason>``) or bandit's named-test form (``# nosec B608``).
+    """
     idx = line_no - 1
     if 0 <= idx < len(lines) and suppressed(lines[idx]):
         return []
