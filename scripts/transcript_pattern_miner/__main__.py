@@ -66,7 +66,8 @@ from .categories import (
     test_pattern_outcomes,
 )
 from .secrets_scan import secrets_observed
-from .report import append_outcomes_jsonl, build_candidates, render_report
+from . import disposition, memory_route
+from .report import append_outcomes_jsonl, build_candidate_pool, rank, render_report
 
 # ---------------------------------------------------------------------------
 # Default paths
@@ -122,6 +123,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--out-dir",
         default=str(OUT_DIR),
         help="Override output dir (for testing)",
+    )
+    p.add_argument(
+        "--no-route-corrections",
+        action="store_true",
+        help="Do not auto-draft repeated corrections into memory as candidates",
+    )
+    p.add_argument(
+        "--memory-dir",
+        default=None,
+        help="Override the memory store root the correction router writes into",
     )
     return p.parse_args(argv)
 
@@ -208,11 +219,30 @@ def main(argv: list[str]) -> int:
     report_path = out_dir / f"{today}.md"
     report_path.write_text(report)
 
-    candidates = build_candidates(corrections, sequences, rituals, cross_files)
+    # Suppression runs BEFORE the per-shape caps, so a candidate closed months
+    # ago cannot occupy one of the three correction slots a new cluster needed.
+    # That crowding-out is most of what the ledger buys; filtering after the cap
+    # would remove the row and leave the slot spent.
+    pool = build_candidate_pool(corrections, sequences, rituals, cross_files)
+    closed = disposition.load(disposition.ledger_path(out_dir))
+    candidates, suppressed = rank(pool, closed)
+
+    routed: list[dict] = []
+    if not args.no_route_corrections:
+        # Drafts only; every entry carries status: candidate and needs a human.
+        routed = memory_route.route(candidates, out_dir,
+                                    window_label=window_label,
+                                    memory_dir=args.memory_dir, now=now)
+
     candidates_path.write_text(json.dumps({
         "generated_at": now.isoformat(),
         "window_label": window_label,
         "candidates": candidates,
+        # Closed and back anyway. Kept in the file rather than dropped: a
+        # recurrence after a close says the fix did not hold, which is a
+        # stronger finding than the original was.
+        "suppressed": suppressed,
+        "routed_to_memory": routed,
     }, indent=2))
 
     # Brief stdout summary so caller (cron, agent, human) sees something useful.
@@ -227,6 +257,17 @@ def main(argv: list[str]) -> int:
     if test_table:
         for r in test_table[:3]:
             print(f"    {r['category']}: count={r['count']} POS={r['POSITIVE']} MIX={r['MIXED']} REW={r['REWORK']} NS={r['NO_SIGNAL']}")
+    drafted = [r for r in routed if r.get("action") == "drafted"]
+    failed = [r for r in routed if r.get("action") == "failed"]
+    print(f"  candidates: {len(candidates)} open, {len(suppressed)} suppressed by disposition")
+    if drafted:
+        print(f"  drafted to memory as candidates (need confirmation): {len(drafted)}")
+        for r in drafted:
+            print(f"    {r['candidate_id']} -> {r['record']}")
+    for r in failed:
+        # A silent routing failure would look exactly like "nothing was worth
+        # routing", which is the confusion this whole change exists to remove.
+        print(f"  memory routing FAILED for {r['candidate_id']}: {r['reason']}")
     print(f"  report: {report_path}")
     print(f"  candidates: {candidates_path}")
     return 0

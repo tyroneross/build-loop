@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import disposition
 from .session import TEST_CATEGORIES
 
 
@@ -197,16 +198,51 @@ def _render_test_outcomes(
     lines.append("")
 
 
-def build_candidates(
+# Per-shape caps on the RANKED list. Applied after suppression, not before:
+# a candidate that was closed months ago must not occupy one of the three
+# correction slots that a genuinely new cluster needed. That crowding-out is
+# most of what the disposition ledger buys.
+SHAPE_CAPS = {
+    "user_correction_cluster": 3,
+    "repeated_tool_sequence": 2,
+    "bash_ritual": 1,
+    "cross_project_file": 1,
+}
+TOTAL_CAP = 5
+
+
+def _sequence_rationale(s: dict[str, Any]) -> str:
+    """Say what the numbers mean, so a reader is not left to assume.
+
+    A sequence seen in 54 sessions with 54 distinct renderings is not a ritual;
+    it is the shape of ordinary work. Presenting it with the same wording as a
+    sequence whose identical commands recurred 30 times is what made the
+    category unreadable.
+    """
+    top = s.get("top_rendering_occurrences") or 0
+    sessions = s.get("session_count", 0)
+    distinct = s.get("distinct_renderings") or 0
+    if top <= 1:
+        return (f"Shape recurs in {sessions} sessions but every occurrence is a "
+                f"different command ({distinct} distinct renderings) — likely the "
+                "shape of ordinary work, not a ritual worth automating.")
+    return (f"Same concrete commands repeated {top}× across {sessions} sessions "
+            f"({distinct} distinct renderings) — candidate workflow/skill.")
+
+
+def build_candidate_pool(
     corrections: list[dict[str, Any]],
     sequences: list[dict[str, Any]],
     rituals: list[dict[str, Any]],
     cross_files: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Top-5 ranked candidate proposals for self-improvement-architect to consume."""
-    candidates: list[dict[str, Any]] = []
-    for c in corrections[:3]:
-        candidates.append({
+    """Every candidate, uncapped, each stamped with a stable `candidate_id`.
+
+    Uncapped on purpose. Caps belong after the closed ones are removed.
+    """
+    pool: list[dict[str, Any]] = []
+    for c in corrections:
+        pool.append({
             "kind": "feedback_candidate",
             "shape": "user_correction_cluster",
             "count": c["count"],
@@ -215,31 +251,68 @@ def build_candidates(
             "projects": c["projects"],
             "rationale": "Repeated user correction — highest signal for a feedback_*.md note.",
         })
-    for s in sequences[:2]:
-        candidates.append({
+    for s in sequences:
+        pool.append({
             "kind": "skill_or_workflow_candidate",
             "shape": "repeated_tool_sequence",
             "session_count": s["session_count"],
             "sequence": s["sequence"],
-            "rationale": "Tool sequence recurring across 3+ sessions — candidate workflow/skill.",
+            "sample_commands": s.get("sample_commands", []),
+            "distinct_renderings": s.get("distinct_renderings"),
+            "top_rendering_occurrences": s.get("top_rendering_occurrences"),
+            "rationale": _sequence_rationale(s),
         })
-    for r in rituals[:1]:
-        candidates.append({
+    for r in rituals:
+        pool.append({
             "kind": "automation_candidate",
             "shape": "bash_ritual",
             "count": r["count"],
             "command_shape": r["command_shape"],
             "rationale": "Shell shape repeated 5+ times — candidate for /schedule or script.",
         })
-    for f in cross_files[:1]:
-        candidates.append({
+    for f in cross_files:
+        pool.append({
             "kind": "shared_utility_candidate",
             "shape": "cross_project_file",
             "project_count": f["project_count"],
             "file": f["file"],
             "rationale": "File touched in 3+ projects — candidate for shared template or utility.",
         })
-    return candidates[:5]
+    return disposition.stamp(pool)
+
+
+def rank(pool: list[dict[str, Any]], closed: dict[str, Any] | None = None):
+    """Return `(candidates, suppressed)` -- the capped open list, and every
+    closed candidate that showed up again with the disposition that closed it.
+
+    A recurrence after a close is reported, never dropped: it says the fix did
+    not hold, which is a stronger finding than the original.
+    """
+    open_pool, suppressed = disposition.partition(pool, closed or {})
+    taken: dict[str, int] = {}
+    out: list[dict[str, Any]] = []
+    for candidate in open_pool:
+        shape = candidate.get("shape", "")
+        cap = SHAPE_CAPS.get(shape, 1)
+        if taken.get(shape, 0) >= cap:
+            continue
+        taken[shape] = taken.get(shape, 0) + 1
+        out.append(candidate)
+        if len(out) >= TOTAL_CAP:
+            break
+    return out, suppressed
+
+
+def build_candidates(
+    corrections: list[dict[str, Any]],
+    sequences: list[dict[str, Any]],
+    rituals: list[dict[str, Any]],
+    cross_files: list[dict[str, Any]],
+    closed: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Back-compatible wrapper: the capped open list only."""
+    return rank(build_candidate_pool(corrections, sequences, rituals, cross_files),
+                closed)[0]
 
 
 def append_outcomes_jsonl(path: Path, rows: list[dict[str, Any]]) -> int:

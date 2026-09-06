@@ -54,7 +54,16 @@ def cluster_corrections(aggs: list[SessionAggregate]) -> list[dict[str, Any]]:
         last_seen = max(timestamps) if timestamps else None
         projects = sorted({c["project"] for c in cl})
         sessions = sorted({c["session"] for c in cl})
-        rep_quote = sorted({c["quote"] for c in cl}, key=len)[0]
+        # Tie-break on the string itself, not on length alone. `sorted(set, ...)`
+        # iterates a SET, whose order for strings depends on PYTHONHASHSEED --
+        # randomized per process. Two equally-short quotes in one cluster
+        # therefore produced a different `representative_quote` on every run.
+        # Measured 2026-09-06: two consecutive runs over a byte-identical frozen
+        # copy of 127 session files disagreed on the top two correction ids
+        # every time. Pre-existing and invisible until candidates gained a
+        # stable id derived from this field; a disposition keyed on a value that
+        # changes per process can never suppress anything.
+        rep_quote = sorted({c["quote"] for c in cl}, key=lambda q: (len(q), q))[0]
         out.append({
             "count": len(cl),
             "first_seen": first_seen.isoformat() if first_seen else None,
@@ -67,11 +76,30 @@ def cluster_corrections(aggs: list[SessionAggregate]) -> list[dict[str, Any]]:
     return out
 
 
+# How many concrete renderings of one abstract sequence to carry. Enough to see
+# whether the recurrence is one ritual or many unrelated things sharing a shape;
+# few enough that the candidates file stays readable.
+SEQUENCE_SAMPLE_LIMIT = 3
+
+
 def repeated_tool_sequences(aggs: list[SessionAggregate]) -> list[dict[str, Any]]:
-    """Find length-3..6 sub-sequences that recur across 3+ sessions."""
+    """Find length-3..6 sub-sequences that recur across 3+ sessions.
+
+    Each candidate carries concrete command SHAPES alongside the abstract
+    sequence. `Bash:command -> Bash:command -> ToolSearch:query` across 23
+    sessions is a headline, not a finding: it names a shape without naming the
+    work, so nobody can judge whether automating it is worth anything. The
+    shapes come from `normalize_bash` -- program, subcommand, flag names, every
+    value replaced with `<arg>` -- which is the privacy posture this miner
+    already applies to command text in `manual_command_rituals`. Nothing is
+    captured here that the miner was not already capturing; it is carried to a
+    second place where it answers a question.
+    """
     counts: dict[tuple[str, ...], set[str]] = defaultdict(set)
+    renderings: dict[tuple[str, ...], Counter] = defaultdict(Counter)
     for agg in aggs:
         seq = agg.tool_sequence
+        shapes = agg.tool_shapes
         for length in (3, 4, 5, 6):
             seen_in_session: set[tuple[str, ...]] = set()
             for i in range(len(seq) - length + 1):
@@ -82,17 +110,40 @@ def repeated_tool_sequences(aggs: list[SessionAggregate]) -> list[dict[str, Any]
                     continue
                 seen_in_session.add(window)
                 counts[window].add(agg.session_id)
+                # Index-aligned by construction (session._tool_shape appends on
+                # the same line of control), but a short aggregate from an older
+                # cache would slice empty rather than mis-attribute.
+                if len(shapes) >= i + length:
+                    renderings[window][tuple(shapes[i: i + length])] += 1
 
     out: list[dict[str, Any]] = []
     for window, sessions in counts.items():
         if len(sessions) < 3:
             continue
+        ranked = renderings[window].most_common(SEQUENCE_SAMPLE_LIMIT)
+        samples = [{"commands": list(rendering), "occurrences": n}
+                   for rendering, n in ranked]
+        top_occurrences = ranked[0][1] if ranked else 0
         out.append({
             "sequence": list(window),
             "session_count": len(sessions),
             "sample_sessions": sorted(sessions)[:3],
+            "sample_commands": samples,
+            "distinct_renderings": len(renderings[window]),
+            # How many times the SAME concrete commands recurred. This is the
+            # number that decides whether there is anything to automate, and it
+            # is not the session count.
+            "top_rendering_occurrences": top_occurrences,
         })
-    out.sort(key=lambda d: (-d["session_count"], -len(d["sequence"])))
+    # Rank on concrete repetition first. Measured 2026-09-06 over 14 days of
+    # real transcripts: the two top-ranked sequences by session count were
+    # `Bash -> Bash -> Skill` and `Skill -> Bash -> Bash` at 54 sessions each,
+    # with 54 distinct renderings apiece -- every occurrence a different
+    # command. Ranking by session count alone put "the agent runs two shell
+    # commands around a skill call" at the top of the automation list twice, and
+    # spent both sequence slots on it.
+    out.sort(key=lambda d: (-d["top_rendering_occurrences"],
+                            -d["session_count"], -len(d["sequence"])))
     return out[:20]
 
 

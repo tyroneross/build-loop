@@ -117,7 +117,7 @@ class SessionAggregate:
 
     __slots__ = (
         "session_id", "first_ts", "last_ts", "cwds",
-        "user_messages", "tool_sequence", "files_touched",
+        "user_messages", "tool_sequence", "tool_shapes", "files_touched",
         "bash_commands", "secret_hits", "_prev_was_assistant",
         "events", "test_invocations",
     )
@@ -131,6 +131,14 @@ class SessionAggregate:
         self.user_messages: list[tuple[dt.datetime | None, str, str]] = []
         # tool sequence within session: list of tool names (with first-arg key)
         self.tool_sequence: list[str] = []
+        # Index-aligned with tool_sequence. Same abstraction for non-Bash tools;
+        # for Bash, the `normalize_bash` shape -- program + subcommand + flag
+        # NAMES, every value replaced with <arg>. That is the miner's existing
+        # privacy contract for command text (manual_command_rituals has used it
+        # since the beginning), reused rather than widened: a sequence reading
+        # "Bash:command -> Bash:command -> ToolSearch:query" names a shape
+        # without naming any work, and cannot be judged for automation value.
+        self.tool_shapes: list[str] = []
         # (project, abs_path) tuples
         self.files_touched: list[tuple[str, str]] = []
         # normalized bash command shapes
@@ -326,6 +334,20 @@ def _record_ibr_slash_command(
     })
 
 
+def _tool_shape(name: str, inp: Any, label: str) -> str:
+    """A judgeable rendering of one tool call, safe to persist.
+
+    Bash carries the normalized command shape; every other tool keeps its
+    abstract label, because its arguments are paths and queries that the miner
+    already declines to persist in this position.
+    """
+    if name == "Bash" and isinstance(inp, dict):
+        shape = normalize_bash(str(inp.get("command", "")))
+        if shape:
+            return f"Bash: {shape}"
+    return label
+
+
 def _process_assistant_tool_use_item(
     agg: SessionAggregate,
     item: dict[str, Any],
@@ -337,7 +359,12 @@ def _process_assistant_tool_use_item(
     inp = item.get("input") or {}
     tool_use_id = item.get("id")
     first_key = next(iter(inp.keys()), None) if isinstance(inp, dict) else None
-    agg.tool_sequence.append(f"{name}:{first_key}" if first_key else name)
+    label = f"{name}:{first_key}" if first_key else name
+    agg.tool_sequence.append(label)
+    # Appended here, on the same line-of-control as tool_sequence, so the two
+    # lists cannot drift out of alignment. A second pass correlating them later
+    # would be a second definition of "which command was that".
+    agg.tool_shapes.append(_tool_shape(name, inp, label))
     agg.events.append({
         "idx": len(agg.events),
         "kind": "assistant_tool",

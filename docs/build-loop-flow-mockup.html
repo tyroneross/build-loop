@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7270496f9cf4841bb84d17f553b7f51d428cf857b100828be5e72416c52a629d"
+    "content_sha256": "3c7d402c20fbbf887af1a11d459caedfde7d7882d673f4791d3001af825f27ad"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -2165,7 +2165,9 @@
       "scripts/transcript_pattern_miner/accuracy/eval_accuracy.py": "eval_accuracy — precision/recall harness for the 5 transcript-pattern-miner detectors.",
       "scripts/transcript_pattern_miner/accuracy/fixtures.py": "Labeled fixture for the 5 detector accuracy harness.",
       "scripts/transcript_pattern_miner/categories.py": "categories — the 5 mining categories + test-pattern outcome aggregation.\"\"\"",
+      "scripts/transcript_pattern_miner/disposition.py": "Terminal states for mined candidates, so a closed one stops costing anything.",
       "scripts/transcript_pattern_miner/io_cache.py": "io_cache — JSONL streaming, processed-cache persistence, timestamp parsing.\"\"\"",
+      "scripts/transcript_pattern_miner/memory_route.py": "Draft a repeated user correction into memory, as a candidate awaiting a human.",
       "scripts/transcript_pattern_miner/report.py": "report — markdown report rendering, candidate building, outcomes JSONL appender.\"\"\"",
       "scripts/transcript_pattern_miner/secrets_scan.py": "secrets_scan — pattern-based secret detection and rotation-tracker aggregation.\"\"\"",
       "scripts/transcript_pattern_miner/session.py": "session — SessionAggregate dataclass, per-session JSONL streaming, outcome classification.",
