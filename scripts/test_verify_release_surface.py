@@ -32,8 +32,6 @@ def _init_repo(workdir: Path, version: str = "0.12.8") -> None:
     (workdir / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     (workdir / ".codex-plugin").mkdir(parents=True, exist_ok=True)
     (workdir / ".agents" / "plugins").mkdir(parents=True, exist_ok=True)
-    (workdir / "plugin-artifacts" / "codex" / ".codex-plugin").mkdir(parents=True, exist_ok=True)
-    (workdir / "plugin-artifacts" / "codex").mkdir(parents=True, exist_ok=True)
     (workdir / "package.json").write_text(json.dumps({
         "name": "@test/plugin",
         "version": version,
@@ -61,24 +59,16 @@ def _init_repo(workdir: Path, version: str = "0.12.8") -> None:
     (workdir / ".agents" / "plugins" / "marketplace.json").write_text(json.dumps({
         "name": "test-plugin",
         "version": version,
-        "plugins": [{"name": "test-plugin", "source": "./plugin-artifacts/codex"}],
-    }), encoding="utf-8")
-    (workdir / "plugin-artifacts" / "codex" / ".codex-plugin" / "plugin.json").write_text(json.dumps({
-        "name": "test-plugin",
-        "version": version,
+        "plugins": [{"name": "test-plugin", "source": "."}],
     }), encoding="utf-8")
     readme_text = (
         f"npm install -g @tyroneross/build-loop@{version}\n"
         f"python3 scripts/verify_release_surface.py --version v{version} --branch main --remote origin --json\n"
     )
     (workdir / "README.md").write_text(readme_text, encoding="utf-8")
-    (workdir / "plugin-artifacts" / "codex" / "README.md").write_text(readme_text, encoding="utf-8")
     # Manifest test that exits 0.
     (workdir / "scripts").mkdir(exist_ok=True)
     (workdir / "scripts" / "test_plugin_manifest.py").write_text(
-        "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8",
-    )
-    (workdir / "scripts" / "build_codex_plugin_artifact.py").write_text(
         "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8",
     )
     # Init git repo.
@@ -141,19 +131,6 @@ class CheckManifestVersionsTests(unittest.TestCase):
             fails = [f for f in r["findings"] if f.get("file") == ".agents/plugins/marketplace.json" and f.get("status") == "fail"]
             self.assertEqual(len(fails), 1, f"expected agents marketplace version drift, got: {r['findings']}")
 
-    def test_codex_artifact_manifest_drift_fails(self):
-        with tempfile.TemporaryDirectory() as d:
-            wd = Path(d)
-            _init_repo(wd, "0.12.8")
-            artifact_manifest = wd / "plugin-artifacts" / "codex" / ".codex-plugin" / "plugin.json"
-            data = json.loads(artifact_manifest.read_text(encoding="utf-8"))
-            data["version"] = "0.12.7"
-            artifact_manifest.write_text(json.dumps(data), encoding="utf-8")
-            r = vrs.check_manifest_versions(wd, "0.12.8")
-            self.assertFalse(r["pass"])
-            fails = [f for f in r["findings"] if f.get("file") == "plugin-artifacts/codex/.codex-plugin/plugin.json" and f.get("status") == "fail"]
-            self.assertEqual(len(fails), 1, f"expected Codex artifact manifest drift, got: {r['findings']}")
-
     def test_v_prefix_normalized(self):
         with tempfile.TemporaryDirectory() as d:
             wd = Path(d)
@@ -188,8 +165,8 @@ class CheckReadmeVersionsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wd = Path(d)
             _init_repo(wd, "0.12.8")
-            artifact_readme = wd / "plugin-artifacts" / "codex" / "README.md"
-            artifact_readme.write_text(
+            (wd / "README.md").write_text(
+                "npm install -g @tyroneross/build-loop@0.12.8\n"
                 "python3 scripts/verify_release_surface.py --version v0.12.7 --branch main --json\n",
                 encoding="utf-8",
             )
@@ -219,27 +196,6 @@ class CheckManifestTestTests(unittest.TestCase):
             self.assertFalse(r["pass"])
 
 
-class CheckCodexArtifactCurrentTests(unittest.TestCase):
-    def test_no_builder_or_artifact_skips(self):
-        with tempfile.TemporaryDirectory() as d:
-            wd = Path(d)
-            r = vrs.check_codex_artifact_current(wd)
-            self.assertTrue(r["pass"], r)
-            self.assertEqual(r["findings"][0]["status"], "skipped")
-
-    def test_builder_failure_fails(self):
-        with tempfile.TemporaryDirectory() as d:
-            wd = Path(d)
-            script = wd / "scripts" / "build_codex_plugin_artifact.py"
-            artifact = wd / "plugin-artifacts" / "codex"
-            script.parent.mkdir(parents=True)
-            artifact.mkdir(parents=True)
-            script.write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
-            r = vrs.check_codex_artifact_current(wd)
-            self.assertFalse(r["pass"], r)
-            self.assertEqual(r["findings"][0]["exit_code"], 1)
-
-
 class CheckLocalCommitLogTests(unittest.TestCase):
     def test_finds_versioned_commit(self):
         with tempfile.TemporaryDirectory() as d:
@@ -261,7 +217,9 @@ class CheckLocalTagTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wd = Path(d)
             _init_repo(wd, "0.12.8")
-            subprocess.run(["git", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
+            # -c tag.gpgsign=false: a developer's global `tag.gpgsign true` turns a bare
+            # `git tag` into an annotated tag that demands a message and fails (exit 128).
+            subprocess.run(["git", "-c", "tag.gpgsign=false", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
             r = vrs.check_local_tag(wd, "v0.12.8")
             self.assertTrue(r["pass"])
 
@@ -278,7 +236,9 @@ class CheckBranchHeadShaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wd = Path(d)
             _init_repo(wd, "0.12.8")
-            subprocess.run(["git", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
+            # -c tag.gpgsign=false: a developer's global `tag.gpgsign true` turns a bare
+            # `git tag` into an annotated tag that demands a message and fails (exit 128).
+            subprocess.run(["git", "-c", "tag.gpgsign=false", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
             r = vrs.check_branch_head_sha(wd, "main", "v0.12.8")
             self.assertTrue(r["pass"], r)
 
@@ -387,7 +347,9 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wd = Path(d)
             _init_repo(wd, "0.12.8")
-            subprocess.run(["git", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
+            # -c tag.gpgsign=false: a developer's global `tag.gpgsign true` turns a bare
+            # `git tag` into an annotated tag that demands a message and fails (exit 128).
+            subprocess.run(["git", "-c", "tag.gpgsign=false", "tag", "v0.12.8"], cwd=wd, check=True, capture_output=True)
             cmd = [
                 sys.executable,
                 str(HERE / "verify_release_surface.py"),
