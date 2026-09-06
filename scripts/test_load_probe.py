@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -138,7 +139,13 @@ class LoadProbeTests(unittest.TestCase):
                     break
                 time.sleep(0.05)
             self.assertRegex(title, r"^bl-load-w-[0-9a-f]{6}$")
-            receipt_root = Path.home() / "Library" / "Caches" / "com.rosslabs.build-loop" / "processes"
+            # Mirror bin/build-loop-load-probe.js cacheRoot(): macOS uses the user cache dir,
+            # every other platform falls back to <tmpdir>/build-loop-<uid>/processes. The
+            # test hardcoded the macOS path and raised StopIteration on Ubuntu CI.
+            if sys.platform == "darwin":
+                receipt_root = Path.home() / "Library" / "Caches" / "com.rosslabs.build-loop" / "processes"
+            else:
+                receipt_root = Path(tempfile.gettempdir()) / f"build-loop-{os.getuid()}" / "processes"
             receipt_file = next(item for item in receipt_root.glob("*.json") if json.loads(item.read_text()).get("supervisor", {}).get("pid") == supervisor.pid)
             receipt = json.loads(receipt_file.read_text())
             self.assertEqual(receipt["purpose"], "bounded-synthetic-cpu-load")
