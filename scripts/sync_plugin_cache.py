@@ -42,8 +42,7 @@ EXCLUDE_DIRS = {
     # raised on those four dangling entries, so EVERY `build-loop-install
     # --host claude` failed while the installer still printed
     # "claude: OK build-loop@<version>". The Claude cache sat on 0.37.0 for
-    # multiple bumps. Codex was unaffected — it syncs the generated
-    # plugin-artifacts/codex tree, not the repo root.
+    # multiple bumps.
     ".ibr", ".navgator", ".spectra", ".bookmark", ".episodic", ".procedural",
     ".in_use", ".pytest_cache", ".claude-code-debugger", ".localsmartz",
     ".ci-rally-apps",

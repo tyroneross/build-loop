@@ -32,7 +32,7 @@ def write_minimal_repo(root: Path) -> None:
     write(root / ".claude-plugin/plugin.json", json.dumps({"name": "build-loop", "version": "1.0.0"}))
     write(
         root / ".agents/plugins/marketplace.json",
-        json.dumps({"name": "build-loop", "version": "1.0.0", "plugins": [{"name": "build-loop", "source": "./plugin-artifacts/codex"}]}),
+        json.dumps({"name": "build-loop", "version": "1.0.0", "plugins": [{"name": "build-loop", "source": "."}]}),
     )
     write(
         root / "package.json",
@@ -41,12 +41,10 @@ def write_minimal_repo(root: Path) -> None:
                 ".codex-plugin",
                 ".agents/plugins",
                 "AGENTS.md",
-                "plugin-artifacts/codex",
             ]
         }),
     )
     write(root / "AGENTS.md", "# Agents\n")
-    write(root / "plugin-artifacts/codex/.codex-plugin/plugin.json", json.dumps({"name": "build-loop", "version": "1.0.0", "skills": "./skills"}))
 
 
 class CodexPreflightTests(unittest.TestCase):
@@ -85,7 +83,7 @@ class CodexPreflightTests(unittest.TestCase):
     def test_cache_sync_uses_declared_codex_artifact_source(self) -> None:
         self.assertEqual(
             preflight.codex_install_source(self.root),
-            (self.root / "plugin-artifacts/codex").resolve(),
+            self.root.resolve(),
         )
 
 

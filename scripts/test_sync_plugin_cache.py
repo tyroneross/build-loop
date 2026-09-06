@@ -90,7 +90,7 @@ class SyncPluginCacheTests(unittest.TestCase):
         self.assertEqual(data["source_mode"], "head")
 
     def test_default_sync_can_archive_plugin_subdirectory(self) -> None:
-        artifact = self.source / "plugin-artifacts/codex"
+        artifact = self.source / "dist/codex"
         write(artifact / ".codex-plugin/plugin.json", json.dumps({
             "name": "build-loop",
             "version": "1.0.0",
@@ -98,7 +98,7 @@ class SyncPluginCacheTests(unittest.TestCase):
         }))
         write(artifact / "skills/build-loop/SKILL.md", "---\nname: build-loop\n---\nartifact\n")
         write(self.source / "skills/internal/SKILL.md", "---\nname: internal\n---\nnoisy\n")
-        commit_all(self.source, "add codex artifact")
+        commit_all(self.source, "add plugin subdirectory")
 
         result = run([
             "--host", "codex",

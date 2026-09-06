@@ -15,7 +15,6 @@ version = 1
 path = [
     "**/*.json",
     "assets/*.png",
-    "plugin-artifacts/codex/assets/*.png",
     "README.md",
     "CONTRIBUTING.md",
     "NOTICE",

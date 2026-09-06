@@ -171,7 +171,7 @@ Build Loop includes the Coding Debugger core natively. The loop searches before 
 The repo ships three agent surfaces from one source:
 
 - **Claude Code plugin**: plugin metadata, commands, hooks, and `agents/*.md`.
-- **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
+- **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`codex-skills/build-loop/SKILL.md`), installed from the repository root.
 - **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
 Surface counts in this release: two commands (`/build-loop:run` and `/build-loop:feedback`), 55 skills, 29 agents. Every skill, what it is for, and how an agent reaches it is listed in [`docs/SKILL-INDEX.md`](docs/SKILL-INDEX.md) — generated from the skills' own frontmatter, so it cannot drift from what ships. `scripts/test_readme_surface_claims.py` holds the counts on this line to the same source.
@@ -323,12 +323,11 @@ python3 scripts/install_memory.py --check
 
 ## Codex surface
 
-The Codex package exposes one public entrypoint skill through the slim artifact:
+The Codex package installs from the repository root and exposes one public entrypoint skill:
 
 ```text
-plugin-artifacts/codex/
-  .codex-plugin/plugin.json
-  skills/build-loop/SKILL.md
+.codex-plugin/plugin.json     # "skills": "./codex-skills"
+codex-skills/build-loop/SKILL.md
 ```
 
 The full `skills/` tree still ships for Claude Code and for internal references. Codex loads helper instructions only when the public build-loop skill asks for them.
@@ -336,7 +335,7 @@ The full `skills/` tree still ships for Claude Code and for internal references.
 Check installed cache sync and prune stale versions:
 
 ```bash
-python3 scripts/check_cache_sync.py --host codex --source plugin-artifacts/codex
+python3 scripts/check_cache_sync.py --host codex --source .
 python3 scripts/check_cache_sync.py --host claude --source .
 python3 scripts/prune_plugin_cache.py --source . --host all --apply
 ```
@@ -351,7 +350,6 @@ For a plugin/package release, keep these version surfaces in lockstep:
 - `.claude-plugin/marketplace.json`
 - `.codex-plugin/plugin.json`
 - `.agents/plugins/marketplace.json`
-- `plugin-artifacts/codex/.codex-plugin/plugin.json`
 
 Build and verify, then verify the release surface after tag/push:
 
@@ -359,7 +357,7 @@ Build and verify, then verify the release surface after tag/push:
 npm run build
 python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
-npm run codex:build-artifact
+python3 scripts/reference_pointer_lint.py
 npm pack --dry-run --json
 python3 scripts/verify_release_surface.py --version v0.42.5 --branch main --remote origin --json  # x-release-please-version
 ```

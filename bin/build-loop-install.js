@@ -5,7 +5,6 @@
 "use strict";
 
 const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -189,7 +188,6 @@ function main() {
 
   const python = findPython();
   const steps = [];
-  const codexArtifact = path.join(root, "plugin-artifacts", "codex");
 
   if (process.platform !== "darwin" && !args.allowNonMac && !args.json) {
     process.stderr.write(
@@ -198,9 +196,8 @@ function main() {
   }
 
   for (const host of hostsFor(args.host)) {
-    const source = host === "codex" && fs.existsSync(codexArtifact) ? codexArtifact : root;
     steps.push(
-      runStep(`sync ${host} plugin cache`, python, syncArgs({ host, source, args }), args)
+      runStep(`sync ${host} plugin cache`, python, syncArgs({ host, source: root, args }), args)
     );
   }
 

@@ -23,7 +23,6 @@ from exposure_policy import (  # noqa: E402
 )
 CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 CODEX_SKILLS_DIR = REPO_ROOT / "codex-skills"
-CODEX_ARTIFACT_DIR = REPO_ROOT / "plugin-artifacts" / "codex"
 SKILLS_DIR = REPO_ROOT / "skills"
 
 # Codex has NO commands surface — it can only reach a plugin through a skill.
@@ -34,11 +33,9 @@ SKILLS_DIR = REPO_ROOT / "skills"
 # `public-justification:` (see `surface_violation` below), never by a list here.
 CODEX_PUBLIC_ENTRYPOINTS = {"build-loop"}
 
-# Prose copies of the surface policy. The codex copy is GENERATED verbatim by
-# `scripts/build_codex_plugin_artifact.py` (`docs` is in its RUNTIME_DIRS), so it
-# is asserted byte-identical rather than checked twice.
+# Prose copy of the surface policy. The repo root IS the Codex surface, so this
+# one file ships to every host; there is no second generated copy to reconcile.
 POLICY_DOC = "docs/agent-surface-policy.md"
-GENERATED_POLICY_DOC = "plugin-artifacts/codex/docs/agent-surface-policy.md"
 CURSOR_SURFACE_RULE = ".cursor/rules/build-loop-surface.mdc"
 # Names these docs used to advertise as public entrypoints. Commit 7c4cf57
 # (2026-07-26) collapsed the human surface to a single `/build-loop:run` and the
@@ -134,17 +131,16 @@ class CodexSurfaceTests(unittest.TestCase):
         }
         self.assertEqual(names, CODEX_PUBLIC_ENTRYPOINTS)
 
-    def test_codex_marketplace_points_to_full_artifact(self) -> None:
+    def test_codex_marketplace_installs_from_the_repo_root(self) -> None:
         data = json.loads((REPO_ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
         entries = {entry["name"]: entry for entry in data.get("plugins", [])}
-        self.assertEqual(entries["build-loop"].get("source"), "./plugin-artifacts/codex")
+        self.assertEqual(entries["build-loop"].get("source"), ".")
 
-    def test_codex_artifact_exposes_approved_public_skills(self) -> None:
-        data = json.loads((CODEX_ARTIFACT_DIR / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(data.get("skills"), "./codex-skills")
+    def test_codex_surface_exposes_exactly_one_public_wrapper(self) -> None:
+        """The repo root IS the Codex plugin: one wrapper under the declared root."""
         skill_paths = sorted(
-            str(path.relative_to(CODEX_ARTIFACT_DIR))
-            for path in (CODEX_ARTIFACT_DIR / "codex-skills").rglob("SKILL.md")
+            str(path.relative_to(REPO_ROOT))
+            for path in CODEX_SKILLS_DIR.rglob("SKILL.md")
         )
         self.assertEqual(
             skill_paths,
@@ -152,21 +148,17 @@ class CodexSurfaceTests(unittest.TestCase):
                 "codex-skills/build-loop/SKILL.md",
             ],
         )
-        wrapper = CODEX_ARTIFACT_DIR / "codex-skills" / "build-loop" / "SKILL.md"
+        wrapper = CODEX_SKILLS_DIR / "build-loop" / "SKILL.md"
         self.assertEqual(read_name(wrapper), "build-loop")
         self.assertEqual(read_user_invocable(wrapper), "true")
-        self.assertEqual(
-            (wrapper.parent / ".." / ".." / "skills" / "build-loop" / "SKILL.md")
-            .resolve()
-            .read_text(encoding="utf-8"),
-            (SKILLS_DIR / "build-loop" / "SKILL.md").read_text(encoding="utf-8"),
-        )
 
-    def test_codex_artifact_is_included_in_npm_package_files(self) -> None:
+    def test_codex_package_files_ship_the_root_surfaces(self) -> None:
         data = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-        self.assertIn("plugin-artifacts/codex", data.get("files", []))
-        self.assertIn(".agents/plugins", data.get("files", []))
-        self.assertNotIn(".agents", data.get("files", []))
+        files = data.get("files", [])
+        self.assertIn("codex-skills", files)
+        self.assertIn(".agents/plugins", files)
+        self.assertNotIn(".agents", files)
+        self.assertNotIn("plugin-artifacts/codex", files)
 
     def test_repo_maintenance_documents_audit_limits(self) -> None:
         text = (SKILLS_DIR / "repo-maintenance" / "SKILL.md").read_text(encoding="utf-8")
@@ -241,10 +233,10 @@ class OtherAgentSurfaceTests(unittest.TestCase):
     def test_policy_prose_never_claims_a_source_skill_is_public(self) -> None:
         """Prose is a policy copy, so it can drift from code. This is the gate.
 
-        The codex doc SHIPS TO CODEX: when it disagreed with the code, agents on
+        The policy doc SHIPS TO CODEX: when it disagreed with the code, agents on
         that host were instructed to load skills the harness hides.
         """
-        for rel in (POLICY_DOC, GENERATED_POLICY_DOC, CURSOR_SURFACE_RULE):
+        for rel in (POLICY_DOC, CURSOR_SURFACE_RULE):
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
             with self.subTest(doc=rel):
                 # Deliberately a blunt substring ban, so it cannot be evaded by
@@ -265,15 +257,6 @@ class OtherAgentSurfaceTests(unittest.TestCase):
                         f"{rel} re-advertises retired public entrypoint {name!r}",
                     )
 
-    def test_codex_policy_doc_is_the_generated_copy(self) -> None:
-        self.assertEqual(
-            (REPO_ROOT / GENERATED_POLICY_DOC).read_text(encoding="utf-8"),
-            (REPO_ROOT / POLICY_DOC).read_text(encoding="utf-8"),
-            f"{GENERATED_POLICY_DOC} is generated verbatim from {POLICY_DOC} by "
-            "scripts/build_codex_plugin_artifact.py — edit the source and rebuild, "
-            "never hand-edit the artifact",
-        )
-
     def test_agent_role_taxonomy_is_discoverable(self) -> None:
         taxonomy = REPO_ROOT / "references" / "agent-role-taxonomy.md"
         self.assertTrue(taxonomy.is_file())
@@ -292,7 +275,6 @@ class OtherAgentSurfaceTests(unittest.TestCase):
         instruction_paths = [
             REPO_ROOT / "AGENTS.md",
             REPO_ROOT / "CLAUDE.md",
-            CODEX_ARTIFACT_DIR / "AGENTS.md",
         ]
 
         for path in instruction_paths:
@@ -312,7 +294,7 @@ class OtherAgentSurfaceTests(unittest.TestCase):
             self.assertNotIn("rally stop claude_code", text, str(path))
             self.assertIn("Rally is coordination metadata", text, str(path))
 
-        for path in [REPO_ROOT / "README.md", CODEX_ARTIFACT_DIR / "README.md"]:
+        for path in [REPO_ROOT / "README.md"]:
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("rally codex --human", text, str(path))
             self.assertNotIn("rally start", text, str(path))

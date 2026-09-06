@@ -14,8 +14,8 @@ point at it instead of repeating it.
 The index is DERIVED, never hand-maintained. `SKILL.md` frontmatter is the only
 input, so a newly authored skill lands in the index the moment the file exists.
 `--check` is the drift guard: it regenerates in memory and exits 1 when the
-on-disk file differs, the same generate-and-assert-in-sync contract that
-`scripts/build_codex_plugin_artifact.py` uses for the Codex bundle.
+on-disk file differs, the same generate-and-assert-in-sync contract
+`scripts/artifact_guard.py` applies to every checked-in generated artifact.
 
 Exposure is not decided here. `scripts/exposure_policy.py` owns the rule — the
 same module `scripts/surface_policy.py` imports — so the index cannot disagree

@@ -6,10 +6,9 @@
 Named, observed failure this control earns its place against: checked-in
 artifacts silently drift from source because regeneration is a manual step and
 only a CI gate (not the commit flow) catches it. On 2026-06-27/28 this reddened
-main three times in one session — the architecture diagram twice
-(``scripts/architecture_diagram/generate.py --check``) and the Codex plugin
-artifact once (``scripts/build_codex_plugin_artifact.py --check``), each needing
-a manual follow-up regen commit.
+main three times in one session, twice via the architecture diagram
+(``scripts/architecture_diagram/generate.py --check``), each needing a manual
+follow-up regen commit.
 
 Design (systems-not-discipline, DRY)
 ------------------------------------
@@ -69,40 +68,6 @@ class Artifact:
     why: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Watch derivation
-# ---------------------------------------------------------------------------
-
-# Fallback if the builder cannot be imported (guard installed into a repo that
-# does not ship it). Narrow on purpose: a partial watch under-reports drift,
-# which the --check/CI mode still catches; a crashed guard blocks every commit.
-_CODEX_WATCH_FALLBACK = ("skills/", "references/", "AGENTS.md", "README.md", "LICENSE")
-
-
-def _codex_watch() -> tuple[str, ...]:
-    """Watched prefixes for the Codex bundle, derived from the builder itself.
-
-    The builder decides what it mirrors: RUNTIME_DIRS + TOP_LEVEL_FILES +
-    RUNTIME_FILES. Restating that set here as a hand-written literal is the same
-    list maintained twice, and the two copies drifted — the literal named 5 of
-    the ~42 mirrored paths, so a commit touching ``scripts/``, ``agents/``, or
-    ``architecture/`` intersected nothing, the guard skipped the check, and the
-    bundle shipped stale. Drift then surfaced later as a manual
-    ``chore(artifact): regenerate the codex mirror ...`` follow-up commit
-    (ecd4273, 2026-08-23) — precisely the failure this guard exists to prevent.
-
-    Deriving it means adding a directory to the builder extends the guard with
-    no second edit.
-    """
-    try:
-        import build_codex_plugin_artifact as codex
-    except Exception:  # noqa: BLE001 — a guard that raises blocks every commit
-        return _CODEX_WATCH_FALLBACK
-    dirs = tuple(f"{d}/" for d in codex.RUNTIME_DIRS)
-    files = tuple(codex.TOP_LEVEL_FILES) + tuple(str(f) for f in codex.RUNTIME_FILES)
-    return tuple(sorted(set(dirs + files)))
-
-
 ARTIFACTS: tuple[Artifact, ...] = (
     Artifact(
         name="architecture-diagram",
@@ -114,14 +79,6 @@ ARTIFACTS: tuple[Artifact, ...] = (
                  "architecture/ARCHITECTURE.md",
                  "docs/build-loop-flow-mockup.html"),
         why="auto-discovered components + authored flow → model.json + mockup",
-    ),
-    Artifact(
-        name="codex-plugin-artifact",
-        watch=_codex_watch(),
-        check_argv=("scripts/build_codex_plugin_artifact.py", "--check"),
-        regen_argv=("scripts/build_codex_plugin_artifact.py",),
-        outputs=("plugin-artifacts/codex",),
-        why="slim Codex bundle mirrored from the full skill tree + references",
     ),
 )
 
@@ -447,6 +404,30 @@ def mode_check(repo: Path, *, as_json: bool) -> int:
     return 1 if stale_any else 0
 
 
+def _output_snapshot(repo: Path, outputs: tuple[str, ...]) -> dict[str, bytes]:
+    """Content of every regular file under ``outputs`` (relative path -> bytes)."""
+    snap: dict[str, bytes] = {}
+    for rel in outputs:
+        base = repo / rel
+        if base.is_file():
+            snap[rel] = base.read_bytes()
+        elif base.is_dir():
+            for f in sorted(base.rglob("*")):
+                if f.is_file():
+                    snap[str(f.relative_to(repo))] = f.read_bytes()
+    return snap
+
+
+def _ignored_unstaged_sources(repo: Path, artifact: Artifact) -> list[str]:
+    """Unstaged working-tree edits under this artifact's watched sources.
+
+    ``_regen_isolated`` regenerates from the STAGED index, so these edits are
+    deliberately not part of the regen. Naming them is what stops a reader from
+    concluding the regenerator "wrote nothing" when it correctly ignored an
+    edit nobody staged (the 2026-09-04 misread recorded in commit faa91ad2)."""
+    return [p for p in _unstaged_files(repo) if _matches(artifact, [p])]
+
+
 def mode_regen(repo: Path, which: str) -> int:
     failed = False
     for artifact in ARTIFACTS:
@@ -455,12 +436,28 @@ def mode_regen(repo: Path, which: str) -> int:
         if not _script_present(repo, artifact):
             sys.stderr.write(f"· {artifact.name} skipped (generator not present)\n")
             continue
+        before = _output_snapshot(repo, artifact.outputs)
         ok, detail = _run_regen(repo, artifact)
-        if ok:
-            sys.stdout.write(f"↻ {artifact.name} regenerated\n")
-        else:
+        if not ok:
             failed = True
             sys.stderr.write(f"✖ {artifact.name} regen failed: {detail}\n")
+            continue
+        after = _output_snapshot(repo, artifact.outputs)
+        changed = sorted(k for k in set(before) | set(after)
+                         if before.get(k) != after.get(k))
+        if changed:
+            sys.stdout.write(f"↻ {artifact.name} regenerated from the staged index: "
+                             f"{len(changed)} output file(s) changed\n")
+        else:
+            sys.stdout.write(f"= {artifact.name} regenerated from the staged index: "
+                             f"no output changes\n")
+        ignored = _ignored_unstaged_sources(repo, artifact)
+        if ignored:
+            sys.stderr.write(
+                f"⚠ {artifact.name}: {len(ignored)} UNSTAGED source edit(s) were NOT "
+                f"included (regen reads the staged index): "
+                f"{', '.join(ignored[:8])}{' …' if len(ignored) > 8 else ''}\n"
+                f"  `git add` them and rerun, or commit them first.\n")
     return 1 if failed else 0
 
 

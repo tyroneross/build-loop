@@ -212,8 +212,6 @@ def scan(root: Path, paths: list[str], staged: bool) -> list[tuple[str, int, str
             continue
         if path in EXEMPT_PATHS or Path(path).name == SELF_BASENAME:
             continue
-        if path.startswith("plugin-artifacts/"):
-            continue  # generated mirror; the source file is graded instead
         content = _staged_content(root, path) if staged else _disk_content(root, path)
         if content is None:
             continue

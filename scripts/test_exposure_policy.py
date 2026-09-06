@@ -174,7 +174,6 @@ class TestExcludedPaths(unittest.TestCase):
             ("skills", ".build-loop", "worktrees", "run-1", "skills", "a", "SKILL.md"),
             (".claude", "worktrees", "run-2", "skills", "a", "SKILL.md"),
             ("skills", "node_modules", "pkg", "SKILL.md"),
-            ("plugin-artifacts", "codex", "skills", "a", "SKILL.md"),
         ):
             with self.subTest(rel=rel):
                 self.assertTrue(is_excluded_path(rel))

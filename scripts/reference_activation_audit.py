@@ -10,10 +10,8 @@ orphaned, drifted across copies, mis-filed, or oversized-without-a-summary —
 the failure modes that silently make a doc invisible to the running agent.
 
 Scope notes:
-- `plugin-artifacts/**` is a BUILD-GENERATED mirror, not a source of truth.
-  It is excluded from every detector (auditing it would double-count and flag
-  the mirror against itself).
-- `archive/**` is historical and excluded.
+- `archive/**` is historical and excluded from every detector (auditing it
+  would double-count and flag a copy against its own source).
 
 Exit code: 0 = clean, 1 = findings (gating), 2 = usage/IO error.
 
@@ -32,7 +30,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 # Directory segments that are mirrors/history, never a source of truth.
-EXCLUDED_SEGMENTS = ("plugin-artifacts", "archive", "node_modules", "__pycache__")
+EXCLUDED_SEGMENTS = ("archive", "node_modules", "__pycache__")
 
 # Markers that classify a reference as a deprecated shim.
 SHIM_NAME_HINTS = (".alt.",)

@@ -78,9 +78,9 @@ class TestClassification(Fixture):
                 self.assertEqual(out["resolved"], 0, kind)
 
     def test_copies_and_worktrees_never_satisfy_a_finding(self):
-        """A test inside plugin-artifacts/ or a worktree is a copy, not coverage."""
+        """A test inside a worktree or another cache copy is not coverage."""
         (self.root / "scripts" / "widget.py").write_text("x = 1\n")
-        stale = self.root / "plugin-artifacts" / "codex" / "scripts"
+        stale = self.root / ".worktrees" / "run-1" / "scripts"
         stale.mkdir(parents=True)
         (stale / "test_widget.py").write_text("pass\n")
         self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
@@ -154,9 +154,9 @@ class TestImportBasedCoverage(Fixture):
         self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))
         self.assertEqual(rv.revalidate(self.root)["open"], 1)
 
-    def test_a_copy_under_plugin_artifacts_still_does_not_count(self):
+    def test_a_copy_under_a_worktree_still_does_not_count(self):
         (self.root / "scripts" / "widget.py").write_text("x = 1\n")
-        stale = self.root / "plugin-artifacts" / "codex" / "scripts"
+        stale = self.root / ".worktrees" / "run-1" / "scripts"
         stale.mkdir(parents=True)
         (stale / "test_gadgets.py").write_text("import widget\n")
         self.write("self-review-1.md", _finding("self_missing_test", "widget.py"))

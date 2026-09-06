@@ -38,7 +38,6 @@ def test_generated_artifacts_never_require_a_receipt() -> None:
         "architecture/ARCHITECTURE.md",
         "architecture/model.json",
         "docs/build-loop-flow-mockup.html",
-        "plugin-artifacts/codex/agents/scope-auditor.md",
     ]
     assert audit._memory_lane_hits(generated) == []
 

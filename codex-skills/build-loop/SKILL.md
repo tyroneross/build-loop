@@ -21,6 +21,11 @@ Load and follow the canonical workflow:
 Use internal helper skills only through that workflow. Read their files
 directly from `../../skills/` when the canonical workflow asks for them.
 
+Pointers written as `references/<name>.md` inside `skills/build-loop/SKILL.md`
+resolve relative to `skills/build-loop/` — read them at
+`../../skills/build-loop/references/<name>.md`, falling back to the repo-root
+`../../references/<name>.md` when the skill's own directory has no such file.
+
 ## Completion gate
 
 Before declaring a Codex Build Loop run complete:

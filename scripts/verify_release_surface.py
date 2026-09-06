@@ -16,17 +16,16 @@ Checks (in order):
     2. readme_versions     — versioned README install/release examples show
                               the target version
     3. manifest_test       — scripts/test_plugin_manifest.py exits 0
-    4. codex_artifact_current — checked-in Codex artifact matches source
-    5. local_commit_log    — git log shows a commit on the branch whose
+    4. local_commit_log    — git log shows a commit on the branch whose
                               message references the target version
-    6. local_tag           — git tag --list <tag> returns the tag
-    7. branch_head_sha     — git rev-parse <branch> equals the commit SHA
+    5. local_tag           — git tag --list <tag> returns the tag
+    6. branch_head_sha     — git rev-parse <branch> equals the commit SHA
                               referenced by the tag
-    8. remote_refs         — git ls-remote <remote> <branch> <tag> shows
+    7. remote_refs         — git ls-remote <remote> <branch> <tag> shows
                               BOTH refs at the same SHA (load-bearing —
                               without this, a passing local verification
                               can ship nothing)
-    9. fresh_session_load  — OPTIONAL — when --check-cache is passed,
+    8. fresh_session_load  — OPTIONAL — when --check-cache is passed,
                               diff installed cache vs canonical for the
                               plugin's agents/SKILL.md files
 
@@ -71,13 +70,11 @@ README_VERSION_PATTERNS = (
 )
 README_VERSION_FILES = (
     "README.md",
-    "plugin-artifacts/codex/README.md",
 )
 RELEASE_SURFACE_CHECKS = (
     "manifest_versions",
     "readme_versions",
     "manifest_test",
-    "codex_artifact_current",
     "local_commit_log",
     "local_tag",
     "branch_head_sha",
@@ -120,7 +117,6 @@ def check_manifest_versions(workdir: Path, target: str) -> dict[str, Any]:
         ".claude-plugin/plugin.json": "version",
         ".codex-plugin/plugin.json": "version",
         ".agents/plugins/marketplace.json": "version",
-        "plugin-artifacts/codex/.codex-plugin/plugin.json": "version",
     }
     findings: list[dict[str, Any]] = []
     overall_pass = True
@@ -334,49 +330,6 @@ def check_manifest_test(workdir: Path) -> dict[str, Any]:
     }
 
 
-def check_codex_artifact_current(workdir: Path) -> dict[str, Any]:
-    """Checked-in Codex artifact matches the canonical source tree."""
-    script = workdir / "scripts" / "build_codex_plugin_artifact.py"
-    artifact = workdir / "plugin-artifacts" / "codex"
-    if not script.is_file() and not artifact.exists():
-        return {"name": "codex_artifact_current", "pass": True,
-                "findings": [{"status": "skipped",
-                              "reason": "no Codex artifact builder or artifact present"}]}
-    if not script.is_file():
-        return {"name": "codex_artifact_current", "pass": False,
-                "findings": [{"status": "fail",
-                              "reason": f"{script.relative_to(workdir)} not present"}]}
-    if not artifact.exists():
-        return {"name": "codex_artifact_current", "pass": False,
-                "findings": [{"status": "fail",
-                              "reason": f"{artifact.relative_to(workdir)} not present"}]}
-    rc, stdout, stderr = _run(
-        [
-            sys.executable,
-            str(script),
-            "--source",
-            str(workdir),
-            "--target",
-            str(artifact),
-            "--check",
-        ],
-        cwd=workdir,
-        timeout=60,
-    )
-    return {
-        "name": "codex_artifact_current",
-        "pass": rc == 0,
-        "findings": [{
-            "command": (
-                f"{sys.executable} {script.relative_to(workdir)} --source . "
-                f"--target {artifact.relative_to(workdir)} --check"
-            ),
-            "exit_code": rc,
-            "summary": (stderr or stdout).strip().splitlines()[-3:] if (stderr or stdout) else [],
-        }],
-    }
-
-
 def check_local_commit_log(workdir: Path, branch: str, target: str) -> dict[str, Any]:
     """git log on branch shows a commit whose message references the target version."""
     bare = _strip_v(target)
@@ -537,8 +490,6 @@ def verify_release_surface(
         results.append(check_readme_versions(workdir, version))
     if "manifest_test" not in skip_checks:
         results.append(check_manifest_test(workdir))
-    if "codex_artifact_current" not in skip_checks:
-        results.append(check_codex_artifact_current(workdir))
     if "local_commit_log" not in skip_checks:
         results.append(check_local_commit_log(workdir, branch, version))
     if "local_tag" not in skip_checks:

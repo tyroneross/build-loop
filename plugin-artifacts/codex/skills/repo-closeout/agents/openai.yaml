@@ -1,4 +1,0 @@
-interface:
-  display_name: "Repository Maintenance (Legacy Alias)"
-  short_description: "Compatibility alias for repo maintenance"
-  default_prompt: "Use $build-loop:repo-closeout to route this request to the canonical Repository Maintenance workflow."

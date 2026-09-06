@@ -231,7 +231,7 @@ def run_checks(source: Path) -> list[dict]:
     # Check 3: package.json files[] includes the package-root Codex surfaces.
     pkg_path = source / "package.json"
     pkg = load_json(pkg_path, "package.json")
-    required_entries = {".codex-plugin", ".agents/plugins", "AGENTS.md", "plugin-artifacts/codex"}
+    required_entries = {".codex-plugin", ".agents/plugins", "AGENTS.md"}
     if pkg is None:
         checks.append({
             "id": 3,

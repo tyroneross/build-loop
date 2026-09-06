@@ -254,7 +254,6 @@ class TestDiscovery(TmpPluginTest):
             ".build-loop/worktrees/run-1/skills/copy",
             ".claude/worktrees/run-2/skills/copy",
             "node_modules/pkg",
-            "plugin-artifacts/codex",
         ):
             stray = self.root / "skills" / rel / "SKILL.md"
             stray.parent.mkdir(parents=True, exist_ok=True)

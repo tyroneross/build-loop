@@ -595,7 +595,6 @@ MEMORY_GENERATED_PREFIXES = (
     "architecture/ARCHITECTURE.md",
     "architecture/model.json",
     "docs/build-loop-flow-mockup.html",
-    "plugin-artifacts/",
 )
 MEMORY_KNOWLEDGE_RE = re.compile(
     r"(AGENTS\.md$|/SKILL\.md$|^agents/|^\.agents/|^architecture/|/migrations/"

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "31a66973a7863d0112f99efb0b42039ccccde827dc926d5b915e98cfcf966e25"
+    "content_sha256": "7917d4a70e8ab66dbde875103018942250a5c90bc37ef5ec9fcf8760cc65fbc6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1226,11 +1226,11 @@
         }
       },
       "claim-scope": {
-        "description": "\"Before stating any fact about a system, name the LAYER the claim lives at (working tree / repository / deployed / live behavior) and check that the instrument you used can actually reach that layer. A grep proves what is in one checkout; it can say nothing about what is running. Verify right-to-left: start at observed behavior, walk back toward source. Triggers on any assertion word — is / is not / there is no / do…",
+        "description": "\"Name the LAYER a claim lives at (working tree / repository / deployed / live behavior) and check that your instrument can reach it, before stating any fact about a system. Triggers on assertion words (is / never / only / verified / cannot) and on 'does X exist', 'did X ship'. Not for grading evidence STRENGTH ([measured]/[correlated]/[reasoned]) — that is report_lint's mechanism-claim rule, which this extends with …",
         "file": "skills/claim-scope/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-09-04"
+          "date": "2026-09-05"
         }
       },
       "color-engine": {
@@ -1262,7 +1262,7 @@
         "file": "skills/database-practice/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-09-05"
+          "date": "2026-09-04"
         }
       },
       "debug-loop": {
@@ -1597,7 +1597,6 @@
       "scripts/build_acp.py": "Build the Architecture Context Pack (ACP) from `.build-loop/architecture/`.",
       "scripts/build_capability_index.py": "Capability index builder (WP-B item 1) — scripts as tools + consumer ring-2.",
       "scripts/build_capability_registry.py": "Capability registry builder.",
-      "scripts/build_codex_plugin_artifact.py": "Build the full Codex plugin artifact behind one public entrypoint.",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
       "scripts/bump_version.py": "Single source of truth for build-loop's version across all four manifests.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
@@ -1851,6 +1850,7 @@
       "scripts/reference_capture/staleness.py": "Staleness computation for captured references.",
       "scripts/reference_capture.py": "Reference capture CLI — persist research findings as dated reference files.",
       "scripts/reference_graph_orphans.py": "Reference-graph orphan check (WP-E item 2) — propose, never delete.",
+      "scripts/reference_pointer_lint.py": "reference_pointer_lint.py — every ``references/X.md`` pointer on the primary",
       "scripts/regenerate_knowledge_index.py": "Regenerate `.episodic/decisions/INDEX.md` and `.episodic/issues/INDEX.md`.",
       "scripts/release_staleness.py": "Detect the failure mode \"a week passed with merged commits and no release was cut\".",
       "scripts/report_lint.py": "User-facing output style lint for build-loop's Phase 4 Review-G draft.",

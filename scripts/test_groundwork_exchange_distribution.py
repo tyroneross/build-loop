@@ -14,7 +14,6 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 ADAPTER = HERE / "groundwork_exchange.py"
 SYNC = HERE / "sync_plugin_cache.py"
-ARTIFACT = REPO_ROOT / "plugin-artifacts" / "codex"
 
 
 def load_adapter():
@@ -53,7 +52,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
             ])
             self.assertEqual(claude.returncode, 0, msg=claude.stderr + claude.stdout)
             codex = run([
-                "python3", str(SYNC), "--source", str(ARTIFACT), "--host", "codex",
+                "python3", str(SYNC), "--source", str(REPO_ROOT), "--host", "codex",
                 "--cache", str(codex_cache), "--dirty",
                 "--file", ".codex-plugin/plugin.json", "--file", "scripts/groundwork_exchange.py", "--json",
             ])
@@ -61,7 +60,6 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
 
             copies = [
                 ADAPTER,
-                ARTIFACT / "scripts" / "groundwork_exchange.py",
                 claude_cache / "scripts" / "groundwork_exchange.py",
                 codex_cache / "scripts" / "groundwork_exchange.py",
             ]

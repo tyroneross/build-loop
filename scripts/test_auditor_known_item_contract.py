@@ -4,10 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SURFACES = (
-    ROOT / "agents" / "independent-auditor.md",
-    ROOT / "plugin-artifacts" / "codex" / "agents" / "independent-auditor.md",
-)
+AUDITOR = ROOT / "agents" / "independent-auditor.md"
 
 
 def test_known_item_gate_is_binding_and_packaged() -> None:
@@ -20,7 +17,6 @@ def test_known_item_gate_is_binding_and_packaged() -> None:
         "known_item_closure",
         "binding loop-control result",
     )
-    bodies = [path.read_text(encoding="utf-8") for path in SURFACES]
-    assert bodies[0] == bodies[1], "Codex packaged auditor must match the source prompt"
+    body = AUDITOR.read_text(encoding="utf-8")
     for phrase in required:
-        assert phrase in bodies[0], phrase
+        assert phrase in body, phrase

@@ -285,7 +285,6 @@ def test_apply_is_idempotent(plugin_dir: Path) -> None:
         "skills/.build-loop/worktrees/run-1/skills/alpha",
         "skills/.claude/worktrees/run-2/skills/alpha",
         "skills/node_modules/pkg/skills/alpha",
-        "skills/plugin-artifacts/codex/skills/alpha",
     ],
 )
 def test_worktree_copies_are_excluded(plugin_dir: Path, worktree_rel: str) -> None:

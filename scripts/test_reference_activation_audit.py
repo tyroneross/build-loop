@@ -82,12 +82,12 @@ def test_orphan_detected(tmp_path: Path):
 
 def test_excluded_dirs_ignored(tmp_path: Path):
     _clean_repo(tmp_path)
-    # mirror copy + archived copy must NOT trigger dup_drift or orphan
-    _mk(tmp_path, "plugin-artifacts/codex/references/keep.md", "mirror DIFFERENT\n")
-    _mk(tmp_path, "archive/references/old.md", "archived\n")
+    # archived copy + vendored copy must NOT trigger dup_drift or orphan
+    _mk(tmp_path, "archive/references/keep.md", "archived DIFFERENT\n")
+    _mk(tmp_path, "node_modules/pkg/references/old.md", "vendored\n")
     findings = raa.run_audit(tmp_path)
     assert "dup_drift" not in _rules(findings)
-    assert not any("plugin-artifacts" in f.path or "archive" in f.path for f in findings)
+    assert not any("archive" in f.path or "node_modules" in f.path for f in findings)
 
 
 def test_ds_store_detected(tmp_path: Path):

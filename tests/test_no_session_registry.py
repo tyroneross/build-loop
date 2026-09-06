@@ -75,7 +75,6 @@ def test_no_live_session_registry_invocation_in_tracked_files() -> None:
         if (
             not rel
             or rel == "tests/test_no_session_registry.py"
-            or rel.startswith("plugin-artifacts/")
         ):
             continue  # this guard names the patterns by construction
         try:

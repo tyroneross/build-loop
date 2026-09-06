@@ -215,15 +215,14 @@ def is_undeclared(exposure_class: str) -> bool:
 # Worktree exclusion — shared because every consumer walks the same tree
 # ---------------------------------------------------------------------------
 
-#: A worktree copy of the plugin carries a full duplicate `skills/` tree, so a
-#: walk that crosses one double-counts every skill and reports another agent's
-#: checkout as this plugin's surface. Matched on whole path SEGMENTS, never
+#: A worktree or vendored copy of the plugin carries a full duplicate `skills/`
+#: tree, so a walk that crosses one double-counts every skill and reports
+#: another agent's checkout as this plugin's surface. Matched on whole path SEGMENTS, never
 #: substrings, so a legitimately named skill like `data-plane-worktrees` survives.
 EXCLUDED_PATH_SEGMENTS: tuple[tuple[str, ...], ...] = (
     (".build-loop", "worktrees"),
     (".claude", "worktrees"),
     ("node_modules",),
-    ("plugin-artifacts",),
 )
 
 

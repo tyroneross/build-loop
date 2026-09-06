@@ -118,13 +118,12 @@ def _is_core_path(rel_posix: str) -> bool:
 
 
 # Generated / vendored trees that MIRROR scripts/ and tests/. Their test files
-# are build output, never gate targets: `plugin-artifacts/codex/` alone mirrors
-# 217 `test_*.py` files whose basenames collide with their `scripts/` twins, and
-# pytest aborts the whole collection with "import file mismatch" the moment both
-# copies land in one invocation. Discovery therefore never returns a path under
-# these roots — excluding them at the source beats de-duplicating downstream.
+# are build output, never gate targets: a mirrored tree carries `test_*.py`
+# files whose basenames collide with their `scripts/` twins, and pytest aborts
+# the whole collection with "import file mismatch" the moment both copies land
+# in one invocation. Discovery therefore never returns a path under these roots
+# — excluding them at the source beats de-duplicating downstream.
 _NON_GATE_TREES = (
-    "plugin-artifacts",
     "dist",
     "build",
     "node_modules",
@@ -270,7 +269,7 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
         if p.suffix != ".py":
             continue
 
-        # A mirror copy under plugin-artifacts/ (or another generated tree) is
+        # A mirror copy under a generated tree (dist/, build/, vendor/, ...) is
         # build output, not a gate target — and collecting it alongside its
         # scripts/ twin aborts the run with "import file mismatch".
         if _in_non_gate_tree(p, workdir):

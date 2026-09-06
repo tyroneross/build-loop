@@ -291,8 +291,6 @@ def test_the_manifest_writer_has_an_executable_call_site():
     for path in sorted((root / "scripts").rglob("*.py")):
         if path.name.startswith("test_") or path == module:
             continue
-        if "plugin-artifacts" in path.parts:
-            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

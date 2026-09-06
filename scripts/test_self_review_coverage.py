@@ -62,13 +62,13 @@ class CoverageLookupTest(unittest.TestCase):
         self._script("test_miner.py", "Runs transcript-pattern-miner.py end to end\n")
         self.assertEqual(find_test(self.root, "transcript-pattern-miner")[1], "import")
 
-    def test_mirror_copies_are_not_live_sources(self) -> None:
-        self.assertFalse(is_live(Path("plugin-artifacts/codex/scripts/test_x.py")))
+    def test_copies_are_not_live_sources(self) -> None:
+        self.assertFalse(is_live(Path(".worktrees/run-1/scripts/test_x.py")))
         self.assertFalse(is_live(Path("a/__pycache__/test_x.py")))
         self.assertTrue(is_live(Path("scripts/test_x.py")))
 
-    def test_index_excludes_mirrored_tests(self) -> None:
-        mirror = self.root / "plugin-artifacts" / "scripts"
+    def test_index_excludes_copied_tests(self) -> None:
+        mirror = self.root / ".worktrees" / "scripts"
         mirror.mkdir(parents=True)
         (mirror / "test_widget.py").write_text("import widget\n")
         self.assertEqual(CoverageIndex(self.root).lookup("widget"), (None, ""))

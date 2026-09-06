@@ -17,7 +17,6 @@ because regen is a manual step caught only by a late CI gate):
 """
 from __future__ import annotations
 
-import builtins
 import hashlib
 import importlib.util
 import sys
@@ -32,17 +31,6 @@ _REPO = _SCRIPT.parent.parent
 
 def _load():
     spec = importlib.util.spec_from_file_location("artifact_guard", _SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _load_builder():
-    """The Codex bundle builder, loaded the same way as the guard under test."""
-    path = _SCRIPT.parent / "build_codex_plugin_artifact.py"
-    spec = importlib.util.spec_from_file_location("build_codex_plugin_artifact", path)
     mod = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     sys.modules[spec.name] = mod
@@ -115,9 +103,9 @@ def test_matches_dir_prefix_and_exact():
     assert ag._matches(art, ["skills"])  # the dir itself
 
 
-def test_registry_has_both_real_artifacts():
+def test_registry_has_the_real_artifacts():
     names = {a.name for a in ag.ARTIFACTS}
-    assert {"architecture-diagram", "codex-plugin-artifact"} == names
+    assert {"architecture-diagram"} == names
 
 
 # --- staged regen + restage ----------------------------------------------
@@ -333,51 +321,6 @@ def test_fallback_inplace_when_isolation_unavailable_and_clean(synth, monkeypatc
     assert (repo / "out.txt").read_text() == hashlib.sha256(b"b").hexdigest()
 
 
-# --- watch derivation (regression: the two-list drift) --------------------
-
-
-def test_codex_watch_covers_everything_the_builder_mirrors():
-    """The guard must watch every path the Codex builder actually mirrors.
-
-    Named failure: the watch list was a hand-written literal naming 5 paths
-    while the builder mirrored ~42. A commit touching `scripts/`, `agents/`,
-    or `architecture/` intersected nothing, so the pre-commit guard skipped
-    the check and the bundle shipped stale -- surfacing later as a manual
-    `chore(artifact): regenerate the ... mirror` commit (ecd4273). Deriving
-    the list closes it; this asserts it stays derived.
-    """
-    builder = _load_builder()
-    entries = set(next(a.watch for a in ag.ARTIFACTS if a.name == "codex-plugin-artifact"))
-
-    for d in builder.RUNTIME_DIRS:
-        assert f"{d}/" in entries, f"builder mirrors {d}/ but the guard does not watch it"
-    for f in builder.TOP_LEVEL_FILES:
-        assert f in entries, f"builder mirrors {f} but the guard does not watch it"
-    for f in builder.RUNTIME_FILES:
-        assert str(f) in entries, f"builder mirrors {f} but the guard does not watch it"
-
-
-def test_codex_watch_excludes_the_bundle_it_generates():
-    """Watching its own output would make every regen look like fresh drift."""
-    entries = next(a.watch for a in ag.ARTIFACTS if a.name == "codex-plugin-artifact")
-    assert not any(e.startswith("plugin-artifacts") for e in entries)
-
-
-def test_codex_watch_falls_back_when_the_builder_is_absent(monkeypatch):
-    """A guard that raises blocks every commit, so an unimportable builder
-    degrades to the narrow literal rather than propagating."""
-    sys.modules.pop("build_codex_plugin_artifact", None)
-    real_import = builtins.__import__
-
-    def _boom(name, *a, **kw):
-        if name == "build_codex_plugin_artifact":
-            raise ImportError("simulated: builder not shipped")
-        return real_import(name, *a, **kw)
-
-    monkeypatch.setattr(builtins, "__import__", _boom)
-    assert ag._codex_watch() == ag._CODEX_WATCH_FALLBACK
-
-
 # --- stale worktree reaper -------------------------------------------------
 # A hard kill runs no `finally`. On 2026-08-22 an artifact-guard worktree
 # survived a killed run and was still registered three days later.
@@ -454,3 +397,28 @@ def test_reaper_never_raises_into_the_commit_path(tmp_path):
     import artifact_guard as ag
 
     assert ag._reap_stale_worktrees(tmp_path / "not-a-repo") == 0
+
+
+def test_regen_mode_names_the_frame_and_the_unstaged_edits_it_ignored(synth, capsys):
+    """`--regen` reads the STAGED index. A reader who edited a source and did not
+    stage it used to see a bare "regenerated" and conclude the tool wrote nothing
+    (commit faa91ad2, 2026-09-04). The output must now say (a) which frame it
+    used, (b) whether any output changed, and (c) which unstaged watched edits it
+    deliberately skipped."""
+    repo = synth
+    (repo / "src.txt").write_text("b"); _git(repo, "add", "src.txt")
+    assert ag.mode_staged(repo) == 0                      # out.txt == sha(b), staged
+    _git(repo, "commit", "-q", "-m", "b")
+    (repo / "src.txt").write_text("c")                    # unstaged edit only
+    assert ag.mode_regen(repo, "all") == 0
+    out, err = capsys.readouterr()
+    assert "no output changes" in out
+    assert "staged index" in out
+    assert "UNSTAGED" in err and "src.txt" in err
+    assert (repo / "out.txt").read_text() == hashlib.sha256(b"b").hexdigest()
+    _git(repo, "add", "src.txt")                          # now staged
+    assert ag.mode_regen(repo, "all") == 0
+    out, err = capsys.readouterr()
+    assert "1 output file(s) changed" in out
+    assert "UNSTAGED" not in err
+    assert (repo / "out.txt").read_text() == hashlib.sha256(b"c").hexdigest()

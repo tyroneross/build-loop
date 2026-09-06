@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 # Paths that are copies, caches, or other runs — never the live source of truth.
-EXCLUDED_PARTS = ("plugin-artifacts", "worktrees", "__pycache__", ".build-loop")
+EXCLUDED_PARTS = ("worktrees", "__pycache__", ".build-loop")
 
 # Captures the identifier in `import X`, `from X import`, and `X.py`.
 # Per-stem equivalent of the re-validator's original per-stem pattern: the

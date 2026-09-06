@@ -68,7 +68,7 @@ except ModuleNotFoundError:  # pragma: no cover - pre-3.11 only
 # Directories never scanned for sources NOR mined for first-party names.
 _IGNORE_DIRS = {
     ".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv",
-    ".mypy_cache", ".ruff_cache", "build-loop.worktrees", "plugin-artifacts",
+    ".mypy_cache", ".ruff_cache", "build-loop.worktrees",
     "dist", "build", ".ci-rally-apps",
 }
 

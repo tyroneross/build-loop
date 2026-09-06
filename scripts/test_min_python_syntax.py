@@ -41,7 +41,6 @@ EXCLUDED_PARTS = {
     "__pycache__",
     ".build",
     "worktrees",
-    "plugin-artifacts",
     "vendor",
     "node_modules",
 }

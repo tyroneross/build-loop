@@ -297,11 +297,11 @@ class TestScopeChanged(unittest.TestCase):
         self.assertEqual(payload["ran"], [])
 
 
-    def test_mirror_copy_under_plugin_artifacts_is_never_a_gate_target(self) -> None:
+    def test_mirror_copy_under_a_generated_tree_is_never_a_gate_target(self) -> None:
         """A test file under a generated mirror tree must not be collected.
 
-        Regression: `plugin-artifacts/codex/` mirrors `scripts/`, so every one of
-        its `test_*.py` files shares a basename with its source twin. When git
+        Regression: a generated mirror of `scripts/` gives every one of its
+        `test_*.py` files a basename shared with its source twin. When git
         reported both copies as changed, the gate handed both to pytest, which
         aborted collection with "import file mismatch" and surfaced verdict=error
         — the gate failing on a change that was itself green. Discovery now drops
@@ -311,7 +311,7 @@ class TestScopeChanged(unittest.TestCase):
         scripts.mkdir(exist_ok=True)
         source_test = scripts / "test_mirrored_thing.py"
         source_test.write_text("def test_ok(): assert True\n")
-        mirror = self.workdir / "plugin-artifacts" / "codex" / "scripts"
+        mirror = self.workdir / "dist" / "codex" / "scripts"
         mirror.mkdir(parents=True)
         mirror_test = mirror / "test_mirrored_thing.py"
         mirror_test.write_text("def test_ok(): assert True\n")
@@ -332,7 +332,7 @@ class TestScopeChanged(unittest.TestCase):
 
     def test_mirror_copy_alone_maps_to_no_gate_target(self) -> None:
         """A change confined to the generated mirror has nothing to verify."""
-        mirror = self.workdir / "plugin-artifacts" / "codex" / "scripts"
+        mirror = self.workdir / "dist" / "codex" / "scripts"
         mirror.mkdir(parents=True)
         mirror_test = mirror / "test_only_in_mirror.py"
         mirror_test.write_text("def test_ok(): assert True\n")
@@ -380,7 +380,7 @@ class TestNoGateTreePredicate(unittest.TestCase):
 
     def test_workdir_inside_a_mirror_tree_still_gates_its_own_scripts(self) -> None:
         """Running the gate FROM inside the artifact must not exclude everything."""
-        inner = self.workdir / "plugin-artifacts" / "codex"
+        inner = self.workdir / "dist" / "codex"
         path = inner / "scripts" / "test_x.py"
         self.assertFalse(self.mod._in_non_gate_tree(path, inner))
 
