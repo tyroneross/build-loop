@@ -20,21 +20,31 @@ from typing import Any
 SEVERITY_ORDER: dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 # A confirmed false positive is silenced with `# nosec: <reason>` (Python/shell)
-# or `// nosec: <reason>` (JS/TS) on the flagged line. A REASON IS REQUIRED: a
-# bare `# nosec` does not suppress, so the justification is enforced by the
-# pattern, not only by convention. (An earlier comment here claimed a bare
-# `nosec` still matched; it never did. Pinned by
-# test_security_common.py::test_bare_nosec_without_colon_does_NOT_suppress.)
-#
-# Two spellings satisfy "a reason is present":
-#   - `# nosec: <prose>`     — this scanner's own form, the colon carries it
-#   - `# nosec B608`         — bandit's form, the test ID carries it
+# or `// nosec: <reason>` (JS/TS) on the flagged line. Two spellings are
+# recognized:
+#   - `# nosec: <prose>`  — this scanner's own form
+#   - `# nosec B608`      — bandit's form, naming a bandit test ID
 # The bandit form is accepted because it is what every Python codebase that has
-# ever run bandit already writes, and it names the specific check rather than
-# blanket-silencing the line. Named failure (2026-09-05): two f-strings in
+# ever run bandit already writes. Named failure (2026-09-05): two f-strings in
 # RossLabs Ambient Agent's Scripts/ledger_composition.py carried `# nosec B608`,
 # were HIGH-flagged anyway, and helped hard-block a push whose delta was clean.
-NOSEC_RE = re.compile(r"(#|//)\s*nosec\b\s*(?::|B\d{3}\b)", re.IGNORECASE)
+#
+# WHAT SUPPRESSION ACTUALLY DOES — read this before adding a marker.
+# `suppressed()` receives ONLY the line, never a check id, so EITHER spelling
+# silences EVERY check on that line, not just the one it names. A bandit ID here
+# is a marker, not a scope. Two consequences, both verified live 2026-09-05
+# after an earlier version of this comment claimed otherwise:
+#   - `AWS_KEY = "AKIA…"  # nosec B608` silences the hardcoded-secret finding,
+#     even though B608 is bandit's SQL-injection test.
+#   - `# nosec:` with nothing after the colon suppresses too, so the reason is a
+#     convention, not something the pattern enforces.
+# A bare `# nosec` (no colon, no ID) does NOT suppress — that much is enforced,
+# and is pinned by test_bare_nosec_without_colon_does_NOT_suppress.
+#
+# The ID range is `B[1-7]\d\d` because bandit's own tests live in B1xx–B7xx.
+# Accepting any three digits made `# nosec B000` a plausible-looking universal
+# bypass that no bandit run would ever have produced.
+NOSEC_RE = re.compile(r"(#|//)\s*nosec\b\s*(?::|B[1-7]\d{2}\b)", re.IGNORECASE)
 
 
 def finding(

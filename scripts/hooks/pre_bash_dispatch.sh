@@ -547,11 +547,14 @@ case " $_GITCLASS " in
                 # branch. Anything not positively classified as plain → OMIT
                 # --diff → full-repo scan (fail-safe: never scan less than
                 # intended).
-                _PLAIN=$(CMD="$CMD" UPSTREAM="$_UPSTREAM" BRANCH="$_BRANCH" python3 - <<'PY' 2>/dev/null || true
+                _PLAIN=$(CMD="$CMD" UPSTREAM="$_UPSTREAM" BRANCH="$_BRANCH" SCAN_TARGET="$_SCAN_TARGET" python3 - <<'PY' 2>/dev/null || true
 import os, re, shlex, sys
 cmd = os.environ.get("CMD", "")
 upstream = os.environ.get("UPSTREAM", "")  # e.g. "origin/main"
 branch = os.environ.get("BRANCH", "")      # current branch, e.g. "feature"
+# The repo this scan actually resolved to. `git -C <path>` is only plain when it
+# names THIS path (see is_plain); empty means resolution failed → never plain.
+scan_target = os.environ.get("SCAN_TARGET", "")
 rem, _, up_branch = upstream.partition("/")
 
 # h3 — ALLOWLIST polarity. Only flags positively known NOT to change the push
@@ -569,16 +572,26 @@ SAFE_BOOL = {
 # Value-consuming safe flags: a server-side push option, no dest/ref change.
 SAFE_VALUE = {"-o", "--push-option"}
 
-# A shell redirection token, in shlex token space. `>`/`>>`/`<`/`2>`/`2>&1`/
-# `>&2`/`>/tmp/log`. Redirections change where OUTPUT goes, never what is pushed,
-# so they must not count as positionals.
+# A shell redirection token, in shlex token space. Redirections change where
+# OUTPUT goes, never what is pushed, so they must not count as positionals.
 #
 # Named failure (2026-09-05, RossLabs Ambient Agent): `git push origin main 2>&1`
 # parsed `2>&1` as a third positional → 3+ positionals → not plain → --diff was
 # omitted → a 716-file full scan hard-blocked on 57 pre-existing findings, while
 # the same tree with `--diff origin/main --spot-check` exited 0. Any redirected,
 # piped, or logged plain push hit this.
-_REDIR_RE = re.compile(r"^(\d*)(>>|>&|>|<&|<)(.*)$")
+#
+# The matcher is DELIBERATELY NARROW, because `git check-ref-format` PERMITS `<`
+# and `>` in a ref name (it forbids space, `~ ^ : ? * [ \` and control chars). An
+# earlier, looser `^(\d*)(>>|>&|>|<&|<)(.*)$` ate `<hotfix>` and `2>1` as
+# redirections, leaving `git push origin '<hotfix>'` classified plain and scoped
+# to `origin/main..HEAD` while a different branch shipped — a silent false
+# clearance found by the independent auditor on 2026-09-05, before this shipped.
+# Three unambiguous shapes only; anything else stays a positional, which makes
+# the push non-plain and full-scans (the fail-safe direction).
+_REDIR_BARE_RE = re.compile(r"^\d*(?:>>|>|<)$")            # `>` `>>` `<` `2>`
+_REDIR_FDDUP_RE = re.compile(r"^\d*(?:>&|<&)\d*$")          # `2>&1` `>&2` `<&0`
+_REDIR_TARGET_RE = re.compile(r"^\d*(?:>>|>|<)[/.~$]\S*$")  # `>/tmp/log` `2>>./out`
 
 def strip_redirections(toks):
     """Drop redirection operators (and their target tokens) from an argv list."""
@@ -586,11 +599,15 @@ def strip_redirections(toks):
     i, n = 0, len(toks)
     while i < n:
         t = toks[i]
-        m = None if t.startswith("-") else _REDIR_RE.match(t)
-        if m:
-            # Bare operator (`>`, `2>`, `>>`) → the NEXT token is its target.
-            # Attached target (`>/tmp/log`, `2>&1`, `>&2`) → nothing else to eat.
-            i += 2 if m.group(3) == "" else 1
+        if t.startswith("-"):
+            out.append(t)
+            i += 1
+            continue
+        if _REDIR_BARE_RE.match(t):
+            i += 2                       # the NEXT token is the target
+            continue
+        if _REDIR_FDDUP_RE.match(t) or _REDIR_TARGET_RE.match(t):
+            i += 1                       # target is attached to the operator
             continue
         out.append(t)
         i += 1
@@ -602,12 +619,29 @@ def is_plain(seg):
         toks = strip_redirections(shlex.split(seg))
     except ValueError:
         return "segment has unbalanced quotes"
-    # `git -C <path> push` is plain: the scan target, upstream, branch, and push
-    # config above are ALL resolved with the same `-C` path (_bl_effective_dir),
-    # so the delta is computed against the repo actually being pushed. No other
-    # global option is admitted — `-c remote.origin.pushurl=...` would change the
-    # destination, and `--git-dir=<d>` a repo the scan target does not follow.
+    # `git -C <path> push` is plain ONLY when <path> IS the repo this scan
+    # resolved to. The earlier version stripped `-C <path>` unconditionally on
+    # the strength of a comment claiming _bl_effective_dir always agrees; the
+    # independent auditor disproved that on 2026-09-05, before it shipped:
+    #   - _bl_effective_dir's sed uses a greedy `.*`, so it returns the LAST
+    #     `-C` in the command. `git -C /a push && git -C /b push` scanned /b's
+    #     delta and pushed /a with zero coverage.
+    #   - its character class stops at whitespace, so `git -C "/p with space"
+    #     push` truncated to a non-directory and fell back to the SESSION repo,
+    #     delta-scanning the wrong tree entirely.
+    # Comparing realpaths closes both: a mismatch (or an unresolved target) is a
+    # reason, not a strip, so the push full-scans. No other global option is
+    # admitted — `-c remote.origin.pushurl=...` changes the destination, and
+    # `--git-dir=<d>` names a repo the scan target does not follow.
     while len(toks) >= 3 and toks[0] == "git" and toks[1] == "-C":
+        if not scan_target:
+            return "`git -C` used but the scan target could not be resolved"
+        try:
+            same = os.path.realpath(toks[2]) == os.path.realpath(scan_target)
+        except OSError:
+            same = False
+        if not same:
+            return "`git -C %s` is not the repo being scanned (%s)" % (toks[2], scan_target)
         toks = [toks[0]] + toks[3:]
     if len(toks) < 2 or toks[0] != "git" or toks[1] != "push":
         return "segment is not a bare `git push` (leading token %r)" % (toks[0] if toks else "",)

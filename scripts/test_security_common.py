@@ -75,6 +75,28 @@ class TestSuppressed(unittest.TestCase):
     def test_nosec_as_a_prefix_of_another_word_does_NOT_suppress(self):
         self.assertFalse(sc.suppressed("x = eval(y)  # nosecret: shhh"))
 
+    def test_only_real_bandit_id_ranges_suppress(self):
+        """`B000`/`B999` are not bandit tests, so accepting any three digits made
+        them a plausible-looking universal bypass. Bandit's own tests are
+        B1xx-B7xx. (Auditor finding f5, 2026-09-05.)"""
+        self.assertTrue(sc.suppressed("x = 1  # nosec B101"))
+        self.assertTrue(sc.suppressed("x = 1  # nosec B703"))
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosec B000"))
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosec B999"))
+
+    def test_suppression_is_line_scoped_not_check_scoped(self):
+        """Pinned because it is NOT what the bandit spelling suggests, and a
+        reader who assumes otherwise will annotate one check and silence all of
+        them. `suppressed()` never receives a check id, so any recognized marker
+        silences every check on the line."""
+        self.assertTrue(sc.suppressed('AWS = "AKIAIOSFODNN7EXAMPLE"  # nosec B608'))
+
+    def test_an_empty_reason_after_the_colon_still_suppresses(self):
+        """Also pinned as a known limit: the colon form does not enforce that a
+        reason follows it. The comment in security_common.py says so; this is
+        the oracle that keeps the two honest."""
+        self.assertTrue(sc.suppressed("x = eval(y)  # nosec:"))
+
     def test_unrelated_line_is_not_suppressed(self):
         """The dangerous direction: silencing a finding that never asked to be."""
         self.assertFalse(sc.suppressed("x = eval(user_input)"))

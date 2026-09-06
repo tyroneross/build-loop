@@ -71,6 +71,13 @@ _GIT_VALUE_OPTS = frozenset({
 _WRAPPER_COMMANDS = frozenset({
     "env", "nohup", "command", "time", "sudo", "doas", "timeout", "gtimeout",
     "stdbuf", "caffeinate", "builtin", "exec", "nice", "ionice", "xargs",
+    # Command RUNNERS: they take their own args and then execute a command
+    # given to them, so a `git` token deeper in the segment is still a real
+    # invocation. `find . -exec git push \;` and `$(which git) push` were both
+    # caught by the old substring guard and lost when it was narrowed; they are
+    # ordinary idioms, not adversarial constructions.
+    "find", "parallel", "watch", "entr", "flock", "su", "runuser", "script",
+    "which", "type",
 })
 # A leading VAR=val assignment (env-style): `FOO=bar git push`.
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -214,7 +221,7 @@ def _strip_leading_wrappers(tokens: list[str]) -> list[str]:
     """Drop leading no-arg command wrappers and VAR=val assignments (`nohup`, `env FOO=bar`)."""
     i, n = 0, len(tokens)
     while i < n:
-        base = tokens[i].rsplit("/", 1)[-1]
+        base = _cmd_basename(tokens[i])
         if base in _WRAPPER_COMMANDS or _ASSIGNMENT_RE.match(tokens[i]):
             i += 1
             continue
@@ -234,24 +241,27 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     if not tokens:
         return None
     stripped = _strip_leading_wrappers(tokens)
-    if stripped and stripped[0].rsplit("/", 1)[-1] == "git":
+    if stripped and _cmd_basename(stripped[0]) == "git":
         return _subcommand_after_git(stripped)
-    if tokens[0].rsplit("/", 1)[-1] in _WRAPPER_COMMANDS:
+    if _cmd_basename(tokens[0]) in _WRAPPER_COMMANDS:
         for idx in range(len(tokens)):
-            if tokens[idx].rsplit("/", 1)[-1] == "git":
+            if _cmd_basename(tokens[idx]) == "git":
                 return _subcommand_after_git(tokens[idx:])
     return None
 
 
 def _cmd_basename(token: str) -> str:
-    """Token → its command basename, ignoring quote characters.
+    """Token → its command basename, ignoring quoting and alias-bypass syntax.
 
-    Only used on the fallback path, where the text failed to parse and a token
-    can still carry the quote shlex would have consumed (``bash -c "git`` splits
-    to the token ``"git``). Without this, a shell-interpreted push hid behind its
-    own opening quote.
+    Two prefixes must not hide a command:
+
+      - a quote character, because on the fallback path the text failed to parse
+        and a token can still carry the quote shlex would have consumed
+        (``bash -c "git`` splits to the token ``"git``);
+      - a LEADING BACKSLASH, because ``\\git push`` is the ordinary way to bypass
+        a shell alias and is still an invocation of git.
     """
-    return token.strip("\"'").rsplit("/", 1)[-1]
+    return token.strip("\"'").lstrip("\\").rsplit("/", 1)[-1]
 
 
 def could_invoke_git(text: str) -> bool:

@@ -542,6 +542,55 @@ class TestTrackedOnly(_DiffScanBase):
         self.assertEqual(rc, 1)
         self.assertTrue(self._has_secret(data, "src/auth.ts"))
 
+    def test_delta_file_untracked_now_still_blocks(self):
+        """Auditor finding f3 (2026-09-05). `--tracked-only` must remove only
+        content that CANNOT reach the remote. A file committed with a secret and
+        then `git rm --cached`-ed is untracked now, but its blob is still inside
+        the pushed range, so it ships. The most common secret-remediation reflex
+        ('just untrack it') was silencing the gate on the very push carrying the
+        secret.
+
+        NOTE: this cannot use `self._commit`, which runs `git add -A` and would
+        re-track the file, making the test vacuous. It also cannot rely on
+        `git diff --name-only base..HEAD`, which names NOTHING here — the file is
+        absent from both endpoint trees. `_git_range_touched_files` walks the
+        commits instead, which is why it exists.
+        """
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        base = self._commit(d, "baseline")
+        self._write(d, "config.env.ts", _SECRET_LINE)
+        self._commit(d, "add config")
+        self._git(d, "rm", "--cached", "config.env.ts")  # file stays on disk
+        self._git(d, "commit", "-q", "-m", "untrack it")  # NOT _commit: no add -A
+        self.assertEqual(
+            self._git(d, "ls-files", "--cached").stdout.split(),
+            ["README.md"],
+            "precondition: config.env.ts must be untracked for this test to mean anything",
+        )
+        rc, data = self._scan(d, "--diff", base, "--spot-check", "--tracked-only")
+        self.assertEqual(
+            rc, 1,
+            "a file named by the push delta ships to the remote and must be "
+            "scanned even when it is untracked now",
+        )
+        self.assertTrue(self._has_secret(data, "config.env.ts"))
+
+    def test_untracked_file_outside_the_delta_stays_excluded(self):
+        """The other half of f3: the exemption must not readmit the untracked
+        mockups this flag exists to exclude. They are not in the delta."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        base = self._commit(d, "baseline")
+        self._write(d, "note.md", "clean\n")
+        self._commit(d, "clean work")
+        self._write(d, "mockup.ts", _SECRET_LINE)  # untracked, not in the delta
+        rc, data = self._scan(d, "--diff", base, "--spot-check", "--tracked-only")
+        self.assertEqual(rc, 0, f"stderr-free clean push expected; got {data}")
+        self.assertFalse(self._has_secret(data, "mockup.ts"))
+
     def test_tracked_only_passes_no_others_to_git(self):
         """Unit-level: the flag is what removes `--others` from the argv."""
         seen: list[list[str]] = []

@@ -259,6 +259,41 @@ def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
     }
 
 
+def _git_range_touched_files(root: Path, ref: str) -> set[Path]:
+    """Resolved abs paths of every file touched by ANY commit in ``<ref>..HEAD``.
+
+    Distinct from ``_git_diff_files``, and the distinction is load-bearing.
+    ``git diff --name-only <ref>..HEAD`` compares two TREES, so a file added in
+    one commit and removed in a later one inside the same range is named by
+    NEITHER endpoint — yet its blob is reachable from the pushed ref and does
+    reach the remote. ``git log --name-only`` walks the commits instead, so it
+    names it.
+
+    This is the exemption list for ``--tracked-only``: the question that filter
+    must answer is "could this path's content have reached the remote in THIS
+    push?", and a path touched anywhere in the range answers yes.
+
+    Returns an empty set on any failure. That is safe here BECAUSE the caller
+    only ever uses it to WIDEN what gets scanned — an empty set degrades to the
+    plain tracked filter, never to scanning less than the tracked tree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "log", "--name-only", "--format=", "-z",
+             f"{ref}..HEAD"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return {
+        (root / rel).resolve()
+        for rel in result.stdout.split("\0")
+        if rel.strip()
+    }
+
+
 def _matches_exclude(root: Path, path: Path, exclude_globs: list[str]) -> bool:
     """True when ``path``'s repo-relative posix path matches any fnmatch glob."""
     if not exclude_globs:
@@ -276,6 +311,7 @@ def walk_source_files(
     exclude_globs: list[str] | None = None,
     stats: dict[str, int] | None = None,
     tracked_only: bool = False,
+    tracked_exempt: set[Path] | None = None,
 ):
     """Yield (path, lines) for non-binary text source files.
 
@@ -295,6 +331,9 @@ def walk_source_files(
       - ``tracked_only``: drop UNTRACKED files from the candidate set. A push
         ships committed content only, so its gate passes True; a deploy uploads
         the working tree, so it leaves the default False.
+      - ``tracked_exempt``: paths that survive the tracked filter regardless.
+        The push delta goes here, because a file NAMED by ``<ref>..HEAD`` ships
+        to the remote by definition even if it is untracked right now.
     """
     tracked = _git_tracked_files(root, include_untracked=not tracked_only)
     for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
@@ -308,7 +347,18 @@ def walk_source_files(
             path = Path(dirpath_str) / fname
             if diff_set is not None and path.resolve() not in diff_set:
                 continue
-            if tracked is not None and path.resolve() not in tracked:
+            # A file NAMED by the push delta ships to the remote, so it survives
+            # the tracked filter even when it is untracked right now. Without
+            # this, the most common secret-remediation reflex silenced the gate
+            # on the very push carrying the secret: commit the file, then
+            # `git rm --cached` it, and `--tracked-only` dropped it while its
+            # blob stayed in <upstream>..HEAD. (Auditor finding f3, 2026-09-05,
+            # caught before this shipped.)
+            if (
+                tracked is not None
+                and path.resolve() not in tracked
+                and not (tracked_exempt and path.resolve() in tracked_exempt)
+            ):
                 continue
             # Exclude is the LAST filter so stats['excluded'] counts only files
             # that would otherwise have been scanned (real candidates removed).
@@ -1298,6 +1348,7 @@ def _perform_scan(
     empty_diff: bool,
     spot_check: bool = False,
     tracked_only: bool = False,
+    tracked_exempt: set[Path] | None = None,
 ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
     """Run all checks once. Returns (findings, files_scanned, walk_stats).
 
@@ -1343,8 +1394,12 @@ def _perform_scan(
 
     # Per-file checks (walk is pruned by diff_set + exclude_globs, except in
     # spot mode where depth is decided per file below).
+    # `walk_filter` is None in spot mode (the walk covers the whole tree and depth
+    # is decided per file), so the tracked-filter exemption is passed SEPARATELY
+    # — the push gate runs exactly that combination
+    # (`--diff … --spot-check --tracked-only`).
     for path, lines in walk_source_files(
-        root, walk_filter, exclude_globs, walk_stats, tracked_only
+        root, walk_filter, exclude_globs, walk_stats, tracked_only, tracked_exempt
     ):
         files_scanned += 1
         is_content = _is_content_file(path)
@@ -1471,6 +1526,19 @@ def main() -> int:
         if resolved is None:  # fail-safe fallback to full scan
             diff_info = {"ref": args.diff, "mode": "fallback-full-scan", "changed_files": 0}
         else:
+            # UNION with every path any commit in the range touched. `git diff`
+            # compares the two endpoint TREES, so a file added in one commit and
+            # removed in a later one inside the same range is named by neither —
+            # yet `git push` ships its blob and anyone who checks out the middle
+            # commit reads it. Scanning it at DEEP depth is what makes the
+            # scanner's promise ("scan what is being pushed") true.
+            #
+            # Found 2026-09-05 while fixing --tracked-only: the pre-existing
+            # behavior reported such a file only as an advisory SPOT finding, so
+            # `commit a secret, then git rm --cached it` cleared the gate on the
+            # very push carrying the secret. Both the old code and the first
+            # --tracked-only patch exited 0 on it.
+            resolved = resolved | _git_range_touched_files(root, args.diff)
             diff_set = resolved
             diff_active = True
             diff_info = {"ref": args.diff, "mode": "delta", "changed_files": len(resolved)}
@@ -1478,9 +1546,14 @@ def main() -> int:
     # Empty diff range → nothing changed → scan nothing (exit 0).
     empty_diff = diff_active and not diff_set
 
+    # A path in the delta is being pushed, so --tracked-only must not drop it
+    # even when it is untracked right now. In spot mode the walk is not pruned to
+    # the delta, so this exemption has to travel separately from `walk_filter`.
+    tracked_exempt: set[Path] | None = diff_set if (args.tracked_only and diff_active) else None
+
     all_findings, files_scanned, walk_stats = _perform_scan(
         root, diff_set, diff_active, exclude_globs, empty_diff, args.spot_check,
-        args.tracked_only,
+        args.tracked_only, tracked_exempt,
     )
 
     # f1 belt-and-braces: --diff named changed files, yet the walk scanned NONE
@@ -1505,7 +1578,7 @@ def main() -> int:
         diff_active = False
         all_findings, files_scanned, walk_stats = _perform_scan(
             root, None, False, exclude_globs, False, args.spot_check,
-            args.tracked_only,
+            args.tracked_only, tracked_exempt,
         )
 
     # Surface the spot sweep in the report header so "scanned the whole tree"

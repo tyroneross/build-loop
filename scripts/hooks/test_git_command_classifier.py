@@ -273,6 +273,48 @@ class CouldInvokeGitTests(unittest.TestCase):
     def test_no_git_at_all(self) -> None:
         self.assertFalse(gcc.could_invoke_git("ls -la && echo done"))
 
+    # ---- Auditor finding f1 (2026-09-05): the narrowed guard dropped four
+    # shapes the old `"git" in seg` substring test caught. Each is an ordinary
+    # idiom, and each reaches this guard only via an unparseable command — where
+    # a miss means a real push runs with NO security scan and NO commit audit.
+
+    def test_alias_bypass_backslash_is_command_position(self) -> None:
+        """`\\git push` is how you bypass a shell alias. shlex strips the
+        backslash on the parseable path, but this guard reads raw tokens."""
+        self.assertTrue(gcc.could_invoke_git("\\git push origin main"))
+
+    def test_command_substitution_resolving_git_is_command_position(self) -> None:
+        self.assertTrue(gcc.could_invoke_git("$(which git) push origin main"))
+
+    def test_find_exec_is_command_position(self) -> None:
+        self.assertTrue(
+            gcc.could_invoke_git("find . -name f -exec git push origin main \\;")
+        )
+
+    def test_parallel_is_command_position(self) -> None:
+        self.assertTrue(gcc.could_invoke_git("parallel git push ::: origin"))
+
+    def test_command_runners_do_not_false_fire_on_git_shaped_paths(self) -> None:
+        """The guard on widening _WRAPPER_COMMANDS: a runner whose ARGUMENTS
+        merely contain git-shaped paths is still not an invocation."""
+        for cmd in ("find . -name git-folder -type d", "find /x/git/push -type f",
+                    "find . -path ./gitignore -delete"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(gcc.could_invoke_git(cmd))
+
+    def test_find_exec_push_fires_on_the_parseable_path_too(self) -> None:
+        """Widening the wrapper set closed a PRE-EXISTING main-path gap: before
+        this, `find -exec git push` was missed by the parser as well, and only
+        the conservative fallback caught it."""
+        self.assertEqual(
+            gcc.classify_command("find . -name f -exec git push origin main \\;"),
+            {"push"},
+        )
+
+    def test_unparseable_alias_bypass_push_still_fires(self) -> None:
+        cmd = "cat <<EOF\na 1 << 2\n\\git push origin main"
+        self.assertEqual(gcc.classify_command(cmd), {"commit", "push"})
+
 
 class SubprocessRoundTripTests(unittest.TestCase):
     """Drive the classifier as the dispatcher does: event JSON on stdin → space-sep stdout."""

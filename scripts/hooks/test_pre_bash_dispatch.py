@@ -516,6 +516,59 @@ class SecurityPushClassifierConservatismTests(unittest.TestCase):
         IS committed must still hard-block."""
         self._assert_full_scan_blocks("git push --mirror origin")
 
+    # ---- Auditor findings f2 and f4 (2026-09-05), caught before shipping.
+    # Both were false CLEARANCES: a push that is NOT plain classified plain and
+    # scoped to a delta that does not cover what actually shipped.
+
+    def test_ref_name_containing_angle_brackets_full_scans(self) -> None:
+        """f4: `git check-ref-format` PERMITS `<` and `>` in a ref name. The
+        first redirection stripper ate `<hotfix>` as a redirection, leaving
+        `git push origin '<hotfix>'` classified plain and scoped to
+        origin/<branch>..HEAD while a different branch shipped."""
+        self._assert_full_scan_blocks("git push origin '<hotfix>'")
+
+    def test_ref_name_that_looks_like_a_redirection_full_scans(self) -> None:
+        """f4 sibling: `2>1` is a legal ref name."""
+        self._assert_full_scan_blocks("git push origin '2>1'")
+
+    def test_two_different_dash_C_paths_full_scan(self) -> None:
+        """f2: `_bl_effective_dir`'s sed is greedy, so it resolves the LAST
+        `-C`. Stripping `-C` unconditionally meant repo A shipped with zero
+        coverage while the operator saw a green delta scan naming repo B."""
+        other = make_buildloop_repo(self.tmp, name="otherrepo")
+        self._assert_full_scan_blocks(
+            f"git -C {other} push && git -C {self.repo} push"
+        )
+
+    def test_dash_C_path_the_resolver_cannot_read_full_scans(self) -> None:
+        """f2 sibling: the sed's character class stops at whitespace, so a `-C`
+        path containing a space truncates and resolution silently falls back to
+        the session repo — delta-scanning a tree that is not being pushed."""
+        spaced = self.tmp / "repo with space"
+        subprocess.run(["git", "init", "-q", str(spaced)], check=False)
+        self._assert_full_scan_blocks(f'git -C "{spaced}" push origin {self.branch}')
+
+    def test_delta_file_untracked_now_still_blocks_a_push(self) -> None:
+        """f3 at the hook level: commit a secret, `git rm --cached` it, push.
+        The blob is in the pushed range, so `--tracked-only` must not hide it."""
+        clean = make_buildloop_repo(self.tmp, name="untrackrepo")
+        bare = self.tmp / "untrack-origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(clean, "remote", "add", "origin", str(bare))
+        branch = _git(clean, "branch", "--show-current").stdout.strip()
+        _git(clean, "push", "-u", "-q", "origin", branch)
+        (clean / "config.env.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(clean, "add", "config.env.ts")
+        _git(clean, "commit", "-q", "-m", "add config")
+        _git(clean, "rm", "-q", "--cached", "config.env.ts")
+        _git(clean, "commit", "-q", "-m", "untrack it")
+        r = run_dispatch(clean, f"git push origin {branch}")
+        self.assertEqual(
+            r.returncode, 2,
+            f"a secret whose blob is in the pushed range must block; "
+            f"stderr={r.stderr!r}",
+        )
+
 
 class SecurityPushConfigAwarenessTests(unittest.TestCase):
     """f1/f2/f3/f4 (HIGH) — the last four pre-push false-negatives.
