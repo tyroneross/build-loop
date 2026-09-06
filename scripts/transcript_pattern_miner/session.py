@@ -334,6 +334,34 @@ def _record_ibr_slash_command(
     })
 
 
+# `normalize_bash` keeps token index 1 verbatim -- it is the subcommand slot, and
+# `git status` would be useless as `git <arg>`. That is right for its original
+# caller, where the bar is 5 repeats of the same shape. Here the shape is
+# persisted at 2, so the slot is masked whenever it is carrying data rather than
+# a subcommand: `curl https://hooks.slack.com/services/T00/B01/XyZ`,
+# `psql postgresql://user:pw@db.internal/prod`, `ssh deploy@prod-1` and
+# `cd /Users/<me>/private/clients/acme` all put a secret, a host or a private
+# path in exactly that position.
+# `=` catches the inline-assignment shape, which `normalize_bash` passes through
+# whole: `export AWS_SECRET_ACCESS_KEY=AKIA...` and `make TOKEN=<secret>` both
+# land the value in the subcommand slot. A NAME=value operand is data by
+# definition, so masking it costs no real subcommand.
+_OPAQUE_TOKEN_MARKERS = ("://", "@", "=")
+_OPAQUE_TOKEN_PREFIXES = ("/", "~", "./", "../")
+
+
+def _mask_opaque_operand(shape: str) -> str:
+    """Replace a data-carrying subcommand slot with <arg>. Leaves real subcommands."""
+    parts = shape.split(" ")
+    if len(parts) < 2:
+        return shape
+    token = parts[1]
+    if (any(m in token for m in _OPAQUE_TOKEN_MARKERS)
+            or token.startswith(_OPAQUE_TOKEN_PREFIXES)):
+        parts[1] = "<arg>"
+    return " ".join(parts)
+
+
 def _tool_shape(name: str, inp: Any, label: str) -> str:
     """A judgeable rendering of one tool call, safe to persist.
 
@@ -344,7 +372,7 @@ def _tool_shape(name: str, inp: Any, label: str) -> str:
     if name == "Bash" and isinstance(inp, dict):
         shape = normalize_bash(str(inp.get("command", "")))
         if shape:
-            return f"Bash: {shape}"
+            return f"Bash: {_mask_opaque_operand(shape)}"
     return label
 
 

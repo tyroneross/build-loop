@@ -81,6 +81,14 @@ def cluster_corrections(aggs: list[SessionAggregate]) -> list[dict[str, Any]]:
 # few enough that the candidates file stays readable.
 SEQUENCE_SAMPLE_LIMIT = 3
 
+# A rendering seen once is not evidence of a ritual, and persisting it puts
+# whatever URL, connection string or private path that single command carried
+# into .candidates.json -- which three read paths consume and the memory router
+# can draft onward. `manual_command_rituals` requires 5 repeats before it
+# persists a command shape; this site inherits the principle at the lowest bar
+# that still means "recurred".
+MIN_PERSISTED_OCCURRENCES = 2
+
 
 def repeated_tool_sequences(aggs: list[SessionAggregate]) -> list[dict[str, Any]]:
     """Find length-3..6 sub-sequences that recur across 3+ sessions.
@@ -106,21 +114,37 @@ def repeated_tool_sequences(aggs: list[SessionAggregate]) -> list[dict[str, Any]
                 window = tuple(seq[i: i + length])
                 if len(set(window)) == 1:
                     continue
+                # Counted BEFORE the per-session guard. The guard exists so one
+                # session cannot inflate the SESSION set; the rendering counter
+                # answers a different question -- how often the same concrete
+                # commands actually recurred -- and sat below the guard, so it
+                # fired at most once per session and silently counted sessions
+                # while the comment and the rationale string both said
+                # occurrences. A ritual run 20x inside one session scored 1.
+                #
+                # Index-aligned by construction (session._tool_shape appends on
+                # the same line of control), but a short aggregate from an older
+                # cache slices empty rather than mis-attributing.
+                if len(shapes) >= i + length:
+                    rendering = tuple(shapes[i: i + length])
+                    # One-off renderings are not persisted. `sample_commands`
+                    # ends up in .candidates.json and is drafted onward, and a
+                    # command seen once carries whatever URL, DSN or private
+                    # path it happened to contain. `manual_command_rituals` has
+                    # always required 5 repeats before persisting a shape; this
+                    # site must not persist at a lower bar than that.
+                    renderings[window][rendering] += 1
                 if window in seen_in_session:
                     continue
                 seen_in_session.add(window)
                 counts[window].add(agg.session_id)
-                # Index-aligned by construction (session._tool_shape appends on
-                # the same line of control), but a short aggregate from an older
-                # cache would slice empty rather than mis-attribute.
-                if len(shapes) >= i + length:
-                    renderings[window][tuple(shapes[i: i + length])] += 1
 
     out: list[dict[str, Any]] = []
     for window, sessions in counts.items():
         if len(sessions) < 3:
             continue
-        ranked = renderings[window].most_common(SEQUENCE_SAMPLE_LIMIT)
+        ranked = [(r, n) for r, n in renderings[window].most_common()
+                  if n >= MIN_PERSISTED_OCCURRENCES][:SEQUENCE_SAMPLE_LIMIT]
         samples = [{"commands": list(rendering), "occurrences": n}
                    for rendering, n in ranked]
         top_occurrences = ranked[0][1] if ranked else 0

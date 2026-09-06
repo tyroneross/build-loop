@@ -249,7 +249,9 @@ class SequencesCarryJudgeableCommands(unittest.TestCase):
                          "the 3-session real ritual must outrank the 20-session "
                          "shape whose every occurrence differs")
         self.assertEqual(out[0]["top_rendering_occurrences"], 3)
-        self.assertEqual(out[1]["top_rendering_occurrences"], 1)
+        self.assertEqual(out[1]["top_rendering_occurrences"], 0,
+                         "a shape whose every occurrence differs persists no "
+                         "rendering at all, and scores 0 rather than 1")
 
     def test_the_rationale_states_which_case_it_is(self):
         noisy = {"session_count": 54, "distinct_renderings": 54,
@@ -270,6 +272,72 @@ class SequencesCarryJudgeableCommands(unittest.TestCase):
                          "Bash: git status -s")
         self.assertEqual(_tool_shape("Read", {"file_path": "/secret/notes.md"},
                                      "Read:file_path"), "Read:file_path")
+
+    def test_a_rendering_seen_once_is_never_persisted(self):
+        """One-off commands carry whatever they happened to contain."""
+        aggs = []
+        for i in range(3):
+            a = SessionAggregate(f"s{i}")
+            a.tool_sequence = ["Bash:command", "Bash:command", "ToolSearch:query"]
+            a.tool_shapes = [f"Bash: unique{i}a", f"Bash: unique{i}b", "ToolSearch:query"]
+            aggs.append(a)
+        out = categories.repeated_tool_sequences(aggs)
+        self.assertEqual(out[0]["session_count"], 3)
+        self.assertEqual(out[0]["sample_commands"], [],
+                         "a rendering seen once must not reach .candidates.json")
+
+    def test_occurrences_are_counted_not_sessions(self):
+        """The counter sat below the per-session guard and counted sessions.
+
+        A ritual run 20x inside one session scored 1, while the comment and the
+        rationale string both said occurrences.
+        """
+        agg = SessionAggregate("s0")
+        agg.tool_sequence = ["Bash:command", "Bash:command", "ToolSearch:query"] * 4
+        agg.tool_shapes = ["Bash: git status", "Bash: git diff", "ToolSearch:query"] * 4
+        others = []
+        for i in (1, 2):
+            a = SessionAggregate(f"s{i}")
+            a.tool_sequence = ["Bash:command", "Bash:command", "ToolSearch:query"]
+            a.tool_shapes = ["Bash: git status", "Bash: git diff", "ToolSearch:query"]
+            others.append(a)
+        out = categories.repeated_tool_sequences([agg] + others)
+        target = next(c for c in out if c["sequence"][-1] == "ToolSearch:query"
+                      and len(c["sequence"]) == 3)
+        self.assertEqual(target["session_count"], 3)
+        self.assertGreater(target["top_rendering_occurrences"], 3,
+                           "repeats inside one session must count")
+
+    def test_a_data_carrying_operand_is_masked_in_every_argument_order(self):
+        """The first cut fixed flag order and never exercised the operand slot.
+
+        `normalize_bash` keeps token index 1 verbatim -- correct for its original
+        caller, wrong for a slot persisted at 2 repeats. Each of these puts a
+        secret, a host or a private path in exactly that position.
+        """
+        cases = {
+            "curl https://hooks.slack.com/services/T00/B01/XyZsecret": ("XyZsecret", "hooks.slack.com"),
+            "curl -H 'Authorization: Bearer sk-live-abc' https://api.example.com/v1/x": ("sk-live-abc", "api.example.com"),
+            "curl https://api.example.com/v1/x -H 'Authorization: Bearer sk-live-abc'": ("sk-live-abc", "api.example.com"),
+            "psql postgresql://user:p4ssw0rd@db.internal/prod": ("p4ssw0rd", "db.internal"),
+            "ssh deploy@prod-1.internal": ("prod-1.internal",),
+            "cd /Users/someone/private/clients/acme && ls": ("acme", "private"),
+            "export AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE": ("AKIAIOSFODNN7EXAMPLE",),
+        }
+        for command, forbidden in cases.items():
+            shape = _tool_shape("Bash", {"command": command}, "Bash:command")
+            for needle in forbidden:
+                self.assertNotIn(needle, shape, f"{needle!r} survived: {shape!r}")
+
+    def test_a_real_subcommand_is_not_masked(self):
+        """The masking must not turn every command into `prog <arg>`."""
+        # `uv run python` renders `uv run <arg>` -- that is normalize_bash's own
+        # index>=2 rule, unchanged here, not the operand masking under test.
+        for command, expected in (("git status -s", "Bash: git status -s"),
+                                  ("pytest scripts/ -q", "Bash: pytest scripts/ -q"),
+                                  ("uv run", "Bash: uv run")):
+            self.assertEqual(_tool_shape("Bash", {"command": command},
+                                         "Bash:command"), expected)
 
     def test_bash_values_are_stripped_by_the_miners_own_normalizer(self):
         """No widening: `normalize_bash` is the posture manual_command_rituals
@@ -349,6 +417,57 @@ class CorrectionsAreDraftedNeverDecided(unittest.TestCase):
         row = list(disposition.load(disposition.ledger_path(self.out)).values())[0]
         self.assertEqual(row["state"], "routed")
         self.assertFalse(disposition.is_closed(row))
+
+    def test_a_human_promoted_entry_is_never_overwritten(self):
+        """The defect that would have silently undone the human's decision.
+
+        The idempotence guard reads the ledger inside `out_dir`, but the memory
+        path is global and the miner runs from at least three out_dirs
+        (launchd's default, learn_accruing.py, self_review/gather.py). The
+        second one re-drafted, and memory_writer.write rebuilds frontmatter and
+        replaces the body wholesale -- reverting exactly the promotion this
+        module's own draft body tells the human to make.
+        """
+        with tempfile.TemporaryDirectory() as mem_dir:
+            mem = Path(mem_dir)
+            candidate = disposition.stamp([correction()])[0]
+            path = Path(memory_route._write_via_memory_writer(
+                candidate, "t", "body", memory_dir=mem, now=NOW))
+            self.assertIn("status: candidate", path.read_text(encoding="utf-8"))
+
+            # The human promotes it: removes the marker and rewrites the body.
+            path.write_text("---\nname: kept\n---\n\nMy own words.\n",
+                            encoding="utf-8")
+
+            # A second out_dir with an empty ledger tries to draft it again.
+            with tempfile.TemporaryDirectory() as other_out:
+                out = memory_route.route(
+                    disposition.stamp([correction()]), Path(other_out),
+                    window_label="last 7 day(s)", now=NOW,
+                    runner=lambda c, t, b, memory_dir=None, now=None:
+                        memory_route._write_via_memory_writer(
+                            c, t, b, memory_dir=mem, now=now))
+                self.assertEqual(out[0]["action"], "skipped")
+                self.assertIn("promoted", out[0]["reason"])
+                row = disposition.load(
+                    disposition.ledger_path(Path(other_out)))[candidate["candidate_id"]]
+                self.assertEqual(row["state"], "waived")
+
+            self.assertEqual(path.read_text(encoding="utf-8"),
+                             "---\nname: kept\n---\n\nMy own words.\n",
+                             "the human's promoted entry was overwritten")
+
+    def test_a_second_out_dir_does_not_redraft_an_existing_candidate(self):
+        with tempfile.TemporaryDirectory() as mem_dir:
+            mem = Path(mem_dir)
+            candidate = disposition.stamp([correction()])[0]
+            first = memory_route._write_via_memory_writer(
+                candidate, "t", "first body", memory_dir=mem, now=NOW)
+            second = memory_route._write_via_memory_writer(
+                candidate, "t", "second body", memory_dir=mem, now=NOW)
+            self.assertEqual(first, second)
+            self.assertIn("first body", Path(first).read_text(encoding="utf-8"))
+            self.assertNotIn("second body", Path(first).read_text(encoding="utf-8"))
 
     def test_a_write_failure_is_reported_and_does_not_kill_the_run(self):
         def boom(*a, **kw):

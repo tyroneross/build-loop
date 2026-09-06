@@ -138,6 +138,16 @@ def route(
         try:
             written = runner(candidate, title, draft_body(candidate, window_label),
                              memory_dir=memory_dir, now=now)
+        except AlreadyPromoted as promoted:
+            # A closed loop, not a failure: a human confirmed it. Recorded as a
+            # terminal `waived` so no out_dir's ledger re-surfaces it either.
+            disposition.close(out_dir, cid, "waived", str(promoted),
+                              rationale="human promoted the drafted memory entry",
+                              shape="user_correction_cluster", now=now)
+            results.append({"candidate_id": cid, "action": "skipped",
+                            "reason": "already promoted by a human",
+                            "record": str(promoted)})
+            continue
         except Exception as exc:  # noqa: BLE001 - a mining run must not die on this
             results.append({"candidate_id": cid, "action": "failed",
                             "reason": f"{type(exc).__name__}: {exc}"})
@@ -148,6 +158,27 @@ def route(
         results.append({"candidate_id": cid, "action": "drafted", "record": written})
 
     return results
+
+
+class AlreadyPromoted(Exception):
+    """A human removed `status: candidate`. The draft must never overwrite that."""
+
+
+def _promotion_state(path: Path) -> str:
+    """`absent` | `candidate` | `promoted`, read from the file's own frontmatter.
+
+    Read from the file rather than from a ledger because the file is the thing
+    a human edits, and the ledger the miner consults depends on which out_dir it
+    was invoked from. An unreadable file is reported `absent`: re-drafting over
+    a corrupt entry is recoverable, refusing forever is not.
+    """
+    try:
+        if not path.exists():
+            return "absent"
+        head = path.read_text(encoding="utf-8", errors="ignore")[:2000]
+    except OSError:
+        return "absent"
+    return "candidate" if "status: candidate" in head else "promoted"
 
 
 def _load_memory_writer():
@@ -193,6 +224,23 @@ def _write_via_memory_writer(candidate, title, body, *, memory_dir=None, now=Non
     # that was never written.
     effective_rel, effective_dir = writer._normalize_file_rel(
         file_rel, scope="top-level", project=None, memory_dir=target)
+    target_path = Path(effective_dir) / effective_rel
+
+    # The idempotence guard in `route` reads the ledger inside `out_dir`, but
+    # this path is GLOBAL -- and the miner runs from at least three out_dirs
+    # (launchd's default, learn_accruing.py, self_review/gather.py), each with
+    # its own ledger. Without this check the second out_dir re-drafts a
+    # candidate the first already drafted, and `memory_writer.write` rebuilds
+    # frontmatter from scratch and replaces the body wholesale -- so a human who
+    # promoted the entry by removing `status: candidate`, exactly as this
+    # module's own draft body instructs, would have that promotion silently
+    # reverted and their edits overwritten. Refusing to touch a promoted file is
+    # the one behaviour this module cannot get wrong.
+    promoted = _promotion_state(target_path)
+    if promoted == "promoted":
+        raise AlreadyPromoted(str(target_path))
+    if promoted == "candidate":
+        return str(target_path)
 
     writer.write(
         target,
@@ -217,4 +265,4 @@ def _write_via_memory_writer(candidate, title, body, *, memory_dir=None, now=Non
             "last_seen": candidate.get("last_seen"),
         },
     )
-    return str(Path(effective_dir) / effective_rel)
+    return str(target_path)
