@@ -20,12 +20,21 @@ from typing import Any
 SEVERITY_ORDER: dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 # A confirmed false positive is silenced with `# nosec: <reason>` (Python/shell)
-# or `// nosec: <reason>` (JS/TS) on the flagged line. The COLON IS REQUIRED: a
-# bare `# nosec` does not suppress, so the reason is enforced by the pattern, not
-# only by convention. (An earlier comment here claimed a bare `nosec` still
-# matched; it never did. Pinned by
+# or `// nosec: <reason>` (JS/TS) on the flagged line. A REASON IS REQUIRED: a
+# bare `# nosec` does not suppress, so the justification is enforced by the
+# pattern, not only by convention. (An earlier comment here claimed a bare
+# `nosec` still matched; it never did. Pinned by
 # test_security_common.py::test_bare_nosec_without_colon_does_NOT_suppress.)
-NOSEC_RE = re.compile(r"(#|//)\s*nosec\s*:", re.IGNORECASE)
+#
+# Two spellings satisfy "a reason is present":
+#   - `# nosec: <prose>`     — this scanner's own form, the colon carries it
+#   - `# nosec B608`         — bandit's form, the test ID carries it
+# The bandit form is accepted because it is what every Python codebase that has
+# ever run bandit already writes, and it names the specific check rather than
+# blanket-silencing the line. Named failure (2026-09-05): two f-strings in
+# RossLabs Ambient Agent's Scripts/ledger_composition.py carried `# nosec B608`,
+# were HIGH-flagged anyway, and helped hard-block a push whose delta was clean.
+NOSEC_RE = re.compile(r"(#|//)\s*nosec\b\s*(?::|B\d{3}\b)", re.IGNORECASE)
 
 
 def finding(
@@ -139,5 +148,5 @@ def first_match_line(lines: list[str], pattern: re.Pattern[str]) -> tuple[int, s
 
 
 def suppressed(line: str) -> bool:
-    """True when the line carries an inline `nosec:` suppression."""
+    """True when the line carries an inline `nosec: <reason>` / `nosec B###` suppression."""
     return bool(NOSEC_RE.search(line))

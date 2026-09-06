@@ -38,7 +38,9 @@ Coverage model (--spot-check):
   affects the exit code. That way a deploy gate sees the whole tree without a
   years-old MEDIUM blocking an unrelated ship.
 
-Suppression: add `# nosec: <reason>` or `// nosec: <reason>` to a line.
+Suppression: add `# nosec: <reason>` / `// nosec: <reason>`, or bandit's
+`# nosec B608`, to a line. A bare `# nosec` does not suppress — the pattern
+requires either a prose reason or a named bandit test.
 
 Exit codes: 0 = nothing at/above threshold, 1 = something at/above threshold,
             2 = scanner error.
@@ -175,7 +177,7 @@ def _skip_file_name(name: str) -> bool:
             return True
     return False
 
-def _git_tracked_files(root: Path) -> set[Path] | None:
+def _git_tracked_files(root: Path, include_untracked: bool = True) -> set[Path] | None:
     """Absolute paths of git-tracked files, or None if not a usable git repo.
 
     A pre-push gate should scan what is actually being pushed — the tracked
@@ -183,11 +185,25 @@ def _git_tracked_files(root: Path) -> set[Path] | None:
     tool snapshots) that live on disk but never reach the remote. Returns None
     (→ caller falls back to full-tree walk) when git is unavailable or the path
     is not a repo, so non-git consumers keep working.
+
+    ``include_untracked`` controls whether ``--others`` (untracked-but-not-ignored
+    files) joins the index. The two callers want opposite answers:
+
+      - A DEPLOY uploads the working tree, so an untracked file genuinely ships
+        and must be scanned. Default True keeps that behavior.
+      - A PUSH ships committed content only, so an untracked file cannot reach
+        the remote and a finding in one is unactionable at that moment.
+
+    Named failure (2026-09-05, RossLabs Ambient Agent): 54 of the 57 HIGH findings
+    that hard-blocked a push lived in UNTRACKED `.designdoc/*.html` mockups. The
+    push delta was clean; the content could not have reached the remote.
     """
+    args = ["git", "ls-files", "-z", "--cached", "--exclude-standard"]
+    if include_untracked:
+        args.insert(4, "--others")
     try:
         result = subprocess.run(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            cwd=root, capture_output=True, text=True, timeout=15,
+            args, cwd=root, capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.SubprocessError, ValueError):
         # ValueError covers UnicodeDecodeError: a non-UTF-8 filename would make
@@ -259,6 +275,7 @@ def walk_source_files(
     diff_set: set[Path] | None = None,
     exclude_globs: list[str] | None = None,
     stats: dict[str, int] | None = None,
+    tracked_only: bool = False,
 ):
     """Yield (path, lines) for non-binary text source files.
 
@@ -275,8 +292,11 @@ def walk_source_files(
         for every real scan candidate (passed skip-name + diff + tracked) that
         an exclude glob removed — so an over-broad glob (e.g. ``*``) is
         surfaced instead of silently bypassing the whole scan (f4).
+      - ``tracked_only``: drop UNTRACKED files from the candidate set. A push
+        ships committed content only, so its gate passes True; a deploy uploads
+        the working tree, so it leaves the default False.
     """
-    tracked = _git_tracked_files(root)  # None → not a git repo, scan everything
+    tracked = _git_tracked_files(root, include_untracked=not tracked_only)
     for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
         # Prune SKIP_DIRS in-place so os.walk doesn't descend into them
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -1277,6 +1297,7 @@ def _perform_scan(
     exclude_globs: list[str],
     empty_diff: bool,
     spot_check: bool = False,
+    tracked_only: bool = False,
 ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
     """Run all checks once. Returns (findings, files_scanned, walk_stats).
 
@@ -1322,7 +1343,9 @@ def _perform_scan(
 
     # Per-file checks (walk is pruned by diff_set + exclude_globs, except in
     # spot mode where depth is decided per file below).
-    for path, lines in walk_source_files(root, walk_filter, exclude_globs, walk_stats):
+    for path, lines in walk_source_files(
+        root, walk_filter, exclude_globs, walk_stats, tracked_only
+    ):
         files_scanned += 1
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
@@ -1419,6 +1442,14 @@ def main() -> int:
              "check subset. Those findings are advisory — only a CRITICAL among "
              "them affects the exit code. No-op without --diff.",
     )
+    parser.add_argument(
+        "--tracked-only",
+        action="store_true",
+        dest="tracked_only",
+        help="Exclude UNTRACKED files from the scan. Use for a PUSH gate, which "
+             "ships committed content only; leave off for a DEPLOY gate, which "
+             "uploads the working tree.",
+    )
     args = parser.parse_args()
 
     root = Path(args.path).resolve()
@@ -1448,7 +1479,8 @@ def main() -> int:
     empty_diff = diff_active and not diff_set
 
     all_findings, files_scanned, walk_stats = _perform_scan(
-        root, diff_set, diff_active, exclude_globs, empty_diff, args.spot_check
+        root, diff_set, diff_active, exclude_globs, empty_diff, args.spot_check,
+        args.tracked_only,
     )
 
     # f1 belt-and-braces: --diff named changed files, yet the walk scanned NONE
@@ -1472,7 +1504,8 @@ def main() -> int:
         diff_set = None
         diff_active = False
         all_findings, files_scanned, walk_stats = _perform_scan(
-            root, None, False, exclude_globs, False, args.spot_check
+            root, None, False, exclude_globs, False, args.spot_check,
+            args.tracked_only,
         )
 
     # Surface the spot sweep in the report header so "scanned the whole tree"

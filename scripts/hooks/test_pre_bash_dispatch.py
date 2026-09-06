@@ -434,6 +434,88 @@ class SecurityPushClassifierConservatismTests(unittest.TestCase):
             f"stderr={r.stderr!r}",
         )
 
+    # ---- 2026-09-05: shapes that ARE plain but were misread as non-plain.
+    #
+    # `is_plain` parsed every non-flag token as a positional, so a redirection
+    # made a plain push look like a 3-ref multi-push → --diff omitted → full
+    # scan. Observed on RossLabs Ambient Agent: 11 commits, clean delta, blocked
+    # by 57 pre-existing findings the delta never touched. Conservatism is not
+    # weakened here — a redirection changes where OUTPUT goes, never what is
+    # pushed.
+
+    def test_redirected_plain_push_stays_delta_scoped(self) -> None:
+        r = run_dispatch(self.repo, f"git push origin {self.branch} > /dev/null")
+        self.assertEqual(
+            r.returncode, 0,
+            f"a redirection must not make a plain push full-scan; stderr={r.stderr!r}",
+        )
+
+    def test_stderr_redirected_plain_push_stays_delta_scoped(self) -> None:
+        """The exact reported shape: `2>&1` shlex-parses as one token."""
+        r = run_dispatch(self.repo, f"git push origin {self.branch} 2>&1")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+    def test_piped_and_logged_plain_push_stays_delta_scoped(self) -> None:
+        r = run_dispatch(
+            self.repo, f"git push origin {self.branch} 2>&1 | tee /dev/null"
+        )
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+    def test_wrapper_prefixed_redirected_plain_push_stays_delta_scoped(self) -> None:
+        r = run_dispatch(
+            self.repo, f"nohup git push origin {self.branch} > /dev/null 2>&1"
+        )
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+    def test_git_dash_C_plain_push_stays_delta_scoped(self) -> None:
+        """`git -C <path> push` is plain: the scan target, upstream, branch, and
+        push config are all resolved with the SAME `-C` path, so the delta is
+        computed against the repo actually being pushed."""
+        r = run_dispatch(
+            self.repo, f"git -C {self.repo} push origin {self.branch}"
+        )
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+    def test_dash_c_config_push_still_full_scans(self) -> None:
+        """The guard on the `-C` allowance: `-c` can set `remote.*.pushurl` and
+        redirect the push, so it is NOT admitted."""
+        self._assert_full_scan_blocks(
+            f"git -c remote.origin.pushurl=/tmp/elsewhere push origin {self.branch}"
+        )
+
+    def test_block_message_names_the_scope_decision(self) -> None:
+        """A full scan reports findings the delta never touched. Without this
+        line the operator cannot tell a delta finding from a pre-existing one
+        without reading the hook source."""
+        r = run_dispatch(self.repo, "git push --mirror origin")
+        self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
+        self.assertIn("Scan scope — full scan: push command not plain", r.stderr)
+        self.assertIn("--mirror", r.stderr, "the reason must name the token")
+
+    def test_untracked_file_does_not_block_a_push(self) -> None:
+        """A push ships committed content only, so an untracked file cannot
+        reach the remote. 54 of the 57 findings that blocked the reported push
+        lived in untracked `.designdoc/*.html` mockups."""
+        clean = make_buildloop_repo(self.tmp, name="clean")
+        bare = self.tmp / "clean-origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(clean, "remote", "add", "origin", str(bare))
+        branch = _git(clean, "branch", "--show-current").stdout.strip()
+        _git(clean, "push", "-u", "-q", "origin", branch)
+        (clean / "mockup.ts").write_text(_SECRET_LINE, encoding="utf-8")  # never added
+        # `--mirror` forces the full-scan path, so this grades the untracked
+        # exclusion rather than the delta scoping.
+        r = run_dispatch(clean, "git push --mirror origin")
+        self.assertEqual(
+            r.returncode, 0,
+            f"an untracked file cannot reach the remote; stderr={r.stderr!r}",
+        )
+
+    def test_committed_secret_still_blocks_a_full_scan_push(self) -> None:
+        """The false-clearance guard for the untracked exclusion: content that
+        IS committed must still hard-block."""
+        self._assert_full_scan_blocks("git push --mirror origin")
+
 
 class SecurityPushConfigAwarenessTests(unittest.TestCase):
     """f1/f2/f3/f4 (HIGH) — the last four pre-push false-negatives.

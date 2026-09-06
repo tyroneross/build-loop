@@ -10,7 +10,8 @@ a real handler. A false positive costs a reviewer minutes; a false clearance shi
 the vulnerability.
 
 Two behaviours are pinned here because they are NOT what a reader would assume:
-  - `suppressed` requires the colon. A bare `# nosec` does NOT suppress.
+  - `suppressed` requires a REASON: either the colon form (`# nosec: why`) or
+    bandit's named-test form (`# nosec B608`). A bare `# nosec` does NOT suppress.
   - `is_inert_file` matches its markers as SUBSTRINGS of the whole path, so a
     directory merely containing `_archive` makes everything under it inert.
 """
@@ -43,6 +44,36 @@ class TestSuppressed(unittest.TestCase):
         contract — a reader who trusts the prose would think a real finding was
         silenced when it was not."""
         self.assertFalse(sc.suppressed("x = eval(y)  # nosec"))
+
+    # ---- bandit-style suppression (2026-09-05) ----
+    #
+    # `# nosec B608` is what every codebase that has run bandit already writes.
+    # Rejecting it made two already-annotated f-strings in RossLabs Ambient
+    # Agent's Scripts/ledger_composition.py HIGH-flagged, helping hard-block a
+    # push whose delta was clean. The named test IS the reason, so it satisfies
+    # the reason-required contract above without weakening it.
+
+    def test_bandit_named_test_suppresses(self):
+        self.assertTrue(sc.suppressed('q = f"select * from {t}"  # nosec B608'))
+
+    def test_bandit_multiple_named_tests_suppress(self):
+        self.assertTrue(sc.suppressed("subprocess.run(c)  # nosec B602,B603"))
+
+    def test_bandit_form_in_a_js_comment_suppresses(self):
+        self.assertTrue(sc.suppressed("eval(y);  // nosec B307"))
+
+    def test_bandit_form_is_case_insensitive(self):
+        self.assertTrue(sc.suppressed("x = 1  # NOSEC b608"))
+
+    def test_a_non_bandit_word_after_nosec_does_NOT_suppress(self):
+        """The dangerous direction: `# nosec` plus any trailing word must not
+        become a blanket silencer. Only `:` or a `B###` test ID counts."""
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosec later"))
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosec B"))
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosec 608"))
+
+    def test_nosec_as_a_prefix_of_another_word_does_NOT_suppress(self):
+        self.assertFalse(sc.suppressed("x = eval(y)  # nosecret: shhh"))
 
     def test_unrelated_line_is_not_suppressed(self):
         """The dangerous direction: silencing a finding that never asked to be."""

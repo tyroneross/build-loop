@@ -483,6 +483,92 @@ class TestGitHelperDecodeFailOpen(unittest.TestCase):
             security_scan.subprocess.run = orig
 
 
+class TestTrackedOnly(_DiffScanBase):
+    """`--tracked-only` drops UNTRACKED files from the scan.
+
+    Named failure (2026-09-05, RossLabs Ambient Agent): 54 of the 57 HIGH
+    findings that hard-blocked a push lived in untracked `.designdoc/*.html`
+    mockups. `git ls-files --others` put them in the candidate set even though a
+    push ships committed content only, so content that could not reach the
+    remote blocked the push.
+
+    The dangerous direction is a false CLEARANCE, so the flag is pinned on both
+    sides: an untracked secret must vanish ONLY with the flag, and a tracked
+    secret must survive it.
+    """
+
+    def test_untracked_secret_blocks_without_the_flag(self):
+        """Control: the pre-existing default still scans untracked files."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        self._commit(d, "baseline")
+        self._write(d, "mockup.ts", _SECRET_LINE)  # written, never added
+        rc, data = self._scan(d)
+        self.assertEqual(rc, 1)
+        self.assertTrue(self._has_secret(data, "mockup.ts"))
+
+    def test_untracked_secret_is_ignored_with_the_flag(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        self._commit(d, "baseline")
+        self._write(d, "mockup.ts", _SECRET_LINE)
+        rc, data = self._scan(d, "--tracked-only")
+        self.assertEqual(rc, 0, "an untracked file cannot reach the remote")
+        self.assertFalse(self._has_secret(data, "mockup.ts"))
+
+    def test_committed_secret_still_blocks_with_the_flag(self):
+        """The false-clearance guard: --tracked-only must not weaken the gate
+        for content that IS being pushed."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        rc, data = self._scan(d, "--tracked-only")
+        self.assertEqual(rc, 1)
+        self.assertTrue(self._has_secret(data, "src/auth.ts"))
+
+    def test_staged_but_uncommitted_secret_still_blocks_with_the_flag(self):
+        """A staged file is an index entry, so `--cached` keeps it. It is about
+        to be committed; treating it as absent would be the false clearance."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "README.md", "# hi\n")
+        self._commit(d, "baseline")
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._git(d, "add", "src/auth.ts")
+        rc, data = self._scan(d, "--tracked-only")
+        self.assertEqual(rc, 1)
+        self.assertTrue(self._has_secret(data, "src/auth.ts"))
+
+    def test_tracked_only_passes_no_others_to_git(self):
+        """Unit-level: the flag is what removes `--others` from the argv."""
+        seen: list[list[str]] = []
+
+        class _R:
+            returncode = 0
+            stdout = "README.md\0"
+
+        def _fake_run(args, **_kw):
+            seen.append(list(args))
+            return _R()
+
+        orig = security_scan.subprocess.run
+        security_scan.subprocess.run = _fake_run
+        try:
+            security_scan._git_tracked_files(Path("/tmp"), include_untracked=False)
+            security_scan._git_tracked_files(Path("/tmp"), include_untracked=True)
+        finally:
+            security_scan.subprocess.run = orig
+        self.assertNotIn("--others", seen[0])
+        self.assertIn("--others", seen[1])
+        self.assertEqual(
+            seen[1], ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            "the default argv must stay byte-identical to the pre-flag behavior",
+        )
+
+
 class TestEmptyDiff(_DiffScanBase):
     """An empty diff (nothing changed) scans nothing and exits 0."""
 

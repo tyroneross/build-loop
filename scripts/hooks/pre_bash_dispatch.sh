@@ -456,8 +456,8 @@ esac
 # was gated on a judgment flag + a Fable-pinned agent, with no always-on backstop.
 # Hard-block (exit 2) only on HIGH+ findings (scanner rc==1); its stderr names
 # them. Fail-open on any other rc (missing python3, scanner crash) — a broken
-# scanner must never wedge `git push`. Escape: `// nosec: <reason>` on a confirmed
-# false positive, or BUILD_LOOP_HOOKS=off to bypass.
+# scanner must never wedge `git push`. Escape: `// nosec: <reason>` or bandit's
+# `# nosec B###` on a confirmed false positive, or BUILD_LOOP_HOOKS=off to bypass.
 # The guard is now driven by git_command_classifier.py (see $_GITCLASS above):
 # a `push` word appears ONLY when a real `git push` segment was parsed — heredoc
 # TEXT, repo paths, and prose no longer false-fire. This admits every genuine
@@ -490,7 +490,17 @@ case " $_GITCLASS " in
             # root normalisation matters because a subdirectory would scan only
             # part of the tree.
             _SCAN_TARGET=$(_bl_repo_root "$(_bl_effective_dir)")
-            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check)
+            # --tracked-only: a push ships COMMITTED content, so an untracked
+            # file cannot reach the remote and a finding in one is unactionable
+            # at push time. Named failure (2026-09-05, RossLabs Ambient Agent):
+            # 54 of the 57 HIGH findings that hard-blocked a push lived in
+            # untracked `.designdoc/*.html` mockups. The deploy gate below keeps
+            # untracked files, because a deploy DOES upload the working tree.
+            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check --tracked-only)
+            # Human-readable reason for the delta-vs-full choice, carried into
+            # the block message. Before this, an operator whose clean delta was
+            # full-scanned had to read this file to find out why.
+            _SCOPE_NOTE="full scan: no upstream tracking branch"
             # Scope the scan to the push delta: only what's actually being pushed
             # (files changed vs the upstream tracking branch), not the whole tree.
             # No upstream (detached/new branch) → keep the whole-repo scan (safe
@@ -559,13 +569,48 @@ SAFE_BOOL = {
 # Value-consuming safe flags: a server-side push option, no dest/ref change.
 SAFE_VALUE = {"-o", "--push-option"}
 
+# A shell redirection token, in shlex token space. `>`/`>>`/`<`/`2>`/`2>&1`/
+# `>&2`/`>/tmp/log`. Redirections change where OUTPUT goes, never what is pushed,
+# so they must not count as positionals.
+#
+# Named failure (2026-09-05, RossLabs Ambient Agent): `git push origin main 2>&1`
+# parsed `2>&1` as a third positional → 3+ positionals → not plain → --diff was
+# omitted → a 716-file full scan hard-blocked on 57 pre-existing findings, while
+# the same tree with `--diff origin/main --spot-check` exited 0. Any redirected,
+# piped, or logged plain push hit this.
+_REDIR_RE = re.compile(r"^(\d*)(>>|>&|>|<&|<)(.*)$")
+
+def strip_redirections(toks):
+    """Drop redirection operators (and their target tokens) from an argv list."""
+    out = []
+    i, n = 0, len(toks)
+    while i < n:
+        t = toks[i]
+        m = None if t.startswith("-") else _REDIR_RE.match(t)
+        if m:
+            # Bare operator (`>`, `2>`, `>>`) → the NEXT token is its target.
+            # Attached target (`>/tmp/log`, `2>&1`, `>&2`) → nothing else to eat.
+            i += 2 if m.group(3) == "" else 1
+            continue
+        out.append(t)
+        i += 1
+    return out
+
 def is_plain(seg):
+    """Return None when the segment is a plain push, else a short reason string."""
     try:
-        toks = shlex.split(seg)
+        toks = strip_redirections(shlex.split(seg))
     except ValueError:
-        return False
+        return "segment has unbalanced quotes"
+    # `git -C <path> push` is plain: the scan target, upstream, branch, and push
+    # config above are ALL resolved with the same `-C` path (_bl_effective_dir),
+    # so the delta is computed against the repo actually being pushed. No other
+    # global option is admitted — `-c remote.origin.pushurl=...` would change the
+    # destination, and `--git-dir=<d>` a repo the scan target does not follow.
+    while len(toks) >= 3 and toks[0] == "git" and toks[1] == "-C":
+        toks = [toks[0]] + toks[3:]
     if len(toks) < 2 or toks[0] != "git" or toks[1] != "push":
-        return False
+        return "segment is not a bare `git push` (leading token %r)" % (toks[0] if toks else "",)
     toks = toks[2:]  # strip leading `git push`
     positionals = []
     i, n = 0, len(toks)
@@ -586,20 +631,26 @@ def is_plain(seg):
             if key in SAFE_BOOL:           # --force-with-lease[=<lease>] via key
                 i += 1
                 continue
-            return False                   # unknown flag → not plain
+            return "unrecognised flag %r may change the push destination" % (t,)
         if ":" in t:                       # refspec src:dst
-            return False
+            return "explicit refspec %r" % (t,)
         positionals.append(t)
         i += 1
     # Positionals must resolve to the current branch → its tracking remote.
     if not rem or not branch:              # can't prove plain without both
-        return False
+        return "no upstream remote or detached HEAD"
     if not positionals:                    # bare `git push`
         # push.default=matching could ship OTHER branches; require the tracked
         # branch to BE the current branch so that drift can't pass unseen.
-        return up_branch == branch
+        if up_branch != branch:
+            return "branch %r tracks %r, not itself" % (branch, upstream)
+        return None
     if len(positionals) == 1:              # `git push <remote>`
-        return positionals[0] == rem and up_branch == branch
+        if positionals[0] != rem:
+            return "pushes to remote %r, not the tracked %r" % (positionals[0], rem)
+        if up_branch != branch:
+            return "branch %r tracks %r, not itself" % (branch, upstream)
+        return None
     if len(positionals) == 2:              # `git push <remote> <ref>`
         # h2: the ref must be the CURRENT branch, not merely the tracking name.
         # f1: AND the tracked branch must BE the current branch — mirror the
@@ -607,8 +658,14 @@ def is_plain(seg):
         # tracks a differently-named upstream (main tracks origin/develop) let
         # `git push origin main` classify plain and scope to develop..HEAD (the
         # wrong range), shipping main's secret unseen.
-        return positionals[0] == rem and positionals[1] == branch and up_branch == branch
-    return False                           # 3+ positionals (multi-ref) → not plain
+        if positionals[0] != rem:
+            return "pushes to remote %r, not the tracked %r" % (positionals[0], rem)
+        if positionals[1] != branch:
+            return "pushes ref %r, not the current branch %r" % (positionals[1], branch)
+        if up_branch != branch:
+            return "branch %r tracks %r, not itself" % (branch, upstream)
+        return None
+    return "%d positional arguments (multi-ref push)" % (len(positionals),)
 
 # h1 — classify EVERY `git push` occurrence, each segment up to its next shell
 # control operator (&& || ; | &). Plain ONLY if ALL segments are plain; any
@@ -617,25 +674,43 @@ def is_plain(seg):
 # push`, `git -c k=v push`, `git --no-pager push`) and any whitespace (TAB /
 # double-space). Over-matching stays safe: `is_plain` re-parses the segment and
 # a leading global option makes toks[1] != 'push' → not plain → full scan.
+#
+# The verdict is printed as `yes` or `no<TAB><reason>`; the caller shows the
+# reason in its block message so the delta-vs-full choice is visible without
+# reading this file.
 found = False
-plain = True
+reason = None
 for m in re.finditer(r"git(\s+(-[cC]|--[a-z-]+)(\s+\S+|=\S*)?)*\s+push", cmd):
     found = True
     seg = re.split(r"&&|\|\||[;|&]", cmd[m.start():], maxsplit=1)[0]
-    if not is_plain(seg):
-        plain = False
+    reason = is_plain(seg)
+    if reason is not None:
         break
-print("yes" if (found and plain) else "no")
+if found and reason is None:
+    print("yes")
+else:
+    print("no\t%s" % (reason or "no `git push` segment parsed",))
 PY
 )
+                # `no<TAB><reason>` / `yes` / "" (classifier could not run at all,
+                # which the `|| true` above swallows into an empty verdict).
+                _PLAIN_VERDICT=${_PLAIN%%$'\t'*}
+                _PLAIN_REASON=${_PLAIN#*$'\t'}
+                if [ -z "$_PLAIN_VERDICT" ]; then
+                    _PLAIN_REASON="the plain-push classifier produced no verdict"
+                fi
                 # Scope to the delta ONLY when the command classifies plain AND
                 # push config agrees the destination is @{u} (f2). Either alone
                 # is insufficient: the command can't see config, and config
                 # can't see a refspec/flag in the command.
-                if [ "$_PLAIN" = "yes" ] && [ "$_CFG_PLAIN" = "yes" ]; then
+                if [ "$_PLAIN_VERDICT" = "yes" ] && [ "$_CFG_PLAIN" = "yes" ]; then
                     _SCAN_ARGS+=(--diff "$_UPSTREAM")
+                    _SCOPE_NOTE="delta scan: $_UPSTREAM..HEAD (tracked files only)"
+                elif [ "$_PLAIN_VERDICT" != "yes" ]; then
+                    _SCOPE_NOTE="full scan: push command not plain — $_PLAIN_REASON"
+                else
+                    _SCOPE_NOTE="full scan: push config not plain — push.default=${_PDEF:-<unset>}, @{push}=${_PUSHDEST:-<none>}, @{u}=$_UPSTREAM"
                 fi
-                # else: non-plain push → omit --diff → full-repo scan.
             fi
             # excludeGlobs from the config of the repo BEING PUSHED. The globs
             # are matched relative to --path, so config and scan root must be the
@@ -654,7 +729,12 @@ EOF
             if [ "$_SCAN_RC" = "1" ]; then
                 SECURITY_HARD_BLOCK=1
                 printf '%s\n' "$_SCAN_OUT" >&2
-                printf '\n[build-loop] Pre-push security scan found HIGH+ findings — push blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>`, or set BUILD_LOOP_HOOKS=off to bypass.\n' >&2
+                # Name the scope decision. A full scan reports findings the push
+                # delta never touched, and without this line the operator cannot
+                # tell a genuine delta finding from a pre-existing one without
+                # reading this hook's source.
+                printf '\n[build-loop] Scan scope — %s\n' "$_SCOPE_NOTE" >&2
+                printf '[build-loop] Pre-push security scan found HIGH+ findings — push blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>` or `# nosec B###`, or set BUILD_LOOP_HOOKS=off to bypass.\n' >&2
             fi
         fi
         ;;
@@ -718,7 +798,8 @@ EOF
                 if [ "$_DSCAN_RC" = "1" ]; then
                     SECURITY_HARD_BLOCK=1
                     printf '%s\n' "$_DSCAN_OUT" >&2
-                    printf '\n[build-loop] Pre-deploy security scan found HIGH+ findings on a %s deploy — blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>`, or set BUILD_LOOP_HOOKS=off to bypass.\n' "$_DTARGET" >&2
+                    printf '\n[build-loop] Scan scope — full scan including untracked files (a deploy uploads the working tree).\n' >&2
+                    printf '[build-loop] Pre-deploy security scan found HIGH+ findings on a %s deploy — blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>` or `# nosec B###`, or set BUILD_LOOP_HOOKS=off to bypass.\n' "$_DTARGET" >&2
                 fi
                 ;;
         esac

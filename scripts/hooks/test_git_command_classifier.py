@@ -192,6 +192,87 @@ class ClassifyCommandTests(unittest.TestCase):
         cmd = 'python3 -c "print(x << shift)"\ngit push origin main'
         self.assertEqual(gcc.classify_command(cmd), {"commit", "push"})
 
+    # ---- 2026-09-05: the conservative fallbacks need COMMAND position, not a
+    # bare substring. Both fallbacks used to ask `"git" in seg`, so a `git push`
+    # described inside a quoted argument fired the pre-push security scan and
+    # blocked a filing command that pushed nothing.
+
+    def test_git_inside_a_quoted_argument_does_not_fire(self) -> None:
+        """The reported false fire: prose about a push inside `--spec "..."`.
+
+        The `<<` in the prose trips the unterminated-heredoc branch; the only
+        `git` sits in argument position, so nothing can be invoked.
+        """
+        cmd = 'python3 file_to_operations_center.py --spec "compare a << b, then git push"'
+        self.assertEqual(gcc.classify_command(cmd), set())
+
+    def test_unparseable_prose_argument_does_not_fire(self) -> None:
+        """Same class via the unbalanced-quote branch (an apostrophe in prose)."""
+        cmd = """python3 f.py --spec 'it's about a git push that never happened'"""
+        self.assertEqual(gcc.classify_command(cmd), set())
+
+    def test_unparseable_segment_leading_with_git_still_fires(self) -> None:
+        """Control: `git` IS the command word — conservatism must survive."""
+        self.assertIn("push", gcc.classify_command('git push "unterminated'))
+
+    def test_unparseable_wrapper_prefixed_push_still_fires(self) -> None:
+        """Control: an arg-taking wrapper hides the command position behind its
+        own args, so any `git` token in the fragment must still count."""
+        self.assertIn("push", gcc.classify_command('timeout 30 git push "unterminated'))
+
+    def test_unparseable_shell_interpreted_push_still_fires(self) -> None:
+        """Control: `bash -c "git push"` splits to the token `"git` — the opening
+        quote must not hide it."""
+        cmd = 'bash -c "git push origin main" --note "unterminated'
+        self.assertIn("push", gcc.classify_command(cmd))
+
+    def test_unparseable_later_line_push_still_fires(self) -> None:
+        """Control: a real push on a later line of an unparseable command."""
+        cmd = "python3 f.py --spec 'unterminated\ngit push origin main"
+        self.assertIn("push", gcc.classify_command(cmd))
+
+
+class CouldInvokeGitTests(unittest.TestCase):
+    """The command-position guard, graded directly.
+
+    False-CLEARANCE is the dangerous direction here (a missed push ships a
+    secret), so every wrapper and interpreter shape is pinned.
+    """
+
+    def test_bare_git_is_command_position(self) -> None:
+        self.assertTrue(gcc.could_invoke_git("git push origin main"))
+
+    def test_absolute_git_path_is_command_position(self) -> None:
+        self.assertTrue(gcc.could_invoke_git("/usr/bin/git push"))
+
+    def test_after_an_operator_is_command_position(self) -> None:
+        for cmd in ("ls && git push", "ls; git push", "ls | git push", "(git push)"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gcc.could_invoke_git(cmd))
+
+    def test_command_substitution_is_command_position(self) -> None:
+        self.assertTrue(gcc.could_invoke_git('echo "$(git push)"'))
+
+    def test_wrappers_and_assignments_are_transparent(self) -> None:
+        for cmd in ("nohup git push", "env FOO=bar git push", "FOO=1 git push",
+                    "time git push", "timeout 30 git push", "sudo git push"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gcc.could_invoke_git(cmd))
+
+    def test_shell_interpreters_are_transparent(self) -> None:
+        for cmd in ('bash -c "git push"', "sh -c 'git push'", 'eval "git push"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gcc.could_invoke_git(cmd))
+
+    def test_argument_position_is_not_command_position(self) -> None:
+        for cmd in ('echo "git push"', 'python3 f.py --spec "run git push next"',
+                    "rally say claim --subject 'blocked on git push'"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(gcc.could_invoke_git(cmd))
+
+    def test_no_git_at_all(self) -> None:
+        self.assertFalse(gcc.could_invoke_git("ls -la && echo done"))
+
 
 class SubprocessRoundTripTests(unittest.TestCase):
     """Drive the classifier as the dispatcher does: event JSON on stdin → space-sep stdout."""

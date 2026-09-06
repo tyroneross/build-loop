@@ -36,7 +36,7 @@ The pre-push hook passes `--spot-check` automatically. The report header names t
 ## Run it
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path <repo> [--fail-on {low,medium,high,critical}] [--json] [--diff <ref>] [--spot-check] [--exclude <glob>]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path <repo> [--fail-on {low,medium,high,critical}] [--json] [--diff <ref>] [--spot-check] [--exclude <glob>] [--tracked-only]
 ```
 
 - **Exit 0** = nothing at/above threshold · **Exit 1** = found something at/above threshold (this is what gates the pre-push hook).
@@ -44,8 +44,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path <repo> [--fail-o
 - **`--diff <ref>`** (opt-in) scopes the scan to files changed in `<ref>..HEAD` — scan what's being pushed, not the whole tree, so pre-existing unrelated debt doesn't block an unrelated push. Fail-safe: a bad ref / non-git path falls back to a full scan (never scans less than intended); an empty range scans nothing (exit 0). Delta discovery uses `git diff --name-only -z --relative` so non-ASCII/quoted filenames and subdirectory `--path` roots are handled correctly; a belt-and-braces guard also full-scans if the delta named changed files but the walk matched none. The pre-push hook derives `<ref>` from the upstream tracking branch (`@{u}`), and applies it **only to a plain current-branch → tracking push**: any refspec (`origin main:release`), non-tracking remote (`git push backup main`), or whole-repo flag (`--mirror`/`--all`/`--tags`) omits `--diff` and full-scans (fail-safe: never scan less than intended). No upstream → whole-repo scan.
   - **Scope limitation (working-tree vs pushed blob):** `--diff` scopes to the *files named* in `<ref>..HEAD` but reads each file's **current working-tree content**, not the exact pushed blobs. A secret committed then removed later in the same range, or dirty-edited out before the push, escapes. This is shared with the pre-delta whole-tree gate (not a delta-mode regression). A future follow-up could scan pushed blobs directly (`git diff <ref>..HEAD -U0` / per-commit `git show`); tracked as backlog, not yet implemented.
 - **`--exclude <glob>`** (opt-in, repeatable) skips any file whose repo-relative path matches the fnmatch glob, in both full and `--diff` mode. The hook reads these from `.build-loop/config.json` → `securityScan.excludeGlobs` (best-effort; absent = no-op). The report always names the active globs and the count of files they removed, and a bare `*`/`**` (or a glob removing >50% of candidates) emits a stderr warning — an over-broad glob cannot silently bypass the whole scan unnoticed.
+- **`--tracked-only`** (opt-in) drops UNTRACKED files from the candidate set. The **push** gate passes it, because a push ships committed content only; the **deploy** gate does not, because `vercel deploy` and friends upload the working tree, where an untracked file genuinely ships. Named failure (2026-09-05): 54 of the 57 HIGH findings that hard-blocked a push lived in untracked `.designdoc/*.html` mockups that could never reach the remote.
 - With neither `--diff` nor `--exclude`, behavior is unchanged (whole-tree, git-tracked files).
-- Suppress a *confirmed* false positive with an inline `// nosec: <reason>` (JS/TS) or `# nosec: <reason>` (Python/shell) on the flagged line.
+- Suppress a *confirmed* false positive with an inline `// nosec: <reason>` (JS/TS), `# nosec: <reason>` (Python/shell), or bandit's `# nosec B608` on the flagged line. A reason is required — a bare `# nosec` does not suppress.
 
 ## What it catches (DET layer — the greppable 80/20)
 
@@ -84,7 +85,7 @@ The scanner grades structure, not intent. It sees that a query has an owner pred
 ## Interpreting findings
 
 - **CRITICAL** → blocks in every scope, including a spot finding in a file you did not touch. These are the shapes where shipping is the wrong move regardless of authorship: an unscoped mutating query, a fail-open auth guard, a service-role key in the client bundle, `alg: none`.
-- **HIGH** → fix before push (the gate blocks) when the finding is in a changed file. Advisory when it comes from the spot sweep. If it's a genuine false positive, annotate with `// nosec: <reason>`; if you must ship anyway, `BUILD_LOOP_HOOKS=off` bypasses the gate for that command (use sparingly, it's logged in the diff intent).
+- **HIGH** → fix before push (the gate blocks) when the finding is in a changed file. Advisory when it comes from the spot sweep. If it's a genuine false positive, annotate with `// nosec: <reason>` or `# nosec B###`; if you must ship anyway, `BUILD_LOOP_HOOKS=off` bypasses the gate for that command (use sparingly, it's logged in the diff intent).
 - **MEDIUM / LOW** → advisory. Route to `.build-loop/backlog/` rather than blocking. Rate-limiting and headers gaps live here.
 
 Findings carry `scope: "deep" | "spot"` in JSON output, and `--json` `summary` reports `spot_total` and `blocking_total` alongside the severity counts.

@@ -75,6 +75,16 @@ _WRAPPER_COMMANDS = frozenset({
 # A leading VAR=val assignment (env-style): `FOO=bar git push`.
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+# Binaries that can execute a git command supplied as a STRING argument, so a
+# `git` token sitting in argument position is still reachable through them.
+_SHELL_INTERPRETERS = frozenset({"bash", "sh", "zsh", "ksh", "dash", "fish", "eval", "source"})
+
+# Shell control characters that can start a fresh command position. Split is
+# deliberately quote-BLIND: this is only used on text we already failed to parse,
+# where quote state is unknowable, and splitting more produces MORE candidate
+# command positions — the conservative direction.
+_COMMAND_POSITION_SPLIT_RE = re.compile(r"&&|\|\||\$\(|[;|&\n()`{}]")
+
 
 def _read_command_from_stdin() -> str:
     """Extract the raw command (newlines intact) from a PreToolUse event JSON on stdin."""
@@ -233,6 +243,56 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     return None
 
 
+def _cmd_basename(token: str) -> str:
+    """Token → its command basename, ignoring quote characters.
+
+    Only used on the fallback path, where the text failed to parse and a token
+    can still carry the quote shlex would have consumed (``bash -c "git`` splits
+    to the token ``"git``). Without this, a shell-interpreted push hid behind its
+    own opening quote.
+    """
+    return token.strip("\"'").rsplit("/", 1)[-1]
+
+
+def could_invoke_git(text: str) -> bool:
+    """True when a ``git`` token could occupy a COMMAND position in ``text``.
+
+    This is the guard on the two CONSERVATIVE fallbacks below (a segment with
+    unbalanced quotes, and an unterminated pseudo-heredoc). Both used to ask the
+    raw-substring question ``"git" in seg``, which cannot tell a command from a
+    word inside an argument.
+
+    Named failure (2026-09-05, RossLabs Ambient Agent): a filing command shaped
+    ``python3 file_to_operations_center.py --spec "…prose describing a git push…"``
+    contained a ``<<`` in its prose, tripped the unterminated-heredoc branch, and
+    matched ``"git" in cmd`` — so the pre-push security scan ran, and blocked, on
+    a command that pushed nothing.
+
+    The question asked here instead: after splitting on every character that could
+    open a command position and dropping leading wrappers/assignments, does any
+    fragment START with ``git``? An argument-position ``git`` answers no; a real
+    ``nohup git push``, a ``git push`` on a later line, and a ``bash -c "git push"``
+    all still answer yes. Conservatism is preserved where it is load-bearing —
+    a miss would let a secret ship — and dropped only where the token provably
+    is not a command.
+    """
+    for frag in _COMMAND_POSITION_SPLIT_RE.split(text):
+        toks = frag.split()
+        if not toks:
+            continue
+        stripped = _strip_leading_wrappers(toks)
+        if stripped and _cmd_basename(stripped[0]) == "git":
+            return True
+        first = _cmd_basename(toks[0])
+        # An arg-taking wrapper (`timeout 30 git push`) or a shell interpreter
+        # (`bash -c "git push"`) hides the command position behind its own args,
+        # so any `git` token in the fragment counts.
+        if first in _WRAPPER_COMMANDS or first in _SHELL_INTERPRETERS:
+            if any(_cmd_basename(t) == "git" for t in toks):
+                return True
+    return False
+
+
 def classify_command(cmd: str) -> set[str]:
     """Return the set of {commit, push} subcommands genuinely invoked in ``cmd``.
 
@@ -248,9 +308,10 @@ def classify_command(cmd: str) -> set[str]:
         # A `<<WORD` opener with no matching delimiter — our text-level detection likely
         # mis-fired on a quoted bit-shift and would have eaten a real command. Degrade to
         # the conservative both-subcommands trigger rather than risk a missed push/commit —
-        # but only when the raw text mentions `git` at all: if it never does, no push/commit
-        # can hide in the eaten region, so set() is provably safe and skips an idle scan.
-        return set(SUBCOMMANDS_OF_INTEREST) if "git" in cmd else set()
+        # but only when the raw text could invoke git from a COMMAND position: a `git` that
+        # only ever appears inside an argument cannot hide a push/commit in the eaten
+        # region, so set() is provably safe and skips an idle scan.
+        return set(SUBCOMMANDS_OF_INTEREST) if could_invoke_git(cmd) else set()
     for segment in _split_on_unquoted_operators(stripped):
         seg = segment.strip()
         if not seg:
@@ -261,9 +322,10 @@ def classify_command(cmd: str) -> set[str]:
             # Unbalanced quotes — cannot parse this segment. Stay conservative,
             # but only for a segment that could plausibly BE a git command.
             #
-            # Same guard the heredoc branch already applies above: a segment with
-            # no "git" in it cannot hide a git subcommand no matter how it parses,
-            # so claiming both is not conservatism, it is a false positive.
+            # Same guard the heredoc branch already applies above: a segment that
+            # cannot reach `git` from a COMMAND position cannot hide a git
+            # subcommand no matter how it parses, so claiming both is not
+            # conservatism, it is a false positive.
             #
             # Observed 2026-07-30: `psql "$URL" -tAc "select 'role: '||..."` — SQL
             # string literals use apostrophes, shlex rejects the segment, and this
@@ -271,7 +333,11 @@ def classify_command(cmd: str) -> set[str]:
             # The pre-push security gate then hard-blocked a production migration.
             # Third sibling of the argument-data-as-command-structure defect, after
             # `git stash push` and the deploy-policy substring tests.
-            if "git" in seg:
+            #
+            # The 2026-09-05 sibling narrowed `"git" in seg` to `could_invoke_git`:
+            # a segment whose only `git` sits inside a `--spec "…"` argument used
+            # to fire both gates, blocking a filing command that pushed nothing.
+            if could_invoke_git(seg):
                 found.update(SUBCOMMANDS_OF_INTEREST)
             continue
         sub = _git_subcommand(tokens)
