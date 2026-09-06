@@ -74,6 +74,60 @@ Manual npmjs metadata verification without publishing:
 gh workflow run publish-npmjs.yml --ref main -f verify_only=true
 ```
 
+## The release chain, and the two links that do not cascade
+
+Push → release-please opens a release PR → the weekly cut merges it → release-please
+tags and creates the GitHub Release → publish. Two hops in that chain are silent
+unless dispatched explicitly, because **GitHub creates no workflow run for a push or
+release made with `GITHUB_TOKEN`**:
+
+- merge → release-please: the cut's `gh pr merge` pushes to main with `GITHUB_TOKEN`,
+  so release-please never runs on the merge commit. The cut must run
+  `gh workflow run release-please.yml --ref main` after the merge (needs
+  `actions: write`). Proven on NavGator 2026-09-06: PR #7 merged, zero runs for the
+  merge commit `ba0b4d4b`, no Release.
+- Release → publish: release-please creates the Release with `GITHUB_TOKEN`, so
+  `on: release` never fires; release-please.yml dispatches the publish workflows at
+  the tag. `workflow_dispatch` IS delivered for `GITHUB_TOKEN` callers.
+
+Do not cut a Release until the npmjs side is proven (below); a Release with no package
+behind it is what the 0.42.5 gap looked like.
+
+## Diagnosing a trusted-publishing failure
+
+Read the npmjs OIDC exchange answer, not the publish exit code. NavGator's
+`publish.yml` carries a `Diagnose npm trusted-publisher binding` step that mints the
+id-token, prints its claims, and POSTs
+`/-/npm/v1/oidc/token/exchange/package/<scope>%2f<name>`; copy it into any publish
+workflow that fails. What the answers mean (verified 2026-09-06):
+
+| npmjs answer | meaning | fix |
+|---|---|---|
+| `404 {"message":"OIDC token exchange error - package not found"}` | **no Trusted Publisher record exists for this package** on npmjs.com; the workflows can be perfect | create the record (web UI + 2FA; no CLI can) |
+| a claims mismatch message naming a field | record exists, a field differs | match the printed claims: repository is case-sensitive (`NavGator`), workflow is the filename only, environment blank unless the job declares one |
+| exchange 200, publish still refused | allowed actions may be stage-only | enable `npm publish` on the record, or switch the workflow to `npm stage publish` (npm ≥ 12) and approve with 2FA |
+
+Two things that look like evidence and are not:
+
+- **"Signed provenance statement" does not prove OIDC authenticated.** With
+  `publishConfig.provenance: true` npm signs unconditionally, then PUTs with whatever
+  credential it has.
+- **`E404 Not Found - PUT` is a masked auth failure**, not a registry refusal.
+  `actions/setup-node` with `registry-url` exports a placeholder
+  `NODE_AUTH_TOKEN=XXXXX-…`; that non-empty value passes npm's no-credentials guard, so
+  the PUT goes out with garbage and npmjs answers 404 for an unauthorized write to an
+  existing package. Without the placeholder the same fault reports `ENEEDAUTH`.
+
+Preconditions the docs state and this estate has tripped on: `repository.url` in
+`package.json` must exactly match the GitHub repository (persona-lab shipped with none);
+trusted publishing cannot create a package, so a package's first version needs a one-time
+login or token; a Trusted Publisher record is per package, so "wired on the GitHub side"
+for 14 repos means nothing until 14 records exist on npmjs.com.
+
+Local tokens are not a fallback you can assume: on 2026-09-06 both the `~/.npmrc` token
+and the Secrets Vault `npmjs` entry returned 401. `npm login --auth-type=web` prints a
+login URL that works from a non-interactive shell; a human completes it in the browser.
+
 ## Validation
 
 Before tag or publish:

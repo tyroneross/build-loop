@@ -198,7 +198,15 @@ Trusted Publisher settings before the real publish:
 - Workflow filename exactly matches the publish workflow, for example
   `publish-npm.yml`.
 - Environment is blank unless the workflow uses a GitHub environment.
-- Allowed actions include `npm publish`.
+- Allowed actions include `npm publish` (stage-only records reject a direct publish).
+- The record EXISTS. `npmjs.com → package → Settings → Trusted publishing` is per
+  package and only the web UI (with 2FA) can create it. If the OIDC exchange answers
+  `"OIDC token exchange error - package not found"`, there is no record; no workflow
+  edit will help. See `../../../references/npm-package-publishing.md`
+  §"Diagnosing a trusted-publishing failure" for the exchange probe and the answer table.
+- `package.json#repository.url` exactly matches the GitHub repository.
+- The package already exists on npmjs; trusted publishing cannot create one, so the
+  first version of a new package needs a one-time human login.
 
 The workflow should use a GitHub-hosted runner, `permissions: id-token: write`,
 `actions/checkout`, and `actions/setup-node` with `registry-url` set to the
@@ -209,7 +217,10 @@ cache detection is noisy.
 
 Run `npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org`
 as a packaging check, but do not treat it as proof that the Trusted Publisher
-mapping is valid. A real publish can still fail after a successful dry-run when
+mapping is valid. Nor is the `Signed provenance statement` line at publish time:
+with `publishConfig.provenance: true` npm signs before it knows whether the OIDC
+exchange succeeded. A later `E404 Not Found - PUT` is an unauthenticated write masked by
+setup-node's placeholder `NODE_AUTH_TOKEN`, not a missing package. A real publish can still fail after a successful dry-run when
 the npm package settings do not match the GitHub workflow. After publishing,
 verify the registry metadata includes
 `dist.attestations.provenance.predicateType = https://slsa.dev/provenance/v1`.
