@@ -108,3 +108,86 @@ def test_missing_required_field_fails(tmp_path: Path) -> None:
     results.write_text(json.dumps({"task_id": "t1"}) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="missing variant"):
         load_rows(results)
+
+
+@pytest.mark.parametrize("rows", [[], [
+    _row("different-task", "baseline", tokens=1000),
+    _row("t1", "candidate", tokens=100),
+]])
+def test_no_pairs_cannot_establish_quality(rows: list[dict]) -> None:
+    paired = compare(rows, baseline="baseline", candidate="candidate")["exact_repeat"]
+    assert paired["evidence_status"] == "insufficient_evidence"
+    assert paired["quality_non_inferior"] is None
+    assert paired["token_change_pct"] is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("passed", "false"), ("passed", 1), ("model", None), ("trial_id", ""),
+    ("input_tokens", True), ("input_tokens", -1), ("output_tokens", "100"),
+    ("measured_total_tokens", False), ("escaped_defects", -1), ("calls", 1.5),
+    ("duration_seconds", float("nan")), ("duration_seconds", float("inf")),
+])
+def test_invalid_receipt_rejected_at_both_entrypoints(tmp_path: Path, field: str, value: object) -> None:
+    row = _row("t1", "baseline", tokens=1000)
+    row[field] = value
+    path = tmp_path / "invalid.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=field):
+        load_rows(path)
+    with pytest.raises(ValueError, match=field):
+        compare([row], baseline="baseline", candidate="candidate")
+
+
+@pytest.mark.parametrize("receipt", [
+    {"output_tokens": 100}, {"input_tokens": 100}, {"cache_read_input_tokens": 100},
+    {"measured_total_tokens": True}, {"input_tokens": True, "output_tokens": 100},
+])
+def test_partial_or_boolean_usage_is_not_a_measured_total(receipt: dict) -> None:
+    assert measured_tokens(receipt) is None
+
+
+def test_explicit_and_complete_totals_support_zero_and_cache_buckets() -> None:
+    assert measured_tokens({"measured_total_tokens": 0}) == 0
+    assert measured_tokens({"input_tokens": 0, "output_tokens": 0}) == 0
+    assert measured_tokens({"input_tokens": 500, "output_tokens": 100, "cache_read_input_tokens": 200}) == 800
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_trials_are_rejected_independent_of_order(reverse: bool) -> None:
+    candidates = [_row("t1", "candidate", tokens=100), _row("t1", "candidate", tokens=2000)]
+    if reverse:
+        candidates.reverse()
+    with pytest.raises(ValueError, match="duplicate exact-repeat row"):
+        compare([_row("t1", "baseline", tokens=1000), *candidates], baseline="baseline", candidate="candidate")
+
+
+def test_explicit_trials_pair_without_dropping_repeats() -> None:
+    rows = [
+        dict(_row("t1", "baseline", tokens=1000), trial_id="1"),
+        dict(_row("t1", "candidate", tokens=100), trial_id="1"),
+        dict(_row("t1", "baseline", tokens=1000), trial_id="2"),
+        dict(_row("t1", "candidate", tokens=2000), trial_id="2"),
+    ]
+    paired = compare(rows, baseline="baseline", candidate="candidate")["exact_repeat"]
+    assert paired["pairs"] == 2
+    assert paired["token_change_pct"] == 5.0
+    assert paired["evidence_status"] == "complete"
+    rows[-1]["trial_id"] = "unmatched"
+    assert compare(rows, baseline="baseline", candidate="candidate")["exact_repeat"]["pairs"] == 1
+
+
+def test_missing_measurement_cannot_make_partial_cost_look_like_a_win() -> None:
+    rows = [
+        _row("t1", "baseline", tokens=1000), _row("t1", "candidate", tokens=100),
+        _row("t2", "baseline", tokens=1000), _row("t2", "candidate", tokens=None),
+    ]
+    result = compare(rows, baseline="baseline", candidate="candidate")
+    assert result["exact_repeat"]["measured_pairs"] == 1
+    assert result["exact_repeat"]["token_change_pct"] is None
+    assert result["exact_repeat"]["evidence_status"] == "insufficient_evidence"
+    assert result["variants"]["candidate"]["raw_tokens_per_passed_run"] is None
+
+
+def test_same_variant_is_not_a_comparison() -> None:
+    with pytest.raises(ValueError, match="different variants"):
+        compare([_row("t1", "baseline", tokens=1000)], baseline="baseline", candidate="baseline")

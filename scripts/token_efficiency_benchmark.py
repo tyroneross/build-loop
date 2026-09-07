@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +20,33 @@ TOKEN_FIELDS = (
 
 def measured_tokens(row: dict[str, Any]) -> int | None:
     explicit = row.get("measured_total_tokens")
-    if isinstance(explicit, int) and explicit >= 0:
-        return explicit
-    values = [row.get(field) for field in TOKEN_FIELDS]
-    if not any(isinstance(value, int) and value >= 0 for value in values):
+    if explicit is not None:
+        return explicit if type(explicit) is int and explicit >= 0 else None
+    # A lone output/cache bucket cannot establish the total cost of a run.
+    if not all(type(row.get(field)) is int and row[field] >= 0 for field in TOKEN_FIELDS[:2]):
         return None
-    return sum(value for value in values if isinstance(value, int) and value >= 0)
+    values = [row.get(field) for field in TOKEN_FIELDS]
+    if any(value is not None and (type(value) is not int or value < 0) for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
+def validate_row(row: dict[str, Any]) -> None:
+    for field in ("task_id", "variant", "model", "snapshot"):
+        if field not in row:
+            raise ValueError(f"missing {field}")
+        if not isinstance(row[field], str) or not row[field].strip():
+            raise ValueError(f"{field} must be a nonempty string")
+    if type(row.get("passed")) is not bool:
+        raise ValueError("passed must be a boolean")
+    if "trial_id" in row and (not isinstance(row["trial_id"], str) or not row["trial_id"].strip()):
+        raise ValueError("trial_id must be a nonempty string")
+    for field in (*TOKEN_FIELDS, "measured_total_tokens", "escaped_defects", "calls"):
+        if field in row and (type(row[field]) is not int or row[field] < 0):
+            raise ValueError(f"{field} must be a nonnegative integer")
+    duration = row.get("duration_seconds", 0)
+    if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
+        raise ValueError("duration_seconds must be a finite nonnegative number")
 
 
 def load_rows(path: Path) -> list[dict[str, Any]]:
@@ -35,9 +57,10 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         row = json.loads(line)
         if not isinstance(row, dict):
             raise ValueError(f"line {line_no}: row must be a JSON object")
-        for required in ("task_id", "variant", "model", "snapshot", "passed"):
-            if required not in row:
-                raise ValueError(f"line {line_no}: missing {required}")
+        try:
+            validate_row(row)
+        except ValueError as exc:
+            raise ValueError(f"line {line_no}: {exc}") from exc
         rows.append(row)
     return rows
 
@@ -55,13 +78,15 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "escaped_defects": sum(int(row.get("escaped_defects") or 0) for row in rows),
         "calls": sum(int(row.get("calls") or 0) for row in rows),
         "raw_tokens": total_tokens,
-        "raw_tokens_per_passed_run": round(total_tokens / passed, 2) if passed else None,
+        "raw_tokens_per_passed_run": (
+            round(total_tokens / passed, 2) if passed and len(tokens) == len(rows) else None
+        ),
         "duration_seconds": round(sum(float(row.get("duration_seconds") or 0) for row in rows), 3),
     }
 
 
-def exact_repeat_key(row: dict[str, Any]) -> tuple[str, str, str]:
-    return str(row["task_id"]), str(row["snapshot"]), str(row["model"])
+def exact_repeat_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    return row["task_id"], row["snapshot"], row["model"], row.get("trial_id", "")
 
 
 def compare(
@@ -70,12 +95,18 @@ def compare(
     baseline: str,
     candidate: str,
 ) -> dict[str, Any]:
+    if baseline == candidate:
+        raise ValueError("baseline and candidate must be different variants")
     by_variant: dict[str, list[dict[str, Any]]] = {}
-    indexed: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+    indexed: dict[tuple[str, str, str, str], dict[str, dict[str, Any]]] = {}
     for row in rows:
+        validate_row(row)
         variant = str(row["variant"])
         by_variant.setdefault(variant, []).append(row)
-        indexed.setdefault(exact_repeat_key(row), {})[variant] = row
+        variants = indexed.setdefault(exact_repeat_key(row), {})
+        if variant in variants:
+            raise ValueError(f"duplicate exact-repeat row for {variant}: {exact_repeat_key(row)!r}; use unique trial_id values")
+        variants[variant] = row
 
     pairs = [
         (variants[baseline], variants[candidate])
@@ -91,7 +122,7 @@ def compare(
     candidate_tokens = sum(right_tokens for _, _, _, right_tokens in measured_pairs)
     token_change_pct = (
         round((candidate_tokens - baseline_tokens) / baseline_tokens * 100, 2)
-        if baseline_tokens
+        if baseline_tokens and len(measured_pairs) == len(pairs)
         else None
     )
     baseline_passed = sum(bool(left.get("passed")) for left, _ in pairs)
@@ -104,6 +135,9 @@ def compare(
         "candidate": candidate,
         "variants": {name: aggregate(group) for name, group in sorted(by_variant.items())},
         "exact_repeat": {
+            "evidence_status": (
+                "complete" if pairs and len(measured_pairs) == len(pairs) else "insufficient_evidence"
+            ),
             "pairs": len(pairs),
             "measured_pairs": len(measured_pairs),
             "baseline_raw_tokens": baseline_tokens,
@@ -115,9 +149,9 @@ def compare(
             "candidate_escaped_defects": candidate_defects,
             "quality_non_inferior": (
                 candidate_passed >= baseline_passed and candidate_defects <= baseline_defects
-            ),
+            ) if pairs else None,
         },
-        "note": "Only exact task_id + snapshot + model pairs support the A/B conclusion; token estimates are excluded.",
+        "note": "Only exact task_id + snapshot + model + trial_id pairs support the A/B conclusion; token estimates and incomplete totals are excluded, and every pair needs measured totals for a token-change claim.",
     }
 
 
