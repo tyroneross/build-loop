@@ -56,6 +56,53 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # SECOND, ORTHOGONAL FAILURE. The cadence check above reads git only, so a
+      # release that was cut and then failed to publish looks perfectly healthy
+      # to it: tag present, release present, commits_since_tag == 0. That is the
+      # shape that left @tyroneross/build-loop serving 0.36.1 for seven weeks
+      # while main carried 0.42.5 — the registry the README points users at.
+      # Non-blocking: a registry outage must not fail the cadence job.
+      - name: Evaluate registry lag
+        id: registry
+        continue-on-error: true
+        run: |
+          set +e
+          OUT=$(python3 scripts/registry_lag.py --workdir . --ref origin/main --json)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          case "$CODE" in
+            0) echo "lagging=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "lagging=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "::warning::registry_lag.py could not run (exit $CODE) — registry state unknown this week"
+               echo "lagging=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          {
+            echo 'reason<<EOF'
+            python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('reason','(no reason)'))" "$OUT" 2>/dev/null || echo "registry check did not produce a verdict"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the registry-lag issue
+        if: steps.registry.outputs.lagging == 'true'
+        env:
+          REASON: ${{ steps.registry.outputs.reason }}
+          LAG_TITLE: 'Registry lag — npm does not match the default branch'
+        run: |
+          set -euo pipefail
+          BODY=$(printf '%s\n\n%s\n\n%s\n' \
+            "$REASON" \
+            "A release was cut but the publish did not land, or the registry is ahead of main. Read the npmjs OIDC exchange answer rather than the publish exit code — \`E404 Not Found - PUT\` is a masked auth failure, not a registry refusal. See \`references/npm-package-publishing.md\` for the answer table." \
+            "Most common cause: no Trusted Publisher record exists for this package on npmjs.com. That is per-package, and only the web UI with 2FA can create it.")
+          EXISTING=$(gh issue list --state open --search "$LAG_TITLE in:title" \
+                       --json number,title \
+                       --jq "map(select(.title == \"$LAG_TITLE\")) | .[0].number // empty")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$LAG_TITLE" --body "$BODY"
+          fi
+
       - name: Open or update the cadence issue
         if: steps.check.outputs.stale == 'true'
         env:
