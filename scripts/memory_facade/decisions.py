@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Backend 2: canonical decision indexes + project decisions/*.md reader."""
+"""Backend 2: content-FTS decision index (doc_type='decision') + project
+decisions/*.md reader.
+
+This module's first leg used to read `indexes/INDEX.jsonl` directly; it now
+reads the content-FTS body index instead. Measured on the live store
+(2026-09-01): INDEX.jsonl held 53 decision-typed rows and ALL 53 were
+also present in the content-FTS body index (`indexes/content_fts.sqlite`,
+6,777 decision-typed docs) -- the JSONL leg contributed zero unique
+documents. Nothing kept it current either: 26/41 on-disk decision files for
+project `build-loop` and 21/22 for `build-loop-memory` were absent from it.
+37 of the 53 JSONL rows pointed at `lessons/*.md` decision-typed docs, a lane
+the dec_dirs file scan below cannot reach (lessons/ is not a decision
+directory) -- that coverage is the reason this reads the FTS index instead
+of retiring the leg outright. See `plan.md` "Path A vs Path B".
+"""
 from __future__ import annotations
 
 import os
@@ -12,8 +26,16 @@ from .common import (
     DECISION_FRONTMATTER_RE,
     _parse_iso,
     _q_match,
-    _read_jsonl,
 )
+
+# Scope values the content-FTS index (`content_index._scope`) assigns that
+# mean "visible from every project", generalizing the JSONL leg's single
+# "_unscoped" sentinel: FTS scopes by path shape alone, returning "global"
+# for anything not under a `projects/<slug>/` tree (e.g. top-level
+# `lessons/*.md`) and the literal slug for `projects/<slug>/...` paths --
+# which makes `projects/_unscoped/decisions/*.md` come through as scope
+# "_unscoped", not "global". Both must be treated as globally visible.
+_GLOBAL_SCOPES = frozenset({"_unscoped", "global"})
 
 
 def _resolve_decision_dirs(workdir: Path) -> List[Path]:
@@ -101,97 +123,170 @@ def _parse_decision_frontmatter(
     )
 
 
-def _index_row_to_decision(
+def _content_row_to_decision(
     row: Dict[str, Any], project: Optional[str]
 ) -> Optional[Dict[str, Any]]:
-    """Convert a single INDEX.jsonl row to a decision entry, or None to skip."""
-    if str(row.get("type") or "") != "decision":
-        return None
-    row_project = str(row.get("project") or "_unscoped")
-    # Exclude only rows that belong to a DIFFERENT, NAMED project. A row
-    # that is itself _unscoped/global is a decision explicitly routed as
-    # "applies to a different project too" (see the routing rule in
-    # `skills/build-loop/references/memory.md`) and must stay visible for
-    # every scoped project — it was previously dropped here, making the
-    # global lane a write-only destination (17/47 indexed rows affected).
+    """Convert a single content-FTS row (already filtered to doc_type='decision')
+    to a decision entry, or None to skip.
+
+    Generalizes the routing rule the retired `_index_row_to_decision` enforced
+    against INDEX.jsonl's `project` field: exclude only rows that belong to a
+    DIFFERENT, NAMED project. A row scoped "_unscoped" or "global" is a
+    decision explicitly routed as "applies to a different project too" (see
+    the routing rule in `skills/build-loop/references/memory.md`) and must
+    stay visible for every scoped project.
+
+    Recency: prefer the frontmatter `created`/`date` field (`meta.created`,
+    already returned on every FTS row) over the row's `_recency_ts`, which
+    `content_index.query` derives from `files.mtime_ns` -- checkout time, not
+    authorship time. The retired `_index_row_to_decision` ranked by
+    `updated or date or created`; ranking by mtime instead would silently
+    flatten in exactly the situation recall matters most: a fresh clone or
+    any fresh git worktree gives every file the SAME mtime (verified live in
+    this run's own worktree -- every file carries mtime 2026-09-01 02:16),
+    collapsing the FTS leg's recency signal to a constant. `_parse_iso`
+    returns Unix seconds and `_recency_ts` is already `mtime_ns / 1e9` --
+    same scale, so falling back to mtime when `created` is absent mixes
+    safely into the merge sort.
+
+    Dedup note: `read_decisions` seeds `seen_ids` from this leg's
+    `canonical_id` (here, the file stem) and skips a file-scan entry whose
+    frontmatter `canonical_id` collides with it. That agreement holds only
+    while frontmatter `canonical_id` equals the file stem -- true for all 42
+    on-disk decision files in the live store as of this writing, but not a
+    contract either leg enforces; a decision file with a `canonical_id`
+    that legitimately diverges from its stem would produce two entries
+    instead of one.
+    """
+    row_project = str(row.get("_scope") or "_unscoped")
     if (
         project
-        and project != "_unscoped"
-        and row_project != "_unscoped"
+        and project not in _GLOBAL_SCOPES
+        and row_project not in _GLOBAL_SCOPES
         and row_project != project
     ):
         return None
     return {
         "_kind": "decisions",
-        "_source": "index",
-        "_recency_ts": _parse_iso(
-            row.get("updated") or row.get("date") or row.get("created")
-        ),
-        "id": row.get("id") or row.get("canonical_id"),
-        "canonical_id": row.get("canonical_id") or row.get("id"),
-        "legacy_id": row.get("legacy_id"),
+        "_source": "content",
+        "_recency_ts": _parse_iso(row.get("created")) or row.get("_recency_ts"),
+        "id": row.get("id") or "",
+        "canonical_id": row.get("id") or "",
+        "legacy_id": None,
         "title": row.get("title") or "",
         "primary_tag": "",
         "project": row_project,
-        "path": row.get("canonical_path") or "",
-        "summary": row.get("title") or "",
+        "path": row.get("path") or "",
+        "summary": row.get("snippet") or "",
     }
 
 
 def _indexed_decisions(
     workdir: Path, query: str, limit: int
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read generated build-loop-memory index rows first."""
+    """Read decision-typed docs (`doc_type='decision'`) from the content-FTS
+    body index instead of the retired `INDEX.jsonl` leg (see module docstring
+    for the measurements that justified the swap).
+
+    Mirrors `read_content`'s degrade-quietly contract: an index that simply
+    hasn't been built yet returns `([], [])` with no reason, same as the
+    JSONL leg this replaces (`_read_jsonl` was silent on a missing file too;
+    the file-scan leg in `read_decisions` unconditionally covers the same
+    ground). A reason is only emitted for a genuine, unexpected failure
+    (import error resolving the index path, or the query itself raising) --
+    never for the ordinary case of no index on disk. Never raises either
+    way.
+    """
     try:
-        from _paths import memory_indexes_dir  # type: ignore  # noqa: PLC0415
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        try:
+            from scripts import content_index  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import content_index  # type: ignore  # noqa: PLC0415
     except Exception:  # noqa: BLE001
         return [], []
 
-    rows, reasons = _read_jsonl(memory_indexes_dir() / "INDEX.jsonl")
-    if not rows:
-        return [], reasons
+    try:
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        project: Optional[str] = resolve_project(workdir)
+    except Exception:  # noqa: BLE001
+        project = None
 
-    project = resolve_project(workdir)
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        searchable = " ".join(
-            str(row.get(k) or "")
-            for k in ("id", "canonical_id", "title", "status", "legacy_id", "legacy_path")
+    # Push the project scope into the SQL WHERE, never into a Python pass over
+    # the result. `content_index.query` applies `LIMIT` inside the database, so
+    # filtering afterwards means the limit is spent on rows this project cannot
+    # see: with `limit` foreign decisions outranking every local one, the leg
+    # returns ZERO local decisions while the store holds plenty. The retired
+    # JSONL leg read the whole file, so it never had this failure mode.
+    #
+    # `content_index._filters` builds `(scope IN (project) OR scope IN
+    # (_GLOBAL_SCOPES))`, which is exactly the visibility rule
+    # `_content_row_to_decision` enforces below — the Python check stays as a
+    # cross-check that the two cannot silently disagree. Scoped only when the
+    # project is a NAMED one: for a caller already in a global lane the Python
+    # rule admits every project, and passing that sentinel to SQL would invert
+    # it into "global rows only".
+    scoped_project = project if project and project not in _GLOBAL_SCOPES else None
+    # Crowding-out guard: global rows are visible from every project by design,
+    # so they compete with the project's OWN rows for the same `limit` slots.
+    # Measured on the live store (2026-08-14): querying project "build-loop"
+    # with limit=10 returned 10/10 global rows and dropped every build-loop row,
+    # because 10 global decisions shared a more recent date than build-loop's
+    # own newest. Reserve up to half of `limit` for the project's own rows.
+    #
+    # The reservation needs its own SQL query to be worth anything. A single
+    # widened query cannot be post-filtered into one: `LIMIT` runs inside the
+    # database, so if enough global rows outrank every local one, no local row
+    # ever reaches Python to be reserved. `scope=` asks for exactly this
+    # project's documents, with no implicit global OR.
+    reserved_n = max(1, limit // 2) if scoped_project else 0
+    kwargs: Dict[str, Any] = {
+        "doc_type": "decision",
+        # An empty query BROWSES, matching `_q_match`'s "empty query matches
+        # everything" contract that the retired JSONL leg relied on. Without
+        # it, `read_decisions(workdir, "", limit)` -- a bare "show me recent
+        # decisions" -- returns nothing at all from the index leg.
+        "browse_on_empty": True,
+    }
+    try:
+        db_path = content_index.default_db_path()
+        if not db_path.is_file():
+            # Ordinary "not built yet" case -- quiet, matches the JSONL
+            # leg's contract for a missing INDEX.jsonl.
+            return [], []
+        reserved_rows = (
+            content_index.query(query, limit=reserved_n, scope=scoped_project, **kwargs)
+            if scoped_project
+            else []
         )
-        tags = row.get("tags") or []
-        if isinstance(tags, list):
-            searchable += " " + " ".join(str(t) for t in tags)
-        if not _q_match(searchable, query):
+        rows = content_index.query(query, limit=limit, project=scoped_project, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — never raise on the recall hot path
+        return [], [f"content_index_error: {exc}"]
+
+    out: List[Dict[str, Any]] = []
+    seen_paths: set = set()
+    for row in [*reserved_rows, *rows]:
+        path = str(row.get("path") or "")
+        if path and path in seen_paths:
             continue
-        entry = _index_row_to_decision(row, project)
-        if entry is not None:
-            out.append(entry)
+        entry = _content_row_to_decision(row, project)
+        if entry is None:
+            continue
+        if path:
+            seen_paths.add(path)
+        out.append(entry)
     out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
 
-    # Crowding-out guard: now that global (_unscoped) rows survive the
-    # per-project filter above, they compete with the project's OWN rows
-    # for the same `limit` slots in a pure recency sort. Measured on the
-    # live store (2026-08-14): querying project "build-loop" with limit=10
-    # returned 10/10 _unscoped rows and dropped every build-loop row,
-    # because 10 _unscoped decisions shared a more recent date than
-    # build-loop's own newest. Reserve up to half of `limit` for the
-    # project's own rows (recency order preserved within each half) so a
-    # burst of newer global decisions can narrow, but never zero out, a
-    # project's visibility into its own recent decisions. This is a
-    # reservation on top of the existing recency sort, not a new ranking
-    # dimension — ranking itself (recency, token-OR match) is unchanged.
-    if project and project != "_unscoped":
-        local = [e for e in out if e["project"] == project]
+    if scoped_project:
+        local = [e for e in out if e["project"] == scoped_project]
         if local and len(local) < len(out):
-            reserved_n = min(len(local), max(1, limit // 2))
-            reserved = local[:reserved_n]
+            keep_n = min(len(local), reserved_n)
+            reserved = local[:keep_n]
             reserved_keys = {id(e) for e in reserved}
             rest = [e for e in out if id(e) not in reserved_keys]
-            out = reserved + rest[: max(0, limit - reserved_n)]
+            out = reserved + rest[: max(0, limit - keep_n)]
             out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
 
-    return out[:limit], reasons
+    return out[:limit], []
 
 
 def _file_decision_entry(
@@ -254,56 +349,6 @@ def _scan_decision_files(
     return out
 
 
-def _decision_index_coverage_reason(dec_dirs: List[Path]) -> Optional[str]:
-    """Observability-only signal: how many decision files on disk (across the
-    resolved ``dec_dirs``) have no matching row in ``INDEX.jsonl``.
-
-    Query-independent by design (unlike ``_indexed_decisions``, which is
-    filtered by the caller's search terms) — this reports total index
-    coverage, not coverage of the current search. Never raises, never
-    treated as an error or a gate: returns ``None`` when paths can't be
-    resolved or there's nothing on disk to report against. A prior audit
-    found 45 of 61 on-disk decision files absent from the index; nothing
-    previously surfaced that gap to a caller.
-    """
-    if not dec_dirs:
-        return None
-    try:
-        from _paths import memory_indexes_dir  # type: ignore  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return None
-
-    rows, _ = _read_jsonl(memory_indexes_dir() / "INDEX.jsonl")
-    indexed_ids: set[str] = set()
-    for row in rows:
-        if str(row.get("type") or "") != "decision":
-            continue
-        for key in ("canonical_id", "id", "legacy_id"):
-            val = row.get(key)
-            if val:
-                indexed_ids.add(str(val))
-
-    on_disk = 0
-    missing = 0
-    seen_stems: set[str] = set()
-    for dec_dir in dec_dirs:
-        for p in dec_dir.glob("*.md"):
-            stem = p.stem
-            if stem.upper().startswith("INDEX") or stem.startswith("_") or stem in seen_stems:
-                continue
-            seen_stems.add(stem)
-            on_disk += 1
-            if stem not in indexed_ids:
-                missing += 1
-
-    if on_disk == 0:
-        return None
-    return (
-        f"decision_index_coverage: {missing}/{on_disk} decision files on disk "
-        "are not represented in INDEX.jsonl (observability only)"
-    )
-
-
 def read_decisions(
     workdir: Path, query: str, limit: int
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -312,10 +357,6 @@ def read_decisions(
     reasons.extend(index_reasons)
 
     dec_dirs = _resolve_decision_dirs(workdir)
-    coverage_reason = _decision_index_coverage_reason(dec_dirs)
-    if coverage_reason:
-        reasons.append(coverage_reason)
-
     if not dec_dirs:
         return indexed, reasons
 

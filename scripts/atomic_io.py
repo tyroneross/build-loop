@@ -56,6 +56,43 @@ class LockedFile:
                 self._fd = None
 
 
+def _content_index_writethrough(target: Path) -> None:
+    """Upsert *target* into the FTS content index right after a durable write lands.
+
+    Measured 2026-09-01: nothing refreshed content_fts.sqlite on write, so three
+    decisions written that day were absent from it. A full incremental build()
+    costs 33s over 10,545 docs, too slow to sit on a write path, so this calls
+    the targeted single-file upsert (content_index.index_paths) instead.
+
+    Never raises. Bounds any lock-contention stall to a short fail-fast busy
+    timeout well under a second (not sqlite3's 5.0s default) rather than truly
+    never slowing the write — under contention it SKIPS the upsert rather than
+    blocking, so a contended document stays absent from the index until the next
+    `content_index.py build`. Guard is cheapest
+    test first so the common case (non-.md writes — atomic_io has 29 importers,
+    most writing non-memory files) returns before paying any import: env
+    switches, then suffix, then store-root membership, and only then the
+    content_index import (sqlite3 et al) and the actual upsert.
+    """
+    if os.environ.get("BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH", "1") == "0":
+        return
+    if os.environ.get("BUILD_LOOP_MEMORY_CONTENT", "1") == "0":
+        return
+    try:
+        if Path(target).suffix.lower() != ".md":
+            return
+        from _paths import memory_store_root  # noqa: PLC0415
+        store = memory_store_root()
+        try:
+            Path(target).resolve().relative_to(store.resolve())
+        except ValueError:
+            return
+        import content_index  # noqa: PLC0415
+        content_index.index_paths([target], store=store)
+    except Exception:  # noqa: BLE001 — an index failure must never fail a memory write
+        pass
+
+
 def atomic_write_bytes(target: Path, data: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=target.name + ".tmp.", dir=str(target.parent))
@@ -71,3 +108,4 @@ def atomic_write_bytes(target: Path, data: bytes) -> None:
         except FileNotFoundError:
             pass
         raise
+    _content_index_writethrough(target)

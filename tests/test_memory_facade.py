@@ -23,8 +23,22 @@ SCRIPTS = REPO / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import content_index  # type: ignore  # noqa: E402
 import memory_facade as mf  # type: ignore  # noqa: E402
+from memory_facade import decisions as decisions_backend  # type: ignore  # noqa: E402
 from semantic_index import upsert_fact  # type: ignore  # noqa: E402
+
+
+def _rebuild_content_index(memory_root: Path) -> None:
+    """Build the content-FTS index over *memory_root* for a test fixture.
+
+    `content_index.build(..., incremental=False)` on a tiny fixture store is
+    fast (full walk of a handful of files, not the 10,545-doc live store) --
+    the brief for this chunk explicitly names this as the sanctioned way to
+    populate the FTS leg in tests without depending on the sibling chunk's
+    `index_paths` helper landing first.
+    """
+    content_index.build(memory_root, incremental=False)
 
 
 # ---------------------------------------------------------------------------
@@ -124,10 +138,10 @@ def test_runs_backend_handles_missing_file(tmp_path: Path) -> None:
 
 def test_decisions_backend_returns_matching(workdir: Path) -> None:
     out, reasons = mf.read_decisions(workdir, query="baseline", limit=10)
-    # `reasons` now carries the query-independent index-coverage
-    # observability signal (never an error/gate) — the isolated fixture's
-    # two decision files have no INDEX.jsonl, so both are reported missing.
-    assert any(r.startswith("decision_index_coverage:") for r in reasons)
+    # The `decision_index_coverage:` signal was observability for the
+    # INDEX.jsonl leg this backend no longer reads (see decisions.py module
+    # docstring) -- it must never appear in `reasons` again.
+    assert not any(r.startswith("decision_index_coverage:") for r in reasons)
     assert len(out) == 1
     assert out[0]["primary_tag"] == "architecture"
 
@@ -147,30 +161,33 @@ def test_global_decision_recalled_from_scoped_project(workdir: Path) -> None:
     """A decision routed `project: _unscoped` (the "would this apply to a
     different project? yes -> global" routing rule) must be recallable from
     a DIFFERENT, NAMED project's context — that is the entire point of
-    routing it global. Before the fix, `_index_row_to_decision`
+    routing it global. Before the original fix, `_index_row_to_decision`
     (memory_facade/decisions.py) dropped every `_unscoped` index row the
     moment the caller's own project resolved to a real name, making every
     globally-routed decision invisible everywhere except `_unscoped` itself.
+
+    Re-expressed for the content-FTS leg (INDEX.jsonl is no longer read):
+    the same routing rule now lives in `_content_row_to_decision`, keyed off
+    the FTS row's `_scope` instead of a JSONL row's `project` field. A file
+    under `projects/_unscoped/decisions/` gets `_scope == "_unscoped"` from
+    `content_index._scope`, which is the FTS-side equivalent of the old
+    JSONL sentinel.
     """
     _pin_scoped_project(workdir, "scoped-project")
 
     memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
-    indexes_dir = memory_root / "indexes"
-    indexes_dir.mkdir(parents=True, exist_ok=True)
-    (indexes_dir / "INDEX.jsonl").write_text(
-        json.dumps(
-            {
-                "type": "decision",
-                "id": "dec-global-001",
-                "canonical_id": "dec-global-001",
-                "title": "Global rollback policy: always keep a green main",
-                "project": "_unscoped",
-                "date": "2026-06-01T00:00:00Z",
-            }
-        )
-        + "\n",
+    unscoped_dir = memory_root / "projects" / "_unscoped" / "decisions"
+    unscoped_dir.mkdir(parents=True, exist_ok=True)
+    (unscoped_dir / "dec-global-001.md").write_text(
+        "---\n"
+        "title: Global rollback policy: always keep a green main\n"
+        "type: decision\n"
+        "date: 2026-06-01\n"
+        "---\n"
+        "Always keep a green main branch; roll back rather than forward-fix.\n",
         encoding="utf-8",
     )
+    _rebuild_content_index(memory_root)
 
     out, reasons = mf.read_decisions(workdir, query="rollback policy", limit=10)
     ids = [d["canonical_id"] for d in out]
@@ -184,26 +201,28 @@ def test_decision_from_different_named_project_not_recalled(workdir: Path) -> No
     """A decision belonging to a DIFFERENT, NAMED project must stay
     invisible from `scoped-project`'s recall — only `_unscoped`/global
     decisions become visible everywhere; this guards against an
-    over-broad leak while fixing global recall."""
+    over-broad leak while fixing global recall.
+
+    Re-expressed for the content-FTS leg: the file lives under
+    `projects/other-project/decisions/`, so `content_index._scope` assigns
+    it `_scope == "other-project"` -- a NAMED scope distinct from
+    "scoped-project", which `_content_row_to_decision` must still exclude.
+    """
     _pin_scoped_project(workdir, "scoped-project")
 
     memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
-    indexes_dir = memory_root / "indexes"
-    indexes_dir.mkdir(parents=True, exist_ok=True)
-    (indexes_dir / "INDEX.jsonl").write_text(
-        json.dumps(
-            {
-                "type": "decision",
-                "id": "dec-other-001",
-                "canonical_id": "dec-other-001",
-                "title": "other-project internal API contract v2",
-                "project": "other-project",
-                "date": "2026-06-01T00:00:00Z",
-            }
-        )
-        + "\n",
+    other_dir = memory_root / "projects" / "other-project" / "decisions"
+    other_dir.mkdir(parents=True, exist_ok=True)
+    (other_dir / "dec-other-001.md").write_text(
+        "---\n"
+        "title: other-project internal API contract v2\n"
+        "type: decision\n"
+        "date: 2026-06-01\n"
+        "---\n"
+        "Internal API contract v2 for other-project only.\n",
         encoding="utf-8",
     )
+    _rebuild_content_index(memory_root)
 
     out, reasons = mf.read_decisions(workdir, query="internal API contract", limit=10)
     ids = [d["canonical_id"] for d in out]
@@ -226,6 +245,145 @@ def test_decisions_backend_handles_missing_dir(
     out, reasons = mf.read_decisions(tmp_path, query="anything", limit=5)
     assert out == []
     assert reasons == []
+
+
+def test_decisions_backend_never_raises_when_fts_db_absent(workdir: Path) -> None:
+    """`read_decisions` must still return the file-scan leg's results, and
+    must not raise, when the content-FTS index has never been built --
+    the `workdir` fixture never calls `_rebuild_content_index`, so this
+    exercises the ordinary "not built yet" path for every other test in
+    this module too."""
+    out, reasons = mf.read_decisions(workdir, query="baseline", limit=10)
+    assert len(out) == 1
+    assert out[0]["canonical_id"] == "decision-project-unscoped-arch-baseline-20260502-001"
+    assert not any(r.startswith("content_index_error:") for r in reasons)
+
+
+def test_decision_typed_lesson_doc_recalled_via_read_decisions(workdir: Path) -> None:
+    """A decision-typed doc that lives in the `lessons/*.md` lane (not a
+    `decisions/` directory) is reachable via `read_decisions` ONLY through
+    the content-FTS leg -- `_resolve_decision_dirs`/`_scan_decision_files`
+    never walk `lessons/`. This is the coverage claim (plan.md: "37 of the
+    53 JSONL rows point at lessons/*.md decision-typed docs") that justifies
+    reading the FTS index here instead of just deleting the leg (Path A)."""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    lessons_dir = memory_root / "lessons"
+    lessons_dir.mkdir(parents=True, exist_ok=True)
+    (lessons_dir / "2026-06-26-decision-navgator-test.md").write_text(
+        "---\n"
+        "title: NavGator cross-project knowledge base direction\n"
+        "type: decision\n"
+        "date: 2026-06-26\n"
+        "---\n"
+        "Decision captured in the lessons lane about NavGator's knowledge base.\n",
+        encoding="utf-8",
+    )
+    _rebuild_content_index(memory_root)
+
+    out, reasons = mf.read_decisions(workdir, query="navgator knowledge base", limit=10)
+    ids = [d["canonical_id"] for d in out]
+    assert "2026-06-26-decision-navgator-test" in ids, (
+        f"expected the lessons-lane decision doc to be recalled; got {ids} "
+        f"(reasons={reasons})"
+    )
+    hit = next(d for d in out if d["canonical_id"] == "2026-06-26-decision-navgator-test")
+    assert hit["_source"] == "content"
+
+
+def test_content_leg_ranks_by_frontmatter_date_not_file_mtime(workdir: Path) -> None:
+    """The content-FTS leg must rank by the decision's own `created`/`date`
+    frontmatter, not by `files.mtime_ns` (checkout time). A fresh clone or
+    git worktree gives every file the SAME mtime, flattening recall's
+    recency signal to a constant -- exactly the case this test forces by
+    touching an OLD decision's mtime forward, so the fix would fail here for
+    the right reason if it silently regressed to mtime."""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    decisions_dir = memory_root / "projects" / "_unscoped" / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    old_decision = decisions_dir / "dec-old-but-touched.md"
+    old_decision.write_text(
+        "---\n"
+        "title: Recency regression probe decision\n"
+        "type: decision\n"
+        "date: 2020-01-01\n"
+        "---\n"
+        "Old decision whose file gets touched recently by this test.\n",
+        encoding="utf-8",
+    )
+    _rebuild_content_index(memory_root)
+    # Touch the file forward AFTER indexing, so `files.mtime_ns` (recorded at
+    # build time) and the on-disk mtime now disagree with the frontmatter
+    # date -- and re-touch it, since some filesystems round mtime writes.
+    recent_ts = 2_000_000_000  # 2033-05-18, far newer than 2020-01-01
+    os.utime(old_decision, (recent_ts, recent_ts))
+    assert old_decision.stat().st_mtime == recent_ts
+
+    out, reasons = mf.read_decisions(workdir, query="recency regression probe", limit=10)
+    hits = [d for d in out if d["canonical_id"] == "dec-old-but-touched"]
+    assert hits, f"expected the probe decision to be recalled; reasons={reasons}"
+    hit = hits[0]
+    assert hit["_source"] == "content"
+
+    old_date_ts = mf._parse_iso("2020-01-01")
+    assert old_date_ts is not None
+    # Ranked by the frontmatter date: within a second of the parsed 2020
+    # timestamp, and nowhere near the 2033 mtime the file was touched to.
+    assert abs(hit["_recency_ts"] - old_date_ts) < 1.0, (
+        f"expected _recency_ts near frontmatter date {old_date_ts}, "
+        f"got {hit['_recency_ts']} (file mtime is {recent_ts})"
+    )
+    assert abs(hit["_recency_ts"] - recent_ts) > 1.0
+
+
+def test_content_leg_row_survives_merged_truncation_for_a_title_query(workdir: Path) -> None:
+    """The crowding-out reservation removed from `_indexed_decisions` was
+    dead code -- `content_index.query(..., limit=limit)` already applies
+    `ORDER BY relevance LIMIT limit` in SQL before this function ever sees a
+    row, so the reservation's truncation step was a no-op. But nothing
+    previously guarded that a content-sourced row actually survives
+    `read_decisions`'s own final `merged[:limit]` truncation for a
+    realistic, title-targeted query. (The auditor measured 0/10 content
+    rows surviving for a generic `query='decision'` at `limit=10` -- not a
+    regression this fix addresses, but this locks down the title-targeted
+    case that IS expected to work.)"""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    lessons_dir = memory_root / "lessons"
+    lessons_dir.mkdir(parents=True, exist_ok=True)
+    (lessons_dir / "2026-07-01-decision-truncation-guard.md").write_text(
+        "---\n"
+        "title: Truncation guard regression probe\n"
+        "type: decision\n"
+        "date: 2026-07-01\n"
+        "---\n"
+        "Content-only decision used to guard merged[:limit] truncation.\n",
+        encoding="utf-8",
+    )
+    _rebuild_content_index(memory_root)
+
+    out, reasons = mf.read_decisions(workdir, query="Truncation guard regression probe", limit=10)
+    content_rows = [d for d in out if d["_source"] == "content"]
+    assert content_rows, (
+        f"expected a content-sourced decision row to survive merged[:limit]; got {out} (reasons={reasons})"
+    )
+
+
+def test_read_content_finds_docs_from_non_store_root_workdir(
+    workdir: Path, tmp_path: Path
+) -> None:
+    """Regression for the `default_db_path(workdir)` bug: `read_content`
+    must find store documents even when called from a workdir that is NOT
+    the memory store root -- e.g. from a project repo, which is every real
+    caller except a session running directly inside build-loop-memory."""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    _rebuild_content_index(memory_root)
+
+    caller_workdir = tmp_path / "some-other-repo"
+    caller_workdir.mkdir()
+    assert caller_workdir != memory_root
+
+    out, reasons = mf.read_content(caller_workdir, query="baseline", limit=5, project=None)
+    assert out, f"expected content results from a non-store-root workdir; reasons={reasons}"
+    assert any("baseline" in (r.get("title") or "").lower() for r in out)
 
 
 def test_semantic_backend_unavailable_without_env(workdir: Path) -> None:
@@ -432,3 +590,133 @@ def test_q_match_case_insensitive_and_empty() -> None:
     assert mf._q_match("Architecture Scan", "ARCH") is True
     assert mf._q_match("Architecture Scan", "") is True
     assert mf._q_match("Architecture Scan", "missing") is False
+
+
+# --- The FTS decision leg must not lose local decisions to the SQL LIMIT -----
+# Three regressions the content-FTS swap introduced over the retired
+# INDEX.jsonl leg, which read the whole file and filtered in Python.
+
+def _write_decision(directory: Path, stem: str, title: str, body: str, date: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{stem}.md").write_text(
+        f"---\ntitle: {title}\ntype: decision\ndate: {date}\n---\n{body}\n",
+        encoding="utf-8",
+    )
+
+
+def test_local_decisions_survive_foreign_high_ranking_rows(workdir: Path) -> None:
+    """A content-index-only local decision must survive a flood of foreign
+    decisions that all outrank it on the same query.
+
+    `content_index.query` applies LIMIT inside SQL. Filtering foreign rows out
+    afterwards in Python spends the whole limit on rows this project cannot
+    see, so with enough higher-ranking foreign matches the leg returns ZERO
+    local decisions while the store holds them. The foreign rows below repeat
+    the query terms so they genuinely outrank the single local mention.
+    """
+    _pin_scoped_project(workdir, "scoped-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+
+    for index in range(12):
+        _write_decision(
+            memory_root / "projects" / f"foreign-{index}" / "decisions",
+            f"dec-foreign-{index:03d}",
+            f"foreign retry backoff retry backoff policy {index}",
+            "retry backoff retry backoff retry backoff retry backoff policy.",
+            "2026-07-01",
+        )
+    _write_decision(
+        memory_root / "projects" / "scoped-project" / "decisions",
+        "dec-local-001",
+        "scoped-project retry policy",
+        "Our own retry policy for this project.",
+        "2026-06-01",
+    )
+    _rebuild_content_index(memory_root)
+
+    out, reasons = decisions_backend._indexed_decisions(workdir, "retry backoff policy", 5)
+    ids = [d["canonical_id"] for d in out]
+
+    assert "dec-local-001" in ids, (
+        "the project's own decision was crowded out of the SQL LIMIT by foreign "
+        f"higher-ranking rows; got {ids} (reasons={reasons})"
+    )
+    assert not any(i.startswith("dec-foreign-") for i in ids), (
+        f"a different named project's decision leaked into recall: {ids}"
+    )
+
+
+def test_newer_global_decisions_cannot_zero_out_a_project_s_own(workdir: Path) -> None:
+    """The crowding-out reservation: a burst of newer global decisions may
+    narrow, but never erase, a project's view of its own recent decisions."""
+    _pin_scoped_project(workdir, "scoped-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+
+    for index in range(12):
+        _write_decision(
+            memory_root / "projects" / "_unscoped" / "decisions",
+            f"dec-global-{index:03d}",
+            f"global cache eviction policy {index}",
+            "cache eviction policy cache eviction policy.",
+            "2026-08-01",
+        )
+    _write_decision(
+        memory_root / "projects" / "scoped-project" / "decisions",
+        "dec-local-cache-001",
+        "scoped-project cache eviction policy",
+        "Our own cache eviction policy.",
+        "2026-05-01",  # older than every global row above
+    )
+    _rebuild_content_index(memory_root)
+
+    out, reasons = decisions_backend._indexed_decisions(workdir, "cache eviction policy", 10)
+    ids = [d["canonical_id"] for d in out]
+
+    assert "dec-local-cache-001" in ids, (
+        "12 newer global decisions zeroed out the project's own decision; "
+        f"got {ids} (reasons={reasons})"
+    )
+    assert any(i.startswith("dec-global-") for i in ids), (
+        f"global decisions must stay visible, not be replaced wholesale: {ids}"
+    )
+
+
+def test_empty_query_browses_recent_decisions(workdir: Path) -> None:
+    """`_q_match` treats an empty query as "matches everything", so the leg
+    that replaced the whole-file reader has to browse rather than return
+    nothing — otherwise a bare "show me recent decisions" recalls zero."""
+    _pin_scoped_project(workdir, "scoped-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+
+    _write_decision(
+        memory_root / "projects" / "scoped-project" / "decisions",
+        "dec-browse-local", "scoped-project browse target", "Local body.", "2026-06-01",
+    )
+    _write_decision(
+        memory_root / "projects" / "_unscoped" / "decisions",
+        "dec-browse-global", "global browse target", "Global body.", "2026-06-02",
+    )
+    _rebuild_content_index(memory_root)
+
+    out, reasons = decisions_backend._indexed_decisions(workdir, "", 10)
+    ids = [d["canonical_id"] for d in out]
+
+    assert "dec-browse-local" in ids and "dec-browse-global" in ids, (
+        f"empty query must browse the visible decision set; got {ids} (reasons={reasons})"
+    )
+
+
+def test_empty_query_browse_still_excludes_other_named_projects(workdir: Path) -> None:
+    """The guard for the test above: browsing widens the query, never the scope."""
+    _pin_scoped_project(workdir, "scoped-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+
+    _write_decision(
+        memory_root / "projects" / "other-project" / "decisions",
+        "dec-browse-foreign", "other-project browse target", "Foreign body.", "2026-06-03",
+    )
+    _rebuild_content_index(memory_root)
+
+    out, _ = decisions_backend._indexed_decisions(workdir, "", 10)
+
+    assert "dec-browse-foreign" not in [d["canonical_id"] for d in out]

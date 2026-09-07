@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -33,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import atomic_io  # noqa: E402
+import content_index  # noqa: E402
 
 
 class Base(unittest.TestCase):
@@ -101,6 +104,97 @@ class TestAtomicWrite(Base):
                 atomic_io.atomic_write_bytes(self.target, b"NEW")
         leftovers = [p.name for p in self.dir.iterdir() if ".tmp." in p.name]
         self.assertEqual(leftovers, [], "failed write littered a temp file")
+
+
+class TestContentIndexWritethrough(unittest.TestCase):
+    """atomic_write_bytes upserts .md writes into the FTS index (plan chunk 2)."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.store = self.dir / "store"
+        self.store.mkdir()
+        self._env_backup = {
+            key: os.environ.get(key)
+            for key in ("BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH", "BUILD_LOOP_MEMORY_CONTENT")
+        }
+        self.addCleanup(self._restore_env)
+        self._patcher = mock.patch("_paths.memory_store_root", return_value=self.store)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def _restore_env(self) -> None:
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _db_path(self) -> Path:
+        return content_index.default_db_path(self.store)
+
+    def test_md_write_under_store_root_is_immediately_queryable(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())  # database must already exist
+        target = self.store / "decision.md"
+        atomic_io.atomic_write_bytes(target, b"needlephrase body text")
+        rows = content_index.query("needlephrase", db_path=self._db_path())
+        self.assertEqual([row["path"] for row in rows], [str(target.resolve())])
+
+    def test_md_write_outside_store_root_leaves_index_untouched(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())
+        outside_dir = self.dir / "outside"
+        target = outside_dir / "decision.md"
+        atomic_io.atomic_write_bytes(target, b"outsideneedlephrase body text")
+        self.assertEqual(
+            content_index.query("outsideneedlephrase", db_path=self._db_path()), []
+        )
+
+    def test_md_write_with_no_database_yet_creates_none_but_file_still_lands(self) -> None:
+        """The write-through hook must never create the database (that's build()'s
+        job alone — see index_paths' own no-create test); a store with no index
+        yet degrades to a write-through no-op, not a silently-seeded one-doc db."""
+        self.assertFalse(self._db_path().exists())
+        target = self.store / "decision.md"
+        atomic_io.atomic_write_bytes(target, b"neverbuiltneedle body text")
+        self.assertFalse(self._db_path().exists(), "write-through must not create the database")
+        self.assertEqual(target.read_bytes(), b"neverbuiltneedle body text")
+
+    def test_non_md_write_leaves_index_untouched(self) -> None:
+        target = self.store / "state.json"
+        atomic_io.atomic_write_bytes(target, b'{"a": 1}')
+        self.assertFalse(self._db_path().exists())
+
+    def test_raising_index_paths_does_not_fail_the_write(self) -> None:
+        target = self.store / "decision.md"
+        with mock.patch.object(content_index, "index_paths", side_effect=RuntimeError("boom")):
+            atomic_io.atomic_write_bytes(target, b"body text")
+        self.assertEqual(target.read_bytes(), b"body text")
+
+    def test_writethrough_does_not_block_on_a_locked_index(self) -> None:
+        """The write-through hook must fail fast under index contention, not
+        inherit sqlite3's 5.0s default busy timeout. Confirmed to FAIL before
+        the fix: pre-fix this blocked for the full default timeout (measured
+        by the auditor at 12.83s in a fuller repro) before silently dropping
+        the document from the index."""
+        content_index.build(self.store, db_path=self._db_path())  # database must already exist
+        blocker = sqlite3.connect(self._db_path())
+        blocker.execute("BEGIN EXCLUSIVE")
+        try:
+            target = self.store / "decision.md"
+            started = time.monotonic()
+            atomic_io.atomic_write_bytes(target, b"locked write body text")
+            elapsed = time.monotonic() - started
+        finally:
+            blocker.rollback()
+            blocker.close()
+        self.assertLess(elapsed, 1.0, f"write-through blocked for {elapsed:.2f}s under index contention")
+        self.assertEqual(target.read_bytes(), b"locked write body text")
+
+    def test_env_switch_disables_the_hook(self) -> None:
+        os.environ["BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH"] = "0"
+        target = self.store / "decision.md"
+        atomic_io.atomic_write_bytes(target, b"disabledneedlephrase body text")
+        self.assertFalse(self._db_path().exists())
 
 
 class TestLockedFile(Base):

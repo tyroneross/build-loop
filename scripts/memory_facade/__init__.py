@@ -225,7 +225,16 @@ def read_content(
     except Exception as exc:  # noqa: BLE001
         return [], [f"content_index_unavailable: {exc}"]
     try:
-        db = _ci.default_db_path(workdir)
+        # No argument: `default_db_path(store)` treats a non-None argument
+        # as the STORE ROOT, not the caller's cwd. Passing `workdir` here
+        # resolved `<workdir>/indexes/content_fts.sqlite`, which exists only
+        # when `workdir` happens to BE the memory store root. Measured
+        # 2026-09-01: `recall()` from `/Users/tyroneross/dev/git-folder/
+        # build-loop` (i.e. every caller that isn't build-loop-memory
+        # itself) returned `content_index_absent` and zero content results.
+        # No argument lets `memory_store_root()`'s own env/default
+        # resolution apply, matching every other backend in this module.
+        db = _ci.default_db_path()
         if not Path(db).is_file():
             return [], [
                 "content_index_absent: no FTS index on disk; build it with "
