@@ -43,7 +43,11 @@ from pathlib import Path
 from typing import Any
 
 from atomic_io import LockedFile, atomic_write_bytes
-from collapse_run import inspect_worktree_safety, reconcile_terminal_execution
+from collapse_run import (
+    inspect_worktree_safety,
+    reconcile_terminal_execution,
+    verify_branch_closeout_receipt,
+)
 from data_plane import DataPlaneError, check_terminal_manifest
 
 EXPECTED_SCHEMA_VERSION = 1
@@ -406,6 +410,51 @@ def _matching_pass_evidence(state: dict, run_id: str, source: str) -> list[str]:
     return []
 
 
+def _closeout_receipt_evidence(workdir: Path, state: dict, run_id: str, source: str) -> list[str]:
+    """Accept a VERIFIED branch-closeout receipt wherever a pass outcome was required.
+
+    ``outcome == "pass"`` grades REVIEW QUALITY, not liveness. A run that
+    crashed after Review-G almost always grades ``partial`` — an owed verifier
+    alone sets it — so requiring a pass made the archive path unsatisfiable for
+    the very shape it exists to clear. A branch-closeout receipt answers the
+    question this path actually asks, and answers it more specifically:
+    collapse_run marks a ref ``closed`` only after it merged into its target
+    and its bundle verified.
+
+    The proof itself is delegated to
+    :func:`collapse_run.verify_branch_closeout_receipt` — the same reader
+    ``reconcile_terminal_execution`` uses — so this path cannot accept a
+    receipt the live reconciliation path would reject. A second, looser parser
+    here would be the whole risk: reading ``status``/``owner_release``/
+    ``refs[].status`` out of a JSON file proves nothing about whether the refs
+    exist, whether the bundles verify, or whether the recorded OIDs are still
+    current. The canonical reader rejects a non-canonical or symlinked receipt,
+    refs that do not match the run ledger one-to-one, an unverified or
+    off-root bundle, an OID that disagrees across ledgers, a worktree path that
+    still exists, and a branch that still resolves.
+
+    This substitutes for the GRADE only. Every resource check in
+    ``_classify_legacy_crash`` still has to pass on its own.
+    """
+    runs = state.get("runs")
+    matches = [
+        row for row in (runs if isinstance(runs, list) else [])
+        if isinstance(row, dict) and _execution_identity(row) == run_id
+    ]
+    if len(matches) != 1:
+        # Zero rows means nothing attributes the refs to this run; two or more
+        # means the ledger is ambiguous about which one the receipt describes.
+        return []
+    try:
+        evidence, _reason = verify_branch_closeout_receipt(workdir, matches[0])
+    except Exception:  # noqa: BLE001 — evidence gathering must never raise here
+        return []
+    if evidence is None:
+        return []
+    branches = ", ".join(evidence.get("closed_branches") or [])
+    return [f"{source}: verified branch-closeout receipt closed every ref ({branches})"]
+
+
 def _referenced_manifest_is_terminal(workdir: Path, execution: dict) -> bool:
     if "data_manifest_path" not in execution:
         return True
@@ -523,6 +572,9 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
 
     evidence = _matching_terminal_evidence(state, run_id, "state")
     pass_evidence = _matching_pass_evidence(state, run_id, "state")
+    receipt_evidence = _closeout_receipt_evidence(workdir, state, run_id, "state")
+    evidence.extend(receipt_evidence)
+    pass_evidence.extend(receipt_evidence)
     path_value = execution.get("run_worktree_path")
     branch_value = execution.get("run_worktree_branch")
     managed_path = _managed_worktree_path(workdir, path_value)
@@ -535,6 +587,13 @@ def _classify_legacy_crash(workdir: Path, state: dict, execution: dict) -> dict:
         if isinstance(child_state, dict):
             evidence.extend(_matching_terminal_evidence(child_state, run_id, "run_worktree.state"))
             pass_evidence.extend(_matching_pass_evidence(child_state, run_id, "run_worktree.state"))
+            # The ledger row may live in the run worktree's own state, but the
+            # receipt is always canonical to the repo whose refs were closed.
+            child_receipt = _closeout_receipt_evidence(
+                workdir, child_state, run_id, "run_worktree.state"
+            )
+            evidence.extend(child_receipt)
+            pass_evidence.extend(child_receipt)
 
     referenced: list[tuple[str, bool | None]] = []
     if path_value:
