@@ -76,6 +76,15 @@ PHASE_ALIASES = {
     "phase_6": "learn",
 }
 
+# Canonical run-completion rule, stated once in scripts/state_finalize.py: the
+# orchestrator writes ``execution.phase`` and finishes at "report"; inline runs
+# write top-level ``state.phase`` and finish at "done". resume_resolver.py and
+# orchestrator_heartbeat.py already read "report" as terminal, so the dashboard
+# must agree — otherwise a closed run renders as mid-Review forever, because
+# PHASE_ALIASES maps the "report" label onto the in-flight Review phase.
+TERMINAL_EXECUTION_PHASE = "report"
+TERMINAL_TOP_LEVEL_PHASES = frozenset({"report", "done"})
+
 TASK_STATUS_PRIORITY = {"pending": 0, "queued": 1, "active": 2, "blocked": 3, "complete": 4}
 PLAN_TASK_RE = re.compile(
     r"^#{2,4}\s+(?:(?:Task|Chunk|Commit)\s+)?(?P<id>[A-Za-z]+\d+|\d+)\s*(?:[:\-\u2013\u2014]\s*)?(?P<title>.+)$"
@@ -173,12 +182,28 @@ def _latest_run(state: dict[str, Any]) -> dict[str, Any] | None:
     ), None)
 
 
+def _execution_is_terminal(state: dict[str, Any], execution: dict[str, Any]) -> bool:
+    """Report whether the run already reached its recorded end marker."""
+    if str(execution.get("phase") or "").strip().lower() == TERMINAL_EXECUTION_PHASE:
+        return True
+    return str(state.get("phase") or "").strip().lower() in TERMINAL_TOP_LEVEL_PHASES
+
+
 def _run_context(state: dict[str, Any]) -> dict[str, Any]:
     execution = state.get("execution") if isinstance(state.get("execution"), dict) else {}
     latest = _latest_run(state)
     active_run_id = execution.get("build_loop_id") or execution.get("run_id")
-    active = bool(active_run_id and state.get("active", True) is not False)
-    selected_run = execution if active else (latest or {})
+    terminal = _execution_is_terminal(state, execution)
+    active = bool(active_run_id and state.get("active", True) is not False and not terminal)
+    # The durable runs[] entry for THIS run outranks the live execution block:
+    # outcome, phases, and learn are only ever written there, so reading the
+    # execution block instead drops every result the run already recorded.
+    recorded = (
+        latest
+        if latest and active_run_id and str(latest.get("run_id") or "") == str(active_run_id)
+        else None
+    )
+    selected_run = recorded if recorded is not None else (execution if active else (latest or {}))
     run_id = active_run_id or selected_run.get("run_id")
     outcome = str(selected_run.get("outcome") or "").lower()
     complete = not active and bool(latest) and outcome in {"pass", "passed", "complete", "completed", "success", "succeeded"}
@@ -224,6 +249,8 @@ def _run_context(state: dict[str, Any]) -> dict[str, Any]:
         "current_phase": current_phase,
         "status": status,
         "active": active,
+        "terminal": terminal,
+        "recorded_run": recorded,
     }
 
 
@@ -263,6 +290,11 @@ def _phase_projection(context: dict[str, Any], state: dict[str, Any], warnings: 
 
     if context["active"] and current_index is None:
         warnings.append("The run is active, but no recognized current phase was recorded.")
+    if context.get("terminal") and context.get("recorded_run") is None:
+        warnings.append(
+            "The run reached its final phase, but no matching run record was written; "
+            "phase results are unconfirmed."
+        )
     active_count = sum(item["status"] == "active" for item in result)
     if active_count > 1:
         warnings.append("Multiple phases were marked active; the dashboard preserved the recorded states.")

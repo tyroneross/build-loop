@@ -743,3 +743,141 @@ def test_missing_and_malformed_sources_degrade_to_an_honest_idle_view(tmp_path: 
     assert result["agents"] == []
     assert any("malformed JSON" in warning for warning in result["warnings"])
     assert any("malformed agent ledger" in warning for warning in result["warnings"])
+
+
+# --- Terminal execution.phase ("report"/"done") must not read as mid-Review ---
+# Regression guard for the closed dogfood run that rendered active/review while
+# state.json recorded outcome=pass with every phase and Learn complete.
+
+_CLOSED_RUN_ID = "bl-20260830T035910Z-codex-966541"
+_ALL_PHASES = ("assess", "plan", "execute", "review", "iterate", "learn")
+
+
+def _closed_run_state(**run_overrides: object) -> dict[str, object]:
+    """State for a run that reached Review-G with its execution block still present."""
+    run: dict[str, object] = {
+        "run_id": _CLOSED_RUN_ID,
+        "goal": "Close the loop.",
+        "outcome": "pass",
+        "phases": {phase: "complete" for phase in _ALL_PHASES},
+        "learn": {"status": "complete", "outcome": "full"},
+    }
+    run.update(run_overrides)
+    return {
+        "active": True,
+        "execution": {"build_loop_id": _CLOSED_RUN_ID, "phase": "report"},
+        "runs": [run],
+    }
+
+
+def test_run_closed_at_review_g_with_learn_complete_reports_complete(tmp_path: Path, monkeypatch) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", _closed_run_state())
+    # tmp_path is not a git checkout, so the workspace scan would otherwise add
+    # an environmental warning unrelated to what this test asserts.
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path])
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["current_phase"] is None
+    assert {phase["id"]: phase["status"] for phase in result["phases"]} == {
+        phase: "complete" for phase in _ALL_PHASES
+    }
+    assert result["metrics"]["phases_complete"] == 6
+    assert result["warnings"] == []
+
+
+def test_inline_run_finishing_at_top_level_done_reports_complete(tmp_path: Path) -> None:
+    state = _closed_run_state()
+    state["phase"] = "done"
+    state["execution"] = {"build_loop_id": _CLOSED_RUN_ID}
+
+    _write_json(tmp_path / ".build-loop/state.json", state)
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["current_phase"] is None
+    assert all(phase["status"] == "complete" for phase in result["phases"])
+
+
+def test_run_at_review_g_with_learn_pending_still_shows_learn_active(tmp_path: Path) -> None:
+    """A terminal execution phase must not backfill an unfinished Learn."""
+    _write_json(tmp_path / ".build-loop/state.json", _closed_run_state(
+        phases={phase: "complete" for phase in _ALL_PHASES[:5]},
+        learn={"status": "awaiting_agents", "pending_work_orders": 2},
+    ))
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "active"
+    assert result["current_phase"] == "learn"
+    assert {phase["id"]: phase["status"] for phase in result["phases"]} == {
+        "assess": "complete", "plan": "complete", "execute": "complete",
+        "review": "complete", "iterate": "complete", "learn": "active",
+    }
+
+
+def test_recorded_blocked_phase_outranks_a_terminal_execution_phase(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", _closed_run_state(
+        outcome="partial",
+        phases={"assess": "complete", "plan": "complete", "execute": "complete", "review": "blocked"},
+        learn={"status": "complete"},
+    ))
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "blocked"
+    assert result["current_phase"] == "review"
+    assert [phase["status"] for phase in result["phases"]] == [
+        "complete", "complete", "complete", "blocked", "pending", "pending",
+    ]
+
+
+def test_terminal_execution_without_a_run_record_warns_instead_of_claiming_success(tmp_path: Path) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": _CLOSED_RUN_ID, "phase": "report"},
+        "runs": [],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "idle"
+    assert result["current_phase"] is None
+    assert all(phase["status"] == "pending" for phase in result["phases"])
+    assert any("no matching run record" in warning for warning in result["warnings"])
+
+
+def test_in_flight_review_sub_step_still_projects_review_as_active(tmp_path: Path) -> None:
+    """Only the terminal 'report' marker ends a run; 'review_g' is still in flight."""
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-live", "phase": "review_g"},
+        "runs": [],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "active"
+    assert result["current_phase"] == "review"
+    assert [phase["status"] for phase in result["phases"]] == [
+        "complete", "complete", "complete", "active", "pending", "pending",
+    ]
+
+
+def test_active_run_reads_phases_from_its_own_recorded_entry(tmp_path: Path) -> None:
+    """The durable runs[] entry for the active run outranks the execution block."""
+    _write_json(tmp_path / ".build-loop/state.json", {
+        "active": True,
+        "execution": {"build_loop_id": "run-live", "phase": "iterate"},
+        "runs": [
+            {"run_id": "older", "outcome": "pass", "phases": {"learn": "blocked"}},
+            {"run_id": "run-live", "phases": {"assess": "complete", "plan": "complete"}},
+        ],
+    })
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "active"
+    assert result["current_phase"] == "iterate"
+    assert {phase["id"]: phase["status"] for phase in result["phases"]}["learn"] == "pending"
