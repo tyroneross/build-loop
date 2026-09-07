@@ -152,6 +152,54 @@ jobs:
         # workflow never actually exercises OIDC.
         run: npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org
 
+      # Turn a masked publish failure into a named cause. npm's OIDC helper
+      # swallows every exchange failure at log.verbose/silly and returns
+      # undefined (npm 11.19.0, lib/utils/oidc.js), so a broken trusted-publisher
+      # binding is invisible at the default loglevel: the publish then goes out
+      # with setup-node's placeholder NODE_AUTH_TOKEN and npmjs answers
+      # `E404 Not Found - PUT`, which reads like a missing package and is not.
+      # This step makes the same two calls npm makes and prints what npmjs
+      # actually answered, plus the exact claims the binding is matched against.
+      # Diagnostic only: never publishes, never prints either token.
+      # Source of truth: references/npm-package-publishing.md (build-loop).
+      - name: Diagnose npm trusted-publisher binding
+        continue-on-error: true
+        env:
+          NPM_PACKAGE: '@tyroneross/build-loop'
+        run: |
+          set -uo pipefail
+          ID_TOKEN=$(curl -sS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>process.stdout.write((JSON.parse(d).value)||''))")
+          if [ -z "${ID_TOKEN}" ]; then
+            echo "No GitHub OIDC id-token issued. Check that the job grants permissions.id-token: write."
+            exit 0
+          fi
+          echo "Claims npmjs matches the trusted publisher against:"
+          ID_TOKEN="${ID_TOKEN}" node -e '
+            const p = JSON.parse(Buffer.from(process.env.ID_TOKEN.split(".")[1], "base64url").toString("utf8"));
+            for (const k of ["repository", "repository_owner", "repository_visibility", "workflow_ref", "job_workflow_ref", "ref", "event_name"]) {
+              console.log(`  ${k} = ${p[k]}`);
+            }
+          '
+          # npm escapes the scope separator only, and lowercases the escape
+          # (npm-package-arg escapedName): @scope%2fname, not %40scope%2Fname.
+          ESCAPED="${NPM_PACKAGE/\//%2f}"
+          echo "POST /-/npm/v1/oidc/token/exchange/package/${ESCAPED}"
+          STATUS=$(curl -sS -o /tmp/npm-oidc-exchange.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${ID_TOKEN}" \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${ESCAPED}")
+          echo "  HTTP ${STATUS}"
+          if [ "${STATUS}" = "200" ]; then
+            echo "  Exchange succeeded. The trusted-publisher binding is valid. (Token withheld from the log.)"
+          else
+            echo "  npmjs rejected the exchange. Response body:"
+            sed -e 's/^/    /' /tmp/npm-oidc-exchange.json
+            echo "  Fix at npmjs.com > @tyroneross/build-loop > Settings > Trusted Publisher."
+            echo "  Every field is case-sensitive and unvalidated; match the claims printed above."
+          fi
+
       - name: Publish to npmjs
         if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')) && steps.npmjs_version.outputs.exists != 'true'
         # No NODE_AUTH_TOKEN — see the dry-run step above.
