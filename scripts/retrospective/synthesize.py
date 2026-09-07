@@ -18,6 +18,7 @@ returns ``status="degraded"`` with a reason rather than crashing the run.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -31,12 +32,23 @@ except ImportError:  # pragma: no cover - path fallback
 
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import temporal_membership as tm
-from retrospective.sections import build as build_sections
+from retrospective.sections import build as build_sections, load_routing_evidence
 from retrospective.write import (
     write_active,
     promote_durable,
     write_enforce_candidates,
 )
+
+
+DEFAULT_COST_LEDGER_PATH = Path.home() / ".bookmark" / "cost-ledger.jsonl"
+
+
+def _routing_ledger_path(explicit: Path | None) -> Path:
+    """Return the configured ledger path without making it a synthesis dependency."""
+    if explicit is not None:
+        return explicit
+    configured = os.environ.get("BUILD_LOOP_COST_LEDGER")
+    return Path(configured) if configured else DEFAULT_COST_LEDGER_PATH
 
 
 def _load_state_json(workdir: Path) -> dict[str, Any]:
@@ -251,6 +263,7 @@ def run(
     transcript: Path | None = None,
     memory_root: Path | None = None,
     session_id: str | None = None,
+    routing_ledger: Path | None = None,
 ) -> dict[str, Any]:
     """Synthesize the retrospective for ``workdir``.
 
@@ -304,6 +317,7 @@ def run(
             tx, state, intent_md, plan_md, rid,
             transcript_note=tx_reason,
             trace_jsonl=workdir / ".build-loop/telemetry/tool-traces.jsonl",
+            routing_evidence=load_routing_evidence(_routing_ledger_path(routing_ledger), rid),
         )
 
         # Promote BEFORE writing the active/summary pair: the summary must carry

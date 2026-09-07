@@ -6,7 +6,7 @@ Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on 
 
 ## End-of-run continuation gate
 
-After the followup drain, a second iterate cycle continues executable queue lanes only when `scripts/context_bootstrap.py:should_continue_into_queues` allows it. Backlog items remain deferred until class-aware promotion at a planning boundary.
+Before any additional follow-up or queue pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. No-regrets is off unless explicitly enabled. Follow `references/keep-going-policy.md`; accepted-plan fixes still run. Backlog needs reviewed class-aware promotion at a planning boundary.
 
 ## Re-validate hook for UI work (by `uiTarget.kind`)
 
@@ -96,13 +96,15 @@ When iteration cap is reached and queue entries remain, write them to `.build-lo
 
 ## Phase 5 autonomous iterate loop (plan §14.3 — Phase A)
 
-When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-drain loop. Entry conditions, body, and exits below; all backed by `scripts/budget_check.py` + `Agent(subagent_type="build-loop:alignment-checker", ...)`. The loop body executes after classic Phase 5 Iterate has handled the just-completed plan's own ❓ Unfixed items; then it picks up fresh queue items.
+When autonomous execution is enabled **and** the no-regrets boundary command returns `review_candidates`, Phase 5 generalizes into an additional-work queue drain. Entry conditions, body, and exits below; all backed by `scripts/budget_check.py` + `Agent(subagent_type="build-loop:alignment-checker", ...)`. The loop body executes after classic Phase 5 Iterate has handled the just-completed plan's own ❓ Unfixed items; then it picks up fresh queue items.
 
 **Pre-entry — autonomous mode detection.** Read these in order; first hit wins:
 
-1. `state.json.autonomous.enabled` (set by the skill body when `--autonomous=true` or default).
+1. `state.json.execution.autonomous` (written by the supervisor); legacy `state.json.autonomous.enabled` is read only when the execution field is absent.
 2. `--autonomous=false` on the original invocation forces `false`; loop is skipped entirely.
 3. `state.json.execution.budget` MUST exist (the skill body writes it at start). Missing → log a warning and treat autonomous as disabled for this run.
+
+**Before pickup:** run the no-regrets boundary command above and honor `stop`. Autonomous mode alone never enables additional work.
 
 **On every loop iteration entry — three short calls in order:**
 

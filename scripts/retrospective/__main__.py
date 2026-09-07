@@ -51,6 +51,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
               "without a time check, like --transcript."),
     )
     ap.add_argument("--memory-root", default=None, help="override build-loop-memory root")
+    ap.add_argument(
+        "--cost-ledger", default=None,
+        help="override cost-ledger JSONL for run-scoped routing evidence",
+    )
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     return ap.parse_args(argv)
 
@@ -59,12 +63,14 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     transcript = Path(args.transcript) if args.transcript else None
     memory_root = Path(args.memory_root) if args.memory_root else None
+    cost_ledger = Path(args.cost_ledger) if args.cost_ledger else None
     result = synth_run(
         workdir=Path(args.workdir),
         run_id=args.run_id,
         transcript=transcript,
         memory_root=memory_root,
         session_id=args.session_id,
+        routing_ledger=cost_ledger,
     )
     filing = _filing_status(result.get("active_path"))
     if filing is not None:

@@ -43,7 +43,7 @@ DEFAULT_QUEUE_LIMIT = 12
 DEFAULT_AUDIT_VERDICT_COUNT = 3
 DEFAULT_SAME_VERDICT_LIMIT = 5
 STABLE_WINDOW_SECONDS = 30
-QUEUE_DIRS = ("issues", "backlog", "ux-queue", "followup", "proposals")
+QUEUE_DIRS = ("queue", "issues", "ux-queue", "followup")
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
 DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)(s|m|h)?$")
 
@@ -112,6 +112,7 @@ def initialize_run(
     budget: str | None = None,
     long: bool = False,
     autonomous: bool = True,
+    no_regrets: bool | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Initialize one host-neutral run envelope without making time the goal."""
@@ -128,10 +129,17 @@ def initialize_run(
     autonomy_config = config.get("autonomy", {}) if isinstance(config, dict) else {}
     raw_limit = autonomy_config.get("queueLimit", "adaptive") if isinstance(autonomy_config, dict) else "adaptive"
     queue_limit = resolve_queue_limit(workdir, goal, configured=raw_limit)
+    from context_bootstrap import no_regrets_context, write_session_prefs
+    if no_regrets is not None:
+        write_session_prefs(workdir, "always" if no_regrets else "never", source="user")
+    continuation = no_regrets_context(workdir)
+    if no_regrets is not None and continuation["enabled"] != no_regrets:
+        raise ValueError("no-regrets preference could not be persisted; mode was not changed")
     execution = {
         "run_id": run_id,
         "goal": goal.strip(),
         "autonomous": bool(autonomous),
+        "no_regrets": continuation,
         "outcome_first": True,
         "related_issue_policy": "execute_related_reversible_testable",
         "queue_limit": queue_limit,
@@ -378,14 +386,30 @@ def _tokens(text: str) -> set[str]:
 
 
 def _queue_candidates(workdir: Path) -> Iterable[tuple[str, Path]]:
+    from memory_facade.backlog import _store_module
+    store = _store_module()
+    from task_surface import TERMINAL_STATUSES
     base = workdir / ".build-loop"
     for queue in QUEUE_DIRS:
         directory = base / queue
         if directory.is_dir():
-            for path in sorted(directory.rglob("*.md")):
+            # Held/archive subdirectories are not executable lanes.
+            for path in sorted(directory.glob("*.md")):
                 if path.name.upper() == "INDEX.MD":
                     continue
+                fm, _ = store.parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+                if str(fm.get("status", "open")).lower() in TERMINAL_STATUSES | {
+                    "cancelled", "blocked", "held", "quarantined"
+                }:
+                    continue
+                if str(fm.get("classify", "")).upper() in {"PRODUCTION", "DECISION"}:
+                    continue
                 yield queue, path
+    # The canonical reader excludes archive and normalizes legacy records.
+    for item in store.load_items(workdir):
+        if item.get("bucket") == "planned" and item.get("status") in {"open", "deferred"}:
+            if item.get("gated") in {None, "none", ""} and not item.get("needs_reconcile"):
+                yield "backlog", Path(item["_path"])
 
 
 def snapshot_queue(workdir: Path, goal: str, limit: int | None = None) -> dict[str, Any]:
@@ -399,6 +423,7 @@ def snapshot_queue(workdir: Path, goal: str, limit: int | None = None) -> dict[s
         ranked.append({
             "id": f"{queue}:{path.stem}",
             "queue": queue,
+            "next_action": "review_then_promote" if queue == "backlog" else "revalidate_then_classify",
             "path": str(path.relative_to(workdir)),
             "alignment_terms": overlap,
             "alignment_score": round(len(overlap) / max(1, len(goal_tokens)), 3),
@@ -423,7 +448,7 @@ def snapshot_queue(workdir: Path, goal: str, limit: int | None = None) -> dict[s
     run_id = _current_run_id(workdir)
     state = _read_json(workdir / STATE_PATH, {})
     execution = state.get("execution") if isinstance(state, dict) else {}
-    lease_expires_at = (execution or {}).get("deadline_at") or (
+    lease_expires_at = ((execution or {}).get("budget") or {}).get("deadline_at") or (
         datetime.now(timezone.utc) + timedelta(hours=2)
     ).isoformat()
     manifest = {
@@ -447,6 +472,34 @@ def snapshot_queue(workdir: Path, goal: str, limit: int | None = None) -> dict[s
         _atomic_json(run_path, manifest)
         _atomic_json(workdir / MANIFEST_PATH, manifest)
     return manifest
+
+
+def continuation(workdir: Path, goal: str) -> dict[str, Any]:
+    """Resolve additional work at each boundary; candidates still need review."""
+    from context_bootstrap import no_regrets_context
+    from budget_check import compute_envelope
+    mode = no_regrets_context(workdir)
+    if not mode["enabled"]:
+        return {**mode, "action": "stop", "reason": "no_regrets_off"}
+    state = _read_json(workdir / STATE_PATH, {})
+    if (workdir / ".build-loop/halt").exists():
+        return {**mode, "action": "stop", "reason": "user_pause"}
+    autonomous = (state.get("execution") or {}).get("autonomous")
+    if autonomous is None:
+        autonomous = (state.get("autonomous") or {}).get("enabled")
+    if autonomous is False:
+        return {**mode, "action": "stop", "reason": "classic_mode"}
+    budget = compute_envelope(state, {})
+    if budget["budget_seconds"] <= 0 or budget["remaining_seconds"] <= 0:
+        return {**mode, "action": "stop", "reason": "budget_missing_or_exhausted", "budget": budget}
+    manifest = snapshot_queue(workdir, goal)
+    return {
+        **mode,
+        "action": "review_candidates" if manifest["selected"] else "stop",
+        "reason": "aligned_candidates" if manifest["selected"] else "no_eligible_candidates",
+        "manifest": manifest,
+        "budget": budget,
+    }
 
 
 def classify_related_issue(issue: dict[str, Any]) -> dict[str, Any]:
@@ -805,6 +858,8 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         )
         if request.get(key) is not None
     }
+    # The CLI already uses this ledger; API callers must use it as well.
+    hints["ledger_path"] = Path(request.get("ledger_path") or "~/.bookmark/cost-ledger.jsonl").expanduser()
     capacity = resolve_fanout(
         workdir,
         requested=max(1, ready_items),
@@ -873,6 +928,89 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
+    """Atomically reserve a cooperating loop's wave across local worktrees.
+
+    Workers must stop before lease expiry; renew while running and release only
+    after workers finish. Advisory Rally presence is deliberately not counted.
+    """
+    reservation_id = str(request.get("reservation_id") or "").strip()
+    if not reservation_id:
+        raise ValueError("reservation_id is required (run-id:wave-id)")
+    capacity = request.get("shared_capacity")
+    if type(capacity) is not int or not 1 <= capacity <= HARD_CEILING:
+        raise ValueError("shared_capacity must be a verified host worker limit")
+    ttl = request.get("lease_seconds", 300)
+    if type(ttl) is not int or not 30 <= ttl <= 3600:
+        raise ValueError("lease_seconds must be between 30 and 3600")
+    path = Path(request.get("capacity_path") or "~/.build-loop/worker-capacity.json").expanduser()
+    now = datetime.now(timezone.utc)
+    with LockedFile(path):
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(state, dict) or not isinstance(state.get("leases", {}), dict):
+            raise ValueError("invalid capacity store; inspect it before dispatch")
+        leases = {}
+        for key, row in state.get("leases", {}).items():
+            if (not isinstance(row, dict) or type(row.get("workers")) is not int
+                    or type(row.get("shared_capacity")) is not int
+                    or not 0 < row["workers"] <= row["shared_capacity"] <= HARD_CEILING
+                    or not isinstance(row.get("workdir"), str)):
+                raise ValueError("invalid capacity lease; inspect the shared store before dispatch")
+            try:
+                expires = datetime.fromisoformat(row["expires_at"])
+                if expires > now:
+                    leases[key] = row
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("invalid capacity lease; inspect the shared store before dispatch")
+        existing = leases.get(reservation_id)
+        if existing:
+            if existing.get("workdir") != str(workdir.resolve()):
+                raise ValueError("reservation belongs to another worktree")
+            # Idempotent acquisition/renewal never changes an in-flight allocation.
+            existing["expires_at"] = (now + timedelta(seconds=ttl)).isoformat()
+            result = {"reservation": existing, "action": "renewed"}
+        else:
+            if request.get("renew_only"):
+                raise ValueError("reservation expired or missing; stop workers before acquiring a new wave")
+            # Concurrent users cannot raise the shared ceiling while leases exist.
+            capacity = min([capacity] + [row["shared_capacity"] for row in leases.values()])
+            active = sum(row["workers"] for row in leases.values())
+            decision = select_fanout(workdir, {
+                **request, "shared_capacity": capacity, "active_elsewhere": active,
+                "signals": {**(request.get("signals") or {}), "current_concurrency": 0},
+            })
+            workers = decision["admission"]["next_concurrency"]
+            lease = {
+                "reservation_id": reservation_id, "workdir": str(workdir.resolve()),
+                "workers": workers, "shared_capacity": capacity,
+                "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
+            }
+            if workers > 0:
+                leases[reservation_id] = lease
+            result = {"reservation": lease, "action": "reserved" if workers else "wait", "decision": decision}
+        _atomic_json(path, {"leases": leases})
+    return {**result, "capacity_path": str(path)}
+
+
+def release_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
+    """Release only this worktree's exact reservation after workers finish."""
+    key = str(request.get("reservation_id") or "").strip()
+    if not key:
+        raise ValueError("reservation_id is required")
+    path = Path(request.get("capacity_path") or "~/.build-loop/worker-capacity.json").expanduser()
+    with LockedFile(path):
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(state, dict) or not isinstance(state.get("leases", {}), dict):
+            raise ValueError("invalid capacity store; inspect it before release")
+        leases = state.get("leases", {})
+        row = leases.get(key)
+        if row and row.get("workdir") != str(workdir.resolve()):
+            raise ValueError("reservation belongs to another worktree")
+        removed = leases.pop(key, None) is not None
+        _atomic_json(path, {"leases": leases})
+    return {"released": removed, "reservation_id": key}
+
+
 def _payload(value: str) -> dict[str, Any]:
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
@@ -890,11 +1028,15 @@ def main(argv: list[str] | None = None) -> int:
     initialize.add_argument("--budget")
     initialize.add_argument("--long", action="store_true")
     initialize.add_argument("--autonomous", choices=("true", "false"), default="true")
+    initialize.add_argument("--no-regrets", choices=("on", "off"), default=None,
+                            help="Explicit user toggle for continuing beyond the accepted task")
     preflight = sub.add_parser("preflight")
     preflight.add_argument("--request", required=True)
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--goal", required=True)
     snapshot.add_argument("--limit", type=int)
+    continue_parser = sub.add_parser("continuation")
+    continue_parser.add_argument("--goal", required=True)
     related = sub.add_parser("classify-related")
     related.add_argument("--issue", required=True)
     verdict = sub.add_parser("verdict")
@@ -918,6 +1060,9 @@ def main(argv: list[str] | None = None) -> int:
     pressure.add_argument("--signals", required=True)
     fanout = sub.add_parser("fanout")
     fanout.add_argument("--request", required=True)
+    for name in ("reserve-fanout", "release-fanout"):
+        reservation = sub.add_parser(name)
+        reservation.add_argument("--request", required=True)
     args = parser.parse_args(argv)
     workdir = Path(args.workdir).resolve()
     try:
@@ -925,11 +1070,14 @@ def main(argv: list[str] | None = None) -> int:
             result = initialize_run(
                 workdir, args.goal, run_id=args.run_id, budget=args.budget,
                 long=args.long, autonomous=args.autonomous == "true",
+                no_regrets=None if args.no_regrets is None else args.no_regrets == "on",
             )
         elif args.command == "preflight":
             result = assess_preflight(workdir, _payload(args.request))
         elif args.command == "snapshot":
             result = snapshot_queue(workdir, args.goal, args.limit)
+        elif args.command == "continuation":
+            result = continuation(workdir, args.goal)
         elif args.command == "classify-related":
             result = classify_related_issue(_payload(args.issue))
         elif args.command == "verdict":
@@ -950,6 +1098,10 @@ def main(argv: list[str] | None = None) -> int:
             result = record_run(workdir, _payload(args.record))
         elif args.command == "backpressure":
             result = backpressure_action(_payload(args.signals))
+        elif args.command == "reserve-fanout":
+            result = reserve_fanout(workdir, _payload(args.request))
+        elif args.command == "release-fanout":
+            result = release_fanout(workdir, _payload(args.request))
         elif args.command == "fanout":
             result = select_fanout(workdir, _payload(args.request))
         else:

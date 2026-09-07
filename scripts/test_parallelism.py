@@ -440,3 +440,33 @@ class TestPartitionOverlap:
     def test_three_way_overlap_sorted(self) -> None:
         assignments = {"C": ["f"], "A": ["f"], "B": ["f"]}
         assert partition_overlap(assignments) == {"f": ["A", "B", "C"]}
+
+
+def test_partial_duplicate_usage_cannot_inflate_fanout(tmp_path):
+    path = tmp_path / 'ledger.jsonl'
+    rows = [
+        {'task_id': 'a', 'model': 'terra', 'status': 'completed', 'input_tokens': 20000, 'output_tokens': 4000},
+        {'task_id': 'b', 'model': 'terra', 'status': 'completed', 'output_tokens': 100},
+        {'task_id': 'b', 'model': 'terra', 'status': 'completed', 'output_tokens': 100},
+        {'task_id': 'c', 'model': 'terra', 'status': 'failed', 'input_tokens': 10, 'output_tokens': 100},
+    ]
+    path.write_text('\n'.join(json.dumps(row) for row in rows))
+    assert measured_tokens_per_worker(path, model='terra') == 24000
+    path.write_text(json.dumps(rows[1]))
+    assert measured_tokens_per_worker(path, model='terra') is None
+    assert resolve_fanout(tmp_path, model='terra', ledger_path=path)['token_estimate_source'] == 'heuristic'
+
+
+def test_frontier_escalations_get_conservative_resource_estimate():
+    assert classify_model_size('gpt-6-astra') == 'xlarge'
+    assert classify_model_size('claude-mythos') == 'xlarge'
+
+
+def test_usage_identity_is_scoped_to_run(tmp_path):
+    path = tmp_path / 'ledger.jsonl'
+    rows = [
+        {'run_id': 'old', 'task_id': 'a', 'model': 'terra', 'status': 'completed', 'input_tokens': 20000, 'output_tokens': 4000},
+        {'run_id': 'new', 'task_id': 'a', 'model': 'terra', 'status': 'completed', 'output_tokens': 100},
+    ]
+    path.write_text('\n'.join(json.dumps(row) for row in rows))
+    assert measured_tokens_per_worker(path, model='terra') == 24000

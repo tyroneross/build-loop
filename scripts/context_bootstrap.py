@@ -584,6 +584,10 @@ def read_session_prefs(workdir: Path) -> dict[str, Any]:
         except (json.JSONDecodeError, OSError):
             pass
 
+    # A current direct user instruction wins over standing repo configuration.
+    if state_prefs and state_prefs.get("source") == "user":
+        return state_prefs
+
     # 2. Load config.json override.
     config_path = workdir / ".build-loop" / "config.json"
     if config_path.exists():
@@ -619,48 +623,45 @@ def write_session_prefs(
     bl.mkdir(parents=True, exist_ok=True)
     state_path = bl / "state.json"
 
+    from atomic_io import LockedFile, atomic_write_bytes
     try:
-        if state_path.exists():
-            state = json.loads(state_path.read_text(encoding="utf-8"))
+        with LockedFile(state_path):
+            state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
             if not isinstance(state, dict):
                 state = {}
-        else:
-            state = {"runs": [], "schema_version": "1.0.0"}
-
-        state["session_prefs"] = {
-            "continue_from_queues": continue_from_queues,
-            "set_at": utc_now(),
-            "source": source,
-        }
-        tmp = state_path.with_name(f".{state_path.name}.tmp")
-        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, state_path)
-    except (OSError, json.JSONDecodeError):
+            state["session_prefs"] = {
+                "continue_from_queues": continue_from_queues,
+                "set_at": utc_now(),
+                "source": source,
+            }
+            atomic_write_bytes(state_path, (json.dumps(state, indent=2) + "\n").encode())
+    except (OSError, ValueError, TimeoutError):
         pass
 
 
 def should_continue_into_queues(workdir: Path) -> bool:
-    """Return True when the active execution queue should continue draining.
+    """No-regrets continuation is opt-in; completing accepted work is separate.
 
-    SHIPPED DEFAULT (2026-06-04): an *unset* preference behaves as ``"always"``
-    so every build-loop run continues its outcome-bound queue without
-    operator intervention. Existing explicit preferences are still respected:
-
-    - ``source == "default"`` (unset, fresh repo)   → True  (auto-drain)
-    - ``continue_from_queues == "always"``           → True
-    - ``continue_from_queues == "never"``            → False (per-repo opt-out)
-    - ``continue_from_queues == "ask"`` (explicit)   → False (legacy opt-in path)
-
-    The per-repo opt-out remains ``continue_from_queues: "never"`` in
-    ``.build-loop/config.json`` or via ``write_session_prefs(workdir, "never")``.
+    Reuse the existing preference: always=on, never/ask/unset=off. A legacy
+    explicit always remains a standing opt-in; an absent preference never is.
     """
+    return read_session_prefs(workdir)["continue_from_queues"] == "always"
+
+
+def no_regrets_context(workdir: Path) -> dict[str, Any]:
+    """Return the mode and the announcement the orchestrator must surface."""
     prefs = read_session_prefs(workdir)
-    if prefs["continue_from_queues"] == "always":
-        return True
-    if prefs["continue_from_queues"] == "never":
-        return False
-    # "ask" — distinguish unset (default flip → True) from explicit ask (legacy False).
-    return prefs.get("source") == "default"
+    enabled = prefs["continue_from_queues"] == "always"
+    return {
+        "enabled": enabled,
+        "source": prefs["source"],
+        "announcement": (
+            "No-regrets mode is on: continue eligible issues and promote aligned planned "
+            "backlog work until drained, paused, or the run budget expires."
+            if enabled else
+            "No-regrets mode is off: complete the accepted task and its required fixes."
+        ),
+    }
 
 
 def pending_queue_items(workdir: Path) -> dict[str, Any]:
@@ -1391,6 +1392,10 @@ def agent_brief(packet: dict[str, Any]) -> str:
         f"- Rally/coordination: {'checked' if rally.get('checked') else 'skipped'}; reasons={rally.get('reasons') or []}",
     ]
 
+    mode = packet.get("no_regrets") or {}
+    if mode.get("announcement"):
+        lines.append(f"- {mode['announcement']}")
+
     locator = canonical.get("locator") or {}
     locator_results = locator.get("results") or []
     if locator_results:
@@ -1716,6 +1721,7 @@ def build_packet(
             project=project,
         ),
         "session_prefs": read_session_prefs(workdir),
+        "no_regrets": no_regrets_context(workdir),
         "staleness": staleness_context(workdir),
         "reference_freshness": reference_freshness_context(workdir, project),
         "ops_state": ops_state_context(workdir),

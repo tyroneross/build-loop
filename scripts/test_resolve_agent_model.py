@@ -169,6 +169,94 @@ class InheritAgent(unittest.TestCase):
         self.assertEqual(env["source"], "inherit")
 
 
+class AgentPreferences(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workdir = Path(self.tmp.name)
+        (self.workdir / ".build-loop").mkdir()
+
+    def configure(self, overrides):
+        (self.workdir / ".build-loop/config.json").write_text(
+            json.dumps({"modelOverrides": overrides}), encoding="utf-8"
+        )
+
+    def resolve(self, agent, **kwargs):
+        return ram.resolve(
+            agent=agent, workdir=self.workdir,
+            host_providers=kwargs.pop("host_providers", {"openai"}), **kwargs,
+        )
+
+    def test_coordinator_preference_does_not_upgrade_other_roles(self):
+        self.configure({"agents": {"build-orchestrator": {
+            "model": "gpt-5.6-sol", "source": "chat", "evidence": "Use Sol to coordinate."
+        }}})
+        selected = self.resolve("build-orchestrator")
+        self.assertEqual(selected["model"], "gpt-5.6-sol")
+        self.assertEqual(selected["source"], "config")
+        self.assertEqual(self.resolve("assessment-orchestrator")["model"], "gpt-5.6-terra")
+        self.assertEqual(self.resolve("implementer")["model"], "gpt-5.6-terra")
+        self.assertEqual(self.resolve("mock-scanner")["model"], "gpt-5.6-luna")
+
+    def test_explicit_cheap_coordinator_overrides_broader_tier_preference(self):
+        self.configure({"thinking": "gpt-5.6-sol", "agents": {
+            "build-orchestrator": "gpt-5.6-terra"
+        }})
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-terra")
+        self.assertEqual(self.resolve("scope-auditor")["model"], "gpt-5.6-sol")
+
+    def test_below_floor_judge_preference_falls_back(self):
+        self.configure({"agents": {"independent-auditor": "gpt-5.6-luna"}})
+        result = self.resolve("independent-auditor")
+        self.assertEqual(result["model"], "gpt-5.6-sol")
+        self.assertEqual(result["resolution_path"][0]["skipped"], "below-floor")
+
+    def test_unavailable_agent_preference_falls_back_to_role(self):
+        self.configure({"agents": {"build-orchestrator": "gpt-5.6-sol"}})
+        result = self.resolve("build-orchestrator", extra_unavailable={"gpt-5.6-sol"})
+        self.assertEqual(result["model"], "gpt-5.6-terra")
+        self.assertEqual(result["resolution_path"][0]["skipped"], "unavailable")
+
+    def test_chat_metadata_does_not_grant_cross_provider_access(self):
+        self.configure({"agents": {"build-orchestrator": {
+            "model": "claude-fable-5-1", "source": "user", "evidence": "Prefer Fable."
+        }}})
+        result = self.resolve("build-orchestrator")
+        self.assertEqual(result["model"], "gpt-5.6-terra")
+        self.assertEqual(result["resolution_path"][0]["skipped"], "unavailable")
+
+    def test_state_agent_preference_remains_compatible_with_config_precedence(self):
+        (self.workdir / ".build-loop/state.json").write_text(json.dumps({
+            "config": {"modelOverrides": {"agents": {"build-orchestrator": "gpt-5.6-sol"}}}
+        }), encoding="utf-8")
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-sol")
+        self.configure({"thinking": "gpt-5.6-terra"})
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-terra")
+
+    def test_invalid_agent_entry_does_not_hide_tier_preference(self):
+        self.configure({"thinking": "gpt-5.6-sol", "agents": {
+            "build-orchestrator": {"model": None, "source": "chat"}
+        }})
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-sol")
+
+    def test_exhausted_valid_role_cannot_revive_frontmatter(self):
+        result = self.resolve("implementer", host_providers={"unreachable-provider"})
+        self.assertIsNone(result["model"])
+        self.assertFalse(result["resolved"])
+        self.assertEqual(result["source"], "unresolved")
+
+    def test_unavailable_frontier_floor_marker_is_not_dispatchable(self):
+        result = self.resolve("advisor", host_providers={"unreachable-provider"})
+        self.assertIsNone(result["model"])
+        self.assertFalse(result["resolved"])
+
+    def test_cli_require_fails_on_exhausted_role(self):
+        cp = run("implementer", "--workdir", str(self.workdir),
+                 "--host-providers", "unreachable-provider", "--require")
+        self.assertEqual(cp.returncode, 1)
+        self.assertFalse(json.loads(cp.stderr)["resolved"])
+
+
 class FallbackChain(unittest.TestCase):
     def test_missing_segment_falls_back_to_frontmatter_model(self):
         with tempfile.TemporaryDirectory() as td:
@@ -187,6 +275,41 @@ class FallbackChain(unittest.TestCase):
                               host_providers={"anthropic"})
             self.assertEqual(env["model"], "haiku")
             self.assertEqual(env["source"], "frontmatter-fallback")
+
+    def test_invalid_role_frontmatter_never_bypasses_provider_or_alias_outage(self):
+        with tempfile.TemporaryDirectory() as td:
+            adir = Path(td) / "agents"
+            _write_agent(
+                adir, "badtier", segment="agentic_execution", tier="bogus",
+                model="claude-fable-5-1",
+            )
+            cross_provider = ram.resolve(
+                agent="badtier", workdir=Path(td), agents_dir=adir,
+                host_providers={"openai"},
+            )
+            self.assertIsNone(cross_provider["model"])
+            self.assertFalse(cross_provider["resolved"])
+            self.assertEqual(cross_provider["resolution_path"][-1]["skipped"], "unavailable")
+
+            alias_outage = ram.resolve(
+                agent="badtier", workdir=Path(td), agents_dir=adir,
+                host_providers={"anthropic"}, extra_unavailable={"fable"},
+            )
+            self.assertIsNone(alias_outage["model"])
+            self.assertFalse(alias_outage["resolved"])
+
+    def test_unreachable_legacy_tier_default_remains_unresolved(self):
+        with tempfile.TemporaryDirectory() as td:
+            adir = Path(td) / "agents"
+            _write_agent(adir, "tieronly", segment=None, tier="code", model=None)
+            env = ram.resolve(
+                agent="tieronly", workdir=Path(td), agents_dir=adir,
+                host_providers={"openai"},
+            )
+            self.assertIsNone(env["model"])
+            self.assertFalse(env["resolved"])
+            self.assertEqual(env["resolution_path"][-1]["via"], "tier-default-fallback")
+            self.assertEqual(env["resolution_path"][-1]["skipped"], "unavailable")
 
     def test_no_model_no_valid_tags_unresolved(self):
         with tempfile.TemporaryDirectory() as td:

@@ -63,7 +63,14 @@ def iso_utc(now: datetime | None = None) -> str:
 
 
 def build_row(args: argparse.Namespace) -> dict[str, Any]:
-    for field in (*MEASURED_TOKEN_FIELDS, "tokens_estimate", "fanout_limit"):
+    for field in (
+        *MEASURED_TOKEN_FIELDS,
+        "tokens_estimate",
+        "fanout_limit",
+        "retry_count",
+        "rework_count",
+        "escaped_defects_count",
+    ):
         value = getattr(args, field, None)
         if value is not None and value < 0:
             raise ValueError(f"{field} must be non-negative")
@@ -81,16 +88,22 @@ def build_row(args: argparse.Namespace) -> dict[str, Any]:
         "tokens_source": args.tokens_source,
         "est_cost_usd": None,
     }
-    measured_total = 0
-    measured_present = False
+    observed_token_total = 0
+    observed_token_present = False
     for field in MEASURED_TOKEN_FIELDS:
         value = getattr(args, field, None)
         if value is not None:
             row[field] = value
-            measured_total += value
-            measured_present = True
-    if measured_present:
-        row["measured_total_tokens"] = measured_total
+            observed_token_total += value
+            observed_token_present = True
+    if observed_token_present:
+        # A provider can report only output tokens. Keep that useful subtotal,
+        # but do not call it a complete worker-token measurement.
+        row["observed_token_total"] = observed_token_total
+    if args.input_tokens is not None and args.output_tokens is not None:
+        # Cache buckets are additive when the provider reports them; input and
+        # output are the minimum complete usage pair for one agent attempt.
+        row["measured_total_tokens"] = observed_token_total
 
     for field in (
         "phase",
@@ -132,6 +145,22 @@ def build_row(args: argparse.Namespace) -> dict[str, Any]:
         row["elapsed_seconds"] = args.elapsed_seconds
     if args.downstream_iterate_outcome is not None:
         row["downstream_iterate_outcome"] = args.downstream_iterate_outcome
+    # Enrichment-only routing evidence.  The transcript hook can observe the
+    # requested model but cannot prove host-selected model/effort or quality;
+    # callers add these fields only when an attempt receipt contains them.
+    for field in (
+        "requested_model",
+        "actual_model",
+        "requested_effort",
+        "actual_effort",
+        "verifier_verdict",
+        "retry_count",
+        "rework_count",
+        "escaped_defects_count",
+    ):
+        value = getattr(args, field, None)
+        if value is not None:
+            row[field] = value
     return row
 
 
@@ -211,6 +240,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "abandoned",
         ],
         help="Enum: backfilled by orchestrator after Phase 5 closes — what the iterate cycle did with this dispatch's commit",
+    )
+    p.add_argument(
+        "--requested-model", default=None,
+        help="Model requested at dispatch; additive enrichment field.",
+    )
+    p.add_argument(
+        "--actual-model", default=None,
+        help="Model reported by the host after execution; omit when unavailable.",
+    )
+    p.add_argument(
+        "--requested-effort", choices=["low", "medium", "high", "xhigh", "max", "ultra"], default=None,
+        help="Reasoning effort requested at dispatch; additive enrichment field.",
+    )
+    p.add_argument(
+        "--actual-effort", choices=["low", "medium", "high", "xhigh", "max", "ultra"], default=None,
+        help="Reasoning effort reported by the host; omit when unavailable.",
+    )
+    p.add_argument(
+        "--verifier-verdict", default=None,
+        help="Verifier result associated with this attempt; omit when no verifier ran.",
+    )
+    p.add_argument(
+        "--retry-count", type=int, default=None,
+        help="Completed retry count for this task; zero is explicit evidence of no retry.",
+    )
+    p.add_argument(
+        "--rework-count", type=int, default=None,
+        help="Number of rework cycles attributable to this task.",
+    )
+    p.add_argument(
+        "--escaped-defects-count", type=int, default=None,
+        help="Defects found after this attempt passed its immediate verifier.",
     )
     return p.parse_args(argv)
 

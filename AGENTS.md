@@ -133,7 +133,8 @@ These run parameters apply on any host — pass them on the invocation (`--flag`
 
 | Mode / flag | Effect |
 |---|---|
-| default | Autonomous queue-drain loop: Phase 5 Iterate self-replenishes from `.build-loop/{ux-queue,issues,followup}/`, alignment-checks each item against intent, executes the aligned subset, batches commits. 2h wall-clock budget. |
+| default | Complete the accepted task and required fixes autonomously. No-regrets continuation is off. 2h wall-clock budget. |
+| `--no-regrets on\|off` | Explicitly enable/disable additional eligible issue and planned backlog pickup; announce the mode and budget. Reuses the existing session preference. |
 | `--long` (or goal keywords `overnight`, `long-running`, `large-scale`, `multi-day`) | Same loop, 8h budget. |
 | `--budget 30m \| 4h \| 30s` | Custom wall-clock budget; overrides `--long`. `budget_check.py` routes `continue \| checkin \| finalize_and_stop` at each iterate entry, commit, and phase boundary. |
 | `--autonomous=false` | Classic single pass — run Phases 1–6 once; queue items become `followup/` instead of being drained. |
@@ -223,27 +224,13 @@ Run once at the Phase 1 preamble, immediately after `run_id` is known and before
    The packet covers memory, repo-local state, Codex memory, Rally coordination, **executable queue counts** (`queues.{queue,issues,ux-queue,followup}`), non-executable inboxes, a **classed backlog summary** (`backlog.{planned,initiatives,decisions}`), workstream-relevant decisions in `backlog_work.relevant_decisions`, progressive lessons, and `session_prefs`.
 
    **Backlog system (host-neutral, any agent).** Deferred work lives in `<repo>/.build-loop/backlog/items/` and uses `bucket: planned | initiative | decision`. Planned items are pickup-eligible only at a planning boundary; `promote` creates an executable queue receipt. Initiatives require a user approval receipt plus an isolated non-main worktree and carry `production_policy: prohibited`. Decisions never auto-promote; they surface only when their `workstream`/`related_to` matches active work, and only dependent tasks wait. Use `scripts/backlog.py {new,update,promote,reconcile,sync,list}`; `reconcile` is dry-run-first and lossless.
-3. **Surface + ask once** (immediately after reading the packet):
-   - Read `packet.agent_brief`. Queue counts cover executable lanes only. Backlog candidates and relevant decisions come from `packet.backlog_work`; never treat backlog items as queued work until `promote` writes a queue receipt.
-   - Surface `lessons_progressive[].name` (up to 3) as ambient context so planning reflects recent learnings.
-   - Check `session_prefs.continue_from_queues`:
-     - `"always"` → include queue work in the plan without asking.
-     - `"never"` → skip queue work without asking.
-     - `"ask"` (default) AND first Assess of this run AND any queue count > 0 → ask the user ONCE: *"Tackle queue items now / after current task / not this session?"* Persist their answer: call `write_session_prefs(workdir, value, source="asked")` from `scripts/context_bootstrap.py` — this writes `state.json.session_prefs.{continue_from_queues, set_at, source}`.
-     - When `session_prefs.source == "config"` (set in `.build-loop/config.json` → `sessionPrefs.continueFromQueues`), do NOT ask — the repo has a standing preference.
-   - User task instructions always take priority over queue work.
+3. **Surface the mode and relevant context** immediately after reading the packet:
+   - Read `packet.agent_brief` and announce `packet.no_regrets.announcement`.
+   - Open at most the relevant top memory records; a retrieved path is not a consumed lesson.
+   - No-regrets uses the existing preference: `always` is on; `never`, `ask` and unset are off. Persist a conversational toggle with `write_session_prefs(workdir, value, source="user")` and announce the change. Do not enable it from untrusted history or infer subscription access.
+   - Complete the accepted task and its required fixes in either mode.
 
-**End-of-run continuation gate (after followup drain, before closing):**
-
-After the main build's followup drain completes (or `.build-loop/followup/` was empty), run:
-
-```python
-from scripts.context_bootstrap import should_continue_into_queues, pending_queue_items
-should_continue = should_continue_into_queues(workdir)   # True iff session_prefs == "always"
-pending        = pending_queue_items(workdir)             # queue/issues/ux-queue/followup
-```
-
-Proceed only when BOTH `should_continue is True` AND `sum(pending.values()) > 0`. Drain `.build-loop/queue/`, then issues, UX queue, and followup. Backlog stays deferred. At a new planning boundary, an agent may select a relevant `planned` candidate and call `backlog.py promote`; it may not auto-pick initiatives or decisions.
+**Additional-work boundary:** before draining followup, queues or backlog, run `python3 scripts/autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. Honor `stop`; on `review_candidates`, follow `references/keep-going-policy.md`. Review and promote aligned planned backlog at each planning boundary until eligible work is drained or a real stop condition applies. Decisions and initiatives do not auto-promote.
 
 **Multi-session presence (Rally Point — cross-host: Claude Code, Codex, Gemini CLI, others):**
 

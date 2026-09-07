@@ -216,6 +216,37 @@ def test_shortlist_phase_5_debugging_relevance(real_registry: dict) -> None:
     )
 
 
+def test_ensure_registry_rebuilds_for_source_add_edit_delete(tmp_path: Path) -> None:
+    """A valid cache must not hide changes in files the registry crawls."""
+    workdir = tmp_path
+    (workdir / "scripts").mkdir()
+    (workdir / "agents").mkdir()
+    builder = workdir / "scripts" / "build_capability_registry.py"
+    builder.write_text(
+        (SCRIPTS / "build_capability_registry.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    first = workdir / "agents" / "first.md"
+    first.write_text("---\ndescription: first architecture agent\n---\n", encoding="utf-8")
+
+    cached = cs.ensure_registry(workdir)
+    assert cached["total"] == 2  # builder script + first agent
+
+    added = workdir / "agents" / "second.md"
+    added.write_text("---\ndescription: second architecture agent\n---\n", encoding="utf-8")
+    assert cs.ensure_registry(workdir)["total"] == 3
+
+    first.write_text("---\ndescription: changed debugging agent\n---\n", encoding="utf-8")
+    changed = cs.ensure_registry(workdir)
+    assert any(
+        entry["description"] == "changed debugging agent"
+        for entry in changed["entries"]
+    )
+
+    added.unlink()
+    assert cs.ensure_registry(workdir)["total"] == 2
+
+
 def test_shortlist_kind_filter(real_registry: dict) -> None:
     out = cs.shortlist(real_registry, phase=4,
                        intent="validate the diff", kinds=["agent"])

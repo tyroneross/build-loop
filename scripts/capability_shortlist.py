@@ -93,21 +93,33 @@ def _try_load_registry(path: Path) -> dict[str, Any] | None:
 
 
 def ensure_registry(workdir: Path) -> dict[str, Any]:
-    """Read the registry; rebuild it if missing or unreadable."""
+    """Read the registry; rebuild it when crawled sources changed.
+
+    Fingerprinting uses stat metadata for registry inputs only, so a normal
+    shortlist call avoids reading the source bodies that the builder parses.
+    """
     reg_path = workdir / ".build-loop" / "capability-registry.json"
+    result: dict[str, Any] | None = None
     if reg_path.is_file():
         result = _try_load_registry(reg_path)
         if result is not None:
-            return result
+            try:
+                from build_capability_registry import registry_source_fingerprint
+                if result.get("source_fingerprint") == registry_source_fingerprint(workdir):
+                    return result
+            except (ImportError, OSError):
+                # Preserve the old fail-soft behavior if fingerprint support is
+                # unavailable in a consumer distribution.
+                return result
     builder = workdir / "scripts" / "build_capability_registry.py"
     if not builder.is_file():
-        return _EMPTY_REGISTRY
+        return result or _EMPTY_REGISTRY
     subprocess.run(
         [sys.executable, str(builder), "--workdir", str(workdir)],
         check=False,
         capture_output=True,
     )
-    return _try_load_registry(reg_path) or _EMPTY_REGISTRY
+    return _try_load_registry(reg_path) or result or _EMPTY_REGISTRY
 
 
 def score_entry(

@@ -24,6 +24,8 @@ from retrospective.sections import (  # noqa: E402
     extract_issue_signals,
     extract_tool_usage,
     extract_user_prompts,
+    format_routing_evidence,
+    load_routing_evidence,
 )
 
 
@@ -379,6 +381,64 @@ class WhatWentWellDedupeTests(unittest.TestCase):
         sec = build(None, state, None, None, "run-x")
         self.assertIn("auditor approved chunk-1", sec["what_went_well"])
         self.assertIn("auditor approved chunk-2", sec["what_went_well"])
+
+
+class RoutingEvidenceTests(unittest.TestCase):
+    def test_run_filtered_rows_merge_enrichment_and_support_comparison(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ledger = Path(tmp.name) / "cost-ledger.jsonl"
+        rows = [
+            # Dispatch row + later enrichment share one task and must count once.
+            {"run_id": "run-a", "task_id": "t1", "model": "gpt-5.6-terra", "tokens_estimate": 16000},
+            {"run_id": "run-a", "task_id": "t1", "requested_model": "gpt-5.6-terra", "actual_model": "gpt-5.6-terra", "requested_effort": "high", "actual_effort": "high", "tokens_source": "measured", "observed_token_total": 150, "measured_total_tokens": 150, "input_tokens": 100, "output_tokens": 50, "verifier_verdict": "pass", "retry_count": 1},
+            {"run_id": "other-run", "task_id": "ignore", "actual_model": "gpt-5.6-luna", "measured_total_tokens": 999, "input_tokens": 949, "output_tokens": 50, "verifier_verdict": "pass"},
+        ]
+        for task_id in ("t2", "t3"):
+            rows.append({"run_id": "run-a", "task_id": task_id, "requested_model": "gpt-5.6-terra", "actual_model": "gpt-5.6-terra", "requested_effort": "high", "actual_effort": "high", "tokens_source": "measured", "observed_token_total": 150, "measured_total_tokens": 150, "input_tokens": 100, "output_tokens": 50, "downstream_iterate_outcome": "clean"})
+        for task_id in ("t4", "t5", "t6"):
+            rows.append({"run_id": "run-a", "task_id": task_id, "requested_model": "gpt-5.6-luna", "actual_model": "gpt-5.6-luna", "requested_effort": "medium", "actual_effort": "medium", "tokens_source": "measured", "observed_token_total": 100, "measured_total_tokens": 100, "input_tokens": 50, "output_tokens": 50, "failed": False, "rework_count": 0})
+        ledger.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+        evidence = load_routing_evidence(ledger, "run-a")
+        self.assertEqual(evidence["attempts"], 6)
+        self.assertEqual(evidence["measured_token_total"], 750)
+        self.assertEqual(evidence["actual_models"], {"gpt-5.6-luna": 3, "gpt-5.6-terra": 3})
+        self.assertEqual(evidence["retries_total"], 1)
+        self.assertEqual(evidence["rework_total"], 0)
+        rendered = format_routing_evidence(evidence)
+        self.assertIn("requested model gpt-5.6-luna×3, gpt-5.6-terra×3", rendered)
+        self.assertIn("actual model gpt-5.6-luna×3, gpt-5.6-terra×3", rendered)
+        self.assertIn("750 measured tokens", rendered)
+        self.assertIn("design a controlled comparison", rendered)
+
+    def test_heuristic_tokens_stay_unknown(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ledger = Path(tmp.name) / "cost-ledger.jsonl"
+        ledger.write_text(json.dumps({
+            "run_id": "run-a", "task_id": "t1", "model": "gpt-5.6-terra",
+            "tokens_estimate": 16000, "tokens_source": "heuristic",
+        }) + "\n", encoding="utf-8")
+
+        evidence = load_routing_evidence(ledger, "run-a")
+        self.assertIsNone(evidence["measured_token_total"])
+        self.assertEqual(evidence["requested_models"], {"gpt-5.6-terra": 1})
+        self.assertIn("measured tokens unreported (0/1)", format_routing_evidence(evidence))
+
+    def test_partial_tokens_remain_observed_without_qualifying_an_attempt(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ledger = Path(tmp.name) / "cost-ledger.jsonl"
+        ledger.write_text(json.dumps({
+            "run_id": "run-a", "task_id": "t1", "tokens_source": "measured",
+            "output_tokens": 100, "observed_token_total": 100, "measured_total_tokens": 100,
+        }) + "\n", encoding="utf-8")
+
+        evidence = load_routing_evidence(ledger, "run-a")
+        self.assertEqual(evidence["observed_token_total"], 100)
+        self.assertIsNone(evidence["measured_token_total"])
+        self.assertIn("100 reported-token subtotal across 1 partial attempts", format_routing_evidence(evidence))
 
 
 if __name__ == "__main__":

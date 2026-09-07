@@ -248,6 +248,31 @@ class TemporalMembershipMergeTests(unittest.TestCase):
         self.assertEqual(len(merged["runs"][0]["judge_decisions"]), 1)
 
 
+class RoutingEvidenceSynthesisTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tmp_dir = Path(self.tmp.name)
+
+    def test_run_scoped_routing_evidence_reaches_active_retrospective(self) -> None:
+        workdir, tx = _build_workdir(self.tmp_dir, with_repeats=False)
+        ledger = self.tmp_dir / "cost-ledger.jsonl"
+        ledger.write_text("\n".join(json.dumps(row) for row in (
+            {"run_id": "test-run-1", "task_id": "t1", "actual_model": "gpt-5.6-terra", "actual_effort": "high", "tokens_source": "measured", "observed_token_total": 400, "measured_total_tokens": 400, "input_tokens": 350, "output_tokens": 50, "verifier_verdict": "pass"},
+            {"run_id": "another-run", "task_id": "ignore", "actual_model": "gpt-5.6-luna", "tokens_source": "measured", "observed_token_total": 999, "measured_total_tokens": 999, "input_tokens": 949, "output_tokens": 50, "verifier_verdict": "pass"},
+        )) + "\n", encoding="utf-8")
+
+        result = synth_run(
+            workdir, run_id="test-run-1", transcript=tx,
+            memory_root=self.tmp_dir / "no-memory", routing_ledger=ledger,
+        )
+        self.assertEqual(result["status"], "ok")
+        body = Path(result["active_path"]).read_text(encoding="utf-8")
+        self.assertIn("Routing evidence: 1 dispatches", body)
+        self.assertIn("400 measured tokens", body)
+        self.assertNotIn("999 measured tokens", body)
+
+
 class CodexHostAbsenceTests(unittest.TestCase):
     """RCA 2026-07-11 #1: a codex-hosted run with no Claude transcript must produce an
     explicit absence marker in the retrospective — ZERO substitution of a stale transcript."""

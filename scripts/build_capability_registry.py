@@ -47,6 +47,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -671,6 +672,44 @@ def crawl_scripts(repo: Path) -> Iterable[Dict[str, Any]]:
 # Top-level
 # ---------------------------------------------------------------------------
 
+def registry_source_fingerprint(repo: Path) -> str:
+    """Fingerprint only files the registry crawlers inspect.
+
+    Stat metadata is enough to detect additions, edits, and deletions without
+    reading source bodies on every shortlist invocation.
+    """
+    roots = (
+        repo / "agents",
+        repo / "skills",
+        repo / "commands",
+        repo / "scripts",
+    )
+    paths: list[Path] = []
+    if (repo / "hooks" / "hooks.json").is_file():
+        paths.append(repo / "hooks" / "hooks.json")
+    if (repo / ".mcp.json").is_file():
+        paths.append(repo / ".mcp.json")
+    for root in roots:
+        if not root.is_dir():
+            continue
+        pattern = "*.py" if root.name == "scripts" else (
+            "SKILL.md" if root.name == "skills" else "*.md"
+        )
+        paths.extend(
+            p for p in (root.rglob(pattern) if root.name == "skills" else root.glob(pattern))
+            if not (root.name == "scripts" and (
+                p.name.startswith("_") or p.name.startswith("test_")
+            ))
+        )
+    parts: list[str] = []
+    for path in sorted(paths):
+        try:
+            stat = path.stat()
+            parts.append(f"{path.relative_to(repo)}:{stat.st_mtime_ns}:{stat.st_size}")
+        except OSError:
+            parts.append(f"{path.relative_to(repo)}:err")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
 def build_registry(repo: Path) -> Dict[str, Any]:
     entries: List[Dict[str, Any]] = []
     for fn in (crawl_agents, crawl_skills, crawl_commands,
@@ -697,6 +736,7 @@ def build_registry(repo: Path) -> Dict[str, Any]:
         "generator": "build_capability_registry.py",
         "generator_version": "0.2.0",
         "repo_root": str(repo),
+        "source_fingerprint": registry_source_fingerprint(repo),
         "total": len(entries),
         "counts_by_kind": by_kind,
         "counts_by_category": by_category,

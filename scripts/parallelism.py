@@ -71,7 +71,7 @@ _MODEL_SIZE_MARKERS = {
     "small": ("haiku", "luna", "pattern", "nano", "mini", "3b", "7b"),
     "medium": ("sonnet", "terra", "code", "14b", "32b"),
     "large": ("opus", "thinking", "70b"),
-    "xlarge": ("fable", "sol", "frontier", "ultra-frontier"),
+    "xlarge": ("fable", "mythos", "astra", "sol", "frontier", "ultra-frontier"),
 }
 
 
@@ -159,30 +159,30 @@ def measured_tokens_per_worker(
     """Return median measured raw tokens for matching completed ledger rows."""
     if not model or not ledger_path.exists():
         return None
-    totals: list[int] = []
+    samples: dict[str, int | None] = {}
     try:
-        for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        for index, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines()):
             try:
                 row = json.loads(line)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
-            if str(row.get("model") or "").lower() != model.lower():
+            if not isinstance(row, dict):
                 continue
-            if agent and row.get("agent") != agent:
+            actual = row.get("actual_model") or row.get("model") or ""
+            if str(actual).lower() != model.lower() or (agent and row.get("agent") != agent):
                 continue
             if row.get("status") == "dispatched":
                 continue
-            buckets = (
-                row.get("input_tokens"),
-                row.get("output_tokens"),
-                row.get("cache_read_input_tokens"),
-                row.get("cache_creation_input_tokens"),
-            )
-            if not any(isinstance(value, int) and value > 0 for value in buckets):
-                continue
-            totals.append(sum(value for value in buckets if isinstance(value, int) and value > 0))
+            # Latest terminal attempt wins; partial records cannot masquerade as
+            # a complete worker measurement or crowd out other tasks.
+            key = json.dumps([row.get("run_id"), row.get("task_id") or f"legacy-line-{index}"])
+            buckets = (row.get("input_tokens"), row.get("output_tokens"),
+                       row.get("cache_read_input_tokens", 0), row.get("cache_creation_input_tokens", 0))
+            complete = all(type(value) is int and value >= 0 for value in buckets)
+            samples[key] = sum(buckets) if complete and row.get("status") == "completed" else None
     except OSError:
         return None
+    totals = [value for value in samples.values() if value is not None and value > 0]
     return int(statistics.median(totals[-20:])) if totals else None
 
 

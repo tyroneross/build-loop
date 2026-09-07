@@ -9,21 +9,14 @@ each; the full detail lives here and loads on demand.
 
 ## Autonomous Mode (Queue-Drain Loop)
 
-Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains executable `queue/` + `ux-queue/` + `issues/` + `followup/` lanes, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Proposals and backlog items remain non-executable.
-
-**End-of-run queue continuation:** every run may continue its executable lanes at end-of-thread. Backlog work joins only through `backlog.py promote` at a planning boundary. Planned work is pickup-eligible; initiatives require user approval and an isolated non-main worktree; decisions only surface for matching workstreams.
-
-```json
-{ "sessionPrefs": { "continueFromQueues": "never" } }
-```
-
-`PRODUCTION`/`DECISION`-classified items still surface (not auto-executed). The continuation runs the same alignment-checker + scope-auditor + independent-auditor wiring as the in-run iterate loop. Stop conditions: iterate-cap (25 autonomous / 5 classic), budget exhausted, PRODUCTION encountered, 5 consecutive iterate failures, explicit user pause. Surfaced in the run report's `## Queue continuation` section.
+Autonomous execution completes the accepted plan and its required fixes. Additional queue and planned-backlog pickup requires explicit **no-regrets** opt-in, off by default. At Assess announce the mode; at every additional-work boundary run `autonomy_supervisor.py continuation` and follow `references/keep-going-policy.md`. Neither a long budget nor `autonomous=true` turns it on.
 
 ### Flag surface
 
 | Invocation | Effect |
 |---|---|
-| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true |
+| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true, no-regrets off |
+| `/build-loop:run --no-regrets on\|off "goal text"` | persist explicit continuation preference and announce mode/budget |
 | `/build-loop:run --long "goal text"` | long mode, 8h budget |
 | `/build-loop:run --budget 4h "goal text"` | custom budget (overrides `--long`) |
 | `/build-loop:run --budget 30m "goal text"` | accepts `30s`, `30m`, `4h`, or bare integer seconds |

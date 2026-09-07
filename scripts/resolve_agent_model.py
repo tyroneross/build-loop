@@ -30,8 +30,9 @@ Resolution + fallback chain:
   * ``segment``/``tier`` == ``inherit``  -> ``{model: "inherit", source: "inherit"}``
     (an inherit agent flows the caller's model through; dispatch passes NO override).
   * else                                 -> ``resolve_role(segment, tier, workdir)``.
-  * resolve yields no model               -> agent ``model:`` frontmatter (``source: frontmatter-fallback``).
-  * still nothing + a known tier          -> tier default (``source: tier-default-fallback``).
+  * valid role has no available model     -> unresolved; never revive its frontmatter default.
+  * missing/invalid role                 -> dispatchable agent ``model:`` frontmatter (``source: frontmatter-fallback``).
+  * still nothing + a known tier          -> dispatchable tier default (``source: tier-default-fallback``).
   * nothing resolvable                    -> ``{model: None, source: unresolved}`` (exit 1 with ``--require``).
 
 CLI::
@@ -170,6 +171,7 @@ def resolve(
                 workdir=workdir,
                 extra_unavailable=extra_unavailable,
                 host_providers=host_providers,
+                agent=agent,
             )
         except ValueError as exc:
             # Unknown segment/tier token — fall through to the frontmatter/tier chain.
@@ -177,58 +179,87 @@ def resolve(
             env = {}
         else:
             resolution_path.extend(env.get("resolution_path", []))
-            if env.get("model"):
-                return {
-                    "agent": agent,
-                    "segment": segment,
-                    "tier": tier,
-                    "model": env["model"],
-                    "source": env.get("source", "role-preferred"),
-                    "resolution_path": resolution_path,
-                    "prompting_profile": model_taxonomy.prompting_profile(tier),
-                    "preferred_models": env.get("preferred_models", []),
-                    "preferred_effort": env.get("preferred_effort"),
-                    "effort_guidance": env.get("effort_guidance"),
-                    "resolved": env.get("resolved", True),
-                }
+            # A valid role that exhausted its available choices must stay
+            # unresolved. Frontmatter is a compatibility fallback for absent or
+            # invalid roles, never permission to revive an unavailable model.
+            resolved = bool(env.get("model")) and env.get("resolved", True)
+            return {
+                "agent": agent,
+                "segment": segment,
+                "tier": tier,
+                "model": env.get("model") if resolved else None,
+                "source": env.get("source", "role-preferred") if resolved else "unresolved",
+                "resolution_path": resolution_path,
+                "prompting_profile": model_taxonomy.prompting_profile(tier),
+                "preferred_models": env.get("preferred_models", []),
+                "preferred_effort": env.get("preferred_effort"),
+                "effort_guidance": env.get("effort_guidance"),
+                "resolved": resolved,
+            }
     else:
         resolution_path.append({"role": f"{segment}/{tier}", "skipped": "missing segment or tier"})
 
     # Fallback 1: the agent's own `model:` frontmatter (the recommended default).
     if fm_model:
-        resolution_path.append({"model": fm_model, "selected": True, "via": "frontmatter-fallback"})
-        return {
-            "agent": agent,
-            "segment": segment,
-            "tier": tier,
-            "model": fm_model,
-            "source": "frontmatter-fallback",
-            "resolution_path": resolution_path,
-            "prompting_profile": model_taxonomy.prompting_profile(tier),
-            "preferred_models": [fm_model],
-            "preferred_effort": model_taxonomy.preferred_effort(segment, tier, fm_model),
-            "effort_guidance": model_taxonomy.effort_guidance(segment, tier, fm_model),
-            "resolved": True,
-        }
+        dispatch = model_resolver.dispatchability(
+            fm_model,
+            workdir=workdir,
+            extra_unavailable=extra_unavailable,
+            host_providers=host_providers,
+        )
+        if dispatch["resolved"]:
+            model = dispatch["model"]
+            resolution_path.append({"model": model, "selected": True, "via": "frontmatter-fallback"})
+            return {
+                "agent": agent,
+                "segment": segment,
+                "tier": tier,
+                "model": model,
+                "source": "frontmatter-fallback",
+                "resolution_path": resolution_path,
+                "prompting_profile": model_taxonomy.prompting_profile(tier),
+                "preferred_models": [model],
+                "preferred_effort": model_taxonomy.preferred_effort(segment, tier, model),
+                "effort_guidance": model_taxonomy.effort_guidance(segment, tier, model),
+                "resolved": True,
+            }
+        resolution_path.append({
+            "model": dispatch["model"] or fm_model,
+            "skipped": dispatch["reason"],
+            "via": "frontmatter-fallback",
+        })
 
     # Fallback 2: the tier default (legacy token), if the tier is a known legacy token.
     if tier and tier in model_overrides.TIER_DEFAULTS:
         default = model_overrides.TIER_DEFAULTS[tier]
         if default:
-            resolution_path.append({"model": default, "selected": True, "via": "tier-default-fallback"})
-            return {
-                "agent": agent,
-                "segment": segment,
-                "tier": tier,
-                "model": default,
-                "source": "tier-default-fallback",
-                "resolution_path": resolution_path,
-                "prompting_profile": model_taxonomy.prompting_profile(tier),
-                "preferred_models": [default],
-                "preferred_effort": model_taxonomy.preferred_effort(segment, tier, default),
-                "effort_guidance": model_taxonomy.effort_guidance(segment, tier, default),
-                "resolved": True,
-            }
+            dispatch = model_resolver.dispatchability(
+                default,
+                workdir=workdir,
+                extra_unavailable=extra_unavailable,
+                host_providers=host_providers,
+            )
+            if dispatch["resolved"]:
+                model = dispatch["model"]
+                resolution_path.append({"model": model, "selected": True, "via": "tier-default-fallback"})
+                return {
+                    "agent": agent,
+                    "segment": segment,
+                    "tier": tier,
+                    "model": model,
+                    "source": "tier-default-fallback",
+                    "resolution_path": resolution_path,
+                    "prompting_profile": model_taxonomy.prompting_profile(tier),
+                    "preferred_models": [model],
+                    "preferred_effort": model_taxonomy.preferred_effort(segment, tier, model),
+                    "effort_guidance": model_taxonomy.effort_guidance(segment, tier, model),
+                    "resolved": True,
+                }
+            resolution_path.append({
+                "model": dispatch["model"] or default,
+                "skipped": dispatch["reason"],
+                "via": "tier-default-fallback",
+            })
 
     # Nothing resolvable.
     return {

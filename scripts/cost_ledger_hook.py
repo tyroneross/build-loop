@@ -205,7 +205,9 @@ def _build_namespace(dispatch: dict, task_id: str, run_id: str | None) -> Simple
         execution_location=execution_location,
         model_size=model_size,
         output_size="medium",
-        effort="medium",
+        # The transcript has no effort field.  Leaving it absent keeps a
+        # heuristic model-size estimate from becoming false effort telemetry.
+        effort=None,
         fanout_limit=None,
         fanout_primary_constraint=None,
         wall_clock_seconds=None,
@@ -219,6 +221,14 @@ def _build_namespace(dispatch: dict, task_id: str, run_id: str | None) -> Simple
         issue_found=None,
         elapsed_seconds=None,
         downstream_iterate_outcome=None,
+        requested_model=dispatch["model"],
+        actual_model=None,
+        requested_effort=None,
+        actual_effort=None,
+        verifier_verdict=None,
+        retry_count=None,
+        rework_count=None,
+        escaped_defects_count=None,
     )
 
 

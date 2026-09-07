@@ -807,6 +807,202 @@ def _enforce_signals(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Cost-ledger routing evidence (run-scoped, deterministic, no inference).
+# ---------------------------------------------------------------------------
+
+def _nonnegative_int(value: Any) -> int | None:
+    """Return an integer telemetry value only when it is an actual count."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _counted_labels(values: dict[str, Any]) -> str:
+    """Render a stable compact ``model×count`` list, or an honest absence."""
+    labels = [f"{label}×{count}" for label, count in sorted(values.items()) if isinstance(count, int)]
+    return ", ".join(labels) if labels else "unreported"
+
+
+def load_routing_evidence(ledger_path: Path | None, run_id: str) -> dict[str, Any]:
+    """Summarize cost-ledger evidence for one run without treating gaps as zero.
+
+    Cost-ledger rows can be emitted at dispatch and enriched after return under
+    the same ``task_id``.  The latest non-null value for each field wins, so one
+    attempt contributes at most once to token and quality totals.  Heuristic
+    estimates remain outside measured-token totals by design.
+    """
+    attempts: dict[str, dict[str, Any]] = {}
+    if ledger_path is None or not ledger_path.is_file():
+        return {"attempts": 0, "ledger_available": False}
+    try:
+        with ledger_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict) or row.get("run_id") != run_id:
+                    continue
+                task_id = row.get("task_id")
+                if not isinstance(task_id, str) or not task_id:
+                    continue
+                merged = attempts.setdefault(task_id, {})
+                # Append order is ledger chronology.  Preserve only explicit
+                # values, so a sparse terminal row cannot erase a dispatch fact.
+                for key, value in row.items():
+                    if value is not None:
+                        merged[key] = value
+    except OSError:
+        return {"attempts": 0, "ledger_available": False}
+
+    requested_models: Counter[str] = Counter()
+    actual_models: Counter[str] = Counter()
+    requested_efforts: Counter[str] = Counter()
+    actual_efforts: Counter[str] = Counter()
+    verifier_verdicts: Counter[str] = Counter()
+    measured_total = 0
+    measured_attempts = 0
+    observed_token_total = 0
+    observed_token_attempts = 0
+    quality_attempts = 0
+    retries_total = 0
+    retries_observed = 0
+    rework_total = 0
+    rework_observed = 0
+    escaped_defects_total = 0
+    escaped_defects_observed = 0
+
+    for row in attempts.values():
+        # Before the additive field existed, ``model`` was the dispatch value.
+        # It remains usable as a requested model, never as an actual-model claim.
+        requested_model = row.get("requested_model") or row.get("model")
+        if isinstance(requested_model, str) and requested_model:
+            requested_models[requested_model] += 1
+        actual_model = row.get("actual_model")
+        if isinstance(actual_model, str) and actual_model:
+            actual_models[actual_model] += 1
+        requested_effort = row.get("requested_effort")
+        if isinstance(requested_effort, str) and requested_effort:
+            requested_efforts[requested_effort] += 1
+        actual_effort = row.get("actual_effort")
+        if isinstance(actual_effort, str) and actual_effort:
+            actual_efforts[actual_effort] += 1
+
+        # Historical writers mislabeled output-only subtotals as complete.
+        # Reconstruct completeness from the original buckets, never that label.
+        buckets = [row.get("input_tokens"), row.get("output_tokens"),
+                   row.get("cache_read_input_tokens", 0), row.get("cache_creation_input_tokens", 0)]
+        provider_usage = row.get("tokens_source") in {"measured", "usage"}
+        complete = all(_nonnegative_int(value) is not None for value in buckets)
+        measured = sum(buckets) if provider_usage and complete else None
+        observed = None
+        if provider_usage:
+            reported = [_nonnegative_int(row.get(key)) for key in
+                        ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
+            if any(value is not None for value in reported):
+                observed = sum(value for value in reported if value is not None)
+            else:
+                observed = _nonnegative_int(row.get("observed_token_total"))
+        if observed is not None:
+            observed_token_attempts += 1
+            observed_token_total += observed
+        if measured is not None:
+            measured_attempts += 1
+            measured_total += measured
+
+        quality_observed = any(
+            row.get(key) is not None
+            for key in ("verifier_verdict", "downstream_iterate_outcome", "failed", "issue_found")
+        )
+        if quality_observed:
+            quality_attempts += 1
+        verdict = row.get("verifier_verdict")
+        if isinstance(verdict, str) and verdict:
+            verifier_verdicts[verdict] += 1
+        retry_count = _nonnegative_int(row.get("retry_count"))
+        if retry_count is not None:
+            retries_observed += 1
+            retries_total += retry_count
+        rework_count = _nonnegative_int(row.get("rework_count"))
+        if rework_count is not None:
+            rework_observed += 1
+            rework_total += rework_count
+        escaped_defects_count = _nonnegative_int(row.get("escaped_defects_count"))
+        if escaped_defects_count is not None:
+            escaped_defects_observed += 1
+            escaped_defects_total += escaped_defects_count
+
+    return {
+        "attempts": len(attempts),
+        "ledger_available": True,
+        "requested_models": dict(sorted(requested_models.items())),
+        "actual_models": dict(sorted(actual_models.items())),
+        "requested_efforts": dict(sorted(requested_efforts.items())),
+        "actual_efforts": dict(sorted(actual_efforts.items())),
+        "measured_token_attempts": measured_attempts,
+        "measured_token_total": measured_total if measured_attempts else None,
+        "observed_token_attempts": observed_token_attempts,
+        "observed_token_total": observed_token_total if observed_token_attempts else None,
+        "quality_attempts": quality_attempts,
+        "retries_total": retries_total if retries_observed else None,
+        "rework_total": rework_total if rework_observed else None,
+        "verifier_verdicts": dict(sorted(verifier_verdicts.items())),
+        "escaped_defects_total": escaped_defects_total if escaped_defects_observed else None,
+    }
+
+
+def format_routing_evidence(evidence: dict[str, Any]) -> str:
+    """Render one compact, evidence-qualified routing line for a retrospective."""
+    attempts = _nonnegative_int(evidence.get("attempts")) or 0
+    if not attempts:
+        return "Routing evidence: no cost-ledger rows matched this run; retain current routing."
+
+    requested_models = evidence.get("requested_models") or {}
+    actual_models = evidence.get("actual_models") or {}
+    actual_model_count = sum(actual_models.values()) if isinstance(actual_models, dict) else 0
+    requested_efforts = evidence.get("requested_efforts") or {}
+    actual_efforts = evidence.get("actual_efforts") or {}
+    actual_effort_count = sum(actual_efforts.values()) if isinstance(actual_efforts, dict) else 0
+    measured_attempts = _nonnegative_int(evidence.get("measured_token_attempts")) or 0
+    observed_attempts = _nonnegative_int(evidence.get("observed_token_attempts")) or 0
+    quality_attempts = _nonnegative_int(evidence.get("quality_attempts")) or 0
+    token_coverage = (
+        f"measured tokens {measured_attempts}/{attempts}"
+        if measured_attempts else f"measured tokens unreported (0/{attempts})"
+    )
+    parts = [
+        f"Routing evidence: {attempts} dispatches",
+        f"requested model {_counted_labels(requested_models)}",
+        f"actual model {_counted_labels(actual_models)} ({actual_model_count}/{attempts})",
+        f"requested effort {_counted_labels(requested_efforts)}",
+        f"actual effort {_counted_labels(actual_efforts)} ({actual_effort_count}/{attempts})",
+        token_coverage,
+        f"quality outcome {quality_attempts}/{attempts}",
+    ]
+    total = _nonnegative_int(evidence.get("measured_token_total"))
+    if total is not None:
+        parts.append(f"{total} measured tokens")
+    observed_total = _nonnegative_int(evidence.get("observed_token_total"))
+    partial_attempts = max(observed_attempts - measured_attempts, 0)
+    if observed_total is not None and partial_attempts > 0:
+        parts.append(f"{observed_total} reported-token subtotal across {partial_attempts} partial attempts")
+    retries = _nonnegative_int(evidence.get("retries_total"))
+    if retries is not None:
+        parts.append(f"{retries} retries")
+    rework = _nonnegative_int(evidence.get("rework_total"))
+    if rework is not None:
+        parts.append(f"{rework} rework cycles")
+    verdicts = evidence.get("verifier_verdicts") or {}
+    if isinstance(verdicts, dict) and verdicts:
+        parts.append(f"verifier {_counted_labels(verdicts)}")
+    escaped = _nonnegative_int(evidence.get("escaped_defects_total"))
+    if escaped is not None:
+        parts.append(f"{escaped} escaped defects")
+    recommendation = (
+        "retain current routing; design a controlled comparison with matched task, agent, and effort cohorts plus measured tokens and quality outcomes"
+    )
+    return "; ".join(parts) + f". Recommendation: {recommendation}."
+
+
 def build(
     transcript_jsonl: Path | None,
     state_json: dict[str, Any] | None,
@@ -817,6 +1013,7 @@ def build(
     prompted_threshold: int = 2,
     transcript_note: str | None = None,
     trace_jsonl: Path | None = None,
+    routing_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the 9 named sections.
 
@@ -902,7 +1099,8 @@ def build(
         lessons, "no lessons captured (transcript empty or no prior signals)"
     )
 
-    # 2. key_takeaways — surface the intent's restated line + plan headline.
+    # 2. key_takeaways — retain the fixed nine-section contract while adding
+    # one compact run-scoped routing/calibration signal.
     takeaways: list[str] = []
     m = re.search(r"^## Restated intent.*?\n+([^\n]+)", intent_md, re.M | re.S)
     if m:
@@ -912,6 +1110,8 @@ def build(
         takeaways.append(f"Plan headline: {m2.group(1).strip()}")
     if last_run.get("outcome"):
         takeaways.append(f"Run outcome: {last_run['outcome']}")
+    if routing_evidence is not None:
+        takeaways.append(format_routing_evidence(routing_evidence))
     sections["key_takeaways"] = _format_simple_bullet_section(
         takeaways, "no key takeaways captured"
     )

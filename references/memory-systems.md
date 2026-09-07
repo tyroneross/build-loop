@@ -63,22 +63,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 
 **Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, unavailable optional Coding Debugger, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
 
-### 1b. Re-read cadence — long/autonomous mode only (WP-G1)
+### 1b. Targeted re-read cadence
 
-Short runs read once at Phase 1 (above). In **LONG / AUTONOMOUS mode ONLY**, re-read
-memory at each iterate-loop entry and each phase boundary, **gated by
-`scripts/memory_staleness_check.py`** so it is a no-op when nothing changed:
+Read once at Assess, then query again when the task changes domain, a premise fails, a repeated error appears, a planning decision needs prior evidence, or a handoff resumes work. Use `memory_locator.py --query "<specific decision or symptom>" --project <slug> --limit 3 --json`; open only relevant canonical records. A milestone-vs-HEAD check alone cannot detect changed relevance or another session's new memory. At unchanged phase boundaries, reuse the already-read capsule rather than reload bootstrap.
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_staleness_check.py --workdir "$PWD" --json
-# stale=true → re-run the §1 bootstrap; stale=false → skip (cheap milestone-vs-HEAD read)
-```
-
-The staleness check is a single cheap file read (latest milestone `commit` sha vs
-commits-since count); it costs almost nothing when clean. The re-read catches two
-things: parallel-session writes landing in canonical memory mid-run, and the run's
-OWN accumulating decisions (see incremental writes, G2). Classic short runs skip
-this entirely — the once-at-Phase-1 read is sufficient when the run is brief.
+Use `capability_shortlist.py` when choosing a tool for a new task class; its registry refreshes when source surfaces change. Use the locator for deterministic memory paths and `memory_facade.py recall` when richer content retrieval is needed. Widen the query or backend only after a useful local miss. Record a memory-use event only after opening and applying or explicitly rejecting a record, linked to its retrieval correlation ID; a path hit is retrieval evidence, not use.
 
 ### 1a. Live context snapshots (handoff/resume, not durable memory)
 
@@ -97,7 +86,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
 
 **Return shape**: `{ ok, action: "written" | "skipped", snapshot_id, snapshot_path?, current_path }`.
 
-**Writes**: `.build-loop/context/current.md`, `.build-loop/context/snapshots/*.json`, and trigger-specific JSONL sidecars for agent and commit boundaries. This is session/runtime context like Bookmark's useful handoff layer, but non-blocking and repo-local. Do NOT promote every snapshot into durable memory. Only Review-G or explicit decisions write reusable facts to `build-loop-memory`.
+**Writes**: `.build-loop/context/current.md`, `.build-loop/context/snapshots/*.json`, and trigger-specific JSONL sidecars for agent and commit boundaries. This is session/runtime context like Bookmark's useful handoff layer, but non-blocking and repo-local. Do NOT promote every snapshot into durable memory. Capture evidenced reusable insights when discovered through the incremental write protocol below; Review-G consolidates them. Snapshots alone are not durable lessons.
 
 ### 2. Unified recall facade (diagnostic/reference)
 
@@ -163,6 +152,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 | Codex MEMORY.md absent | `codex_memory.reasons[]` records missing registry | n/a | n/a | n/a | n/a |
 | All backends down | packet still emits with populated `reasons[]` | envelope w/ all `reasons` populated, `results: []` | grep fallback | n/a | all relevant backends `ok: false` |
 
+## Useful lessons and preferences
+
+A durable insight records the trigger, observed mechanism, evidence path/run, reusable action, scope and limits, and what would invalidate it. Include a concrete check that would detect the original failure. Search for the same topic before writing; update or supersede existing knowledge instead of producing another near-duplicate. Missing context or speculative explanations belong in pending lessons, not promoted facts. Remove generic messages, empty notes, and summaries such as “tool fired” from recurring-pattern inputs.
+
+For model routing, capture task shape and complexity, requested and actual model/effort, measured token coverage, elapsed time, retries/rework, verifier outcome and escaped defects. Unknown measurements remain unknown. A successful cheap attempt is a candidate for a bounded comparison; changing a default needs comparable quality evidence. Negative results and where a cheaper model required escalation are useful lessons too.
+
+Learn preferences from explicit user statements in the available conversation or approved preference memory. Store a short quote/source and scope with the existing config override; current instructions supersede older preferences. “Free account” can inform a cost preference but cannot prove available models, quotas or dispatch permissions. Verify those through host/config capability evidence. Never ingest a whole chat transcript just to guess preferences.
+
 ## Write protocol — Phase 4 Review sub-step F
 
 Apply the canonical recall-optimized write rule in
@@ -195,10 +192,10 @@ exactly what the staleness-gated re-read picks back up.
 
 ### Run entry — delegate to the deterministic writer
 
-Do NOT hand-write JSON. Schema source-of-truth lives in `scripts/write_run_entry.py`.
+Do NOT hand-write JSON. Schema source-of-truth lives in `scripts/write_run_entry/__main__.py`.
 
 ```bash
-RUN_ID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py" \
+RUN_ID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py" \
   --workdir "$PWD" \
   --goal "$GOAL_SUMMARY" \
   --outcome pass \

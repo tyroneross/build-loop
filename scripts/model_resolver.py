@@ -256,6 +256,63 @@ def in_tier_candidates(
     return out
 
 
+def _availability_context(
+    workdir: Path,
+    *,
+    extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
+) -> tuple[set[str], set[str] | None]:
+    """Return the one availability view used by role and fallback resolution."""
+    wd = workdir.expanduser().resolve()
+    unavailable = expand_unavailable(
+        load_unavailable(wd) | set(extra_unavailable or ())
+    )
+    if host_providers is HOST_FILTER_DISABLED:
+        providers = None
+    elif host_providers is not None:
+        providers = {str(p).strip().lower() for p in host_providers}
+    else:
+        providers = load_host_providers(wd)
+
+    # Provider reachability and local fit are availability facts for every
+    # candidate, including compatibility fallbacks outside a valid role.
+    if providers is not None:
+        for mid in (model_taxonomy.taxonomy().get("models") or {}):
+            if mid.startswith("_"):
+                continue
+            meta = model_taxonomy.model_meta(mid) or {}
+            provider = (meta.get("provider") or "").strip().lower()
+            if provider and provider not in providers:
+                unavailable.add(mid)
+    unavailable |= _too_large_for_host()
+    return unavailable, providers
+
+
+def dispatchability(
+    model: str | None,
+    *,
+    workdir: Path | None = None,
+    extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
+    unavailable: set[str] | None = None,
+) -> dict[str, Any]:
+    """Check one candidate against the same live availability view as roles."""
+    if unavailable is None:
+        if workdir is None:
+            raise ValueError("workdir is required when availability is not supplied")
+        unavailable, _ = _availability_context(
+            workdir,
+            extra_unavailable=extra_unavailable,
+            host_providers=host_providers,
+        )
+    candidate = model_overrides.normalize_model_id(model)
+    return {
+        "model": candidate,
+        "resolved": bool(candidate) and candidate not in unavailable,
+        "reason": None if candidate and candidate not in unavailable else "unavailable",
+    }
+
+
 def resolve(
     *,
     tier: str,
@@ -284,30 +341,14 @@ def resolve(
         raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
 
     wd = workdir.expanduser().resolve()
-    # Expand canonical<->alias forms so an outage declared by either fires (GAP 1).
-    unavailable = expand_unavailable(
-        load_unavailable(wd) | set(extra_unavailable or ())
-    )
     tier_cache = load_tier_cache(wd)
     # Host filter defaults to the current host (GAP 2): explicit arg wins, then
     # config hostProviders, then detected host, then None (host-neutral).
-    if host_providers is HOST_FILTER_DISABLED:
-        host_providers = None  # explicit opt-out: no filtering
-    elif host_providers is not None:
-        host_providers = {str(p).strip().lower() for p in host_providers}
-    else:
-        host_providers = load_host_providers(wd)
-
-    # Fold host-unreachable registry models into the unavailable set so the
-    # cross-tier descent (resolve_with_tier_fallback) also avoids them. The
-    # in-tier walk applies the same filter via in_tier_candidates.
-    if host_providers is not None:
-        for entries in MODEL_REGISTRY.values():
-            for entry in entries:
-                provider = (entry.get("provider") or "").strip().lower()
-                mid = entry.get("id")
-                if mid and provider and provider not in host_providers:
-                    unavailable.add(mid)
+    unavailable, host_providers = _availability_context(
+        wd,
+        extra_unavailable=extra_unavailable,
+        host_providers=host_providers,
+    )
 
     resolution_path: list[dict[str, Any]] = []
 
@@ -492,7 +533,7 @@ def _with_preferences(
     )
     env["preferred_effort"] = model_taxonomy.preferred_effort(segment, tier, selected)
     env["effort_guidance"] = model_taxonomy.effort_guidance(segment, tier, selected)
-    env["resolved"] = bool(selected) and selected not in unavailable
+    env["resolved"] = dispatchability(selected, unavailable=unavailable)["resolved"]
     return env
 
 
@@ -503,6 +544,7 @@ def resolve_role(
     workdir: Path,
     extra_unavailable: set[str] | frozenset[str] | None = None,
     host_providers: set[str] | frozenset[str] | None = None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """Two-axis resolve: a ``(segment, tier)`` ROLE → the highest-priority
     AVAILABLE + host-reachable model.
@@ -516,42 +558,18 @@ def resolve_role(
     the recency-newer but unreachable gpt-5.5.
     """
     wd = workdir.expanduser().resolve()
-    unavailable = expand_unavailable(
-        load_unavailable(wd) | set(extra_unavailable or ())
+    unavailable, host_providers = _availability_context(
+        wd,
+        extra_unavailable=extra_unavailable,
+        host_providers=host_providers,
     )
-    # Host filter: explicit arg → config → detected host → None (host-neutral).
-    if host_providers is HOST_FILTER_DISABLED:
-        host_providers = None
-    elif host_providers is not None:
-        host_providers = {str(p).strip().lower() for p in host_providers}
-    else:
-        host_providers = load_host_providers(wd)
-
-    # Fold host-unreachable seed models into unavailable so the preferred walk
-    # skips them. A model with an unknown provider is kept (fail-open).
-    if host_providers is not None:
-        for mid in (model_taxonomy.taxonomy().get("models") or {}):
-            if mid.startswith("_"):
-                continue
-            meta = model_taxonomy.model_meta(mid) or {}
-            provider = (meta.get("provider") or "").strip().lower()
-            if provider and provider not in host_providers:
-                unavailable.add(mid)
-
-    # Fold local models this MACHINE cannot run into unavailable. Provider
-    # reachability is not the same question as fit: `local` being reachable only
-    # says an inference runtime exists, not that 24GB of weights will load. The
-    # taxonomy ships to other people's laptops, so a chain containing an 18-19GB
-    # coding model would route a 16GB machine at a model it cannot hold.
-    # Rows without min_ram_gb are kept (fail-open) — absence of a requirement is
-    # not evidence that a model is too big.
-    unavailable |= _too_large_for_host()
 
     env = model_overrides.resolve_role(
         segment=segment,
         tier=tier,
         workdir=wd,
         unavailable=unavailable,
+        agent=agent,
     )
     return _with_preferences(
         env,

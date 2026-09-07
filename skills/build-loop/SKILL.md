@@ -35,7 +35,7 @@ Intent → internal mode:
 
 ### Parallelism config
 
-Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` resolves `parallelism.py` capacity, then applies live backpressure. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 150. Default project capacity remains 8.
+Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` previews capacity and live backpressure. Before concurrent dispatch, use `reserve-fanout` per `skills/build-loop/references/codex-subagents.md`; a preview alone reserves nothing. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 150. Default project capacity remains 8.
 
 To set a project preference, use `.build-loop/config.json`:
 
@@ -49,10 +49,10 @@ The preference never forces that many workers. The supervisor admits only indepe
 
 Both are conditional modes — their flag tables, budget/iteration caps, question-timeout rules, self-recursive detection, and the per-commit dispatch contract (incl. the GAP-1 parent-dispatch audit + E3 Learn/retro contract) load on demand from `references/autonomous-and-per-commit-modes.md`. Read it when:
 
-- the invocation carries `--long` / `--budget` / `--autonomous=false`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
+- the invocation carries `--long` / `--budget` / `--autonomous=false` / `--no-regrets`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
 - `state.json.selfRecursive.enabled` is true, or the invocation carries `--per-commit` / `--no-per-commit` → **Per-Commit Mode** detail.
 
-Default behavior with none of those signals: classic single-pass Phase 1–6, 2h budget, autonomous execution-queue drain on. Backlog items stay deferred until class-aware promotion at a planning boundary; initiatives and decisions never auto-promote.
+Default behavior: complete Phase 1–6 and required fixes autonomously within a 2h budget. Additional queue/backlog pickup is off until no-regrets is explicitly enabled; see `references/keep-going-policy.md`.
 
 ## Scope Check
 
@@ -141,12 +141,12 @@ A chunk boundary is not a checkpoint. When the orchestrator (or any session unde
    ```
    followed by the item body in markdown.
 2. Filter `classify: PRODUCTION` items into `.build-loop/followup/needs-confirm/` and surface them ONCE in the report. Do not auto-execute.
-3. After the report is committed, immediately enter a fresh Phase 5 iterate cycle to drain the remaining queue. Re-use the same alignment-checker, scope-auditor, and independent-auditor wiring as the in-run iterate loop — no new dispatch surface required.
+3. Complete all accepted work. Before additional follow-up pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`; enter a fresh Phase 5 cycle only on `review_candidates` (no-regrets is off by default). Re-use the same alignment-checker, scope-auditor, and independent-auditor wiring as the in-run iterate loop — no new dispatch surface required.
 4. The phrasing "want me to keep going with the rest?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. C-FLOW/no_ask_at_chunk_boundary in `constitution.md` is the binding citation.
 
 Stop conditions are unchanged from the in-run iterate loop: iterate-cap (25 in autonomous mode, 5 classic), budget exhaustion, any drained item classifying PRODUCTION, 5 consecutive iterate failures, an item whose intent_anchor does not resolve in the current `intent.md` (escalate as DECISION; do not silently widen scope), or explicit user pause.
 
-This applies both to the orchestrator dispatched via `/build-loop:run` AND to any interactive Claude session that has the build-loop skill loaded (the skill description's verb/symptom triggers are broad — most multi-file work loads it). If a session produces a same-shape follow-up list mid-conversation without an active run, the equivalent action is to dispatch `/build-loop:run` with the list as the queue, not to ask "want me to do them?".
+This applies both to the orchestrator dispatched via `/build-loop:run` AND to any interactive Claude session that has the build-loop skill loaded (the skill description's verb/symptom triggers are broad — most multi-file work loads it). If a session produces a same-shape follow-up list mid-conversation without an active run, finish accepted work without another permission question; additional queue pickup follows the no-regrets boundary above.
 
 ## Host Adapters
 
@@ -228,7 +228,7 @@ Understand current state, load memory through the automatic context bootstrap, d
 
 Groundwork intake: when `$GROUNDWORK_BUILD_REQUEST` or `.designdoc/build-request.json` is present, validate it with the adjacent canonical Spec through `scripts/groundwork_exchange.py validate-request` before planning; failures block Execute.
 
-Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; check `session_prefs.continue_from_queues` and ask the user ONCE when "ask" and any queue has items; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → run `scripts/task_surface.py` when surfacing open work → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; surface `packet.no_regrets.announcement`; only an explicit user preference enables extra queue work; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → run `scripts/task_surface.py` when surfacing open work → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 

@@ -78,6 +78,20 @@ For Codex CLI and Codex app runs, put reusable role rules, output contracts, val
 
 Do not reorder stable sections between worker prompts. Monitoring cached-token counters only detects prefix churn; the improvement comes from preserving the prefix and reducing noisy context before dispatch.
 
+## Shared worker reservations
+
+For authorized concurrent loops on one host, use the existing supervisor before each wave:
+
+```bash
+python3 scripts/autonomy_supervisor.py --workdir "$PWD" reserve-fanout --request '<JSON request>'
+```
+
+Request fields: `reservation_id` (`run-id:wave-id`), verified `shared_capacity` (actual available worker slots, excluding the lead), `independent_items`, concrete child `model`, `agent`, and optional `lease_seconds` (default 300). All cooperating loops share `~/.build-loop/worker-capacity.json`; do not choose per-worktree paths. `capacity_path` is for an explicitly shared alternate namespace/testing. Start at most returned `reservation.workers`; `wait` starts none. Native host limits still apply.
+
+Add the expiry and stop requirement to the worker packet. Renew before expiry with the same request plus `renew_only:true`; an expired/missing renewal requires stopping that wave before reacquiring. Release the exact reservation with `release-fanout --request '<JSON request>'` only after all its workers stop. Do not release capacity just because a peer posts a completion claim. These are cooperative local reservations, not enforcement over unrelated processes or remote accounts. If a host cannot honor expiry, use a bounded sequential wave instead of claiming shared capacity safety.
+
+Use measured completed usage for the same model/agent when available; otherwise retain the labeled heuristic. Partial or duplicate receipts do not establish a cheap complete worker. Select Terra/Luna for appropriate independent tasks even under an Astra/Opus coordinator, according to the user's preference and verified host availability.
+
 ## Parallel Pattern
 
 1. Lead creates the plan and identifies parallel-safe groups.

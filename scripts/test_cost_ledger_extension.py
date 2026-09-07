@@ -204,6 +204,7 @@ class MeasuredTokenTelemetryTests(unittest.TestCase):
             self.assertEqual(rc, 0, err)
             row = _read_rows(ledger)[0]
             self.assertEqual(row["measured_total_tokens"], 4600)
+            self.assertEqual(row["observed_token_total"], 4600)
             self.assertEqual(row["cache_read_input_tokens"], 3000)
             self.assertEqual(row["phase"], "execute")
             self.assertEqual(row["fanout_limit"], 3)
@@ -230,6 +231,56 @@ class MeasuredTokenTelemetryTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("input_tokens must be non-negative", err)
             self.assertFalse(ledger.exists())
+
+    def test_partial_token_measurement_is_an_observed_subtotal_only(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            rc, _, err = _run(
+                _base_args(ledger)
+                + ["--tokens-source", "measured", "--output-tokens", "100"]
+            )
+            self.assertEqual(rc, 0, err)
+            row = _read_rows(ledger)[0]
+            self.assertEqual(row["observed_token_total"], 100)
+            self.assertNotIn("measured_total_tokens", row)
+
+
+class RoutingEvidenceFieldsTests(unittest.TestCase):
+    def test_enrichment_records_actual_values_and_quality_outcome(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            rc, _, err = _run(
+                _base_args(ledger)
+                + [
+                    "--requested-model", "gpt-5.6-terra",
+                    "--actual-model", "gpt-5.6-terra",
+                    "--requested-effort", "high",
+                    "--actual-effort", "high",
+                    "--verifier-verdict", "pass",
+                    "--retry-count", "1",
+                    "--rework-count", "2",
+                    "--escaped-defects-count", "0",
+                ]
+            )
+            self.assertEqual(rc, 0, err)
+            row = _read_rows(ledger)[0]
+            self.assertEqual(row["requested_model"], "gpt-5.6-terra")
+            self.assertEqual(row["actual_model"], "gpt-5.6-terra")
+            self.assertEqual(row["requested_effort"], "high")
+            self.assertEqual(row["actual_effort"], "high")
+            self.assertEqual(row["verifier_verdict"], "pass")
+            self.assertEqual(row["retry_count"], 1)
+            self.assertEqual(row["rework_count"], 2)
+            self.assertEqual(row["escaped_defects_count"], 0)
+
+    def test_negative_routing_counts_are_rejected(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            for option in ("--retry-count", "--rework-count", "--escaped-defects-count"):
+                with self.subTest(option=option):
+                    rc, _, err = _run(_base_args(ledger) + [option, "-1"])
+                    self.assertEqual(rc, 1)
+                    self.assertIn(option[2:].replace("-", "_") + " must be non-negative", err)
 
 
 if __name__ == "__main__":

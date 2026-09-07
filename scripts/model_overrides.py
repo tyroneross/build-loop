@@ -8,6 +8,12 @@ and resolves those tiers to concrete model ids at dispatch time. Repo config is
 the preferred source; state.json is accepted for older runs that snapshot
 config there.
 
+`modelOverrides.agents.<agent-name>` optionally selects a model for one agent
+before the same file's tier override. Entries accept a model string or an object
+with `model` and optional instruction metadata (`source`, `evidence`). Metadata
+does not establish availability or account entitlement; the dispatch resolver
+still applies provider, availability, and capability-floor checks.
+
 Tier defaults (Anthropic mapping, used as the fallback when no override
 is configured and no `--fallback` is supplied):
 
@@ -273,13 +279,23 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _model_override_from_data(data: dict[str, Any], tier: str) -> str | None:
+def _model_override_from_data(
+    data: dict[str, Any], tier: str, agent: str | None = None
+) -> str | None:
     config = data.get("config") if "config" in data else data
     if not isinstance(config, dict):
         return None
     overrides = config.get("modelOverrides")
     if not isinstance(overrides, dict):
         return None
+    # Agent preferences share the existing config and guards. Metadata on an
+    # object entry records the user's instruction; it never establishes access.
+    agents = overrides.get("agents")
+    if agent and isinstance(agents, dict):
+        preference = agents.get(agent)
+        value = preference.get("model") if isinstance(preference, dict) else preference
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     value = overrides.get(tier)
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -301,6 +317,7 @@ def resolve_model(
     fallback: str | None = None,
     config_path: Path | None = None,
     state_path: Path | None = None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
@@ -310,7 +327,7 @@ def resolve_model(
     state = (state_path or default_state_path(wd)).expanduser()
 
     for source, path in (("config", cfg), ("state", state)):
-        model = _model_override_from_data(_read_json(path), tier)
+        model = _model_override_from_data(_read_json(path), tier, agent)
         if model:
             return {
                 "tier": tier,
@@ -513,6 +530,7 @@ def resolve_role(
     recency_tiebreak: bool = True,  # accepted and ignored; rank always wins
     config_path: Path | None = None,
     state_path: Path | None = None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """Two-axis entrypoint: resolve a ``(segment, tier)`` ROLE to a model.
 
@@ -545,8 +563,8 @@ def resolve_role(
 
     resolution_path: list[dict[str, Any]] = []
 
-    # A project-level tier override applies to every role on that capability
-    # rung. Treat it as a preference, not a lock: a known-below-floor or
+    # An agent preference wins over its file's tier override; tier overrides
+    # still apply to every other role on that rung. A known-below-floor or
     # unavailable choice falls through to the ordered role list.
     if legacy_token:
         configured = resolve_model(
@@ -554,6 +572,7 @@ def resolve_role(
             workdir=wd,
             config_path=config_path,
             state_path=state_path,
+            agent=agent,
         )
         if configured.get("source") in {"config", "state"}:
             override = normalize_model_id(configured.get("model"))

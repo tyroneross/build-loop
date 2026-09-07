@@ -373,3 +373,127 @@ def test_host_signals_measure_load_disk_memory_and_thermal(repo: Path, monkeypat
         "signal_source": "host_probe",
         "memory_percent": 28.0,
     }
+
+
+def test_no_regrets_cli_toggle_controls_real_boundary(repo: Path, monkeypatch) -> None:
+    import context_bootstrap as bootstrap
+    monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
+    supervisor.initialize_run(repo, 'repair parser', run_id='nr')
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
+    (repo / '.build-loop/config.json').write_text(json.dumps({'sessionPrefs': {'continueFromQueues': 'never'}}))
+    assert supervisor.main(['--workdir', str(repo), 'initialize', '--goal', 'repair parser',
+                            '--run-id', 'nr2', '--no-regrets', 'on']) == 0
+    assert 'is on' in bootstrap.no_regrets_context(repo)['announcement']
+    queue = repo / '.build-loop/queue'
+    queue.mkdir()
+    item = queue / 'parser.md'
+    item.write_text('---\nstatus: queued\n---\nRepair parser overflow')
+    selected = supervisor.continuation(repo, 'repair parser')
+    assert selected['action'] == 'review_candidates'
+    assert selected['manifest']['selected'][0]['next_action'] == 'revalidate_then_classify'
+    item.write_text('---\nstatus: done\n---\nRepair parser overflow')
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_eligible_candidates'
+    (repo / '.build-loop/halt').touch()
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'user_pause'
+    (repo / '.build-loop/halt').unlink()
+    supervisor.initialize_run(repo, 'repair parser', run_id='expired', no_regrets=True,
+                              now=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'budget_missing_or_exhausted'
+    bootstrap.write_session_prefs(repo, 'never', source='user')
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
+
+
+def test_queue_candidates_do_not_schedule_archives_decisions_or_proposals(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
+    for name in ('backlog/items', 'backlog/archive', 'followup/needs-confirm', 'proposals'):
+        (repo / '.build-loop' / name).mkdir(parents=True)
+    for bucket in ('planned', 'decision', 'initiative'):
+        (repo / '.build-loop/backlog/items' / f'{bucket}.md').write_text(
+            f'---\nid: {bucket}\nbucket: {bucket}\nstatus: open\ngated: none\n---\nRepair parser')
+    for name in ('backlog/archive', 'followup/needs-confirm', 'proposals'):
+        (repo / '.build-loop' / name / 'held.md').write_text('Repair parser')
+    result = supervisor.snapshot_queue(repo, 'repair parser')
+    assert len(result['selected']) == 1
+    assert result['selected'][0]['next_action'] == 'review_then_promote'
+    assert result['selected'][0]['path'].endswith('/planned.md')
+
+
+def test_supervisor_fanout_consumes_ledger_measurements(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
+    ledger = repo / 'usage.jsonl'
+    ledger.write_text(json.dumps({'model': 'gpt-5.6-terra', 'status': 'completed',
+                                  'input_tokens': 40000, 'output_tokens': 8000}) + '\n')
+    result = supervisor.select_fanout(repo, {'independent_items': 8, 'model': 'gpt-5.6-terra',
+                                            'ledger_path': str(ledger)})
+    assert result['capacity']['tokens_per_worker'] == 48000
+    assert result['capacity']['effective_max'] == 2
+
+
+def test_shared_reservations_hold_capacity_until_release(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
+    store = repo / 'capacity.json'
+    request = {'capacity_path': str(store), 'shared_capacity': 4, 'independent_items': 4,
+               'model': 'gpt-5.6-luna', 'reservation_id': 'a', 'ledger_path': str(repo / 'absent')}
+    first = supervisor.reserve_fanout(repo, request)
+    assert first['reservation']['workers'] == 4
+    assert supervisor.reserve_fanout(repo, request)['action'] == 'renewed'
+    other = repo / 'other'
+    other.mkdir()
+    assert supervisor.reserve_fanout(other, {**request, 'reservation_id': 'b'})['action'] == 'wait'
+    with pytest.raises(ValueError, match='another worktree'):
+        supervisor.release_fanout(other, request)
+    supervisor.release_fanout(repo, request)
+    assert supervisor.reserve_fanout(other, {**request, 'reservation_id': 'b'})['reservation']['workers'] == 4
+    with pytest.raises(ValueError, match='expired or missing'):
+        supervisor.reserve_fanout(repo, {**request, 'renew_only': True})
+
+
+def test_concurrent_reservation_processes_do_not_exceed_shared_limit(repo: Path) -> None:
+    import sys
+    script = Path(supervisor.__file__).resolve()
+    processes = []
+    for index in range(3):
+        workdir = repo / str(index)
+        workdir.mkdir()
+        request = {'capacity_path': str(repo / 'shared.json'), 'shared_capacity': 4,
+                   'independent_items': 4, 'reservation_id': str(index), 'model': 'gpt-5.6-luna',
+                   'ledger_path': str(repo / 'missing'),
+                   'signals': {'load_ratio': 0, 'memory_percent': 0, 'thermal_state': 'nominal'}}
+        processes.append(subprocess.Popen([sys.executable, str(script), '--workdir', str(workdir),
+                                           'reserve-fanout', '--request', json.dumps(request)],
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+    reservations = []
+    for process in processes:
+        output, error = process.communicate(timeout=30)
+        assert process.returncode == 0, error
+        reservations.append(json.loads(output)['reservation']['workers'])
+    assert sum(reservations) == 4
+
+
+@pytest.mark.parametrize('payload', ['not json', '[]', '{"leases": []}',
+    '{"leases": {"bad": {"workers": -4, "shared_capacity": 4, "expires_at": "2099-01-01T00:00:00+00:00"}}}'])
+def test_corrupt_capacity_store_does_not_allow_dispatch(repo: Path, payload: str) -> None:
+    store = repo / 'capacity.json'
+    store.write_text(payload)
+    with pytest.raises(ValueError):
+        supervisor.reserve_fanout(repo, {'capacity_path': str(store), 'reservation_id': 'new', 'shared_capacity': 4})
+    assert store.read_text() == payload
+
+
+@pytest.mark.parametrize('status', ['closed', 'complete', 'completed', 'done', 'dropped', 'superseded', 'wontfix'])
+def test_terminal_queue_statuses_never_reenter_continuation(repo: Path, status: str, monkeypatch) -> None:
+    monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
+    directory = repo / '.build-loop/queue'
+    directory.mkdir(parents=True)
+    (directory / 'parser.md').write_text(f'---\nstatus: {status}\n---\nRepair parser')
+    assert supervisor.snapshot_queue(repo, 'repair parser')['selected'] == []
+
+
+def test_legacy_classic_mode_veto_survives_no_regrets_opt_in(repo: Path) -> None:
+    supervisor.initialize_run(repo, 'repair parser', run_id='legacy', no_regrets=True)
+    path = repo / supervisor.STATE_PATH
+    state = json.loads(path.read_text())
+    del state['execution']['autonomous']
+    state['autonomous'] = {'enabled': False}
+    path.write_text(json.dumps(state))
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'classic_mode'
