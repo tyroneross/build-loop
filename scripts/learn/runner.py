@@ -255,12 +255,22 @@ def _work_order(run_id: str, role: str, key: str, source: str, **extra: Any) -> 
     }
 
 
+def _manual_intervention_signature(item: Any) -> str:
+    """Return a causal intervention signature, including legacy row shapes."""
+    values = (item.get("note"), item.get("intervention")) if isinstance(item, dict) else (item,)
+    signature = next((value.strip() for value in values if isinstance(value, str) and value.strip()), "")
+    notice = signature.lower().removeprefix("closeout:")
+    if notice in {"fired-by-stop-hook", "fired-by-stop-hook (inline run did not reach review-g)"}:
+        return ""
+    return signature
+
+
 def _recurring_run_patterns(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
     manual_counts: Counter[str] = Counter()
     security_counts: Counter[str] = Counter()
     for run in runs:
         for item in run.get("manualInterventions", []) if isinstance(run, dict) else []:
-            note = str(item.get("note") if isinstance(item, dict) else item).strip()
+            note = _manual_intervention_signature(item)
             if note:
                 manual_counts[note] += 1
         for item in run.get("security_findings", []) if isinstance(run, dict) else []:

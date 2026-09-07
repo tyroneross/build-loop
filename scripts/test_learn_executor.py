@@ -192,6 +192,35 @@ def test_repeated_manual_intervention_is_detected_without_llm(tmp_path: Path) ->
     assert order["pattern"]["count"] == 2
 
 
+def test_legacy_intervention_rows_are_clustered_and_empty_stop_hook_notices_are_dropped() -> None:
+    runner = _runner()
+    patterns, manual_count, security_count = runner._recurring_run_patterns([
+        {"manualInterventions": [{"phase": "execute", "intervention": "user restored Learn"}]},
+        {"manualInterventions": [{"phase": "execute", "intervention": "user restored Learn"}]},
+        {"manualInterventions": [{"phase": "6", "note": "fired-by-stop-hook"}]},
+        {"manualInterventions": [{"phase": "6", "note": "closeout:fired-by-stop-hook (inline run did not reach Review-G)"}]},
+    ])
+
+    assert [item["payload"] for item in patterns] == [{
+        "type": "manual_intervention",
+        "signature": "user restored Learn",
+        "count": 2,
+    }]
+    assert manual_count == 1
+    assert security_count == 0
+
+
+def test_stop_hook_notice_with_causal_detail_remains_clusterable() -> None:
+    runner = _runner()
+    patterns, manual_count, _security_count = runner._recurring_run_patterns([
+        {"manualInterventions": [{"note": "closeout:fired-by-stop-hook: timeout waiting for Review-G"}]},
+        {"manualInterventions": [{"note": "closeout:fired-by-stop-hook: timeout waiting for Review-G"}]},
+    ])
+
+    assert patterns[0]["payload"]["signature"] == "closeout:fired-by-stop-hook: timeout waiting for Review-G"
+    assert manual_count == 1
+
+
 def test_attestation_closes_architect_and_reviewer_chain(tmp_path: Path) -> None:
     run_id = _write_state(tmp_path, 3, cause="closeout skipped Learn")
     runner = _runner()
@@ -625,3 +654,17 @@ def test_real_tool_named_execute_tool_wrapper_survives_exclusion(tmp_path: Path)
     assert len(patterns) == 1
     assert patterns[0]["key"] == "retry-execute-tool-wrapper"
     assert patterns[0]["payload"]["signature"] == "execute_tool_wrapper"
+
+
+def test_actual_legacy_rows_do_not_collapse_into_a_none_pattern() -> None:
+    # Exact four legacy intervention rows from the 2026-09-07 main-state audit.
+    rows = [{'intervention': 'fixed _py_imports to emit submodule edges before package edges; one iterate pass', 'phase': 'execute'}, {'intervention': 'capture_arch_violation.py: accept short-form rule shape (rule, component_id) emitted by native engine; previously dropped all 77 violations as empty rule_id', 'phase': 'execute'}, {'intervention': 'memory_facade: read both legacy .episodic/decisions and post-cutover ~/dev/git-folder/build-loop-memory/decisions/<project>/ paths', 'phase': 'execute'}, {'intervention': '3-of-7 dead scripts moved to attic; 4 supposedly-dead were live (embed_backend, _test_helpers, transcript-pattern-miner, build_acp/slice_acp); reported in commit body', 'phase': 'execute'}]
+    runs = [{"manualInterventions": rows}, {"manualInterventions": [{"note": "fired-by-stop-hook (inline run did not reach Review-G)"}]}, {"manualInterventions": [{"note": "fired-by-stop-hook (inline run did not reach Review-G)"}]}]
+    patterns, count, _ = _runner()._recurring_run_patterns(runs)
+    assert patterns == []
+    assert count == 0
+
+
+def test_generic_notice_filter_preserves_real_causal_detail() -> None:
+    note = "fired-by-stop-hook (inline run; Fable session later corrected the auditor floor)"
+    assert _runner()._manual_intervention_signature({"note": note}) == note
