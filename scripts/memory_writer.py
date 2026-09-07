@@ -229,6 +229,45 @@ def _emit_scalar(v: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _content_index_writethrough(path: Path) -> None:
+    """Upsert *path* into the FTS content index right after a durable write lands.
+
+    Measured 2026-09-01: nothing refreshed content_fts.sqlite on write, so three
+    decisions written that day were absent from it. A full incremental build()
+    costs 33s over 10,545 docs, too slow to sit on a write path, so this calls
+    the targeted single-file upsert (content_index.index_paths) instead.
+
+    Never raises. Bounds any lock-contention stall to a short fail-fast busy
+    timeout well under a second (not sqlite3's 5.0s default) rather than truly
+    never slowing the write — under contention it SKIPS the upsert rather than
+    blocking, so a contended document stays absent from the index until the next
+    `content_index.py build`. Guard is cheapest
+    test first: env switches, then suffix, then store-root membership, and
+    only then the content_index import (sqlite3 et al) and the actual upsert.
+    Duplicated verbatim in atomic_io.py's ``_content_index_writethrough`` — the
+    two durable-write choke points can't share a module here without inventing
+    a new one, but the actual indexing logic (content_index.index_paths) is
+    written exactly once.
+    """
+    if os.environ.get("BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH", "1") == "0":
+        return
+    if os.environ.get("BUILD_LOOP_MEMORY_CONTENT", "1") == "0":
+        return
+    try:
+        if Path(path).suffix.lower() != ".md":
+            return
+        from _paths import memory_store_root  # noqa: PLC0415
+        store = memory_store_root()
+        try:
+            Path(path).resolve().relative_to(store.resolve())
+        except ValueError:
+            return
+        import content_index  # noqa: PLC0415
+        content_index.index_paths([path], store=store)
+    except Exception:  # noqa: BLE001 — an index failure must never fail a memory write
+        pass
+
+
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(
@@ -246,6 +285,18 @@ def _atomic_write_text(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+    _content_index_writethrough(path)
+
+
+def _telemetry_path_for_write(memory_dir: Path) -> Path:
+    """Use the canonical telemetry stream for canonical memory-store writes."""
+    try:
+        from _paths import memory_indexes_dir, memory_store_root  # noqa: PLC0415
+        Path(memory_dir).resolve().relative_to(memory_store_root().resolve())
+    except Exception:  # noqa: BLE001 — retain isolated telemetry if path resolution degrades
+        # An explicit external --memory-dir is an isolated caller-owned store.
+        return Path(memory_dir) / "TELEMETRY.jsonl"
+    return memory_indexes_dir() / "TELEMETRY.jsonl"
 
 
 def _detect_git_remote(workdir: Path) -> str | None:
@@ -583,7 +634,7 @@ def write(
             memory_id=str(memory_dir / file_rel),
             why_durable=_why,
             action=action,
-            telemetry_path=memory_dir / "TELEMETRY.jsonl",
+            telemetry_path=_telemetry_path_for_write(memory_dir),
         )
     except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
         print(f"WARN: memory_telemetry emit_write failed: {exc}", file=sys.stderr)

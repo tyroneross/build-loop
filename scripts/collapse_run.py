@@ -1203,28 +1203,36 @@ def _repo_path(workdir: Path, value: str) -> Path:
     return path.resolve()
 
 
-def _terminal_closeout_evidence(
+def verify_branch_closeout_receipt(
     workdir: Path,
     run: dict[str, Any],
-    execution: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str]:
-    """Prove that an active execution belongs to a fully closed run.
+    """Prove that *run*'s refs are all genuinely closed, from durable evidence.
 
-    A completed receipt alone is insufficient because ``complete`` also covers
-    retained review branches. Automatic reconciliation is deliberately
-    narrower: no queued/in-flight work, exact run identity, every attributable
-    ref closed in both ledgers, every bundle verified, and every branch/path
-    gone. Any ambiguity leaves the execution untouched.
+    This is the single canonical reader of a branch-closeout receipt, shared by
+    ``_terminal_closeout_evidence`` (live execution reconciliation) and
+    ``resume_resolver`` (legacy-crash archival). Both need the same question
+    answered — "did collapse_run really close this run's refs?" — and a second,
+    looser parser that trusted ``status``/``owner_release``/``refs[].status``
+    would accept a receipt this one rejects.
+
+    A completed receipt alone is insufficient, because ``complete`` also covers
+    retained review branches. Every one of these must hold: the receipt sits at
+    its canonical path and is a regular file (not a symlink); the run ledger
+    and the receipt name exactly the same refs, one-to-one; every ref is
+    ``closed`` in BOTH ledgers; every bundle is attested verified, lives under
+    the canonical bundle root, is not a symlink, and passes ``git bundle
+    verify`` with a head matching the recorded OID; every recorded worktree
+    path agrees across ledgers, sits under the run root, and no longer exists;
+    and no named branch still resolves to an object. Any ambiguity is a refusal.
+
+    Returns ``(evidence, reason)`` — ``evidence`` is ``None`` on refusal, and
+    ``reason`` always names why.
     """
     run_ids = _row_identities(run)
-    execution_ids = _row_identities(execution)
-    if len(run_ids) != 1 or execution_ids != run_ids:
-        return None, "active execution does not exactly match the selected run"
+    if len(run_ids) != 1:
+        return None, "run does not carry exactly one identity"
     run_id = next(iter(run_ids))
-    if execution.get("schema_version") != 1:
-        return None, "active execution is not schema version 1"
-    if execution.get("queued_chunks") != [] or execution.get("in_flight_chunks") != []:
-        return None, "active execution still contains queued or in-flight work"
 
     closeout = run.get("branch_closeout")
     if not isinstance(closeout, dict) or closeout.get("status") != "complete":
@@ -1338,6 +1346,43 @@ def _terminal_closeout_evidence(
         if _branch_oid(workdir, branch_name) is not None:
             return None, f"ref {branch_name} still exists"
 
+    return {
+        "run_id": run_id,
+        "receipt_path": str(expected_receipt_path),
+        "closed_branches": sorted(receipt_by_branch),
+        "closed_refs": {
+            branch: dict(entry) for branch, entry in sorted(receipt_by_branch.items())
+        },
+    }, "verified terminal branch closeout"
+
+
+def _terminal_closeout_evidence(
+    workdir: Path,
+    run: dict[str, Any],
+    execution: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    """Prove that an ACTIVE EXECUTION belongs to a fully closed run.
+
+    Adds the execution-side preconditions on top of
+    :func:`verify_branch_closeout_receipt`, which owns the receipt/ledger proof
+    itself: exact run identity, schema version 1, no queued or in-flight work,
+    and a worktree identity that matches the receipt. Any ambiguity leaves the
+    execution untouched.
+    """
+    run_ids = _row_identities(run)
+    execution_ids = _row_identities(execution)
+    if len(run_ids) != 1 or execution_ids != run_ids:
+        return None, "active execution does not exactly match the selected run"
+    if execution.get("schema_version") != 1:
+        return None, "active execution is not schema version 1"
+    if execution.get("queued_chunks") != [] or execution.get("in_flight_chunks") != []:
+        return None, "active execution still contains queued or in-flight work"
+
+    evidence, reason = verify_branch_closeout_receipt(workdir, run)
+    if evidence is None:
+        return None, reason
+    receipt_by_branch = evidence["closed_refs"]
+
     execution_branch = execution.get("run_worktree_branch")
     execution_path = execution.get("run_worktree_path")
     if bool(execution_branch) != bool(execution_path):
@@ -1354,11 +1399,7 @@ def _terminal_closeout_evidence(
         except (OSError, RuntimeError):
             return None, "active execution worktree path is unresolvable"
 
-    return {
-        "run_id": run_id,
-        "receipt_path": str(expected_receipt_path),
-        "closed_branches": sorted(receipt_by_branch),
-    }, "verified terminal branch closeout"
+    return evidence, reason
 
 
 def reconcile_terminal_execution(workdir: Path, run_id: str) -> dict[str, Any]:

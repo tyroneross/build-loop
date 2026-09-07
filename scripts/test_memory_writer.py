@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import memory_writer as mw  # noqa: E402
+import content_index  # noqa: E402
+import audit_before_commit as audit  # noqa: E402
+from unittest import mock  # noqa: E402
 
 
 class FrontmatterParseTests(unittest.TestCase):
@@ -72,6 +76,124 @@ class EmitFrontmatterTests(unittest.TestCase):
         text = mw._emit_frontmatter(original) + "\nbody"
         fm, _ = mw._split_frontmatter(text)
         self.assertEqual(fm, original)
+
+
+class ContentIndexWritethroughTests(unittest.TestCase):
+    """memory_writer._atomic_write_text upserts .md writes into the FTS index
+    (plan chunk 2) — the second of the two durable-write choke points."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = self.tmp / "store"
+        self.store.mkdir()
+        self._env_backup = {
+            key: os.environ.get(key)
+            for key in ("BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH", "BUILD_LOOP_MEMORY_CONTENT")
+        }
+        self.addCleanup(self._restore_env)
+        self._patcher = mock.patch("_paths.memory_store_root", return_value=self.store)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def _restore_env(self) -> None:
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _db_path(self) -> Path:
+        return content_index.default_db_path(self.store)
+
+    def test_md_write_under_store_root_is_immediately_queryable_with_no_manual_build(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())  # database must already exist
+        target = self.store / "decision.md"
+        mw._atomic_write_text(target, "needlewrittenthrough body text")
+        rows = content_index.query("needlewrittenthrough", db_path=self._db_path())
+        self.assertEqual([row["path"] for row in rows], [str(target.resolve())])
+
+    def test_md_write_outside_store_root_leaves_index_untouched(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())
+        target = self.tmp / "outside" / "decision.md"
+        mw._atomic_write_text(target, "outsidewrittenthrough body text")
+        self.assertEqual(
+            content_index.query("outsidewrittenthrough", db_path=self._db_path()), []
+        )
+
+    def test_non_md_write_leaves_index_untouched(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())
+        target = self.store / "notes.txt"
+        mw._atomic_write_text(target, "plain text")
+        self.assertEqual(content_index.query("plain text", db_path=self._db_path()), [])
+
+    def test_raising_index_paths_does_not_fail_the_write(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())
+        target = self.store / "decision.md"
+        with mock.patch.object(content_index, "index_paths", side_effect=RuntimeError("boom")):
+            mw._atomic_write_text(target, "body text")
+        self.assertEqual(target.read_text(encoding="utf-8"), "body text")
+
+    def test_env_switch_disables_the_hook(self) -> None:
+        content_index.build(self.store, db_path=self._db_path())
+        os.environ["BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH"] = "0"
+        target = self.store / "decision.md"
+        mw._atomic_write_text(target, "disabledwrittenthrough body text")
+        self.assertEqual(
+            content_index.query("disabledwrittenthrough", db_path=self._db_path()), []
+        )
+
+    def test_md_write_with_no_database_yet_creates_none_but_file_still_lands(self) -> None:
+        """The write-through hook must never create the database (build() is the
+        only creator); a store with no index yet degrades to a write-through
+        no-op, not a silently-seeded one-doc db."""
+        self.assertFalse(self._db_path().exists())
+        target = self.store / "decision.md"
+        mw._atomic_write_text(target, "neverbuiltneedle body text")
+        self.assertFalse(self._db_path().exists(), "write-through must not create the database")
+        self.assertEqual(target.read_text(encoding="utf-8"), "neverbuiltneedle body text")
+
+
+class WriteTelemetryPathTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = self.tmp / "build-loop-memory"
+        self.store.mkdir()
+        self._root = os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
+        os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = str(self.store)
+        self.addCleanup(self._restore_root)
+
+    def _restore_root(self) -> None:
+        if self._root is None:
+            os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+        else:
+            os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = self._root
+
+    def _write(self, memory_dir: Path) -> None:
+        mw.write(
+            memory_dir, "lesson.md", body="canonical telemetry regression",
+            name="telemetry", description="writer audit receipt", type_="lesson",
+            run_id="run-telemetry", workdir=str(self.tmp), host="codex",
+        )
+
+    def test_canonical_project_write_uses_the_audit_telemetry_stream(self) -> None:
+        memory_dir = self.store / "projects" / "build-loop" / "lessons"
+        since = time.time() - 5
+        self._write(memory_dir)
+
+        canonical = self.store / "indexes" / "TELEMETRY.jsonl"
+        self.assertTrue(canonical.is_file())
+        self.assertFalse((memory_dir / "TELEMETRY.jsonl").exists())
+        found, evidence = audit._telemetry_since("memory-write", since)
+        self.assertTrue(found, evidence)
+        row = json.loads(canonical.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(row["reader_or_writer"], "codex")
+
+    def test_external_memory_dir_keeps_its_isolated_telemetry_stream(self) -> None:
+        memory_dir = self.tmp / "external-memory" / "lessons"
+        self._write(memory_dir)
+
+        self.assertTrue((memory_dir / "TELEMETRY.jsonl").is_file())
+        self.assertFalse((self.store / "indexes" / "TELEMETRY.jsonl").exists())
 
 
 class WriteTests(unittest.TestCase):

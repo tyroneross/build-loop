@@ -1417,3 +1417,220 @@ def test_iterate_attempt_preserved_across_resume(tmp_path):
     update_execution_state(state_path, "iterate_attempt")
     env = resolve(tmp_path, "run_iter")
     assert env["iterate_attempt"] == 2
+
+
+# --- A verified branch-closeout receipt substitutes for a durable pass -------
+# `outcome == "pass"` grades review quality, not liveness: a run that crashed
+# after Review-G almost always grades `partial`, so requiring a pass made the
+# archive path unsatisfiable for the shape it exists to clear. The receipt is
+# read by collapse_run.verify_branch_closeout_receipt — the SAME reader the
+# live reconciliation path uses — so this arm cannot accept a receipt that
+# path would reject.
+
+_CLOSEOUT_RUN_ID = "bl-20260827T174844Z-codex-762793"
+_CLOSEOUT_BRANCH = "bl/run-762793"
+
+
+def _write_verified_closeout(
+    tmp_path: Path,
+    *,
+    receipt_overrides: dict | None = None,
+    ledger_overrides: dict | None = None,
+    corrupt_bundle: bool = False,
+    symlink_receipt: bool = False,
+) -> tuple[Path, dict]:
+    """A schema-less crash whose refs are provably closed, with a real bundle.
+
+    Everything the canonical reader checks is genuinely present: a bundle under
+    the canonical bundle root that `git bundle verify` accepts and whose head
+    matches the recorded OID, a run-ledger `createdRefs` entry that agrees with
+    the receipt field-for-field, a deleted branch, and an absent worktree.
+    """
+    _make_git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    subprocess.check_call(["git", "add", "seed.txt"], cwd=tmp_path)
+    subprocess.check_call(["git", "commit", "-qm", "seed"], cwd=tmp_path)
+    subprocess.check_call(["git", "branch", _CLOSEOUT_BRANCH], cwd=tmp_path)
+    oid = subprocess.check_output(
+        ["git", "rev-parse", _CLOSEOUT_BRANCH], cwd=tmp_path, text=True
+    ).strip()
+
+    build_loop = tmp_path / ".build-loop"
+    bundle_path = build_loop / "bundles" / f"{_CLOSEOUT_RUN_ID}-run-762793.bundle"
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.check_call(
+        ["git", "bundle", "create", "-q", str(bundle_path), _CLOSEOUT_BRANCH],
+        cwd=tmp_path,
+    )
+    # The branch is closed: bundled, then deleted. The worktree never survives.
+    subprocess.check_call(["git", "branch", "-q", "-D", _CLOSEOUT_BRANCH], cwd=tmp_path)
+    if corrupt_bundle:
+        bundle_path.write_bytes(b"not a bundle\n")
+
+    ref = {
+        "branch": _CLOSEOUT_BRANCH,
+        "source": "executionRunWorktree",
+        "status": "closed",
+        "bundle_verified": True,
+        "bundle_path": str(bundle_path),
+        "expected_oid": oid,
+        "merge_target": "main",
+    }
+    receipt_ref = dict(ref)
+    receipt_ref.update(receipt_overrides.pop("ref", {}) if receipt_overrides else {})
+    ledger_ref = dict(ref)
+    ledger_ref.update(ledger_overrides.pop("ref", {}) if ledger_overrides else {})
+
+    receipt_path = build_loop / "branch-closeout" / f"{_CLOSEOUT_RUN_ID}.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "schema_version": 1,
+        "run_id": _CLOSEOUT_RUN_ID,
+        "status": "complete",
+        "refs": [receipt_ref],
+        "owner_release": {"confirmed": True, "source": "phase-d-integrator"},
+    }
+    receipt.update(receipt_overrides or {})
+    if symlink_receipt:
+        real = build_loop / "branch-closeout" / "elsewhere.json"
+        real.write_text(json.dumps(receipt))
+        receipt_path.symlink_to(real)
+    else:
+        receipt_path.write_text(json.dumps(receipt))
+
+    run_row = {
+        "run_id": _CLOSEOUT_RUN_ID,
+        "outcome": "partial",
+        "auditor_status": "not-run:parent-must-dispatch",
+        "createdRefs": [ledger_ref],
+        "branch_closeout": {"status": "complete", "receipt_path": str(receipt_path)},
+    }
+    run_row.update(ledger_overrides or {})
+
+    execution = {
+        "build_loop_id": _CLOSEOUT_RUN_ID,
+        "crashed_at": "2026-08-27T19:00:38Z",
+        "crash_signal": "stop_hook",
+        "run_worktree_branch": _CLOSEOUT_BRANCH,
+        "run_worktree_path": str(build_loop / "worktrees" / "run-762793"),
+        "started_by_tool": "codex",
+    }
+    state_path = build_loop / "state.json"
+    state_path.write_text(json.dumps({"execution": execution, "runs": [run_row]}))
+    return state_path, execution
+
+
+def test_verified_closeout_receipt_makes_a_partial_run_archivable(tmp_path):
+    state_path, execution = _write_verified_closeout(tmp_path)
+    before = state_path.read_bytes()
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "abort"
+    assert env["required_action"] == "archive_legacy_crash"
+    assert env["legacy_crash"]["classification"] == "terminal_legacy_crash"
+    assert env["legacy_crash"]["archive_safe"] is True
+    assert "branch-closeout receipt" in " ".join(env["legacy_crash"]["evidence"])
+    assert state_path.read_bytes() == before  # classification stays read-only
+
+    apply_env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert apply_env["decision"] == "fresh"
+    assert apply_env["archive_applied"] is True
+    assert apply_env["fresh_ready"] is True
+    state = json.loads(state_path.read_text())
+    assert state["execution"] == {}
+    assert state["historicalExecutions"][-1] == execution
+    assert state["runs"][0]["outcome"] == "partial"  # the grade is preserved, not rewritten
+
+
+def test_same_shape_without_a_receipt_stays_refused(tmp_path):
+    """Guard for the test above: the receipt is what changes the verdict."""
+    state_path, execution = _write_verified_closeout(tmp_path)
+    (tmp_path / ".build-loop" / "branch-closeout" / f"{_CLOSEOUT_RUN_ID}.json").unlink()
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"receipt_overrides": {"status": "prepared"}},
+        {"receipt_overrides": {"status": "deferred"}},
+        {"receipt_overrides": {"owner_release": {"confirmed": False, "source": "x"}}},
+        {"receipt_overrides": {"owner_release": {}}},
+        {"receipt_overrides": {"owner_release": {"confirmed": True}}},
+        {"receipt_overrides": {"refs": []}},
+        {"receipt_overrides": {"ref": {"status": "retained"}}},
+        {"ledger_overrides": {"ref": {"status": "retained"}}},
+        {"receipt_overrides": {"ref": {"branch": "bl/some-other-branch"}}},
+        {"ledger_overrides": {"createdRefs": []}},
+        {"ledger_overrides": {"branch_closeout": {"status": "deferred"}}},
+        {"receipt_overrides": {"ref": {"bundle_verified": False}}},
+        {"ledger_overrides": {"ref": {"bundle_verified": False}}},
+        {"receipt_overrides": {"ref": {"expected_oid": "0" * 40}}},
+        {"corrupt_bundle": True},
+        {"symlink_receipt": True},
+    ],
+    ids=[
+        "status-prepared", "status-deferred", "owner-release-unconfirmed",
+        "owner-release-empty", "owner-release-sourceless", "no-refs",
+        "receipt-ref-retained", "ledger-ref-retained", "refs-do-not-match",
+        "ledger-has-no-refs", "ledger-closeout-deferred",
+        "receipt-bundle-unattested", "ledger-bundle-unattested",
+        "stale-expected-oid", "bundle-fails-verify", "receipt-is-a-symlink",
+    ],
+)
+def test_unproven_closeout_receipt_does_not_substitute_for_a_pass(tmp_path, kwargs):
+    state_path, execution = _write_verified_closeout(tmp_path, **kwargs)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_receipt_naming_another_run_is_not_evidence_for_this_one(tmp_path):
+    state_path, execution = _write_verified_closeout(
+        tmp_path, receipt_overrides={"run_id": "bl-some-other-run"},
+    )
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_receipt_does_not_excuse_a_branch_that_still_exists(tmp_path):
+    """A receipt replaces the GRADE only; every resource check still applies."""
+    state_path, execution = _write_verified_closeout(tmp_path)
+    # Recreate the branch the receipt claims was closed.
+    subprocess.check_call(
+        ["git", "branch", _CLOSEOUT_BRANCH, "HEAD"], cwd=tmp_path,
+    )
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert json.loads(state_path.read_text())["execution"] == execution
+
+
+def test_receipt_does_not_excuse_a_surviving_run_worktree(tmp_path):
+    state_path, execution = _write_verified_closeout(tmp_path)
+    worktree = Path(execution["run_worktree_path"])
+    worktree.mkdir(parents=True)
+    _make_git_repo(worktree)
+
+    env = resolve(tmp_path, "", archive_terminal_legacy_crash=True)
+
+    assert env["decision"] == "abort"
+    assert env["legacy_crash"]["archive_safe"] is False
+    assert worktree.exists()
+    assert json.loads(state_path.read_text())["execution"] == execution

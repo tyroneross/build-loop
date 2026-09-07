@@ -1,0 +1,517 @@
+{
+  "schema_version": 1,
+  "provider": "fireworks_ai",
+  "display_name": "Fireworks AI",
+  "captured_at": "2026-09-07",
+  "review_after": "2026-09-21",
+  "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
+  "catalog_kind": "curated_serverless_snapshot",
+  "coverage": {
+    "scope": "Official recommended models, headline serverless prices, current capability contracts, rate limits, and recent deprecations.",
+    "exhaustive_models": false,
+    "exhaustive_source": "https://app.fireworks.ai/models?serverless=true",
+    "reason": "The complete serverless model list is exposed through an authenticated List Models API and a dynamic model library; no Fireworks key was available for this capture."
+  },
+  "source_precedence": [
+    "changelog",
+    "list_models_api",
+    "serverless_pricing",
+    "recommended_models",
+    "capability_specific_docs"
+  ],
+  "dynamic_fields": [
+    "models[].id",
+    "models[].lifecycle",
+    "models[].pricing",
+    "models[].context_window_tokens",
+    "models[].capabilities",
+    "deprecations[]",
+    "provider_features.serverless_rate_limits",
+    "provider_features.serving_paths"
+  ],
+  "sources": [
+    {
+      "id": "recommended_models",
+      "url": "https://docs.fireworks.ai/guides/recommended-models",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "serverless_pricing",
+      "url": "https://docs.fireworks.ai/serverless/pricing",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "serverless_overview",
+      "url": "https://docs.fireworks.ai/serverless/overview",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "serverless_rate_limits",
+      "url": "https://docs.fireworks.ai/serverless/rate-limits",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "list_models_api",
+      "url": "https://docs.fireworks.ai/faq-new/models-inference/how-to-check-if-a-model-is-available-on-serverless",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "tool_calling",
+      "url": "https://docs.fireworks.ai/guides/function-calling",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "structured_outputs",
+      "url": "https://docs.fireworks.ai/structured-responses/structured-response-formatting",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "reasoning",
+      "url": "https://docs.fireworks.ai/guides/reasoning",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "vision",
+      "url": "https://docs.fireworks.ai/guides/querying-vision-language-models",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "video_audio_inputs",
+      "url": "https://docs.fireworks.ai/guides/video-audio-inputs",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    },
+    {
+      "id": "changelog",
+      "url": "https://docs.fireworks.ai/updates/changelog",
+      "captured_at": "2026-09-07",
+      "tier": "T1"
+    }
+  ],
+  "runtime_verification": {
+    "status": "not_run_missing_credential",
+    "credential": "FIREWORKS_API_KEY",
+    "endpoint": "GET https://api.fireworks.ai/v1/accounts/fireworks/models?filter=supports_serverless=true",
+    "effect": "Model availability and per-model context/capability metadata remain documentation-derived or null."
+  },
+  "provider_features": {
+    "api": {
+      "openai_compatible_base_url": "https://api.fireworks.ai/inference/v1",
+      "anthropic_compatible_base_url": "https://api.fireworks.ai/inference",
+      "model_ids": "accounts/fireworks/models/<model-id>"
+    },
+    "serving_paths": {
+      "standard": "default best-effort serverless",
+      "priority": "higher reliability during peak load at model-specific premium",
+      "fast": "higher-speed route where listed; model-specific and not available for every model",
+      "on_demand": "dedicated GPU capacity, broader model choice, predictable performance, no hard platform rate limit"
+    },
+    "serverless_rate_limits": {
+      "scope": "per account and per model; adaptive",
+      "starting_total_prompt_tpm": 3600000,
+      "starting_uncached_prompt_tpm": 900000,
+      "starting_generated_tpm": 36000,
+      "failure_codes": {
+        "over_limit": 429,
+        "capacity_overload": 503
+      },
+      "actual_limits": "read response headers; sustained usage can raise limits"
+    },
+    "prompt_caching": {
+      "default": true,
+      "scope": "every serverless model",
+      "default_cached_input_discount_percent": 50,
+      "affinity": "use x-session-affinity or the OpenAI user field for repeated prefixes"
+    },
+    "batch": {
+      "discount_percent": 50,
+      "applies_to": [
+        "input",
+        "output"
+      ]
+    },
+    "structured_outputs": {
+      "json_object": true,
+      "json_schema": true,
+      "grammar_mode": true,
+      "schema_standard": "most JSON Schema 2020-12 plus Draft-7 definitions alias",
+      "reasoning_interaction": "response_format json_schema suppresses reasoning output; prompt the schema instead when both are required"
+    },
+    "tool_calling": {
+      "json_schema_parameters": true,
+      "parallel_calls": "model dependent; verify supportsTools and the model capability record"
+    },
+    "reasoning": {
+      "controls": [
+        "reasoning_effort",
+        "thinking"
+      ],
+      "mutually_exclusive_controls": true,
+      "reasoning_content_field": true,
+      "interleaved_thinking": "model dependent"
+    },
+    "serverless_sla": false
+  },
+  "models": [
+    {
+      "id": "accounts/fireworks/models/kimi-k3",
+      "display_name": "Kimi K3",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 3.0,
+          "cached_input": 0.3,
+          "output": 15.0
+        },
+        "priority": {
+          "input": 3.75,
+          "cached_input": 0.375,
+          "output": 18.75
+        }
+      },
+      "best_fit": [
+        "coding",
+        "agentic_tasks"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-pro-0813",
+      "display_name": "DeepSeek V4 Pro (0813)",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 1.32,
+          "cached_input": 0.044,
+          "output": 3.96
+        },
+        "priority": {
+          "input": 1.65,
+          "cached_input": 0.055,
+          "output": 4.95
+        }
+      },
+      "best_fit": [
+        "coding",
+        "reasoning",
+        "long_context"
+      ],
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": null,
+        "reasoning": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "tool_calling",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "display_name": "DeepSeek V4 Flash (0731)",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 0.22,
+          "cached_input": 0.007,
+          "output": 0.66
+        },
+        "priority": {
+          "input": 0.275,
+          "cached_input": 0.00875,
+          "output": 0.825
+        }
+      },
+      "best_fit": [
+        "fast_extraction",
+        "classification",
+        "search"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": null
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/glm-5p2",
+      "display_name": "GLM 5.2",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 1.4,
+          "cached_input": 0.14,
+          "output": 4.4
+        },
+        "priority": {
+          "input": 1.75,
+          "cached_input": 0.18,
+          "output": 5.5
+        }
+      },
+      "best_fit": [
+        "coding",
+        "agents",
+        "reasoning"
+      ],
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": null,
+        "reasoning": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "tool_calling",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/qwen3p7-plus",
+      "display_name": "Qwen 3.7 Plus",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 0.4,
+          "cached_input": 0.08,
+          "output": 1.6
+        },
+        "priority": null
+      },
+      "best_fit": [
+        "long_context",
+        "vision"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": true,
+        "vision": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "reasoning",
+        "vision"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/minimax-m3",
+      "display_name": "MiniMax M3",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 0.3,
+          "cached_input": 0.06,
+          "output": 1.2
+        },
+        "priority": {
+          "input": 0.45,
+          "cached_input": 0.09,
+          "output": 1.8
+        }
+      },
+      "best_fit": [
+        "coding",
+        "agents",
+        "fast_extraction"
+      ],
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": null,
+        "reasoning": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "tool_calling",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/gpt-oss-120b",
+      "display_name": "GPT OSS 120B",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 0.15,
+          "cached_input": 0.015,
+          "output": 0.6
+        },
+        "priority": {
+          "input": 0.18,
+          "cached_input": 0.018,
+          "output": 0.72
+        }
+      },
+      "best_fit": [
+        "reasoning"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/step-3p7-flash-nvfp4",
+      "display_name": "Step 3.7 Flash",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": null,
+      "best_fit": [
+        "fast_extraction",
+        "classification",
+        "vision"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": null,
+        "vision": true
+      },
+      "sources": [
+        "recommended_models",
+        "vision"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/qwen3-omni-30b-a3b-instruct",
+      "display_name": "Qwen3 Omni 30B A3B Instruct",
+      "lifecycle": "deployment_candidate",
+      "context_window_tokens": null,
+      "pricing": null,
+      "best_fit": [
+        "audio_input",
+        "video_input"
+      ],
+      "capabilities": {
+        "tools": null,
+        "structured_outputs": null,
+        "reasoning": true,
+        "audio_input": true,
+        "video_input": true
+      },
+      "sources": [
+        "recommended_models",
+        "video_audio_inputs",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/qwen3-embedding-8b",
+      "display_name": "Qwen3 Embedding 8B",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_input_tokens",
+        "input": 0.1
+      },
+      "best_fit": [
+        "embeddings"
+      ],
+      "capabilities": {
+        "embeddings": true
+      },
+      "sources": [
+        "recommended_models",
+        "serverless_pricing"
+      ]
+    }
+  ],
+  "deprecations": [
+    {
+      "id": "accounts/fireworks/models/minimax-m2p7",
+      "effective_at": "2026-08-27",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/minimax-m3"
+    },
+    {
+      "id": "accounts/fireworks/models/gpt-oss-20b",
+      "effective_at": "2026-08-27",
+      "surface": "serverless",
+      "replacements": [
+        "accounts/fireworks/models/gpt-oss-120b",
+        "accounts/fireworks/models/qwen3-8b"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/kimi-k2p6-fast",
+      "effective_at": "2026-08-27",
+      "surface": "serverless_fast",
+      "replacement": "accounts/fireworks/models/kimi-k2p6"
+    },
+    {
+      "id": "accounts/fireworks/models/kimi-k2p7-code-fast",
+      "effective_at": "2026-08-27",
+      "surface": "serverless_fast",
+      "replacement": "accounts/fireworks/models/kimi-k2p7-code"
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-pro",
+      "effective_at": "2026-08-27",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/deepseek-v4-pro-0813"
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-flash",
+      "effective_at": "2026-08-14",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/deepseek-v4-flash-0731"
+    }
+  ],
+  "uncertainties": [
+    "Context windows and complete per-model capability flags require the authenticated List Models API and are null where the captured docs did not state them.",
+    "The 2026-08-27 changelog says models are deprecated from serverless effective that day but does not state a later removal date; treat those IDs as unavailable for new routing unless the runtime API proves otherwise.",
+    "The changelog says audio inference and image generation were deprecated on 2026-06-10 while current docs still describe video/audio inputs. Input understanding and generative audio/image endpoints are separate surfaces; verify the exact endpoint before use."
+  ],
+  "global_notes": {
+    "performance": "Fireworks recommendations combine vendor internal testing, customer deployments, and external benchmarks. They are not independent Build Loop benchmarks or SLAs.",
+    "production": "Serverless is best effort. Use Priority to reduce load shedding or on-demand capacity for predictable throughput and version control.",
+    "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
+  },
+  "provenance_note": "Re-verified 2026-09-07 against https://docs.fireworks.ai/updates/changelog and the public model list at https://app.fireworks.ai/api/models (303 models). The 2026-08-27 serverless deprecation table and every replacement id reproduced unchanged; the public model list still enumerates deprecated ids because it covers dedicated deployments as well as serverless, so it cannot be read as a serverless availability signal."
+}

@@ -160,6 +160,21 @@ class ContentIndexTests(unittest.TestCase):
         rows = content_index.query("scopedneedle", limit=20, project="alpha", db_path=self.db)
         self.assertEqual([(row["id"], row["_scope"]) for row in rows], [("global", "global"), ("a", "alpha")])
 
+    def test_unscoped_project_lane_is_globally_visible_alongside_named_project(self) -> None:
+        """projects/_unscoped/ IS the global lane (build-loop's memory routing rule
+        sends cross-project decisions there). A caller naming a project must still
+        see it — dropping it silently makes global routing write-only, the same
+        bug memory_facade/decisions.py already documents for the JSONL leg."""
+        self.write("projects/alpha/x.md", "crossscopeneedle")
+        self.write("projects/_unscoped/y.md", "crossscopeneedle")
+        self.write("lessons/z.md", "crossscopeneedle")
+        self.write("projects/beta/w.md", "crossscopeneedle")
+        self.build()
+        rows = content_index.query("crossscopeneedle", limit=20, project="alpha", db_path=self.db)
+        ids = {row["id"] for row in rows}
+        self.assertEqual(ids, {"x", "y", "z"})
+        self.assertNotIn("w", ids)
+
     def test_row_shape_preserves_old_keys_and_adds_requested_keys(self) -> None:
         self.document("shape.md", type="decision", status="open", created="2026-08-01")
         self.build()
@@ -221,6 +236,126 @@ class ContentIndexTests(unittest.TestCase):
         self.assertIn("hyphen", [row["id"] for row in self.search("decision-project-build-loop-thing")])
         self.assertIn("hyphen", [row["id"] for row in self.search('quote"marker')])
         self.assertIn("hyphen", [row["id"] for row in self.search("operator AND sentinel")])
+
+    def test_index_paths_upserts_a_new_file_without_a_full_build(self) -> None:
+        self.build()  # establish the database once, as the real workflow does
+        added = self.write("added.md", "targetedneedle")
+        result = content_index.index_paths([added], store=self.store, db_path=self.db)
+        self.assertEqual(result, {"indexed": 1, "deleted": 0, "skipped": 0})
+        self.assertEqual([row["id"] for row in self.search("targetedneedle")], ["added"])
+
+    def test_index_paths_reupsert_after_edit_replaces_the_old_row(self) -> None:
+        self.build()
+        edited = self.write("edited.md", "originalbodyneedle")
+        content_index.index_paths([edited], store=self.store, db_path=self.db)
+        edited.write_text("revisedbodyneedle", encoding="utf-8")
+        stat = edited.stat()
+        os.utime(edited, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+        content_index.index_paths([edited], store=self.store, db_path=self.db)
+        connection = sqlite3.connect(self.db)
+        try:
+            count = connection.execute(
+                "SELECT count(*) FROM files WHERE path = ?", (str(edited.resolve()),)
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(count, 1)
+        self.assertEqual(self.search("originalbodyneedle"), [])
+        self.assertEqual([row["id"] for row in self.search("revisedbodyneedle")], ["edited"])
+
+    def test_index_paths_removes_a_path_deleted_from_disk(self) -> None:
+        self.build()
+        doomed = self.write("index-paths-doomed.md", "vanishingtargetedneedle")
+        content_index.index_paths([doomed], store=self.store, db_path=self.db)
+        self.assertEqual([row["id"] for row in self.search("vanishingtargetedneedle")], ["index-paths-doomed"])
+        doomed.unlink()
+        result = content_index.index_paths([doomed], store=self.store, db_path=self.db)
+        self.assertEqual(result["deleted"], 1)
+        self.assertEqual(self.search("vanishingtargetedneedle"), [])
+
+    def test_index_paths_outside_store_is_a_no_op(self) -> None:
+        self.build()  # database exists — the no-op is about scope, not a missing db
+        outside = Path(self.tempdir.name) / "outside-index-paths.md"
+        outside.write_text("outsidetargetedneedle", encoding="utf-8")
+        result = content_index.index_paths([outside], store=self.store, db_path=self.db)
+        # A path that was never indexed (out of scope) is a genuine no-op: it must
+        # not be reported as a deletion, since nothing was deleted.
+        self.assertEqual(result, {"indexed": 0, "deleted": 0, "skipped": 1})
+        self.assertEqual(self.search("outsidetargetedneedle"), [])
+        connection = sqlite3.connect(self.db)
+        try:
+            total = connection.execute("SELECT count(*) FROM files").fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(total, 0)
+
+    def test_index_paths_corrupt_or_unreadable_path_does_not_raise(self) -> None:
+        self.build()
+        broken = self.store / "broken.md"
+        broken.mkdir()  # a directory named *.md — os.stat succeeds but reading it as text fails
+        result = content_index.index_paths([broken], store=self.store, db_path=self.db)
+        self.assertEqual(result, {"indexed": 0, "deleted": 0, "skipped": 1})
+
+    def test_index_paths_refuses_a_db_with_a_foreign_schema_version(self) -> None:
+        """A schema-version mismatch must never route through _connect's
+        drop-and-recreate path from index_paths — that path is correct for
+        build() (which refills every row right after) and catastrophic here
+        (index_paths only re-adds the one path it was given). Confirmed to
+        FAIL before the fix: pre-fix this collapsed 40 docs down to 1."""
+        for i in range(40):
+            self.write(f"foreign-schema-{i}.md", f"kangaroo body {i}")
+        self.build()
+        connection = sqlite3.connect(self.db)
+        try:
+            connection.execute(
+                "UPDATE index_state SET schema_version = ?", (content_index._SCHEMA_VERSION - 1,)
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        target = self.store / "foreign-schema-0.md"
+        result = content_index.index_paths([target], store=self.store, db_path=self.db)
+
+        connection = sqlite3.connect(self.db)
+        try:
+            count = connection.execute("SELECT count(*) FROM files").fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(count, 40, "index_paths must leave a foreign-schema db untouched")
+        self.assertEqual(result, {"indexed": 0, "deleted": 0, "skipped": 1})
+        self.assertEqual(len(self.search("kangaroo", limit=100)), 40)
+
+    def test_global_scopes_constant_is_load_bearing_in_the_project_filter(self) -> None:
+        """`_GLOBAL_SCOPES` must actually drive the SQL, not just document an
+        intent a hardcoded literal quietly bypasses. Confirmed to FAIL before
+        the fix: today's code hardcodes ('global', '_unscoped') at line ~364,
+        so monkeypatching the constant changes nothing."""
+        self.write("projects/alpha/scoped.md", "monkeypatchneedle")
+        self.write("projects/_unscoped/global.md", "monkeypatchneedle")
+        self.build()
+        with patch.object(content_index, "_GLOBAL_SCOPES", frozenset({"global"})):
+            rows = self.search("monkeypatchneedle", project="alpha")
+        ids = {row["id"] for row in rows}
+        self.assertNotIn("global", ids, "_unscoped must stop being globally visible once excluded from the constant")
+        self.assertIn("scoped", ids)
+
+    def test_index_paths_never_creates_the_database(self) -> None:
+        """sqlite3.connect() creates the file it's given. If index_paths connected
+        unconditionally, the first durable write to a store with no index would
+        silently produce a one-document database — recall's ``Path(db).is_file()``
+        check would then pass and the loud content_index_absent diagnostic would
+        never fire again. build() must stay the only creator."""
+        self.assertFalse(self.db.exists())
+        target = self.write("never-built.md", "neverbuiltneedle")
+        result = content_index.index_paths([target], store=self.store, db_path=self.db)
+        self.assertEqual(result, {"indexed": 0, "deleted": 0, "skipped": 1})
+        self.assertFalse(self.db.exists(), "index_paths must never create the database")
+
+    def test_build_still_creates_the_database_on_a_fresh_store(self) -> None:
+        self.assertFalse(self.db.exists())
+        self.build()
+        self.assertTrue(self.db.is_file())
 
     def test_empty_or_missing_index_is_safe(self) -> None:
         self.assertEqual(content_index.query("anything", db_path=self.store / "missing.sqlite"), [])

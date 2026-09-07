@@ -57,11 +57,18 @@ Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `s
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
 
-### Groq workload catalog (on demand)
+### Provider workload catalogs (on demand)
 
-When the task asks which Groq API model or system should run a downstream workload, read both `references/provider-catalogs/groq.md` and `references/provider-catalogs/groq-models.json`. The first contains dated decision guidance; the second is the machine-readable snapshot and freshness contract.
+When a task asks which API model or provider should run a downstream workload, read the provider's dated guide and machine-readable snapshot together:
 
-Keep this separate from host-agent reachability. A Groq catalog entry does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark. Reverify the catalog after its `review_after` date, on any deprecation change, and before production billing or capacity decisions because availability, pricing, rate limits, advertised throughput, and capability compatibility are dynamic.
+| Provider | Decision guide | Machine-readable catalog |
+|---|---|---|
+| Groq | `references/provider-catalogs/groq.md` | `references/provider-catalogs/groq-models.json` |
+| OpenRouter | `references/provider-catalogs/openrouter.md` | `references/provider-catalogs/openrouter-models.json` |
+| Fireworks AI | `references/provider-catalogs/fireworks-ai.md` | `references/provider-catalogs/fireworks-ai-models.json` |
+| Together AI | `references/provider-catalogs/together-ai.md` | `references/provider-catalogs/together-ai-models.json` |
+
+Keep provider catalogs separate from host-agent reachability. A catalog entry does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark. Reverify a catalog after its `review_after` date, on any deprecation change, and before production billing or capacity decisions because availability, pricing, rate limits, throughput, and capability compatibility are dynamic. For catalogs marked non-exhaustive, query the recorded live catalog source before selecting a model.
 
 ### GPT-5.6 Codex policy
 

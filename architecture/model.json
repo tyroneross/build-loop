@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "fd207cc9fc4b610c8456b4a07a07ca2e8367b63ea94cd75ae007fbc1f53044e2"
+    "content_sha256": "f2cc0b81cdac2316a648b178b446aa33e3b3efcbfe4180f5585c9548126ce496"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -885,7 +885,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-29"
+          "date": "2026-09-07"
         }
       },
       "database-assessor": {
@@ -1732,7 +1732,7 @@
       "scripts/memory_facade/backlog.py": "Recall backlog items from canonical and personal-mirror stores by ID.\"\"\"",
       "scripts/memory_facade/common.py": "Shared helpers for memory_facade sub-modules.",
       "scripts/memory_facade/debugger.py": "Backend 4: build-loop native structured debugging incident reader.\"\"\"",
-      "scripts/memory_facade/decisions.py": "Backend 2: canonical decision indexes + project decisions/*.md reader.\"\"\"",
+      "scripts/memory_facade/decisions.py": "Backend 2: content-FTS decision index (doc_type='decision') + project",
       "scripts/memory_facade/lessons.py": "Backend 2.5: lessons reader for memory_facade.",
       "scripts/memory_facade/runs.py": "Backend 1: state.json runs[] reader for memory_facade.\"\"\"",
       "scripts/memory_facade/semantic.py": "Backend 3: local SQLite semantic index, with optional Postgres fallback.\"\"\"",
