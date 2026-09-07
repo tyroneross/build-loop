@@ -35,6 +35,52 @@ These are additive arm fields on the canonical artifact, following the existing 
 - **Check the produced code AND its oracle output — never "it ran."** Read the code; run the oracle; parse the RIGHT signal. (2026-07-09: an auto-grep matched the lib unit-test line "0 passed" and mislabeled a 2/5-passing control as FAIL; multi-binary `cargo test` needs pass/fail SUMMED across binaries, not first-match. Always confirm the specific test binary that carries the assertions.)
 - **Separate the measurement apparatus from the thing measured.** The **rig** = everything that is NOT the model or the code under test: the grading script, the exact command + flags you invoke, the tooling environment (installed binaries, language toolchain, PATH), and the fixtures/scaffold. A **rig bug** is a defect in that apparatus that yields a false pass or a false fail wrongly blamed on the model. Before trusting any `0` or any FAIL, confirm the rig produced a *valid run*: the command parsed, the tools were present, the oracle actually executed against real output. Three rig bugs on 2026-07-08, each first mis-scored as a model failure: (a) `pytest` absent from the grading env → a contestant looped on a false-negative it could never clear; (b) `harness swarm --segments` expects a manifest FILE, not an integer count → the treatment arm produced 0 files twice on a malformed command; (c) an auto-grep read the wrong `cargo test` binary's summary line → a 2-of-5-passing run was labeled FAIL. None were the model; all were the rig.
 
+## Compare roles without changing the question being measured
+
+When the request compares planners, orchestrators, and coders, pre-register each
+role as a separate treatment. Do not infer a model's planning ability from a
+coding success, or its orchestration ability from a proposed delegation plan.
+
+| Role | Work that must actually happen | Evidence required before a pass |
+|------|-------------------------------|---------------------------------|
+| Planner | Produce an actionable plan against a fixed task and source capsule | Required behavior, ordered dependencies, ownership, negative cases, and runnable verification match a source-backed rubric fixed before outputs arrive |
+| Orchestrator | Dispatch bounded work, inspect returned evidence, request a repair when necessary, and decide whether integration is justified | A dispatch/return trace shows dependency and scope control, rejection of false success, and correct recovery or escalation; a plan alone is not execution |
+| Coder | Implement the same bounded change in an isolated checkout | Parent reruns frozen behavior checks and regressions on the actual diff; no weakened assertions or out-of-scope changes |
+
+For an orchestration comparison, hold worker model, worker budget, tools, and
+injected failure cases constant. A controlled worker-return exercise measures
+decisions under that fixture; label it separately from live team execution.
+Changing the worker team changes the treatment, even if the lead model stays
+the same. Give every compared model the same role fixtures; an inventory task
+does not establish that model's coder or planner accuracy.
+
+Before dispatch, exercise the verifier on the unchanged baseline and inspect
+what the assertions prove. A test named "selects the second button" that accepts
+any button is not an ordinal-selection oracle. A green existing suite can
+coexist with a reproducible product defect. Include absent targets and other
+negative cases, not only successful selection. Freeze these criteria before
+viewing contestant output; new discoveries become a separately versioned round.
+
+Use fresh contexts for repetitions. Preserve first-attempt output and score
+before supplying review feedback; repaired success is a separate result.
+If the diagnosis is disclosed, disclose it identically and do not score
+diagnosis discovery. Record a parent interruption as an interruption, not a
+model accuracy failure. A deadline failure requires an actual elapsed deadline.
+
+Keep the existing `abc-comparison/v2` artifact. Add `evaluation_role` with one
+of `planner|orchestrator|coder` to arm metadata, alongside the model, effort,
+mode, and provenance fields above. Keep rubric version, fixture identity,
+repetition, initial result, repair result, and dispatch evidence in the raw run
+record. Do not invent a competing normalized observation format. Verify that
+the Lab converter and storage retain these fields before using aggregates;
+raw artifact retention is the fallback, not proof that ingestion preserved them.
+
+Report passes/attempts per role, task, model, effort, and mode. Unknown runtime
+identity remains unknown. Three attempts provide a small, task-specific sample,
+not a general capability ceiling. If every arm passes, increase task difficulty
+in a new pre-registered round; if the apparatus fails, repair it before ranking
+models. Use correctness as the gate and speed/cost only after that gate passes.
+
 ## Roster & dispatch (verified handles)
 - Opus 4.8 → `Agent(model: "opus")`; Sonnet 5.0 → `Agent(model: "sonnet")` (`sonnet` = latest, NOT 4.x — older Sonnets have no clean subagent handle).
 - Codex/OpenAI → read the exact model id and requested effort from the experiment manifest; pass both explicitly (for example `model: "gpt-5.6-terra"`, `config: {model_reasoning_effort: "high"}`). Capture the effective runtime config in the arm log; do not rely on `~/.codex/config.toml` defaults or guess `-codex` suffixes.
