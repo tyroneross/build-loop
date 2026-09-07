@@ -50,6 +50,38 @@ def _runner():
     return runner
 
 
+def _tool_trace():
+    import tool_trace
+
+    return tool_trace
+
+
+def _error_span_rows(workdir: Path, tool_name: str, count: int, *, is_error: bool = True) -> str:
+    """``count`` real spans for ``tool_name``, built by the sole production writer.
+
+    Uses ``tool_trace.build_span`` so fixtures match what ``.build-loop/telemetry/
+    tool-traces.jsonl`` actually contains: no top-level ``tool``/``operation`` key,
+    the real tool name only at ``attributes["gen_ai.tool.name"]``, and
+    ``status.code`` set from ``is_error``.
+    """
+    tool_trace = _tool_trace()
+    rows = [
+        json.dumps(
+            tool_trace.build_span(
+                workdir=workdir,
+                session_id="test-session",
+                tool_name=tool_name,
+                tool_use_id=f"call-{index}",
+                phase="end",
+                is_error=is_error,
+                ordinal=index,
+            )
+        )
+        for index in range(count)
+    ]
+    return "\n".join(rows) + "\n"
+
+
 def test_accruing_writes_receipt_and_run_learn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_id = _write_state(tmp_path, 2)
     runner = _runner()
@@ -451,3 +483,145 @@ def test_large_inputs_are_bounded_and_reported(tmp_path: Path) -> None:
     assert str(traces) in result["stages"]["collect"]["truncated_inputs"]
     assert ".build-loop/experiments/large.jsonl" in result["input_limits"]["truncated_files"]
     assert result["patterns_count"] <= runner.PATTERN_CAP
+
+
+def test_repeated_tool_error_emits_pattern_under_the_real_tool_name(tmp_path: Path) -> None:
+    """The defect this file exists to catch: on today's un-fixed code this is RED.
+
+    Production rows are OTel spans whose ``name`` is the per-invocation label
+    ``"execute_tool Bash"``; the real tool identity lives at
+    ``attributes["gen_ai.tool.name"]``. A repeated FAILURE on the same tool must
+    surface as a pattern keyed on that real name, with the invocation-label noise
+    stripped out — not as zero patterns (old bug: filtered everything) and not as
+    a pattern keyed on the raw span label (the original, pre-filter bug).
+    """
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    traces.write_text(_error_span_rows(tmp_path, "Bash", 5, is_error=True), encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-bash"
+    assert patterns[0]["payload"]["signature"] == "Bash"
+    assert patterns[0]["payload"]["count"] == 5
+
+
+def test_repeated_tool_invocations_without_errors_emit_no_pattern(tmp_path: Path) -> None:
+    """Invocation volume alone is not a pattern — only a repeated ERROR is."""
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    traces.write_text(_error_span_rows(tmp_path, "Bash", 5, is_error=False), encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert patterns == []
+    assert count == 0
+
+
+def test_execute_tool_span_labels_are_excluded_from_tool_trace_patterns(tmp_path: Path) -> None:
+    """Original filed acceptance criterion: a bare legacy row never becomes a pattern."""
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"name": "execute_tool exec"}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert patterns == []
+    assert count == 0
+
+
+def test_legacy_tool_field_row_is_defensive_not_production(tmp_path: Path) -> None:
+    """Legacy/defensive shape only.
+
+    Production ``tool_trace.build_span()`` rows never carry a top-level ``tool``
+    key — the real name only ever appears at ``attributes["gen_ai.tool.name"]``.
+    This exercises ``_resolve_tool_signature()``'s highest-preference branch for
+    any pre-OTel or hand-authored row that does carry one, paired with an ERROR
+    status so the exclusion/resolution logic actually runs instead of being
+    short-circuited by the error gate.
+    """
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"tool": "repeat-call", "status": {"code": "ERROR"}}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-repeat-call"
+
+
+def test_mixed_execute_tool_and_real_signature_yields_only_the_real_pattern(tmp_path: Path) -> None:
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    excluded_rows = [
+        json.dumps({"name": "execute_tool exec", "status": {"code": "ERROR"}}) for _ in range(5)
+    ]
+    real_rows = _error_span_rows(tmp_path, "repeat-call", 5, is_error=True).splitlines()
+    traces.write_text("\n".join(excluded_rows + real_rows) + "\n", encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-repeat-call"
+
+
+def test_execute_tool_signature_does_not_reach_patterns_count_end_to_end(tmp_path: Path) -> None:
+    run_id = _write_state(tmp_path, 3)
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"name": "execute_tool exec", "status": {"code": "ERROR"}}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    result = runner.run(tmp_path, run_id=run_id, source="test")
+
+    assert result["stages"]["collect"]["tool_trace_patterns"] == 0
+    assert result["patterns_count"] == 0
+
+
+def test_exclusion_is_case_insensitive(tmp_path: Path) -> None:
+    """Mutation-resistance fixture: deleting ``.lower()`` from the exclusion check
+    must turn this RED. A mixed-case span label that still resolves to the
+    execute_tool sentinel must stay excluded regardless of case."""
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    row = json.dumps({"name": "Execute_Tool Exec", "status": {"code": "ERROR"}}) + "\n"
+    traces.write_text(row * 5, encoding="utf-8")
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert patterns == []
+    assert count == 0
+
+
+def test_real_tool_named_execute_tool_wrapper_survives_exclusion(tmp_path: Path) -> None:
+    """Mutation-resistance fixture: dropping the trailing space from
+    ``EXECUTE_TOOL_SPAN_PREFIX`` must turn this RED. A genuine tool whose name
+    merely starts with ``execute_tool`` (no separating space) must NOT be
+    excluded — the prefix check requires the literal sentinel or the sentinel
+    plus a space, not an arbitrary shared prefix."""
+    runner = _runner()
+    traces = tmp_path / ".build-loop" / "telemetry" / "tool-traces.jsonl"
+    traces.parent.mkdir(parents=True)
+    traces.write_text(
+        _error_span_rows(tmp_path, "execute_tool_wrapper", 5, is_error=True), encoding="utf-8"
+    )
+
+    patterns, count = runner._tool_trace_patterns(tmp_path, [])
+
+    assert count == 1
+    assert len(patterns) == 1
+    assert patterns[0]["key"] == "retry-execute-tool-wrapper"
+    assert patterns[0]["payload"]["signature"] == "execute_tool_wrapper"

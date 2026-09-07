@@ -113,6 +113,17 @@ when query shape, scale, governance, or economics requires it.
 7. **Test invariants, not just happy paths.** Cover replay safety, crash or
    rollback behavior, query-result stability after index/schema changes, and
    migration idempotence.
+8. **An invariant proven only by the absence of a statement is a convention,
+   not a property.** "This code never writes to X" holds exactly as long as no
+   one adds the write, and a docstring or commit message that says so is not an
+   enforcement point. Make the substrate refuse it: open the handle `mode=ro`,
+   ATTACH read-only, use a restricted role or credential, or revoke the grant.
+   Then assert the refusal in a test — the forbidden write raises — rather than
+   the absence, where grep finds no INSERT. Observed: a migration documented
+   "zero DDL on the 363MB production store" while ATTACHing that store
+   read-write; an independent auditor inserted a row and created a table
+   through the handle the migration held open. The read-only pattern already
+   existed elsewhere in the same build and had simply not been applied here.
 
 ## Object Lifecycle And Population Contract
 

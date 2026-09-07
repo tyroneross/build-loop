@@ -199,6 +199,52 @@ CONTRASTIVE_PIVOT_RES = [
     re.compile(r"\brather than\s+[^.\n]{1,40}\s*[—,]\s*", re.IGNORECASE),
 ]
 
+# Percentage-denominator: a stated "(N%)" must match the nearest preceding
+# "A of B" construction on the same line. On 2026-09-04 (run
+# bl-20260904T050714Z-claude_code-318862) a report and two module docstrings
+# all said "1,463 of 1,864 pages (73%)". 1463/1864 = 78.5%; 73% is
+# 1463/2003 — a different page population in the same repo. Numerator,
+# denominator, and percentage were each individually real and jointly wrong.
+# Only the LLM fact-check caught it; this is the cheap deterministic check
+# that would have caught it for free.
+#
+# A leading "~" or "approx" inside the parens marks the figure as explicitly
+# approximate — that is not a mismatch claim, so it is exempt.
+PERCENT_RE = re.compile(
+    r"\((?P<approx>~|approx\.?\s*)?(?P<pct>\d+(?:\.\d+)?)\s*%\)",
+    re.IGNORECASE,
+)
+_NUMBER_TOKEN = r"\d[\d,]*(?:\.\d+)?"
+A_OF_B_RE = re.compile(
+    rf"(?P<a>{_NUMBER_TOKEN})\s+of\s+(?P<b>{_NUMBER_TOKEN})", re.IGNORECASE
+)
+
+# Adjacency guard for percentage-denominator: an "A of B" only explains a
+# "(N%)" later on the line when the text connecting them reads as one clause
+# -- a short bridging phrase with no clause-ending punctuation. Without this
+# bound, ANY earlier "A of B" on the line pairs with the percentage even
+# across a full independent clause, e.g. "Latency dropped on 3 of 5
+# endpoints, cutting p95 by 240ms (12%)." -- the 12% has nothing to do with
+# 3-of-5, it is a *different* stat in the same sentence. The punctuation set
+# catches the clause break; the char cap is the backstop for a run that
+# lacks punctuation but has still changed subject over a long span.
+ADJACENCY_MAX_GAP_CHARS = 40
+ADJACENCY_BREAK_CHARS = frozenset(";,.:!?")
+ADJACENCY_DASH_RE = re.compile(r"[–—]")  # en dash, em dash
+
+# Inline code spans (`...`) quote text rather than assert it -- a doc
+# describing this very rule, or an example fixture, must not trip on its own
+# quoted figure. Local to this rule only: `_strip_fenced_blocks` is
+# block-level and consumed by seven other rules, so it is not touched here.
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def _blank_inline_code(line: str) -> str:
+    """Blank backtick-delimited spans, preserving length so match offsets
+    into the original ``line`` (used for the reported snippet) stay valid.
+    """
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line)
+
 
 def _finding(
     *,
@@ -462,6 +508,75 @@ CALIBRATED_RE = re.compile(r"[✅⚠❓]|\bunverified\b|\bassumed\b|\binferred\b
 
 
 
+def lint_percentage_denominator(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """Cross-check a stated ``(N%)`` against its nearest preceding ``A of B`` on the same line.
+
+    ``jargon-blocklist`` and friends catch internal codenames; nothing checked
+    whether a percentage the author typed actually matches the fraction typed
+    beside it. A percentage with no preceding ``A of B`` on the line is not
+    checked — only same-line pairs are in scope. Tolerance is the rounding
+    envelope of the stated precision (half a unit in the last decimal place,
+    plus a small epsilon for float error), so ``73%`` accepts anything in
+    [72.5, 73.5) and ``78.5%`` accepts anything in [78.45, 78.55).
+
+    Two guards keep this from flagging a correct sentence:
+
+    - **Adjacency**: the ``A of B`` must be the nearest preceding match AND
+      the text between it and the ``(N%)`` must be a short, punctuation-free
+      bridging phrase (``ADJACENCY_MAX_GAP_CHARS`` / ``ADJACENCY_BREAK_CHARS``
+      above) — otherwise the percentage is a different stat in the same
+      sentence, not that fraction restated.
+    - **Inline code**: backtick spans are blanked before matching, so a doc
+      quoting the defective figure is not itself flagged.
+
+    WARN only — it never blocks a report.
+    """
+    findings: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        if not line.strip():
+            continue
+        scan_line = _blank_inline_code(line)
+        for pct_match in PERCENT_RE.finditer(scan_line):
+            if pct_match.group("approx"):
+                continue
+            pct_str = pct_match.group("pct")
+            stated_pct = float(pct_str)
+            preceding = None
+            for ab_match in A_OF_B_RE.finditer(scan_line, 0, pct_match.start()):
+                preceding = ab_match
+            if preceding is None:
+                continue
+            gap = scan_line[preceding.end():pct_match.start()]
+            if len(gap) > ADJACENCY_MAX_GAP_CHARS:
+                continue
+            if any(ch in ADJACENCY_BREAK_CHARS for ch in gap):
+                continue
+            if ADJACENCY_DASH_RE.search(gap):
+                continue
+            a_raw, b_raw = preceding.group("a"), preceding.group("b")
+            a = float(a_raw.replace(",", ""))
+            b = float(b_raw.replace(",", ""))
+            if b == 0:
+                continue
+            computed_pct = a / b * 100
+            decimals = len(pct_str.split(".")[1]) if "." in pct_str else 0
+            tolerance = 0.5 * (10 ** -decimals) + 1e-6
+            if abs(computed_pct - stated_pct) > tolerance:
+                findings.append(_finding(
+                    rule_id="percentage-denominator",
+                    severity="WARN",
+                    line=lineno,
+                    snippet=line.strip(),
+                    message=(
+                        f"Stated {pct_str}% and {a_raw} of {b_raw} compute to "
+                        f"{computed_pct:.1f}%, not {pct_str}%. Verify which "
+                        "population the percentage came from and name it — "
+                        "only correct a number if the mismatch is real."
+                    ),
+                ))
+    return findings
+
+
 def lint_direct_language(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """Clear verb, clear outcome. Flags weak verbs, filler openers, and uncalibrated hedges."""
     findings: list[dict[str, Any]] = []
@@ -557,6 +672,7 @@ def run_lint(
     findings.extend(lint_mechanism_claim(lines))
     findings.extend(lint_jargon(lines))
     findings.extend(lint_contrastive_pivot(lines))
+    findings.extend(lint_percentage_denominator(lines))
     findings.extend(lint_direct_language(lines))
     findings.extend(lint_length(lines, cap=length_cap))
     findings.extend(lint_context_density(workdir))
