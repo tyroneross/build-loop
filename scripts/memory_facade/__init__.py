@@ -229,11 +229,10 @@ def read_content(
         # as the STORE ROOT, not the caller's cwd. Passing `workdir` here
         # resolved `<workdir>/indexes/content_fts.sqlite`, which exists only
         # when `workdir` happens to BE the memory store root. Measured
-        # 2026-09-01: `recall()` from `/Users/tyroneross/dev/git-folder/
-        # build-loop` (i.e. every caller that isn't build-loop-memory
-        # itself) returned `content_index_absent` and zero content results.
-        # No argument lets `memory_store_root()`'s own env/default
-        # resolution apply, matching every other backend in this module.
+        # 2026-09-01: `recall()` from any repository that is not the memory
+        # store itself returned `content_index_absent` and zero content
+        # results. No argument lets `_paths.memory_store_root()`'s own
+        # env/default resolution apply, matching every other backend here.
         db = _ci.default_db_path()
         if not Path(db).is_file():
             return [], [

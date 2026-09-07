@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "6266755d0bfacde4cdb535d551ae570a7deb27cc04e61578d5a519cb181b9639"
+    "content_sha256": "34a2c0d475c46ad6f4805602bc04b4a909c8a8ca45326ec53c4a34949da88846"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1366,7 +1366,7 @@
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-09-07"
         }
       },
       "native-ax-driver": {
