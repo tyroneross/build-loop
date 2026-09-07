@@ -36,6 +36,10 @@ Exit codes: `0` completed · `1` denied/cancelled/timeout/failed · `2` refused 
 
 Claude Code enforces this through a PreToolUse hook. Codex and other hosts follow it as protocol. Full contract, registry format, and risk-class behaviour when the coordinator is unavailable: `skills/build-loop/references/privileged-request-broker.md`.
 
+## System-access prompts — one request per access need
+
+Before a command, script, build or app launch can request Keychain/admin/privacy access, read `skills/build-loop/references/system-access-once.md` and check the shared request ledger. Existing unresolved requests suppress further commands AND repeated user questions. Do not change purpose, executable, worktree or run ID to evade the hold. An unexpected prompt must be recorded with `--record-blocked`; stop only verified owned requesters. Do not execute ad hoc Swift/Python reads against production Keychain items. Tests use injected stores or isolated fixture identities. A user's statement that they unlocked or signed in permits a metadata/status check; it is not permission to replay an unresolved password request. Ask once with the purpose and requester, then retain a note and wait for an explicit retry instruction. The wrapper enforces only invocations routed through it; no claim of machine-wide dialog interception is permitted.
+
 ## Session-start preflight
 
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Rally is coordination metadata, not verification evidence: use it to discover peers, claims, handoffs, and soft file conflicts; confirm code/package/release truth from the repo, tests, manifests, registries, or GitHub directly.
