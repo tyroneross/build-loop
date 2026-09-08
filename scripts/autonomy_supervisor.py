@@ -701,11 +701,12 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
         action, next_concurrency, reasons = "pause_new_work", 0, ["capacity_exhausted"]
     elif concurrency > maximum:
         action, next_concurrency, reasons = "reduce_concurrency", maximum, pressure
-    elif pressure == ["host_load_at_or_above_90_percent"] and signals.get("execution_location") == "cloud":
+    elif (concurrency == 0 and pressure == ["host_load_at_or_above_90_percent"]
+          and signals.get("execution_location") == "cloud"):
         # Load average includes runnable and waiting local processes; it is not
         # cloud inference utilization. Preserve progress with one cloud worker,
         # while every other pressure/critical signal still gates admission.
-        action, next_concurrency, reasons = "admit_one_cloud" if concurrency == 0 else "reduce_concurrency", 1, pressure
+        action, next_concurrency, reasons = "admit_initial", 1, pressure
     elif pressure:
         action, next_concurrency, reasons = (
             "pause_new_work" if concurrency == 0 else "reduce_concurrency",
@@ -910,7 +911,7 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         }
     signals["current_concurrency"] = current
     signals["max_concurrency"] = capacity["effective_max"]
-    signals["execution_location"] = capacity["execution_location"]
+    signals["execution_location"] = capacity.get("execution_location")
     assessed = backpressure_action(signals)
     if current == 0 and assessed["action"] in {"steady", "recover_one"}:
         initial = min(4, capacity["effective_max"])

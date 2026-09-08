@@ -518,6 +518,7 @@ def test_load_only_pressure_preserves_one_cloud_worker(location, expected):
     {"memory_percent": 85}, {"memory_percent": 95}, {"disk_free_gb": 0.5},
     {"thermal_state": "serious"}, {"provider_429s": 2}, {"error_streak": 3},
     {"cost_used": 9, "cost_ceiling": 10}, {"max_concurrency": 0},
+    {"latency_p95_ms": 2200, "latency_baseline_ms": 1000},
 ])
 def test_cloud_load_exception_does_not_bypass_other_limits(extra):
     result = supervisor.backpressure_action({
@@ -534,6 +535,17 @@ def test_select_fanout_preserves_cloud_progress_under_real_failure_signal(repo, 
     })
     result = supervisor.select_fanout(repo, {
         "independent_items": 1, "model": "gpt-5.6-sol", "execution_location": "cloud",
+        "ledger_path": str(repo / "isolated-cost-ledger.jsonl"),
     })
     assert result["admission"]["next_concurrency"] == 1
     assert result["observed_signals"]["load_ratio"] == 3.467
+
+
+@pytest.mark.parametrize("current,expected", [(1, 1), (4, 2), (8, 4)])
+def test_cloud_load_does_not_change_existing_worker_reduction(current, expected):
+    result = supervisor.backpressure_action({
+        "current_concurrency": current, "max_concurrency": 8,
+        "load_ratio": 3.467, "execution_location": "cloud",
+    })
+    assert result["next_concurrency"] == expected
+    assert result["action"] == "reduce_concurrency"
