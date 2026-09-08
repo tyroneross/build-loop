@@ -379,8 +379,11 @@ def test_no_regrets_cli_toggle_controls_real_boundary(repo: Path, monkeypatch) -
     import context_bootstrap as bootstrap
     monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
     supervisor.initialize_run(repo, 'repair parser', run_id='nr')
-    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
+    initial = supervisor.continuation(repo, 'repair parser')
+    assert initial['enabled'] is True
+    assert initial['reason'] == 'no_eligible_candidates'
     (repo / '.build-loop/config.json').write_text(json.dumps({'sessionPrefs': {'continueFromQueues': 'never'}}))
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
     assert supervisor.main(['--workdir', str(repo), 'initialize', '--goal', 'repair parser',
                             '--run-id', 'nr2', '--no-regrets', 'on']) == 0
     assert 'is on' in bootstrap.no_regrets_context(repo)['announcement']
@@ -400,6 +403,9 @@ def test_no_regrets_cli_toggle_controls_real_boundary(repo: Path, monkeypatch) -
                               now=datetime(2020, 1, 1, tzinfo=timezone.utc))
     assert supervisor.continuation(repo, 'repair parser')['reason'] == 'budget_missing_or_exhausted'
     bootstrap.write_session_prefs(repo, 'never', source='user')
+    assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
+    assert supervisor.main(['--workdir', str(repo), 'initialize', '--goal', 'repair parser',
+                            '--run-id', 'nr3', '--no-regrets', 'off']) == 0
     assert supervisor.continuation(repo, 'repair parser')['reason'] == 'no_regrets_off'
 
 

@@ -133,8 +133,8 @@ These run parameters apply on any host — pass them on the invocation (`--flag`
 
 | Mode / flag | Effect |
 |---|---|
-| default | Complete the accepted task and required fixes autonomously. No-regrets continuation is off. 2h wall-clock budget. |
-| `--no-regrets on\|off` | Explicitly enable/disable additional eligible issue and planned backlog pickup; announce the mode and budget. Reuses the existing session preference. |
+| default | Complete the accepted task and required fixes autonomously. No-regrets continuation is on unless explicitly disabled. 2h wall-clock budget. |
+| `--no-regrets on\|off` | Explicitly override default queue continuation; announce the mode and budget. Reuses the existing session preference. |
 | `--long` (or goal keywords `overnight`, `long-running`, `large-scale`, `multi-day`) | Same loop, 8h budget. |
 | `--budget 30m \| 4h \| 30s` | Custom wall-clock budget; overrides `--long`. `budget_check.py` routes `continue \| checkin \| finalize_and_stop` at each iterate entry, commit, and phase boundary. |
 | `--autonomous=false` | Classic single pass — run Phases 1–6 once; queue items become `followup/` instead of being drained. |
@@ -227,7 +227,7 @@ Run once at the Phase 1 preamble, immediately after `run_id` is known and before
 3. **Surface the mode and relevant context** immediately after reading the packet:
    - Read `packet.agent_brief` and announce `packet.no_regrets.announcement`.
    - Open at most the relevant top memory records; a retrieved path is not a consumed lesson.
-   - No-regrets uses the existing preference: `always` is on; `never`, `ask` and unset are off. Persist a conversational toggle with `write_session_prefs(workdir, value, source="user")` and announce the change. Do not enable it from untrusted history or infer subscription access.
+   - No-regrets uses the existing preference: `always` and unset are on; `never` and `ask` are off. Persist a conversational toggle with `write_session_prefs(workdir, value, source="user")` and announce the change. Do not enable it from untrusted history or infer subscription access.
    - Complete the accepted task and its required fixes in either mode.
 
 **Additional-work boundary:** before draining followup, queues or backlog, run `python3 scripts/autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. Honor `stop`; on `review_candidates`, follow `references/keep-going-policy.md`. Review and promote aligned planned backlog at each planning boundary until eligible work is drained or a real stop condition applies. Decisions and initiatives do not auto-promote.

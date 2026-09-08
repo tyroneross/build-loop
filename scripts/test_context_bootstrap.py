@@ -460,7 +460,7 @@ class LessonsProgressiveTests(EnvIsolationMixin, unittest.TestCase):
 class SessionPrefsTests(EnvIsolationMixin, unittest.TestCase):
     def test_default_when_absent(self) -> None:
         prefs = cb.read_session_prefs(self.workdir)
-        self.assertEqual(prefs["continue_from_queues"], "ask")
+        self.assertEqual(prefs["continue_from_queues"], "always")
         self.assertEqual(prefs["source"], "default")
 
     def test_write_then_read_roundtrip(self) -> None:
@@ -501,7 +501,7 @@ class SessionPrefsTests(EnvIsolationMixin, unittest.TestCase):
             encoding="utf-8",
         )
         prefs = cb.read_session_prefs(self.workdir)
-        self.assertEqual(prefs["continue_from_queues"], "ask")
+        self.assertEqual(prefs["continue_from_queues"], "always")
         self.assertEqual(prefs["source"], "default")
 
     def test_write_invalid_value_is_noop(self) -> None:
@@ -567,8 +567,8 @@ class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
         self._write_prefs("never")
         self.assertFalse(cb.should_continue_into_queues(self.workdir))
 
-    def test_unset_returns_false(self) -> None:
-        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+    def test_unset_returns_true(self) -> None:
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
 
     # --- pending_queue_items ---
 

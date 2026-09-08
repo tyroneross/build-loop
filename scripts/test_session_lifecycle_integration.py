@@ -232,7 +232,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         self.assertIn("#queue=1", brief, f"agent_brief missing #queue=1: {brief[:400]}")
 
     def test_session_prefs_block_present_with_defaults(self) -> None:
-        """session_prefs block is present and defaults to 'ask'."""
+        """session_prefs block is present and defaults to 'always'."""
         packet = cb.build_packet(
             workdir=self.workdir,
             query="fix safari tap",
@@ -247,13 +247,13 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
             ("ask", "always", "never"),
             f"continue_from_queues must be one of ask/always/never, got: {prefs}",
         )
-        # No state.json.session_prefs written yet → default is "ask".
-        self.assertEqual(prefs.get("continue_from_queues"), "ask")
+        # No state.json.session_prefs written yet → default is "always".
+        self.assertEqual(prefs.get("continue_from_queues"), "always")
         self.assertEqual(prefs.get("source"), "default")
 
-    def test_continuation_gate_no_pref_returns_false(self) -> None:
-        """Fresh sessions do not opt into extra backlog work."""
-        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+    def test_continuation_gate_no_pref_returns_true(self) -> None:
+        """Fresh sessions continue eligible work by default."""
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
 
     def test_continuation_gate_after_write_always_returns_true(self) -> None:
         """After write_session_prefs('always'), gate returns True."""
@@ -294,7 +294,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(prefs["set_at"])
 
     def test_full_end_to_end_bootstrap_to_gate(self) -> None:
-        """Full pipeline: bootstrap → check gate False → write pref → gate True + pending."""
+        """Full pipeline: bootstrap enables the gate and finds pending work."""
         # 1. Bootstrap returns expected envelope fields simultaneously.
         packet = cb.build_packet(
             workdir=self.workdir,
@@ -318,10 +318,10 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         self.assertIn("#issues=1", brief)
         self.assertIn("#queue=1", brief)
 
-        # 2. Continuation is off until the user enables it.
-        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+        # 2. The default enables continuation before a user override exists.
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
 
-        # 3. Write "always" → gate stays True AND pending shows items.
+        # 3. Writing "always" preserves the enabled mode and pending work.
         cb.write_session_prefs(self.workdir, "always", source="asked")
         self.assertTrue(cb.should_continue_into_queues(self.workdir))
         pending = cb.pending_queue_items(self.workdir)

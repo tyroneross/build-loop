@@ -6,7 +6,7 @@ Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on 
 
 ## End-of-run continuation gate
 
-Before any additional follow-up or queue pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. No-regrets is off unless explicitly enabled. Follow `references/keep-going-policy.md`; accepted-plan fixes still run. Backlog needs reviewed class-aware promotion at a planning boundary.
+Before any additional follow-up or queue pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. No-regrets is on unless explicitly disabled. Follow `references/keep-going-policy.md`; accepted-plan fixes still run. Backlog needs reviewed class-aware promotion at a planning boundary.
 
 ## Re-validate hook for UI work (by `uiTarget.kind`)
 
@@ -104,7 +104,7 @@ When autonomous execution is enabled **and** the no-regrets boundary command ret
 2. `--autonomous=false` on the original invocation forces `false`; loop is skipped entirely.
 3. `state.json.execution.budget` MUST exist (the skill body writes it at start). Missing → log a warning and treat autonomous as disabled for this run.
 
-**Before pickup:** run the no-regrets boundary command above and honor `stop`. Autonomous mode alone never enables additional work.
+**Before pickup:** run the no-regrets boundary command above and honor `stop`. Autonomous mode honors explicit no-regrets disables and all continuation safety boundaries.
 
 **On every loop iteration entry — three short calls in order:**
 

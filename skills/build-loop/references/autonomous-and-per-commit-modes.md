@@ -9,14 +9,14 @@ each; the full detail lives here and loads on demand.
 
 ## Autonomous Mode (Queue-Drain Loop)
 
-Autonomous execution completes the accepted plan and its required fixes. Additional queue and planned-backlog pickup requires explicit **no-regrets** opt-in, off by default. At Assess announce the mode; at every additional-work boundary run `autonomy_supervisor.py continuation` and follow `references/keep-going-policy.md`. Neither a long budget nor `autonomous=true` turns it on.
+Autonomous execution completes the accepted plan and its required fixes. Additional eligible queue and planned-backlog pickup runs by default unless no-regrets is explicitly disabled. At Assess announce the mode; at every additional-work boundary run `autonomy_supervisor.py continuation` and follow `references/keep-going-policy.md`. Neither a long budget nor `autonomous=true` overrides an explicit disable.
 
 ### Flag surface
 
 | Invocation | Effect |
 |---|---|
-| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true, no-regrets off |
-| `/build-loop:run --no-regrets on\|off "goal text"` | persist explicit continuation preference and announce mode/budget |
+| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true, no-regrets on |
+| `/build-loop:run --no-regrets on\|off "goal text"` | persist an explicit continuation override and announce mode/budget |
 | `/build-loop:run --long "goal text"` | long mode, 8h budget |
 | `/build-loop:run --budget 4h "goal text"` | custom budget (overrides `--long`) |
 | `/build-loop:run --budget 30m "goal text"` | accepts `30s`, `30m`, `4h`, or bare integer seconds |

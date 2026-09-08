@@ -558,12 +558,12 @@ def read_session_prefs(workdir: Path) -> dict[str, Any]:
     """Read session_prefs from state.json and config.json (config overrides).
 
     Returns a dict with keys: continue_from_queues, set_at, source.
-    Default (absent) = {continue_from_queues: "ask", source: "default"}.
+    Default (absent) = {continue_from_queues: "always", source: "default"}.
     Config override (.build-loop/config.json sessionPrefs.continueFromQueues) →
     source "config". State.json session_prefs → source as stored.
     """
     default: dict[str, Any] = {
-        "continue_from_queues": "ask",
+        "continue_from_queues": "always",
         "set_at": None,
         "source": "default",
     }
@@ -640,10 +640,10 @@ def write_session_prefs(
 
 
 def should_continue_into_queues(workdir: Path) -> bool:
-    """No-regrets continuation is opt-in; completing accepted work is separate.
+    """Continue by default; completing accepted work remains separate.
 
-    Reuse the existing preference: always=on, never/ask/unset=off. A legacy
-    explicit always remains a standing opt-in; an absent preference never is.
+    Reuse the existing preference: always/unset=on; never/ask=off. An explicit
+    current-user preference still overrides repo configuration.
     """
     return read_session_prefs(workdir)["continue_from_queues"] == "always"
 

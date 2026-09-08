@@ -52,7 +52,7 @@ Both are conditional modes — their flag tables, budget/iteration caps, questio
 - the invocation carries `--long` / `--budget` / `--autonomous=false` / `--no-regrets`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
 - `state.json.selfRecursive.enabled` is true, or the invocation carries `--per-commit` / `--no-per-commit` → **Per-Commit Mode** detail.
 
-Default behavior: complete Phase 1–6 and required fixes autonomously within a 2h budget. Additional queue/backlog pickup is off until no-regrets is explicitly enabled; see `references/keep-going-policy.md`.
+Default behavior: complete Phase 1–6 and required fixes autonomously within a 2h budget. Additional eligible queue/backlog pickup is on unless no-regrets is explicitly disabled; see `references/keep-going-policy.md`.
 
 ## Scope Check
 
@@ -141,7 +141,7 @@ A chunk boundary is not a checkpoint. When the orchestrator (or any session unde
    ```
    followed by the item body in markdown.
 2. Filter `classify: PRODUCTION` items into `.build-loop/followup/needs-confirm/` and surface them ONCE in the report. Do not auto-execute.
-3. Complete all accepted work. Before additional follow-up pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`; enter a fresh Phase 5 cycle only on `review_candidates` (no-regrets is off by default). Re-use the same alignment-checker, scope-auditor, and independent-auditor wiring as the in-run iterate loop — no new dispatch surface required.
+3. Complete all accepted work. Before additional follow-up pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`; enter a fresh Phase 5 cycle only on `review_candidates` (no-regrets is on by default unless explicitly disabled). Re-use the same alignment-checker, scope-auditor, and independent-auditor wiring as the in-run iterate loop — no new dispatch surface required.
 4. The phrasing "want me to keep going with the rest?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. C-FLOW/no_ask_at_chunk_boundary in `constitution.md` is the binding citation.
 
 Stop conditions are unchanged from the in-run iterate loop: iterate-cap (25 in autonomous mode, 5 classic), budget exhaustion, any drained item classifying PRODUCTION, 5 consecutive iterate failures, an item whose intent_anchor does not resolve in the current `intent.md` (escalate as DECISION; do not silently widen scope), or explicit user pause.
@@ -228,7 +228,7 @@ Understand current state, load memory through the automatic context bootstrap, d
 
 Groundwork intake: when `$GROUNDWORK_BUILD_REQUEST` or `.designdoc/build-request.json` is present, validate it with the adjacent canonical Spec through `scripts/groundwork_exchange.py validate-request` before planning; failures block Execute.
 
-Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; surface `packet.no_regrets.announcement`; only an explicit user preference enables extra queue work; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → run `scripts/task_surface.py` when surfacing open work → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; surface `packet.no_regrets.announcement`; default-on queue work still passes the no-regrets boundary and explicit user opt-outs; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → run `scripts/task_surface.py` when surfacing open work → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 

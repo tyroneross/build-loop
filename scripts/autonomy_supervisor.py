@@ -1029,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
     initialize.add_argument("--long", action="store_true")
     initialize.add_argument("--autonomous", choices=("true", "false"), default="true")
     initialize.add_argument("--no-regrets", choices=("on", "off"), default=None,
-                            help="Explicit user toggle for continuing beyond the accepted task")
+                            help="Explicit user override for default queue continuation")
     preflight = sub.add_parser("preflight")
     preflight.add_argument("--request", required=True)
     snapshot = sub.add_parser("snapshot")
