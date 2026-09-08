@@ -228,10 +228,88 @@ class TargetCheckTest(unittest.TestCase):
         declared = _json.loads(mss.TARGETS_PATH.read_text())
         self.assertEqual(
             set(declared["metrics"]),
-            {"hit_rate", "joinable_rate", "session_rate", "exposure_rate", "use_rows"})
+            {"hit_rate", "joinable_rate", "session_rate", "exposure_rate",
+             "phase_rate", "use_rows"})
         for name, spec in declared["metrics"].items():
             self.assertIn("target_rationale", spec, f"{name} target has no stated reason")
             self.assertIn("falsifier", spec, f"{name} has no falsifier")
+
+    def test_rebaseline_point_is_declared_and_reasoned(self):
+        """The ledger is append-only, so a lifetime rate cannot fall below its own
+        history. Without a declared window a landed fix stays invisible and every
+        reader re-derives the same false 'below'."""
+        import json as _json
+        import memory_store_stats as mss
+        declared = _json.loads(mss.TARGETS_PATH.read_text())
+        self.assertIn("rebaseline_after", declared)
+        self.assertIn("rebaseline_rationale", declared)
+        for name, spec in declared["metrics"].items():
+            if "rebaseline_after" in spec:
+                self.assertIn("rebaseline_commit", spec,
+                              f"{name} re-baselines without naming the commit that earned it")
+
+    def test_per_metric_window_overrides_the_global_one(self):
+        """Emission fixes land per caller on different days. A metric carrying its
+        own point must be scored on that point, not the global one -- otherwise it
+        is graded against rows written before its own fix."""
+        import json as _json
+        import pathlib
+        import tempfile
+        import memory_store_stats as mss
+
+        # Two generations of rows. The old ones carry no ranks (pre-fix); the new
+        # ones do. A lifetime read sees 50% exposure; the per-metric window sees 100%.
+        old_rows = [{"ts": "2026-09-02T00:00:00Z", "kind": "memory-read",
+                     "schema_version": "1.1", "source": "runtime",
+                     "correlation_id": f"o{i}", "memory_ids_seen": ["m"],
+                     "returned_paths": ["/p"], "session_id": "s", "phase": "1-assess"}
+                    for i in range(4)]
+        new_rows = [{"ts": "2026-09-09T00:00:00Z", "kind": "memory-read",
+                     "schema_version": "1.1", "source": "runtime",
+                     "correlation_id": f"n{i}", "memory_ids_seen": ["m"],
+                     "returned_paths": ["/p"], "session_id": "s", "phase": "1-assess",
+                     "ranks": [0], "scores": [1.0]}
+                    for i in range(4)]
+        with tempfile.TemporaryDirectory() as td:
+            store = pathlib.Path(td)
+            (store / "indexes").mkdir()
+            with (store / "indexes" / "TELEMETRY.jsonl").open("w", encoding="utf-8") as fh:
+                for r in old_rows + new_rows:
+                    fh.write(_json.dumps(r) + "\n")
+            targets = store / "targets.json"
+            targets.write_text(_json.dumps({
+                "declared": "test",
+                "rebaseline_after": "2026-09-01T00:00:00Z",
+                "metrics": {
+                    "exposure_rate": {
+                        "target": "equal to hit_rate",
+                        "target_rationale": "r", "falsifier": "f",
+                        "rebaseline_after": "2026-09-08T00:00:00Z",
+                        "rebaseline_commit": "test",
+                    },
+                    "session_rate": {
+                        "target": 1.0, "target_rationale": "r", "falsifier": "f",
+                    },
+                },
+            }), encoding="utf-8")
+
+            stats = {"telemetry": mss.telemetry_stats(store)}
+            got = mss.check_targets(stats, targets_path=targets, store=store)
+
+            exposure = got["metrics"]["exposure_rate"]
+            self.assertEqual(exposure["scored_since"], "2026-09-08T00:00:00Z")
+            self.assertEqual(exposure["window_reads"], 4,
+                             "per-metric window must exclude the pre-fix generation")
+            self.assertEqual(exposure["status"], "on_target")
+            self.assertAlmostEqual(exposure["lifetime"], 0.5,
+                                   msg="lifetime must still be SHOWN, never hidden")
+
+            # A metric without its own point falls back to the global window,
+            # which here spans both generations.
+            self.assertEqual(got["metrics"]["session_rate"]["scored_since"],
+                             "2026-09-01T00:00:00Z")
+            self.assertEqual(got["metrics"]["session_rate"]["window_reads"], 8)
+
 
     def test_relative_target_resolves_against_live_hit_rate(self):
         """joinable/exposure ceilings MOVE with retrieval quality: a zero-result

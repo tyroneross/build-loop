@@ -145,7 +145,8 @@ def read_debugger(
 
 def _emit_telemetry(merged: List[Dict[str, Any]], query: str,
                     project: Optional[str] = None,
-                    workdir: Optional[Path] = None) -> Optional[str]:
+                    workdir: Optional[Path] = None,
+                    phase: Optional[str] = None) -> Optional[str]:
     """Fire-and-forget telemetry emit.  Returns correlation_id or None.
 
     Emits `returned_paths` alongside `memory_ids_seen`. This is the join key,
@@ -181,7 +182,11 @@ def _emit_telemetry(merged: List[Dict[str, Any]], query: str,
         # cooperation, no convention to decay.
         paths = [str(_r.get("path") or "") for _i, _r in kept]
         return _mt.emit_read(
-            phase="unknown",
+            # Resolved, not hard-coded. The former ``"unknown"`` literal made
+            # every recall row unattributable to a build phase, so the store
+            # could not answer which phase memory actually helps -- the
+            # locator emitted a real phase all along and recall did not.
+            phase=_mt.resolve_phase(phase),
             reader="memory_facade.recall",
             query=query,
             returned_paths=[p for p in paths if p],
@@ -310,6 +315,7 @@ def recall(
     limit: int = DEFAULT_LIMIT,
     workdir: Optional[Path] = None,
     skip_postgres: bool = False,
+    phase: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Unified read across the four memory backends. See module docstring.
 
@@ -344,7 +350,7 @@ def recall(
         # backstop for a future backend that ignores `limit`.
         "merged": merged[: limit * len(KINDS)],
         "reasons": reasons,
-        "telemetry_correlation_id": _emit_telemetry(merged, query, project, workdir),
+        "telemetry_correlation_id": _emit_telemetry(merged, query, project, workdir, phase),
     }
 
 
@@ -362,6 +368,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--kind", choices=list(KINDS) + sorted(KIND_ALIASES), default=None)
     parser.add_argument("--project", default=None)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    parser.add_argument("--phase", default=None,
+                        help="build phase for the telemetry row; "
+                             "falls back to $BUILD_LOOP_PHASE, then 'unknown'")
     parser.add_argument("--workdir", default=str(REPO_ROOT_DEFAULT))
     parser.add_argument(
         "--skip-postgres",
@@ -379,6 +388,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         limit=args.limit,
         workdir=Path(args.workdir).resolve(),
         skip_postgres=args.skip_postgres,
+        phase=args.phase,
     )
     json.dump(env, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")

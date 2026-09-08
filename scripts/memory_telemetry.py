@@ -139,6 +139,32 @@ def resolve_session_id(explicit: str | None = None) -> str | None:
     return None
 
 
+PHASE_ENV_VARS = (
+    "BUILD_LOOP_PHASE",          # explicit override, always wins
+    "BUILD_LOOP_CURRENT_PHASE",
+)
+
+UNKNOWN_PHASE = "unknown"
+
+
+def resolve_phase(explicit: str | None = None) -> str:
+    """Best-effort build phase for a telemetry row.
+
+    Unlike ``resolve_session_id``, this returns the ``"unknown"`` sentinel rather
+    than None: ``phase`` is a required column and every historical row already
+    carries that literal, so a None here would split the vocabulary rather than
+    widen it. A wrong phase is still worse than an absent one -- this never
+    guesses from the call stack or the working directory.
+    """
+    if explicit:
+        return explicit
+    for name in PHASE_ENV_VARS:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return UNKNOWN_PHASE
+
+
 def _iso_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

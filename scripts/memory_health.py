@@ -74,14 +74,27 @@ def iter_rows(store: Path):
             continue
 
 
-def collect(store: Path) -> dict:
+def collect(store: Path, since: str | None = None) -> dict:
+    """Aggregate telemetry rows into per-tier counters.
+
+    ``since`` is an ISO-8601 UTC lower bound on ``ts``. It exists because the
+    ledger is append-only: a rate computed over its whole life can never show
+    that a fix landed, so a metric fixed weeks ago keeps reporting "below" and
+    every future reader re-derives the same false verdict. Rows without a ``ts``
+    are dropped when a window is set -- an undated row cannot be proven to fall
+    inside it, and counting it would silently readmit the history the window
+    exists to exclude.
+    """
     tiers: dict[str, dict] = {}
     for row in iter_rows(store):
+        if since and (row.get("ts") or "") < since:
+            continue
         tier = tier_of(row)
         t = tiers.setdefault(tier, {
             "kinds": Counter(), "reads": 0, "reads_with_hits": 0,
             "reads_with_used": 0, "reads_with_effect": 0,
             "reads_with_paths": 0, "reads_with_session": 0, "reads_with_ranks": 0,
+            "reads_with_phase": 0,
             "readers": Counter(), "first": "", "last": "",
             # Only clean reads participate in loop metrics. Follow-ups aggregate
             # by correlation because append order does not guarantee that a read
@@ -111,6 +124,10 @@ def collect(store: Path) -> dict:
                 t["reads_with_session"] += 1
             if row.get("ranks"):
                 t["reads_with_ranks"] += 1
+            # "unknown" is the absent-phase sentinel, not a phase. Counting it
+            # would report full attribution for rows that attribute nothing.
+            if row.get("phase") and row.get("phase") != "unknown":
+                t["reads_with_phase"] += 1
             if tier == "clean":
                 correlation_id = row.get("correlation_id")
                 if correlation_id:
@@ -159,6 +176,7 @@ def stats_summary(tiers: dict) -> dict:
             "joinable_rate": round(t["reads_with_paths"] / reads, 4) if reads else None,
             "session_rate": round(t["reads_with_session"] / reads, 4) if reads else None,
             "exposure_rate": round(t["reads_with_ranks"] / reads, 4) if reads else None,
+            "phase_rate": round(t["reads_with_phase"] / reads, 4) if reads else None,
             "top_readers": dict(t["readers"].most_common(4)),
         }
     loop = summarize(tiers)["loop"]
@@ -265,13 +283,15 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", default=None, help="memory store root")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--since", default=None,
+                    help="ISO-8601 UTC lower bound on row ts, e.g. 2026-09-01T07:00:00Z")
     args = ap.parse_args(argv)
 
     store = Path(args.store).expanduser() if args.store else memory_store_root()
     if not store.is_dir():
         print(f"memory store not found: {store}", file=sys.stderr)
         return 0
-    s = summarize(collect(store))
+    s = summarize(collect(store, since=args.since))
     print(json.dumps(s, indent=2) if args.json else render(s))
     return 0
 

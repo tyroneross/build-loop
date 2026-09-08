@@ -94,8 +94,8 @@ def _committed_since(store: Path, since: str) -> int | None:
     return len({ln for ln in proc.stdout.splitlines() if ln.strip().endswith(".md")})
 
 
-def telemetry_stats(store: Path) -> dict:
-    return memory_health.stats_summary(memory_health.collect(store))
+def telemetry_stats(store: Path, since: str | None = None) -> dict:
+    return memory_health.stats_summary(memory_health.collect(store, since=since))
 
 
 def join_stats(store: Path) -> dict | None:
@@ -166,7 +166,8 @@ def render(s: dict) -> str:
 TARGETS_PATH = HERE.parent / "references" / "memory-signal-targets.json"
 
 
-def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
+def check_targets(stats: dict, targets_path: Path | None = None,
+                  store: Path | None = None) -> dict:
     """Compare live figures to the DECLARED targets.
 
     Targets live in data, not prose, because a prose target rots silently: the
@@ -184,19 +185,54 @@ def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         return {"error": f"targets unreadable at {path}: {exc}"}
 
-    clean = (stats.get("telemetry", {}).get("tiers", {}) or {}).get("clean") or {}
-    hit = clean.get("hit_rate")
-    live = {
-        "hit_rate": hit,
-        "joinable_rate": clean.get("joinable_rate"),
-        "session_rate": clean.get("session_rate"),
-        "exposure_rate": clean.get("exposure_rate"),
-        "use_rows": stats.get("telemetry", {}).get("use_rows"),
-    }
-    out = {"targets_file": str(path), "declared": declared.get("declared"), "metrics": {}}
+    def _live_from(telemetry: dict) -> dict:
+        c = (telemetry.get("tiers", {}) or {}).get("clean") or {}
+        return {
+            "hit_rate": c.get("hit_rate"),
+            "joinable_rate": c.get("joinable_rate"),
+            "session_rate": c.get("session_rate"),
+            "exposure_rate": c.get("exposure_rate"),
+            "phase_rate": c.get("phase_rate"),
+            "use_rows": telemetry.get("use_rows"),
+            "reads": c.get("reads"),
+        }
+
+    lifetime = _live_from(stats.get("telemetry", {}) or {})
+
+    # Score the window, not the whole ledger. The store is append-only, so a
+    # lifetime rate cannot fall below its own history: a metric fixed weeks ago
+    # keeps reporting "below" forever and every reader re-derives the same false
+    # verdict at full cost. Lifetime is still rendered beside it, so nothing is
+    # hidden -- the window narrows what is SCORED, never what is SHOWN.
+    rebaseline = declared.get("rebaseline_after")
+    windows: dict[str | None, dict] = {}
+
+    def _window(since: str | None) -> dict:
+        """Live figures over one window, computed at most once per distinct point."""
+        if since is None or store is None:
+            return lifetime
+        if since not in windows:
+            windows[since] = _live_from(telemetry_stats(store, since=since))
+        return windows[since]
+
+    live = _window(rebaseline)
+    # hit_rate anchors every "equal to hit_rate" target, so it is read from the
+    # SAME window as the metric it bounds -- comparing a metric measured after
+    # its own fix against a hit rate measured before one would manufacture a gap.
+    hit = live.get("hit_rate")
+    out = {"targets_file": str(path), "declared": declared.get("declared"),
+           "rebaseline_after": rebaseline, "window_reads": live.get("reads"),
+           "lifetime_reads": lifetime.get("reads"), "metrics": {}}
     for name, spec in declared.get("metrics", {}).items():
         target = spec.get("target")
-        value = live.get(name)
+        # A per-metric point wins over the global one. Emission fixes land per
+        # caller, on different days: one shared window either scores a metric
+        # against rows written before its own fix, or shrinks to the newest fix
+        # and leaves every other metric with too few rows to mean anything.
+        since = spec.get("rebaseline_after") or rebaseline
+        metric_live = _window(since)
+        value = metric_live.get(name)
+        hit = metric_live.get("hit_rate")
         # A target expressed as "equal to hit_rate" resolves against the live
         # hit rate, because its ceiling moves with retrieval quality.
         resolved = hit if isinstance(target, str) and "hit_rate" in target else target
@@ -210,8 +246,10 @@ def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
         else:
             status = "on_target" if value >= resolved else "below"
         out["metrics"][name] = {
-            "live": value, "target": target, "resolved_target": resolved,
+            "live": value, "lifetime": lifetime.get(name),
+            "target": target, "resolved_target": resolved,
             "baseline": spec.get("baseline_2026_09_01"), "status": status,
+            "scored_since": since, "window_reads": metric_live.get("reads"),
         }
         if name == "use_rows" and value:
             out["metrics"][name]["measurement_limit"] = (
@@ -224,12 +262,21 @@ def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
 def render_targets(t: dict) -> str:
     if "error" in t:
         return f"TARGETS: {t['error']}"
-    L = [f"TARGETS  (declared {t['declared']}, {Path(t['targets_file']).name})",
-         f"  {'metric':16s} {'baseline':>9s} {'live':>9s} {'target':>9s}  status"]
+    head = f"TARGETS  (declared {t['declared']}, {Path(t['targets_file']).name})"
+    L = [head]
+    if t.get("rebaseline_after"):
+        L.append(f"  scored on rows since {t['rebaseline_after']} "
+                 f"(window {t.get('window_reads')} reads / lifetime {t.get('lifetime_reads')}). "
+                 f"'lifetime' is shown, not scored: an append-only ledger cannot "
+                 f"fall below its own history.")
+    L.append(f"  {'metric':16s} {'baseline':>9s} {'window':>9s} {'lifetime':>9s} {'target':>9s}  status")
     for name, m in t["metrics"].items():
         f = lambda v: "-" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))  # noqa: E731
         L.append(f"  {name:16s} {f(m['baseline']):>9s} {f(m['live']):>9s} "
-                 f"{f(m['resolved_target']):>9s}  {m['status']}")
+                 f"{f(m.get('lifetime')):>9s} {f(m['resolved_target']):>9s}  {m['status']}"
+                 + (f"   [since {m['scored_since']}, n={m.get('window_reads')}]"
+                    if m.get("scored_since") and m["scored_since"] != t.get("rebaseline_after")
+                    else ""))
         if m.get("measurement_limit"):
             L.append(f"     limit: {m['measurement_limit']}")
     L.append("  'unmeasurable' means the available aggregate cannot establish the target's "
@@ -256,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     s = collect(store, a.since, not a.no_join)
     if a.check_targets:
         s["targets"] = check_targets(
-            s, Path(a.targets_file) if a.targets_file else None)
+            s, Path(a.targets_file) if a.targets_file else None, store=store)
     if a.json:
         print(json.dumps(s, indent=2))
     else:

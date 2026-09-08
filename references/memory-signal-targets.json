@@ -8,7 +8,7 @@
       "definition": "clean reads returning >=1 candidate / clean reads",
       "computed_from": "memory-read rows, non-empty memory_ids_seen",
       "baseline_2026_09_01": 0.737,
-      "target": 0.90,
+      "target": 0.9,
       "target_rationale": "A quarter of queries returning nothing is mostly retrieval failure, not genuine absence. Not 1.0: some questions legitimately have no stored answer, and forcing that to 1.0 would reward returning junk.",
       "ceiling": 1.0,
       "falsifier": "If hit rate rises while the join-confirmed usefulness rate falls, the gain is junk candidates, not better retrieval. Check both together."
@@ -26,7 +26,7 @@
     "session_rate": {
       "definition": "clean reads carrying session_id / clean reads",
       "computed_from": "memory-read rows, non-empty session_id",
-      "baseline_2026_09_01": 0.030,
+      "baseline_2026_09_01": 0.03,
       "target": 1.0,
       "target_rationale": "Resolved automatically from the runtime environment, so anything below 1.0 is a caller path that bypasses resolve_session_id or a runtime that exports no id. Without it, a time-window join credits one agent's file-open to another agent's retrieval.",
       "ceiling": 1.0,
@@ -35,11 +35,24 @@
     "exposure_rate": {
       "definition": "clean reads carrying ranks and scores / clean reads",
       "computed_from": "memory-read rows, non-empty ranks",
-      "baseline_2026_09_01": 0.020,
+      "baseline_2026_09_01": 0.02,
       "target": "equal to hit_rate",
-      "target_rationale": "Needed to correct a later use-signal for position bias. Known gap: memory_locator emits 0.0% ranks (73 rows at 98.6% paths), because only memory_facade.recall runs the ranker. Closing that gap is the named next step.",
+      "target_rationale": "Needed to correct a later use-signal for position bias. The former gap -- memory_locator emitting 0.0% ranks because only memory_facade.recall ran the ranker -- was CLOSED on 2026-09-07 in eb425c8b; every locator row emitted since carries ranks and scores. The lifetime figure still shows the pre-fix rows, which is why this metric is scored on the rebaseline window.",
       "ceiling": "hit_rate",
-      "falsifier": "Propensity cannot be reconstructed after the fact. Every read emitted without ranks is permanently undebiasable, so this metric only ever measures rows going forward."
+      "falsifier": "Propensity cannot be reconstructed after the fact. Every read emitted without ranks is permanently undebiasable, so this metric only ever measures rows going forward.",
+      "rebaseline_after": "2026-09-08T06:30:00Z",
+      "rebaseline_commit": "eb425c8b \u2014 memory_locator emits ranks+scores"
+    },
+    "phase_rate": {
+      "definition": "clean reads carrying a phase other than the 'unknown' sentinel / clean reads",
+      "computed_from": "memory-read rows, phase not in (null, 'unknown')",
+      "baseline_2026_09_01": 0.228,
+      "target": 1.0,
+      "target_rationale": "Resolved from the runtime like session_id, so anything below 1.0 is a caller that never passes one. memory_facade.recall hard-coded phase='unknown' and emitted 78% of all clean reads, so the store could not answer the first question anyone asks of it: which phase does memory actually help? Fixed 2026-09-08 by resolve_phase(); the metric exists so the answer stays measured rather than remembered.",
+      "ceiling": 1.0,
+      "falsifier": "A runtime that exports no phase yields the 'unknown' sentinel BY DESIGN. If phase_rate stalls, identify the calling runtime before assuming a bug -- and never count 'unknown' as attribution, which would report full coverage for rows that attribute nothing.",
+      "rebaseline_after": "2026-09-08T07:30:00Z",
+      "rebaseline_commit": "this run \u2014 memory_facade.recall resolves phase instead of hard-coding 'unknown'"
     },
     "use_rows": {
       "definition": "count of rate-eligible memory reads with a correlated memory-use row",
@@ -64,10 +77,12 @@
     "pruning": "No usefulness signal to prune BY. Would fall back on recency, which was removed from ranking for scoring P@1 0.030."
   },
   "how_to_audit": [
-    "python3 scripts/memory_store_stats.py --since 2026-09-01",
-    "python3 scripts/memory_store_stats.py --check-targets",
-    "python3 scripts/memory_health.py",
-    "python3 scripts/memory_reconcile.py                      # dry-run, all strategies",
+    "python3 scripts/memory_store_stats.py --check-targets   # scored on the rebaseline window",
+    "python3 scripts/memory_health.py --since 2026-09-01T07:00:00Z",
+    "python3 scripts/memory_health.py                        # lifetime, for comparison",
+    "python3 scripts/memory_reconcile.py                     # dry-run, all strategies",
     "python3 -m pytest scripts/test_memory_*.py scripts/test_content_index.py -q"
-  ]
+  ],
+  "rebaseline_after": "2026-09-01T07:00:00Z",
+  "rebaseline_rationale": "The ledger is append-only, so a lifetime rate can never fall below its own history: joinable_rate, session_rate and exposure_rate were all met by the code emitting rows on 2026-09-08 while the lifetime figure still read 'below' from pre-fix rows. Scoring a window makes a landed fix visible. This timestamp is the hour after ddb2dad8 (2026-08-31T23:29 PDT), the last of the four commits that added returned_paths, ranks, scores and session_id to the read row. Move it forward only when a NEW emission fix lands, and say which commit in this field. A metric may also carry its own `rebaseline_after`, which wins over this global one: emission fixes land per caller on different days, so one shared window either scores a metric against rows written before its own fix or shrinks to the newest fix and starves every other metric of rows. Expect a freshly re-baselined metric to read low on a handful of rows and converge as traffic accumulates -- that is the window filling, not a regression, and it is not a reason to move the point again."
 }

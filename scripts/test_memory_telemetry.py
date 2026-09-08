@@ -469,5 +469,39 @@ class ExposureFieldTests(unittest.TestCase):
                              "explicit")
 
 
+class ResolvePhaseTest(unittest.TestCase):
+    """`memory_facade.recall` hard-coded `phase="unknown"` while emitting 78% of
+    all clean reads, so the store could not answer which phase memory helps."""
+
+    def setUp(self):
+        self._saved = {k: os.environ.pop(k, None) for k in mt.PHASE_ENV_VARS}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_absent_phase_yields_the_sentinel_not_none(self):
+        # `phase` is a required column and every historical row carries this
+        # literal; returning None would split the vocabulary rather than widen it.
+        self.assertEqual(mt.resolve_phase(), "unknown")
+
+    def test_explicit_beats_environment(self):
+        os.environ["BUILD_LOOP_PHASE"] = "1-assess"
+        self.assertEqual(mt.resolve_phase("6-learn"), "6-learn")
+
+    def test_environment_is_read_when_no_explicit_value(self):
+        os.environ["BUILD_LOOP_PHASE"] = "4-review"
+        self.assertEqual(mt.resolve_phase(), "4-review")
+
+    def test_never_guesses_a_phase(self):
+        """A wrong phase is worse than an absent one: it would attribute a
+        retrieval to work that never ran."""
+        self.assertEqual(mt.resolve_phase(""), "unknown")
+        self.assertEqual(mt.resolve_phase(None), "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()
