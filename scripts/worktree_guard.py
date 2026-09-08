@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -140,6 +141,18 @@ def create_guarded_worktree(
 
     # Ensure the parent directory exists.
     wt_path.parent.mkdir(parents=True, exist_ok=True)
+    template = Path(__file__).resolve().parent.parent / "templates/worktrees-README.md"
+    try:
+        content = template.read_text(encoding="utf-8").replace(
+            "{{repository}}", str(workdir.resolve())
+        ).replace("{{repository_command}}", shlex.quote(str(workdir.resolve())))
+        with (wt_path.parent / "README.md").open("x", encoding="utf-8") as readme:
+            readme.write(content)
+    except FileExistsError:
+        pass  # Preserve user documentation, including concurrent creation.
+    except OSError as exc:
+        return {"path": str(wt_path), "branch": wt_branch, "created": False,
+                "error": f"could not document worktree directory: {exc}"}
 
     result = subprocess.run(
         ["git", "worktree", "add", "-b", wt_branch, str(wt_path), base],

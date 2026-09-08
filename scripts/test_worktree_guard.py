@@ -142,6 +142,21 @@ def test_create_guarded_worktree_creates_under_canonical_root(tmp_path: Path) ->
     wt_path = Path(result["path"])
     assert wt_path.exists()
     assert ".build-loop/worktrees/" in str(wt_path)
+    readme = (wt_path.parent / "README.md").read_text()
+    assert str(tmp_path.resolve()) in readme
+    assert "{{repository" not in readme
+    assert "For users" in readme and "For agents" in readme
+
+
+def test_create_guarded_worktree_preserves_existing_container_readme(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    parent = tmp_path / worktree_guard.CANONICAL_WORKTREE_ROOT
+    parent.mkdir(parents=True)
+    readme = parent / "README.md"
+    readme.write_text("User-owned workspace notes\n")
+    result = worktree_guard.create_guarded_worktree(tmp_path, "another", record=False)
+    assert result["created"], result["error"]
+    assert readme.read_text() == "User-owned workspace notes\n"
 
 
 def test_create_guarded_worktree_branch_is_bl_prefixed(tmp_path: Path) -> None:
@@ -374,3 +389,23 @@ def test_risky_branch_unaffected(workdir: Path) -> None:
     }
     entry = log_decision.log_risky_branch(workdir, payload)
     assert entry["hash"] == "deadbeef"
+
+
+def test_worktree_readme_dependency_survives_plugin_cache_copy(tmp_path: Path) -> None:
+    import runpy
+    import shutil
+    import sync_plugin_cache
+
+    root = Path(worktree_guard.__file__).resolve().parent.parent
+    source = tmp_path / "source"
+    for relative in ("scripts/worktree_guard.py", "templates/worktrees-README.md"):
+        target = source / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(root / relative, target)
+    cache = sync_plugin_cache.copy_tree_to_temp(source, tmp_path / "cache")
+    packaged = runpy.run_path(str(cache / "scripts/worktree_guard.py"))
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    result = packaged["create_guarded_worktree"](repo, "installed", record=False)
+    assert result["created"], result["error"]
+    assert (Path(result["path"]).parent / "README.md").is_file()
