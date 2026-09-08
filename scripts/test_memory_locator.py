@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import memory_locator as locator
+from scripts import memory_telemetry
 
 
 def _write_index(root: Path, rows: list[dict]) -> Path:
@@ -22,14 +23,22 @@ def _write_index(root: Path, rows: list[dict]) -> Path:
     return path
 
 
-def _row(root: Path, rel: str, *, title: str, project: str, tags: list[str]) -> dict:
+def _row(
+    root: Path,
+    rel: str,
+    *,
+    title: str,
+    project: str,
+    tags: list[str],
+    status: str = "active",
+) -> dict:
     path = root / rel
     return {
         "canonical_path": rel,
         "checksum": hashlib.sha256(path.read_bytes()).hexdigest(),
         "id": rel.removesuffix(".md").replace("/", "-"),
         "project": project,
-        "status": "active",
+        "status": status,
         "tags": tags,
         "title": title,
         "type": "lesson",
@@ -87,6 +96,95 @@ def test_newer_update_ledger_forces_rg_fallback(tmp_path: Path) -> None:
     assert receipt["engine"] in {"rg", "python-scan"}
     assert receipt["index_fresh"] is False
     assert receipt["results"][0]["path"] == str(target.relative_to(tmp_path))
+
+
+def test_locator_emits_ranked_exposure_and_empty_result_telemetry(tmp_path: Path) -> None:
+    first = tmp_path / "lessons" / "first.md"
+    second = tmp_path / "lessons" / "second.md"
+    for path, body in (
+        (first, "# Exposure rank primary\nExposure rank telemetry primary result."),
+        (second, "# Exposure rank\nExposure rank telemetry."),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    _write_index(tmp_path, [
+        _row(tmp_path, "lessons/first.md", title="Exposure rank primary", project="_global", tags=["telemetry"]),
+        _row(tmp_path, "lessons/second.md", title="Exposure rank", project="_global", tags=["telemetry"]),
+    ])
+    telemetry_path = tmp_path / "isolated-telemetry.jsonl"
+
+    ranked = locator.locate(
+        "exposure rank telemetry",
+        project="build-loop",
+        memory_root=tmp_path,
+        telemetry_path=telemetry_path,
+    )
+    empty = locator.locate(
+        "quantum banana telescope",
+        project="build-loop",
+        memory_root=tmp_path,
+        telemetry_path=telemetry_path,
+    )
+
+    ranked_row, empty_row = memory_telemetry.read_rows(telemetry_path)
+    assert ranked_row["memory_ids_seen"] == [result["id"] for result in ranked["results"]]
+    assert ranked_row["ranks"] == list(range(len(ranked["results"])))
+    assert ranked_row["scores"] == [result["score"] for result in ranked["results"]]
+    assert ranked_row["shown_count"] == len(ranked["results"])
+    assert empty["results"] == []
+    assert empty_row["ranks"] == []
+    assert empty_row["scores"] == []
+    assert empty_row["shown_count"] == 0
+    assert empty_row["zero_result"] is True
+
+
+def test_inactive_statuses_are_excluded_from_index_and_fallback(tmp_path: Path) -> None:
+    statuses = ("archived", "deleted", "inactive", "superseded")
+    paths: dict[str, Path] = {}
+    for status in ("active", *statuses):
+        path = tmp_path / "projects" / "build-loop" / "decisions" / f"{status}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"---\nstatus: {status}\n---\n# Lifecycle decision filters\n{status} lifecycle decision filters.\n",
+            encoding="utf-8",
+        )
+        paths[status] = path
+
+    fallback = locator.locate(
+        "lifecycle decision filters",
+        project="build-loop",
+        memory_root=tmp_path,
+        emit_telemetry=False,
+    )
+
+    assert fallback["engine"] in {"rg", "python-scan"}
+    assert [result["path"] for result in fallback["results"]] == [
+        str(paths["active"].relative_to(tmp_path))
+    ]
+    assert locator._fallback_row(paths["superseded"], tmp_path)[0]["status"] == "superseded"
+
+    _write_index(tmp_path, [
+        _row(
+            tmp_path,
+            str(path.relative_to(tmp_path)),
+            title="Lifecycle decision filters",
+            project="build-loop",
+            tags=["lifecycle", "filters"],
+            status=status,
+        )
+        for status, path in paths.items()
+    ])
+    indexed = locator.locate(
+        "lifecycle decision filters",
+        project="build-loop",
+        memory_root=tmp_path,
+        emit_telemetry=False,
+    )
+
+    assert indexed["engine"] == "index-jsonl"
+    assert [result["path"] for result in indexed["results"]] == [
+        str(paths["active"].relative_to(tmp_path))
+    ]
 
 
 def test_checksum_change_for_ranked_file_forces_fallback(tmp_path: Path) -> None:

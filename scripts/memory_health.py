@@ -20,7 +20,9 @@ untrustworthy rather than silently averaged in.
 
 TIERS
 -----
-- ``clean``    : schema >= 1.1 AND ``source`` == "runtime". Trustworthy.
+- ``clean``    : schema >= 1.1 AND ``source`` == "runtime". Rate-eligible by
+                 provenance; the source marker alone cannot prove a row was
+                 organic runtime activity.
 - ``non_runtime``: schema >= 1.1 with a non-runtime source (test/hook/...). Excluded from rates.
 - ``legacy``   : schema 1.0, no ``source`` field. Test-polluted, unfilterable.
 
@@ -39,8 +41,13 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _paths import memory_store_root  # type: ignore  # noqa: E402
+import memory_telemetry as memory_telemetry  # type: ignore  # noqa: E402
 
 READ, WRITE, EFFECT, USE = "memory-read", "memory-write", "memory-effect", "memory-use"
+
+
+def valid_effect(value: object) -> bool:
+    return isinstance(value, str) and value in memory_telemetry.VALID_EFFECTS
 
 
 def tier_of(row: dict) -> str:
@@ -58,9 +65,11 @@ def iter_rows(store: Path):
                     line = line.strip()
                     if line:
                         try:
-                            yield json.loads(line)
+                            row = json.loads(line)
                         except json.JSONDecodeError:
                             continue
+                        if isinstance(row, dict):
+                            yield row
         except OSError:
             continue
 
@@ -68,10 +77,18 @@ def iter_rows(store: Path):
 def collect(store: Path) -> dict:
     tiers: dict[str, dict] = {}
     for row in iter_rows(store):
-        t = tiers.setdefault(tier_of(row), {
+        tier = tier_of(row)
+        t = tiers.setdefault(tier, {
             "kinds": Counter(), "reads": 0, "reads_with_hits": 0,
             "reads_with_used": 0, "reads_with_effect": 0,
+            "reads_with_paths": 0, "reads_with_session": 0, "reads_with_ranks": 0,
             "readers": Counter(), "first": "", "last": "",
+            # Only clean reads participate in loop metrics. Follow-ups aggregate
+            # by correlation because append order does not guarantee that a read
+            # precedes its effect/use row.
+            "read_correlations": {}, "uncorrelated_reads": 0, "followups": {},
+            "uncorrelated_followups": Counter(),
+            "invalid_effect_labels": 0,
         })
         kind = row.get("kind", "?")
         t["kinds"][kind] += 1
@@ -88,7 +105,69 @@ def collect(store: Path) -> dict:
                 t["reads_with_used"] += 1
             if row.get("effect"):
                 t["reads_with_effect"] += 1
+            if row.get("returned_paths"):
+                t["reads_with_paths"] += 1
+            if row.get("session_id"):
+                t["reads_with_session"] += 1
+            if row.get("ranks"):
+                t["reads_with_ranks"] += 1
+            if tier == "clean":
+                correlation_id = row.get("correlation_id")
+                if correlation_id:
+                    attribution = t["read_correlations"].setdefault(
+                        str(correlation_id), {"used": False, "effect": False}
+                    )
+                    attribution["used"] |= bool(row.get("memory_ids_used"))
+                    effect = row.get("effect")
+                    attribution["effect"] |= valid_effect(effect)
+                    if effect is not None and not valid_effect(effect):
+                        t["invalid_effect_labels"] += 1
+                else:
+                    t["uncorrelated_reads"] += 1
+        elif tier == "clean" and kind in {USE, EFFECT}:
+            correlation_id = row.get("correlation_id")
+            if not correlation_id:
+                t["uncorrelated_followups"][kind] += 1
+                continue
+            followup = t["followups"].setdefault(str(correlation_id), {
+                "kinds": Counter(), "used": False, "effect": False,
+                "invalid_effect_labels": 0,
+            })
+            followup["kinds"][kind] += 1
+            if kind == USE and (row.get("memory_ids_used") or row.get("files_read")):
+                followup["used"] = True
+            effect = row.get("effect")
+            if valid_effect(effect):
+                followup["effect"] = True
+            elif effect is not None:
+                followup["invalid_effect_labels"] += 1
     return tiers
+
+
+def stats_summary(tiers: dict) -> dict:
+    """Project the health collection into store-stat metrics without rescanning."""
+    kinds = Counter()
+    out = {"kinds": {}, "tiers": {}}
+    for name, t in sorted(tiers.items()):
+        kinds.update(t["kinds"])
+        reads = t["reads"]
+        out["tiers"][name] = {
+            "rate_eligible": name == "clean",
+            "reads": reads,
+            "hit_rate": round(t["reads_with_hits"] / reads, 4) if reads else None,
+            "zero_result_rate": round(1 - t["reads_with_hits"] / reads, 4) if reads else None,
+            "joinable_rate": round(t["reads_with_paths"] / reads, 4) if reads else None,
+            "session_rate": round(t["reads_with_session"] / reads, 4) if reads else None,
+            "exposure_rate": round(t["reads_with_ranks"] / reads, 4) if reads else None,
+            "top_readers": dict(t["readers"].most_common(4)),
+        }
+    loop = summarize(tiers)["loop"]
+    out["kinds"] = dict(kinds)
+    out["loop"] = loop
+    out["loop_closed"] = loop["closed"]
+    out["use_rows"] = loop["recorded_use_reads"]
+    out["use_rows_all_tiers"] = kinds.get(USE, 0)
+    return out
 
 
 def summarize(tiers: dict) -> dict:
@@ -96,7 +175,7 @@ def summarize(tiers: dict) -> dict:
     for name, t in sorted(tiers.items()):
         reads = t["reads"]
         out["tiers"][name] = {
-            "trustworthy": name == "clean",
+            "rate_eligible": name == "clean",
             "rows": sum(t["kinds"].values()),
             "kinds": dict(t["kinds"]),
             "reads": reads,
@@ -107,17 +186,40 @@ def summarize(tiers: dict) -> dict:
             "top_readers": dict(t["readers"].most_common(5)),
         }
     clean = tiers.get("clean", {})
-    all_reads = sum(t["reads"] for t in tiers.values())
-    all_used = sum(t["reads_with_used"] for t in tiers.values())
-    use_rows = sum(t["kinds"].get(USE, 0) for t in tiers.values())
-    eff_rows = sum(t["kinds"].get(EFFECT, 0) for t in tiers.values())
+    correlations = clean.get("read_correlations", {})
+    unmatched_followups = Counter()
+    invalid_effect_labels = clean.get("invalid_effect_labels", 0)
+    for correlation_id, followup in clean.get("followups", {}).items():
+        attribution = correlations.get(correlation_id)
+        if attribution is None:
+            unmatched_followups.update(followup["kinds"])
+            continue
+        attribution["used"] |= followup["used"]
+        attribution["effect"] |= followup["effect"]
+        invalid_effect_labels += followup["invalid_effect_labels"]
+    unmatched_followups.update(clean.get("uncorrelated_followups", {}))
+
+    # A repeated follow-up must not make one retrieval look like several
+    # outcomes.  The denominator is likewise one per correlation, preserving
+    # uncorrelated clean read rows as an explicit measurement limitation.
+    reads_clean = len(correlations) + clean.get("uncorrelated_reads", 0)
+    reads_with_use = sum(a["used"] for a in correlations.values())
+    reads_with_effect = sum(a["effect"] for a in correlations.values())
+    use_rows_all_tiers = sum(t["kinds"].get(USE, 0) for t in tiers.values())
+    effect_rows_all_tiers = sum(t["kinds"].get(EFFECT, 0) for t in tiers.values())
     out["loop"] = {
-        "reads_all_tiers": all_reads,
-        "outcome_labelled": all_used + use_rows,
-        "use_rows": use_rows,
-        "effect_rows": eff_rows,
-        "closure_rate": round((all_used + use_rows) / all_reads, 6) if all_reads else None,
-        "closed": bool(all_used or use_rows or eff_rows),
+        "reads_clean": reads_clean,
+        "clean_read_rows": clean.get("reads", 0),
+        "recorded_use_reads": reads_with_use,
+        "effect_labelled_reads": reads_with_effect,
+        "recorded_use_rate": round(reads_with_use / reads_clean, 6) if reads_clean else None,
+        "closure_rate": round(reads_with_effect / reads_clean, 6) if reads_clean else None,
+        "use_rows_all_tiers": use_rows_all_tiers,
+        "effect_rows_all_tiers": effect_rows_all_tiers,
+        "unmatched_clean_followups": dict(unmatched_followups),
+        "invalid_clean_effect_labels": invalid_effect_labels,
+        "uncorrelated_clean_reads": clean.get("uncorrelated_reads", 0),
+        "closed": bool(reads_with_effect),
     }
     return out
 
@@ -125,28 +227,35 @@ def summarize(tiers: dict) -> dict:
 def render(s: dict) -> str:
     L = ["Memory telemetry health", "=" * 55, ""]
     for name, t in s["tiers"].items():
-        mark = "TRUSTWORTHY" if t["trustworthy"] else "NOT trustworthy for rates"
+        mark = "RATE-ELIGIBLE by source=runtime" if t["rate_eligible"] else "EXCLUDED from rates"
         L.append(f"[{name}]  {mark}")
         L.append(f"  rows            : {t['rows']}  {t['kinds']}")
         L.append(f"  window          : {t['first'][:10] or '-'} -> {t['last'][:10] or '-'}")
         if t["reads"]:
             hr = f"{100*t['hit_rate']:.1f}%" if t["hit_rate"] is not None else "-"
             L.append(f"  reads           : {t['reads']}  (returned results: {hr})")
-            L.append(f"  outcome labelled: {t['reads_with_used']} used / {t['reads_with_effect']} effect")
+            L.append(f"  inline labels   : {t['reads_with_used']} used / {t['reads_with_effect']} effect")
             L.append(f"  top readers     : {t['top_readers']}")
         L.append("")
     lp = s["loop"]
-    L += ["Read -> effect loop", "-" * 55,
-          f"  reads (all tiers) : {lp['reads_all_tiers']}",
-          f"  outcome-labelled  : {lp['outcome_labelled']}",
-          f"  memory-use rows   : {lp['use_rows']}",
-          f"  memory-effect rows: {lp['effect_rows']}"]
+    L += ["Clean read -> attributed outcome loop", "-" * 55,
+          f"  clean reads       : {lp['reads_clean']} ({lp['clean_read_rows']} rows)",
+          f"  recorded use      : {lp['recorded_use_reads']}",
+          f"  effect-labelled   : {lp['effect_labelled_reads']}",
+          f"  memory-use rows   : {lp['use_rows_all_tiers']} (all tiers)",
+          f"  memory-effect rows: {lp['effect_rows_all_tiers']} (all tiers)"]
     rate = lp["closure_rate"]
-    L.append(f"  closure rate      : {100*rate:.4f}%" if rate is not None else "  closure rate      : n/a")
+    L.append(f"  effect-label rate : {100*rate:.4f}%" if rate is not None else "  effect-label rate : n/a")
+    if lp["unmatched_clean_followups"] or lp["uncorrelated_clean_reads"]:
+        L.append(f"  unjoinable rows   : {lp['uncorrelated_clean_reads']} read / {lp['unmatched_clean_followups']} follow-up")
+    if lp["invalid_clean_effect_labels"]:
+        L.append(f"  invalid effect labels: {lp['invalid_clean_effect_labels']} (excluded)")
+    L.append("  A memory-use row records inspection; effect labels are consumer-reported, never proof of helpfulness.")
+    L.append("  Source=runtime qualifies a row for this rate; it does not independently exclude fixtures.")
     if not lp["closed"]:
         L += ["",
-              "  OPEN LOOP: the store records what it looked at and never what helped.",
-              "  Nothing here can rank memory by usefulness. Close it with:",
+              "  OPEN LOOP: no valid effect label joins a rate-eligible retrieval.",
+              "  Inspect attributable effects; this does not establish usefulness:",
               "    python3 scripts/memory_effect.py --range <sha>~1..<sha>"]
     return "\n".join(L)
 

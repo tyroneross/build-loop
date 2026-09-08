@@ -42,13 +42,13 @@
       "falsifier": "Propensity cannot be reconstructed after the fact. Every read emitted without ranks is permanently undebiasable, so this metric only ever measures rows going forward."
     },
     "use_rows": {
-      "definition": "count of memory-use rows across all lanes",
-      "computed_from": "kind == 'memory-use'",
+      "definition": "count of rate-eligible memory reads with a correlated memory-use row",
+      "computed_from": "schema_version != 1.0, source == 'runtime', and memory-use.correlation_id joins one clean memory-read",
       "baseline_2026_09_01": 0,
       "target": "> 0 and growing from ORDINARY work, with zero manual seeding",
-      "target_rationale": "The whole point. Until this is non-zero from unseeded traffic, memory cannot be ranked by usefulness, cannot be pruned, and no retrieval change can be judged against outcomes. Every other metric here is instrumentation waiting for this one.",
+      "target_rationale": "The whole point. Until a clean retrieval has a correlated use record from unseeded traffic, memory cannot be ranked by usefulness, cannot be pruned, and no retrieval change can be judged against outcomes. Every other metric here is instrumentation waiting for this one.",
       "ceiling": "join-confirmed subset of hit reads",
-      "falsifier": "A non-zero count produced by a human running the reconciler by hand proves the mechanism, NOT the loop. Check that matched reads carry session ids from sessions the human did not drive."
+      "falsifier": "A non-zero count produced by a human running the reconciler by hand proves the mechanism, NOT the loop. Check that matched reads carry session ids from sessions the human did not drive. The aggregate can report the mechanical count but cannot establish ordinary-work provenance or growth."
     }
   },
   "invariants": {

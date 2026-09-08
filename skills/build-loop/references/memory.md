@@ -69,10 +69,19 @@ Three work/knowledge artifact types, each with a clear WRITE → READ → TRACK 
 
 ### When to read memory
 
-- Always during Phase 1 ASSESS.
-- Before deploying: check global deployment memory.
-- Before UI work: check project design memory.
-- Before adopting a new library: check global library-choice memory.
+Start with a bounded lookup, then read the returned files that address the current decision. Reuse the receipt within the same task; repeat retrieval when the problem, evidence, or scope changes.
+
+| Moment | Tool and purpose |
+|---|---|
+| Phase 1, before choosing an approach | `context_bootstrap.py` for project context; `memory_locator.py --query "<decision or symptom>" --workdir "$PWD" --limit 3 --json` for specific lessons. |
+| A repeated error, user correction, release, or unfamiliar library | Query the exact error or decision before another attempt. Check current repo/tool state against remembered instructions. For UI work, include project design memory. |
+| A reference may live in another repo | Add `--all-projects` to the locator for knowledge discovery; keep issue ownership and queue operations scoped to the owning repo. |
+| Before a durable write | Find the existing lesson first; update it when the cause and scope match. Record trigger, cause, action, verification, limits, and source evidence rather than the run narrative. |
+| Review and Learn | Use `memory_health.py` for provenance-aware rates and `memory_reconcile.py --strategy session-path-window --json` for a dry-run attribution check. Preserve zero matches; do not loosen the join to manufacture use. |
+
+A lookup receipt proves retrieval. After successfully reading a returned file, `memory_telemetry.emit_use` can record its original correlation ID and the inspected files. Add an effect only when the consumer can name the changed decision or check, with evidence in the run retrospective. A consumer-reported effect still does not prove improved outcomes. Never infer failure from an absent use receipt, or rank/prune lessons from opens alone. Audits use `--no-telemetry` for diagnostic locator probes so probes do not inflate runtime counts.
+
+The 2026-09-08 audit found repeated unavailable `timeout` calls in two digests: check tool availability before reuse; after `command not found`, use the host tool timeout or Python `subprocess.run(..., timeout=...)`. Do not retry the same unavailable wrapper. Evidence and measurement limits: canonical memory `assessments/2026-09-08-build-loop-memory-effectiveness/REPORT.md`.
 
 ## Cross-session memory propagation + provenance schema (multi-process / multi-host)
 

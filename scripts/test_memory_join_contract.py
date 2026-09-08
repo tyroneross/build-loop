@@ -19,6 +19,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -172,6 +173,40 @@ class StoreStatsTest(unittest.TestCase):
         self.assertEqual(t["tiers"]["legacy"]["hit_rate"], 0.0)
         self.assertEqual(t["tiers"]["clean"]["joinable_rate"], 1.0)
 
+    def test_loop_metrics_require_a_clean_correlated_followup(self):
+        import memory_store_stats as mss
+        with tempfile.TemporaryDirectory() as d:
+            store = Path(d)
+            (store / "indexes").mkdir()
+            clean_read = {"kind": "memory-read", "schema_version": "1.1",
+                          "source": "runtime", "correlation_id": "mt-clean",
+                          "memory_ids_seen": ["x"], "returned_paths": ["/x.md"]}
+            legacy_use = {"kind": "memory-use", "schema_version": "1.0",
+                          "correlation_id": "mt-clean", "memory_ids_used": ["x"]}
+            orphan_use = {"kind": "memory-use", "schema_version": "1.1",
+                          "source": "runtime", "correlation_id": "mt-orphan",
+                          "memory_ids_used": ["x"]}
+            (store / "indexes" / "TELEMETRY.jsonl").write_text(
+                "\n".join(json.dumps(r) for r in (clean_read, legacy_use, orphan_use)))
+            t = mss.telemetry_stats(store)
+        self.assertEqual(t["use_rows"], 0)
+        self.assertEqual(t["use_rows_all_tiers"], 2)
+        self.assertFalse(t["loop_closed"])
+
+    def test_telemetry_stats_collects_one_snapshot(self):
+        import memory_store_stats as mss
+        with tempfile.TemporaryDirectory() as d:
+            store = Path(d)
+            (store / "indexes").mkdir()
+            row = {"kind": "memory-read", "schema_version": "1.1", "source": "runtime",
+                   "correlation_id": "mt-clean", "memory_ids_seen": ["x"],
+                   "returned_paths": ["/x.md"]}
+            (store / "indexes" / "TELEMETRY.jsonl").write_text(json.dumps(row))
+            with mock.patch.object(mss.memory_health, "collect", wraps=mss.memory_health.collect) as collect:
+                t = mss.telemetry_stats(store)
+        self.assertEqual(collect.call_count, 1)
+        self.assertEqual(t["tiers"]["clean"]["reads"], 1)
+
     def test_empty_store_does_not_crash(self):
         import memory_store_stats as mss
         with tempfile.TemporaryDirectory() as d:
@@ -183,7 +218,7 @@ class TargetCheckTest(unittest.TestCase):
     """Targets live in data so "are we on track" is a command, not an argument."""
 
     def _stats(self, hit=0.8, joinable=0.5, session=1.0, exposure=0.4, use=0):
-        return {"telemetry": {"use_rows": use, "tiers": {"clean": {
+        return {"telemetry": {"use_rows": use, "loop": {"invalid_clean_use_effect_labels": 0}, "tiers": {"clean": {
             "hit_rate": hit, "joinable_rate": joinable,
             "session_rate": session, "exposure_rate": exposure}}}}
 
@@ -211,12 +246,17 @@ class TargetCheckTest(unittest.TestCase):
         r = mss.check_targets(self._stats(hit=0.5))
         self.assertEqual(r["metrics"]["hit_rate"]["status"], "below")
 
-    def test_use_rows_graded_on_being_nonzero(self):
+    def test_use_rows_report_the_mechanical_signal_without_claiming_the_target(self):
         import memory_store_stats as mss
         self.assertEqual(
             mss.check_targets(self._stats(use=0))["metrics"]["use_rows"]["status"], "below")
-        self.assertEqual(
-            mss.check_targets(self._stats(use=3))["metrics"]["use_rows"]["status"], "on_target")
+        reported = mss.check_targets(self._stats(use=3))["metrics"]["use_rows"]
+        self.assertEqual(reported["status"], "unmeasurable")
+        self.assertIn("ordinary-work provenance", reported["measurement_limit"])
+        rendered = mss.render_targets({"declared": "test", "targets_file": "targets.json", "metrics": {
+            "use_rows": reported}})
+        self.assertIn("limit: A correlated use record", rendered)
+        self.assertIn("cannot establish", rendered)
 
     def test_missing_targets_file_reports_rather_than_raises(self):
         import memory_store_stats as mss

@@ -29,6 +29,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _paths import memory_store_root  # type: ignore  # noqa: E402
+from content_index import _frontmatter_and_body  # type: ignore  # noqa: E402
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 
@@ -37,6 +38,7 @@ MAX_FALLBACK_CANDIDATES = 500
 INDEX_RELATIVE_PATH = Path("indexes/INDEX.jsonl")
 UPDATE_LEDGER_RELATIVE_PATH = Path("indexes/updates.jsonl")
 GLOBAL_PROJECTS = {"", "_global", "_unscoped", "global"}
+INACTIVE_STATUSES = frozenset({"archived", "deleted", "inactive", "superseded"})
 # Sentinel project id meaning "every project lane, not just the resolved one".
 # A repo-scoped agent cannot know which project holds the answer, so cross-repo
 # recall must be expressible without naming a project.
@@ -140,6 +142,10 @@ def _project_allowed(row_project: str, project: str | None) -> bool:
     return row_project in GLOBAL_PROJECTS or row_project == project
 
 
+def _inactive_status(value: object) -> bool:
+    return str(value or "active").lower() in INACTIVE_STATUSES
+
+
 def _score_fields(row: dict[str, Any], terms: list[str], body: str = "") -> tuple[int, float, list[str]]:
     fields = (
         ("path", str(row.get("canonical_path") or row.get("path") or "").lower(), 9),
@@ -203,9 +209,8 @@ def _rank_index(
 ) -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
     for row in rows:
-        status = str(row.get("status") or "active").lower()
         row_project = str(row.get("project") or "_global")
-        if status in {"archived", "deleted", "inactive", "superseded"}:
+        if _inactive_status(row.get("status")):
             continue
         if not _project_allowed(row_project, project):
             continue
@@ -326,8 +331,9 @@ def _fallback_row(path: Path, root: Path) -> tuple[dict[str, Any], str]:
     lane = rel.parts[lane_index] if len(rel.parts) > lane_index else "memory"
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
+        metadata, _ = _frontmatter_and_body(path)
     except OSError:
-        text = ""
+        metadata, text = {}, ""
     title = path.stem
     for line in text.splitlines()[:80]:
         if line.startswith("# "):
@@ -339,7 +345,7 @@ def _fallback_row(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         "title": title,
         "project": project,
         "type": lane.removesuffix("s") or "memory",
-        "status": "active",
+        "status": str(metadata.get("status") or "active"),
         "tags": [],
     }, text
 
@@ -355,6 +361,8 @@ def _rank_fallback(
     ranked: list[dict[str, Any]] = []
     for path in paths:
         row, body = _fallback_row(path, root)
+        if _inactive_status(row.get("status")):
+            continue
         if not _project_allowed(str(row["project"]), project):
             continue
         score, coverage, matched = _score_fields(row, terms, body)
@@ -434,6 +442,9 @@ def locate(
                 returned_paths=[item["path"] for item in results],
                 latency_ms=latency_ms,
                 zero_result=not results,
+                ranks=list(range(len(results))),
+                scores=[item["score"] for item in results],
+                shown_count=len(results),
             )
         except Exception as exc:  # noqa: BLE001 - locator must remain usable
             receipt["reasons"].append(f"telemetry_error: {exc}")

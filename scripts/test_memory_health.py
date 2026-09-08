@@ -59,6 +59,13 @@ class MemoryHealthTest(unittest.TestCase):
         self.assertEqual(mh.tier_of({"schema_version": "1.1", "source": "runtime"}), "clean")
         self.assertEqual(mh.tier_of({"schema_version": "1.1", "source": "test"}), "non_runtime")
 
+    def test_non_object_json_rows_are_ignored(self):
+        self._write([[], None, "telemetry", 3,
+                     read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        s = self._summary()
+        self.assertEqual(s["tiers"]["clean"]["reads"], 1)
+        self.assertEqual(s["tiers"]["clean"]["hit_rate"], 1.0)
+
     def test_legacy_pollution_never_blends_into_the_clean_rate(self):
         """PLANTED: legacy is 0% hit, clean is 100%. A blend would read 9%."""
         self._write([read_row(sv="1.0", seen=[]) for _ in range(10)])
@@ -66,8 +73,8 @@ class MemoryHealthTest(unittest.TestCase):
         s = self._summary()
         self.assertEqual(s["tiers"]["clean"]["hit_rate"], 1.0)
         self.assertEqual(s["tiers"]["legacy"]["hit_rate"], 0.0)
-        self.assertTrue(s["tiers"]["clean"]["trustworthy"])
-        self.assertFalse(s["tiers"]["legacy"]["trustworthy"])
+        self.assertTrue(s["tiers"]["clean"]["rate_eligible"])
+        self.assertFalse(s["tiers"]["legacy"]["rate_eligible"])
         # the blended number (1/11 = 0.0909) must appear nowhere as a rate
         self.assertNotIn(0.0909, [t["hit_rate"] for t in s["tiers"].values()])
 
@@ -86,17 +93,96 @@ class MemoryHealthTest(unittest.TestCase):
         self.assertIn("OPEN LOOP", mh.render(s))
 
     def test_closed_loop_is_reported_as_closed(self):
-        """A use row must flip the verdict -- proves the detector is not stuck."""
+        """A linked effect label closes the telemetry loop once."""
         self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
         self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
                       "schema_version": "1.1", "correlation_id": "mt-x",
                       "memory_ids_used": ["decision-abc-123456"], "files_read": [],
-                      "effect": "informed_decision", "reason": "referenced in commit abc",
+                      "effect": None, "reason": "referenced in commit abc",
+                      "source": "runtime"},
+                     {"ts": "2026-08-26T00:00:01Z", "kind": "memory-effect",
+                      "schema_version": "1.1", "correlation_id": "mt-x",
+                      "effect": "informed_decision", "reason": "changed plan",
                       "source": "runtime"}])
         s = self._summary()
         self.assertTrue(s["loop"]["closed"])
-        self.assertEqual(s["loop"]["use_rows"], 1)
+        self.assertEqual(s["loop"]["recorded_use_reads"], 1)
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 1)
+        self.assertEqual(s["loop"]["closure_rate"], 1.0)
         self.assertNotIn("OPEN LOOP", mh.render(s))
+
+    def test_legacy_followup_cannot_close_a_clean_read(self):
+        """PLANTED: an untrustworthy use row must never enter the clean rate."""
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+                      "schema_version": "1.0", "correlation_id": "mt-x",
+                      "memory_ids_used": ["decision-abc-123456"], "effect": "informed_decision"}])
+        s = self._summary()
+        self.assertEqual(s["loop"]["reads_clean"], 1)
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 0)
+        self.assertEqual(s["loop"]["closure_rate"], 0.0)
+
+    def test_followups_require_a_clean_read_and_dedupe_by_correlation(self):
+        """A retry must not count twice; an orphan cannot credit any read."""
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        use = {"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+               "schema_version": "1.1", "correlation_id": "mt-x",
+               "memory_ids_used": ["decision-abc-123456"], "files_read": [],
+               "effect": None, "source": "runtime"}
+        orphan = {**use, "kind": "memory-effect", "correlation_id": "mt-orphan"}
+        orphan["effect"] = "informed_decision"
+        self._write([use, use, orphan])
+        s = self._summary()
+        self.assertEqual(s["loop"]["recorded_use_reads"], 1)
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 0)
+        self.assertEqual(s["loop"]["closure_rate"], 0.0)
+        self.assertEqual(s["loop"]["unmatched_clean_followups"], {"memory-effect": 1})
+
+    def test_manual_use_effect_label_is_attributed_but_not_proven_helpful(self):
+        """Shape of the real manual row, with values anonymized."""
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+                      "schema_version": "1.1", "correlation_id": "mt-x",
+                      "memory_ids_used": ["decision-abc-123456"], "files_read": [],
+                      "effect": "informed_decision", "source": "runtime"}])
+        s = self._summary()
+        self.assertEqual(s["loop"]["recorded_use_reads"], 1)
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 1)
+        self.assertEqual(s["loop"]["closure_rate"], 1.0)
+        self.assertEqual(s["loop"]["invalid_clean_effect_labels"], 0)
+        self.assertTrue(s["loop"]["closed"])
+
+    def test_invalid_effect_label_is_excluded(self):
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+                      "schema_version": "1.1", "correlation_id": "mt-x",
+                      "memory_ids_used": ["decision-abc-123456"], "files_read": [],
+                      "effect": "unknown-label", "source": "runtime"}])
+        s = self._summary()
+        self.assertEqual(s["loop"]["recorded_use_reads"], 1)
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 0)
+        self.assertEqual(s["loop"]["invalid_clean_effect_labels"], 1)
+        self.assertFalse(s["loop"]["closed"])
+
+    def test_malformed_effect_label_is_excluded_without_crashing(self):
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+                      "schema_version": "1.1", "correlation_id": "mt-x",
+                      "memory_ids_used": ["decision-abc-123456"], "files_read": [],
+                      "effect": [], "source": "runtime"}])
+        s = self._summary()
+        self.assertEqual(s["loop"]["effect_labelled_reads"], 0)
+        self.assertEqual(s["loop"]["invalid_clean_effect_labels"], 1)
+
+    def test_empty_use_row_does_not_count_as_inspection(self):
+        self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])])
+        self._write([{"ts": "2026-08-26T00:00:00Z", "kind": "memory-use",
+                      "schema_version": "1.1", "correlation_id": "mt-x",
+                      "memory_ids_used": [], "files_read": [], "effect": None,
+                      "source": "runtime"}])
+        s = self._summary()
+        self.assertEqual(s["loop"]["recorded_use_reads"], 0)
+        self.assertEqual(s["loop"]["recorded_use_rate"], 0.0)
 
     def test_multiple_lanes_are_aggregated(self):
         self._write([read_row(sv="1.1", source="runtime", seen=["decision-abc-123456"])],
@@ -107,7 +193,7 @@ class MemoryHealthTest(unittest.TestCase):
 
     def test_empty_store_does_not_crash(self):
         s = self._summary()
-        self.assertEqual(s["loop"]["reads_all_tiers"], 0)
+        self.assertEqual(s["loop"]["reads_clean"], 0)
         self.assertIsNone(s["loop"]["closure_rate"])
 
 

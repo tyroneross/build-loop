@@ -106,8 +106,10 @@ during normal runs, which is narrower and further along than a cold wiring gap.
 The pieces: `scripts/memory_telemetry.py` documents the contract ("`effect: null`
 and a follow-up `memory-effect` row once outcome is known, joining via
 `correlation_id`"), `scripts/memory_effect.py` exists, and
-`scripts/memory_health.py` reports `reads_with_used / reads_with_effect`. A
-named search for callers found only `memory_health.py` and
+`scripts/memory_health.py` reported inline use/effect counts at that time.
+As of 2026-09-08 it reports deduplicated, correlated rate-eligible reads, recorded
+inspection, and consumer-reported effect labels; none establishes outcome benefit.
+The September 1 search for callers found only `memory_health.py` and
 `test_memory_effect.py`, which is consistent with a join that exists and is
 exercised by hand rather than by the agent loop.
 

@@ -34,7 +34,6 @@ import argparse
 import json
 import subprocess
 import sys
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,35 +43,11 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _paths import memory_store_root  # noqa: E402
+import memory_health as memory_health  # noqa: E402
 
 SKIP_PARTS = {".git", "node_modules", "archive", "raw-originals", "indexes",
               ".venv", "__pycache__", ".build-loop", ".rally"}
-READ, WRITE, USE, EFFECT = "memory-read", "memory-write", "memory-use", "memory-effect"
-
-
-def tier_of(row: dict) -> str:
-    """Same taxonomy as memory_health.py. Kept identical on purpose: two tools
-    that disagree about what 'clean' means produce two irreconcilable numbers."""
-    sv = str(row.get("schema_version") or "1.0")
-    if sv == "1.0" or "source" not in row:
-        return "legacy"
-    return "clean" if row.get("source") == "runtime" else "non_runtime"
-
-
-def _iter_rows(store: Path):
-    for lane in sorted(store.rglob("TELEMETRY.jsonl")):
-        try:
-            fh = lane.open(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        with fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+tier_of = memory_health.tier_of
 
 
 def corpus_stats(store: Path, since: str | None) -> dict:
@@ -120,43 +95,7 @@ def _committed_since(store: Path, since: str) -> int | None:
 
 
 def telemetry_stats(store: Path) -> dict:
-    tiers: dict[str, dict[str, Any]] = {}
-    kinds = Counter()
-    for row in _iter_rows(store):
-        kind = row.get("kind", "?")
-        kinds[kind] += 1
-        if kind != READ:
-            continue
-        t = tiers.setdefault(tier_of(row), {
-            "reads": 0, "with_results": 0, "with_paths": 0,
-            "with_session": 0, "with_ranks": 0, "readers": Counter()})
-        t["reads"] += 1
-        t["readers"][row.get("reader_or_writer", "?")] += 1
-        if row.get("memory_ids_seen"):
-            t["with_results"] += 1
-        if row.get("returned_paths"):
-            t["with_paths"] += 1
-        if row.get("session_id"):
-            t["with_session"] += 1
-        if row.get("ranks"):
-            t["with_ranks"] += 1
-
-    out: dict[str, Any] = {"kinds": dict(kinds), "tiers": {}}
-    for name, t in sorted(tiers.items()):
-        n = t["reads"]
-        out["tiers"][name] = {
-            "trustworthy": name == "clean",
-            "reads": n,
-            "hit_rate": round(t["with_results"] / n, 4) if n else None,
-            "zero_result_rate": round(1 - t["with_results"] / n, 4) if n else None,
-            "joinable_rate": round(t["with_paths"] / n, 4) if n else None,
-            "session_rate": round(t["with_session"] / n, 4) if n else None,
-            "exposure_rate": round(t["with_ranks"] / n, 4) if n else None,
-            "top_readers": dict(t["readers"].most_common(4)),
-        }
-    out["loop_closed"] = bool(kinds.get(USE, 0) or kinds.get(EFFECT, 0))
-    out["use_rows"] = kinds.get(USE, 0)
-    return out
+    return memory_health.stats_summary(memory_health.collect(store))
 
 
 def join_stats(store: Path) -> dict | None:
@@ -197,7 +136,7 @@ def render(s: dict) -> str:
     t = s["telemetry"]
     L += ["", "TELEMETRY", f"  event kinds         : {t['kinds']}"]
     for name, d in t["tiers"].items():
-        mark = "TRUSTWORTHY" if d["trustworthy"] else "not trustworthy for rates"
+        mark = "RATE-ELIGIBLE by source=runtime" if d["rate_eligible"] else "excluded from rates"
         L.append(f"  [{name}] {mark}  reads={d['reads']}")
         pct = lambda v: "-" if v is None else f"{100*v:.1f}%"  # noqa: E731
         L.append(f"     hit {pct(d['hit_rate'])}   zero-result {pct(d['zero_result_rate'])}"
@@ -205,7 +144,8 @@ def render(s: dict) -> str:
                  f"   session {pct(d['session_rate'])}"
                  f"   exposure {pct(d['exposure_rate'])}")
         L.append(f"     readers: {d['top_readers']}")
-    L.append(f"  loop closed         : {t['loop_closed']}  (use rows: {t['use_rows']})")
+    L.append(f"  effect label joined : {t['loop_closed']}  (correlated clean uses: {t['use_rows']}; "
+             f"raw use rows all tiers: {t['use_rows_all_tiers']})")
     j = s.get("join")
     if j and "by_strategy" in j:
         L += ["", "JOIN COVERAGE"]
@@ -262,9 +202,9 @@ def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
         resolved = hit if isinstance(target, str) and "hit_rate" in target else target
         if name == "use_rows":
             # Its target is prose by design ("growing from ordinary work"), so
-            # it is graded on the only mechanical part: is it non-zero at all.
-            status = "unmeasurable" if value is None else (
-                "on_target" if value > 0 else "below")
+            # a nonzero correlated count proves only the mechanical signal.
+            # This aggregate cannot establish ordinary provenance or growth.
+            status = "unmeasurable" if value is None or value > 0 else "below"
         elif value is None or resolved is None or isinstance(resolved, str):
             status = "unmeasurable"
         else:
@@ -273,6 +213,11 @@ def check_targets(stats: dict, targets_path: Path | None = None) -> dict:
             "live": value, "target": target, "resolved_target": resolved,
             "baseline": spec.get("baseline_2026_09_01"), "status": status,
         }
+        if name == "use_rows" and value:
+            out["metrics"][name]["measurement_limit"] = (
+                "A correlated use record proves the mechanical signal only; "
+                "this aggregate cannot establish ordinary-work provenance or growth."
+            )
     return out
 
 
@@ -285,8 +230,10 @@ def render_targets(t: dict) -> str:
         f = lambda v: "-" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))  # noqa: E731
         L.append(f"  {name:16s} {f(m['baseline']):>9s} {f(m['live']):>9s} "
                  f"{f(m['resolved_target']):>9s}  {m['status']}")
-    L.append("  'unmeasurable' means the target resolves against another live metric "
-             "that is itself absent, not that the check failed.")
+        if m.get("measurement_limit"):
+            L.append(f"     limit: {m['measurement_limit']}")
+    L.append("  'unmeasurable' means the available aggregate cannot establish the target's "
+             "required condition; it does not mean the check failed.")
     return "\n".join(L)
 
 
