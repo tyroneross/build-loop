@@ -849,7 +849,7 @@ class DeterministicLocatorIntegrationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(cb, "locate_memory", return_value=receipt), \
-                mock.patch.object(cb, "recall_memory", return_value=empty_envelope), \
+                mock.patch.object(cb, "recall_memory", return_value=empty_envelope) as recall_mock, \
                 mock.patch.object(cb, "ensure_root_constitution", return_value=[]), \
                 mock.patch.object(cb, "canonical_memory_files", return_value=([], [])), \
                 mock.patch.object(cb, "memory_store_root", return_value=Path(td)):
@@ -866,6 +866,8 @@ class DeterministicLocatorIntegrationTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["locator"], receipt)
+        self.assertTrue(recall_mock.call_args_list)
+        self.assertEqual({call.kwargs["phase"] for call in recall_mock.call_args_list}, {"1-assess"})
 
     def test_agent_brief_puts_fetchable_locator_paths_up_front(self):
         packet = {

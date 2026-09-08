@@ -853,6 +853,7 @@ def canonical_memory_context(
                     limit=limit,
                     workdir=workdir,
                     skip_postgres=not include_postgres,
+                    phase="1-assess",
                 )
             for line in stderr_buf.getvalue().splitlines():
                 stripped = line.strip()

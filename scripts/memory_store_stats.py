@@ -98,6 +98,14 @@ def telemetry_stats(store: Path, since: str | None = None) -> dict:
     return memory_health.stats_summary(memory_health.collect(store, since=since))
 
 
+def telemetry_stats_windows(store: Path, since_values: list[str | None]) -> dict[str | None, dict]:
+    """Project lifetime and rebaseline windows from one ledger scan."""
+    return {
+        since: memory_health.stats_summary(tiers)
+        for since, tiers in memory_health.collect_windows(store, since_values).items()
+    }
+
+
 def join_stats(store: Path) -> dict | None:
     """Match coverage per strategy. Optional: skipped if the reconciler is absent."""
     try:
@@ -112,12 +120,13 @@ def join_stats(store: Path) -> dict | None:
         return {"error": str(exc)[:120]}
 
 
-def collect(store: Path, since: str | None, with_join: bool) -> dict:
+def collect(store: Path, since: str | None, with_join: bool,
+            telemetry: dict | None = None) -> dict:
     return {
         "store": str(store),
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "corpus": corpus_stats(store, since),
-        "telemetry": telemetry_stats(store),
+        "telemetry": telemetry if telemetry is not None else telemetry_stats(store),
         "join": join_stats(store) if with_join else None,
     }
 
@@ -166,8 +175,18 @@ def render(s: dict) -> str:
 TARGETS_PATH = HERE.parent / "references" / "memory-signal-targets.json"
 
 
+def _window_points(declared: dict) -> list[str | None]:
+    rebaseline = declared.get("rebaseline_after")
+    return list(dict.fromkeys([
+        None, rebaseline,
+        *(spec.get("rebaseline_after") or rebaseline
+          for spec in declared.get("metrics", {}).values()),
+    ]))
+
+
 def check_targets(stats: dict, targets_path: Path | None = None,
-                  store: Path | None = None) -> dict:
+                  store: Path | None = None,
+                  telemetry_by_since: dict[str | None, dict] | None = None) -> dict:
     """Compare live figures to the DECLARED targets.
 
     Targets live in data, not prose, because a prose target rots silently: the
@@ -197,23 +216,23 @@ def check_targets(stats: dict, targets_path: Path | None = None,
             "reads": c.get("reads"),
         }
 
-    lifetime = _live_from(stats.get("telemetry", {}) or {})
+    if telemetry_by_since is None and store is not None:
+        telemetry_by_since = telemetry_stats_windows(store, _window_points(declared))
+    windowed = telemetry_by_since is not None and None in telemetry_by_since
+    lifetime_source = (telemetry_by_since or {}).get(None) if windowed else stats.get("telemetry", {})
+    lifetime = _live_from(lifetime_source or {})
 
-    # Score the window, not the whole ledger. The store is append-only, so a
-    # lifetime rate cannot fall below its own history: a metric fixed weeks ago
-    # keeps reporting "below" forever and every reader re-derives the same false
-    # verdict at full cost. Lifetime is still rendered beside it, so nothing is
-    # hidden -- the window narrows what is SCORED, never what is SHOWN.
+    # Score the window, not the whole ledger. The store is append-only, so old
+    # rows can keep a post-fix metric below target long after the fix landed.
+    # Lifetime is still rendered beside it, so nothing is hidden -- the window
+    # narrows what is SCORED, never what is SHOWN.
     rebaseline = declared.get("rebaseline_after")
-    windows: dict[str | None, dict] = {}
 
     def _window(since: str | None) -> dict:
-        """Live figures over one window, computed at most once per distinct point."""
-        if since is None or store is None:
+        """Live figures from the supplied snapshot, or a clearly lifetime input."""
+        if not windowed:
             return lifetime
-        if since not in windows:
-            windows[since] = _live_from(telemetry_stats(store, since=since))
-        return windows[since]
+        return _live_from((telemetry_by_since or {}).get(since) or {})
 
     live = _window(rebaseline)
     # hit_rate anchors every "equal to hit_rate" target, so it is read from the
@@ -221,7 +240,8 @@ def check_targets(stats: dict, targets_path: Path | None = None,
     # its own fix against a hit rate measured before one would manufacture a gap.
     hit = live.get("hit_rate")
     out = {"targets_file": str(path), "declared": declared.get("declared"),
-           "rebaseline_after": rebaseline, "window_reads": live.get("reads"),
+           "rebaseline_after": rebaseline, "scored_window_available": windowed,
+           "window_reads": live.get("reads") if windowed else None,
            "lifetime_reads": lifetime.get("reads"), "metrics": {}}
     for name, spec in declared.get("metrics", {}).items():
         target = spec.get("target")
@@ -249,7 +269,8 @@ def check_targets(stats: dict, targets_path: Path | None = None,
             "live": value, "lifetime": lifetime.get(name),
             "target": target, "resolved_target": resolved,
             "baseline": spec.get("baseline_2026_09_01"), "status": status,
-            "scored_since": since, "window_reads": metric_live.get("reads"),
+            "scored_since": since if windowed else None,
+            "window_reads": metric_live.get("reads") if windowed else None,
         }
         if name == "use_rows" and value:
             out["metrics"][name]["measurement_limit"] = (
@@ -264,12 +285,13 @@ def render_targets(t: dict) -> str:
         return f"TARGETS: {t['error']}"
     head = f"TARGETS  (declared {t['declared']}, {Path(t['targets_file']).name})"
     L = [head]
-    if t.get("rebaseline_after"):
+    if t.get("rebaseline_after") and t.get("scored_window_available"):
         L.append(f"  scored on rows since {t['rebaseline_after']} "
                  f"(window {t.get('window_reads')} reads / lifetime {t.get('lifetime_reads')}). "
-                 f"'lifetime' is shown, not scored: an append-only ledger cannot "
-                 f"fall below its own history.")
-    L.append(f"  {'metric':16s} {'baseline':>9s} {'window':>9s} {'lifetime':>9s} {'target':>9s}  status")
+                 f"'lifetime' is shown, not scored: old rows can dilute a post-fix rate.")
+    elif t.get("rebaseline_after"):
+        L.append("  rebaseline window unavailable; values below use the supplied lifetime input.")
+    L.append(f"  {'metric':16s} {'baseline':>9s} {'scored':>9s} {'lifetime':>9s} {'target':>9s}  status")
     for name, m in t["metrics"].items():
         f = lambda v: "-" if v is None else (f"{v:.3f}" if isinstance(v, float) else str(v))  # noqa: E731
         L.append(f"  {name:16s} {f(m['baseline']):>9s} {f(m['live']):>9s} "
@@ -300,10 +322,19 @@ def main(argv: list[str] | None = None) -> int:
     if not store.is_dir():
         print(f"memory store not found: {store}", file=sys.stderr)
         return 0
-    s = collect(store, a.since, not a.no_join)
+    targets_path = Path(a.targets_file) if a.targets_file else None
+    target_windows = None
+    if a.check_targets:
+        try:
+            declared = json.loads((targets_path or TARGETS_PATH).read_text(encoding="utf-8"))
+            target_windows = telemetry_stats_windows(store, _window_points(declared))
+        except (OSError, json.JSONDecodeError):
+            pass
+    s = collect(store, a.since, not a.no_join,
+                telemetry=target_windows.get(None) if target_windows else None)
     if a.check_targets:
         s["targets"] = check_targets(
-            s, Path(a.targets_file) if a.targets_file else None, store=store)
+            s, targets_path, telemetry_by_since=target_windows)
     if a.json:
         print(json.dumps(s, indent=2))
     else:

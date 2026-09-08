@@ -310,6 +310,47 @@ class TargetCheckTest(unittest.TestCase):
                              "2026-09-01T00:00:00Z")
             self.assertEqual(got["metrics"]["session_rate"]["window_reads"], 8)
 
+    def test_check_targets_reads_the_ledger_once_for_all_windows(self):
+        """A concurrent append must not mix lifetime and rebaseline figures."""
+        import contextlib
+        import io
+        import memory_store_stats as mss
+
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td)
+            (store / "indexes").mkdir()
+            row = {"ts": "2026-09-09T00:00:00Z", "kind": "memory-read",
+                   "schema_version": "1.1", "source": "runtime",
+                   "correlation_id": "mt-clean", "memory_ids_seen": ["x"],
+                   "returned_paths": ["/x"], "session_id": "s", "phase": "1-assess"}
+            (store / "indexes" / "TELEMETRY.jsonl").write_text(json.dumps(row))
+            targets = store / "targets.json"
+            targets.write_text(json.dumps({
+                "declared": "test", "rebaseline_after": "2026-09-01T00:00:00Z",
+                "metrics": {"hit_rate": {"target": 1.0},
+                            "phase_rate": {"target": 1.0,
+                                           "rebaseline_after": "2026-09-08T00:00:00Z"}},
+            }))
+            with mock.patch.object(mss.memory_health, "iter_rows",
+                                   wraps=mss.memory_health.iter_rows) as rows, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(mss.main(["--store", str(store), "--no-join",
+                                           "--check-targets", "--targets-file", str(targets),
+                                           "--json"]), 0)
+        self.assertEqual(rows.call_count, 1)
+
+    def test_no_store_does_not_label_lifetime_as_a_rebaseline_window(self):
+        import memory_store_stats as mss
+        got = mss.check_targets(self._stats(hit=0.9, joinable=0.9, exposure=0.9))
+        self.assertFalse(got["scored_window_available"])
+        self.assertIsNone(got["window_reads"])
+        self.assertTrue(all(m["scored_since"] is None for m in got["metrics"].values()))
+        rendered = mss.render_targets(got)
+        self.assertIn("rebaseline window unavailable", rendered)
+        header = next(line for line in rendered.splitlines() if "metric" in line)
+        self.assertIn("scored", header)
+        self.assertNotIn("window", header)
+
 
     def test_relative_target_resolves_against_live_hit_rate(self):
         """joinable/exposure ceilings MOVE with retrieval quality: a zero-result

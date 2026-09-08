@@ -74,91 +74,107 @@ def iter_rows(store: Path):
             continue
 
 
+def _add_row(tiers: dict, row: dict) -> None:
+    """Add one telemetry row to one aggregate."""
+    tier = tier_of(row)
+    t = tiers.setdefault(tier, {
+        "kinds": Counter(), "reads": 0, "reads_with_hits": 0,
+        "reads_with_used": 0, "reads_with_effect": 0,
+        "reads_with_paths": 0, "reads_with_session": 0, "reads_with_ranks": 0,
+        "reads_with_phase": 0,
+        "readers": Counter(), "first": "", "last": "",
+        # Only clean reads participate in loop metrics. Follow-ups aggregate
+        # by correlation because append order does not guarantee that a read
+        # precedes its effect/use row.
+        "read_correlations": {}, "uncorrelated_reads": 0, "followups": {},
+        "uncorrelated_followups": Counter(),
+        "invalid_effect_labels": 0,
+    })
+    kind = row.get("kind", "?")
+    t["kinds"][kind] += 1
+    ts = row.get("ts")
+    if isinstance(ts, str) and ts:
+        t["first"] = min(t["first"], ts) if t["first"] else ts
+        t["last"] = max(t["last"], ts)
+    if kind == READ:
+        t["reads"] += 1
+        t["readers"][row.get("reader_or_writer", "?")] += 1
+        if row.get("memory_ids_seen"):
+            t["reads_with_hits"] += 1
+        if row.get("memory_ids_used"):
+            t["reads_with_used"] += 1
+        if row.get("effect"):
+            t["reads_with_effect"] += 1
+        if row.get("returned_paths"):
+            t["reads_with_paths"] += 1
+        if row.get("session_id"):
+            t["reads_with_session"] += 1
+        if row.get("ranks"):
+            t["reads_with_ranks"] += 1
+        # "unknown" is the absent-phase sentinel, not a phase. Counting it
+        # would report full attribution for rows that attribute nothing.
+        if row.get("phase") and row.get("phase") != "unknown":
+            t["reads_with_phase"] += 1
+        if tier == "clean":
+            correlation_id = row.get("correlation_id")
+            if correlation_id:
+                attribution = t["read_correlations"].setdefault(
+                    str(correlation_id), {"used": False, "effect": False}
+                )
+                attribution["used"] |= bool(row.get("memory_ids_used"))
+                effect = row.get("effect")
+                attribution["effect"] |= valid_effect(effect)
+                if effect is not None and not valid_effect(effect):
+                    t["invalid_effect_labels"] += 1
+            else:
+                t["uncorrelated_reads"] += 1
+    elif tier == "clean" and kind in {USE, EFFECT}:
+        correlation_id = row.get("correlation_id")
+        if not correlation_id:
+            t["uncorrelated_followups"][kind] += 1
+            return
+        followup = t["followups"].setdefault(str(correlation_id), {
+            "kinds": Counter(), "used": False, "effect": False,
+            "invalid_effect_labels": 0,
+        })
+        followup["kinds"][kind] += 1
+        if kind == USE and (row.get("memory_ids_used") or row.get("files_read")):
+            followup["used"] = True
+        effect = row.get("effect")
+        if valid_effect(effect):
+            followup["effect"] = True
+        elif effect is not None:
+            followup["invalid_effect_labels"] += 1
+
+
+def collect_windows(store: Path, since_values: list[str | None]) -> dict[str | None, dict]:
+    """Aggregate every requested UTC window from one ledger stream.
+
+    Target reporting needs lifetime plus a few rebaseline windows.  Reading the
+    append-only ledger once keeps those figures a coherent snapshot while
+    avoiding a raw-row materialization.
+    """
+    windows = {since: {} for since in dict.fromkeys(since_values)}
+    for row in iter_rows(store):
+        ts = row.get("ts")
+        for since, tiers in windows.items():
+            if since is not None and (not isinstance(ts, str) or ts < since):
+                continue
+            _add_row(tiers, row)
+    return windows
+
+
 def collect(store: Path, since: str | None = None) -> dict:
     """Aggregate telemetry rows into per-tier counters.
 
     ``since`` is an ISO-8601 UTC lower bound on ``ts``. It exists because the
-    ledger is append-only: a rate computed over its whole life can never show
-    that a fix landed, so a metric fixed weeks ago keeps reporting "below" and
-    every future reader re-derives the same false verdict. Rows without a ``ts``
+    ledger is append-only: old rows can dilute a post-fix rate long after a fix
+    landed. Rows without a ``ts``
     are dropped when a window is set -- an undated row cannot be proven to fall
     inside it, and counting it would silently readmit the history the window
     exists to exclude.
     """
-    tiers: dict[str, dict] = {}
-    for row in iter_rows(store):
-        if since and (row.get("ts") or "") < since:
-            continue
-        tier = tier_of(row)
-        t = tiers.setdefault(tier, {
-            "kinds": Counter(), "reads": 0, "reads_with_hits": 0,
-            "reads_with_used": 0, "reads_with_effect": 0,
-            "reads_with_paths": 0, "reads_with_session": 0, "reads_with_ranks": 0,
-            "reads_with_phase": 0,
-            "readers": Counter(), "first": "", "last": "",
-            # Only clean reads participate in loop metrics. Follow-ups aggregate
-            # by correlation because append order does not guarantee that a read
-            # precedes its effect/use row.
-            "read_correlations": {}, "uncorrelated_reads": 0, "followups": {},
-            "uncorrelated_followups": Counter(),
-            "invalid_effect_labels": 0,
-        })
-        kind = row.get("kind", "?")
-        t["kinds"][kind] += 1
-        ts = row.get("ts") or ""
-        if ts:
-            t["first"] = min(t["first"], ts) if t["first"] else ts
-            t["last"] = max(t["last"], ts)
-        if kind == READ:
-            t["reads"] += 1
-            t["readers"][row.get("reader_or_writer", "?")] += 1
-            if row.get("memory_ids_seen"):
-                t["reads_with_hits"] += 1
-            if row.get("memory_ids_used"):
-                t["reads_with_used"] += 1
-            if row.get("effect"):
-                t["reads_with_effect"] += 1
-            if row.get("returned_paths"):
-                t["reads_with_paths"] += 1
-            if row.get("session_id"):
-                t["reads_with_session"] += 1
-            if row.get("ranks"):
-                t["reads_with_ranks"] += 1
-            # "unknown" is the absent-phase sentinel, not a phase. Counting it
-            # would report full attribution for rows that attribute nothing.
-            if row.get("phase") and row.get("phase") != "unknown":
-                t["reads_with_phase"] += 1
-            if tier == "clean":
-                correlation_id = row.get("correlation_id")
-                if correlation_id:
-                    attribution = t["read_correlations"].setdefault(
-                        str(correlation_id), {"used": False, "effect": False}
-                    )
-                    attribution["used"] |= bool(row.get("memory_ids_used"))
-                    effect = row.get("effect")
-                    attribution["effect"] |= valid_effect(effect)
-                    if effect is not None and not valid_effect(effect):
-                        t["invalid_effect_labels"] += 1
-                else:
-                    t["uncorrelated_reads"] += 1
-        elif tier == "clean" and kind in {USE, EFFECT}:
-            correlation_id = row.get("correlation_id")
-            if not correlation_id:
-                t["uncorrelated_followups"][kind] += 1
-                continue
-            followup = t["followups"].setdefault(str(correlation_id), {
-                "kinds": Counter(), "used": False, "effect": False,
-                "invalid_effect_labels": 0,
-            })
-            followup["kinds"][kind] += 1
-            if kind == USE and (row.get("memory_ids_used") or row.get("files_read")):
-                followup["used"] = True
-            effect = row.get("effect")
-            if valid_effect(effect):
-                followup["effect"] = True
-            elif effect is not None:
-                followup["invalid_effect_labels"] += 1
-    return tiers
+    return collect_windows(store, [since])[since]
 
 
 def stats_summary(tiers: dict) -> dict:
