@@ -24,6 +24,11 @@ Produces a repo-grounded research packet without committing to implementation. U
 
 2. **Classify the task**: product, feature, algorithm, prompt, bugfix, or refactor
 
+   When the user requests an agent-architecture or context-handoff pilot, load
+   `../build-loop/references/research-architecture-pilot.md`. Use its task-shape
+   assessment and matched experiments before recommending a routing change.
+   Ordinary research does not load the pilot or start additional agents.
+
 3. **Build the packet**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/research_packet.py --packet --workdir "$PWD" --task "<full request>" --mode balanced` to generate the structured research packet
 
 4. **Review and present**: Read the generated packet, verify claims against the actual repo, adjust confidence if needed

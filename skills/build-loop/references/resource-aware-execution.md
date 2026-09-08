@@ -181,3 +181,8 @@ python3 scripts/token_efficiency_benchmark.py --results results.jsonl \
 
 The harness excludes estimates and unmatched tasks from the A/B token claim.
 Quality must remain non-inferior before a token reduction counts as a win.
+
+For an explicitly requested architecture or handoff pilot, load
+`research-architecture-pilot.md` and use the comparator's `--pilot` option.
+It checks declared controls and separates task shapes and calibration evidence;
+it never changes dispatch defaults or establishes statistical non-inferiority.
