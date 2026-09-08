@@ -5,8 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+import task_surface
+
 import dashboard_projection as projection
 import working_state_writer as working_state
+
+
+@pytest.fixture(autouse=True)
+def isolated_operations_center(monkeypatch):
+    """Unit projections retain real local queues without reading a live service."""
+    monkeypatch.setattr(task_surface, "operations_center_items", lambda **_kwargs: (
+        [], {"status": "available", "matched_count": 0},
+    ))
+    projection._OPEN_WORK_CACHE.clear()
+    yield
+    projection._OPEN_WORK_CACHE.clear()
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -785,6 +799,22 @@ def test_run_closed_at_review_g_with_learn_complete_reports_complete(tmp_path: P
     }
     assert result["metrics"]["phases_complete"] == 6
     assert result["warnings"] == []
+
+
+def test_closed_run_preserves_operations_center_unavailable_warning(tmp_path: Path, monkeypatch) -> None:
+    _write_json(tmp_path / ".build-loop/state.json", _closed_run_state())
+    monkeypatch.setattr(projection, "_git_worktree_paths", lambda _root, _warnings: [tmp_path])
+    monkeypatch.setattr(task_surface, "operations_center_items", lambda **_kwargs: (
+        [], {"status": "unavailable", "detail": "fixture service offline"},
+    ))
+
+    result = projection.build_run_projection(tmp_path)
+
+    assert result["status"] == "complete"
+    assert result["open_work"]["operations_center"]["status"] == "unavailable"
+    assert result["warnings"] == [
+        "Operations Center tasks are unavailable; local Build Loop work remains visible.",
+    ]
 
 
 def test_inline_run_finishing_at_top_level_done_reports_complete(tmp_path: Path) -> None:

@@ -4,6 +4,16 @@
 
 Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`fable`, `opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** is what governs the role assignment. This reference documents how to swap providers cleanly.
 
+## Model preferences and bounded workers
+
+Resolve each role through `resolve_agent_model.py`; a frontier parent does not imply frontier children. Honor explicit chat preferences through `.build-loop/config.json.modelOverrides.agents.<agent-name>` (string or `{model, source, evidence}`). Keep the short user quote and scope as provenance. For the stated Sol/Terra/Luna workflow, prefer Sol coordination, Terra implementation and Luna bounded extraction or checks. Reserve Astra/Fable/Mythos for a justified complex plan, independent judgment or difficult execution when the host can dispatch them. Never infer subscription entitlement or model access from chat wording. Another user's explicit cost preference may choose Terra coordination without changing verdict floors or other roles.
+
+Before concurrent dispatch, acquire `autonomy_supervisor.py reserve-fanout`; honor and renew its wave expiry and release only after workers stop, per `skills/build-loop/references/codex-subagents.md` (shared reservation protocol applies across hosts). A `fanout` preview does not reserve slots.
+
+Before dispatch, pass the concrete selected model and supported effort; include compact ownership, relevant memory, acceptance checks and a return contract. After return, enrich the **same attempt ID** via `write_cost_ledger_row.py` with actual model/effort only when the host reports them, token buckets only when measured, and verifier/rework outcomes when known. Retrospective reads this ledger; missing evidence stays unknown. Use outcome-matched comparisons to propose routing changes, then verify the quality effect before adopting them.
+
+Before additional queue/followup/backlog pickup, run the no-regrets boundary in `references/keep-going-policy.md`. Emit `packet.no_regrets.announcement` at Assess and on a conversational toggle. Accepted-plan failures remain required in either mode.
+
 ## Two-axis taxonomy (the source of truth)
 
 Model selection runs on **two orthogonal axes**, encoded as structured data in **`references/model-taxonomy.json`** (the single source of truth; `scripts/model_taxonomy.py` is the loader every selection script imports):
