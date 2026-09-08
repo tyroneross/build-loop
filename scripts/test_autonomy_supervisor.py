@@ -503,3 +503,37 @@ def test_legacy_classic_mode_veto_survives_no_regrets_opt_in(repo: Path) -> None
     state['autonomous'] = {'enabled': False}
     path.write_text(json.dumps(state))
     assert supervisor.continuation(repo, 'repair parser')['reason'] == 'classic_mode'
+
+
+@pytest.mark.parametrize("location,expected", [("cloud", 1), ("local", 0), ("unknown", 0)])
+def test_load_only_pressure_preserves_one_cloud_worker(location, expected):
+    result = supervisor.backpressure_action({
+        "current_concurrency": 0, "max_concurrency": 4,
+        "load_ratio": 3.467, "execution_location": location,
+    })
+    assert result["next_concurrency"] == expected
+
+
+@pytest.mark.parametrize("extra", [
+    {"memory_percent": 85}, {"memory_percent": 95}, {"disk_free_gb": 0.5},
+    {"thermal_state": "serious"}, {"provider_429s": 2}, {"error_streak": 3},
+    {"cost_used": 9, "cost_ceiling": 10}, {"max_concurrency": 0},
+])
+def test_cloud_load_exception_does_not_bypass_other_limits(extra):
+    result = supervisor.backpressure_action({
+        "current_concurrency": 0, "max_concurrency": 4,
+        "load_ratio": 3.467, "execution_location": "cloud", **extra,
+    })
+    assert result["next_concurrency"] == 0
+
+
+def test_select_fanout_preserves_cloud_progress_under_real_failure_signal(repo, monkeypatch):
+    monkeypatch.setattr(supervisor, "host_signals", lambda _: {
+        "load_ratio": 3.467, "memory_percent": 40, "disk_free_gb": 206,
+        "thermal_state": "nominal", "current_concurrency": 0,
+    })
+    result = supervisor.select_fanout(repo, {
+        "independent_items": 1, "model": "gpt-5.6-sol", "execution_location": "cloud",
+    })
+    assert result["admission"]["next_concurrency"] == 1
+    assert result["observed_signals"]["load_ratio"] == 3.467
