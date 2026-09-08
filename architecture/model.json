@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9069b475ae94f87c50181e9c554ffdc6dbc4005adb7041b22a09876812d724bf"
+    "content_sha256": "3687aee4876216c82911f4df287ec23eff9109bd0b10b0e90269fa42574bbaff"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1454,7 +1454,7 @@
         "file": "skills/research/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-09-08"
         }
       },
       "root-cause-analysis": {
