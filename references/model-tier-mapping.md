@@ -6,6 +6,8 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 
 ## Model preferences and bounded workers
 
+For task-specific, quality-gated efficiency studies and briefing Luna, Haiku, Terra, Sonnet or cheap API workers, use [Task-specific model efficiency](task-model-efficiency.md). Benchmark Lab owns testing and interpretation; scoped evidence may broaden a model's work beyond the legacy tier examples below. These studies compare adequate substantive results and total resource use, with no reward for gold plating. Until a matching routing receipt exists, candidate assignments remain hypotheses and existing resolver/verifier requirements apply.
+
 Resolve each role through `resolve_agent_model.py`; a frontier parent does not imply frontier children. Honor explicit chat preferences through `.build-loop/config.json.modelOverrides.agents.<agent-name>` (string or `{model, source, evidence}`). Keep the short user quote and scope as provenance. For the stated Sol/Terra/Luna workflow, prefer Sol coordination, Terra implementation and Luna bounded extraction or checks. Reserve Astra/Fable/Mythos for a justified complex plan, independent judgment or difficult execution when the host can dispatch them. Never infer subscription entitlement or model access from chat wording. Another user's explicit cost preference may choose Terra coordination without changing verdict floors or other roles.
 
 Before concurrent dispatch, acquire `autonomy_supervisor.py reserve-fanout`; honor and renew its wave expiry and release only after workers stop, per `skills/build-loop/references/codex-subagents.md` (shared reservation protocol applies across hosts). A `fanout` preview does not reserve slots.
