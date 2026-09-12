@@ -26,10 +26,20 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+# Entries scanned inside collapsed ignored directories before the walk gives up
+# and reports the directory as uninspected. A budget, not a guess: a directory
+# too large to inspect must READ as uninspected, never as clean.
+_SCAN_BUDGET = 20_000
+# Wall-clock ceiling on the one git call. A fail-open wrapper catches raises,
+# not hangs, so a wedged git (index.lock contention, stalled network mount)
+# would otherwise block the retirement path indefinitely.
+_GIT_TIMEOUT_S = 30
 
 # First match wins. Patterns are matched against every path segment and against
 # the full relative path, so `a/b/__pycache__/c.pyc` classifies as tool_cache.
@@ -98,7 +108,11 @@ def _status_entries(path: Path, *, matching: bool) -> tuple[list[tuple[str, str]
         # every file is requested; `--ignored=matching` collapses it either way.
         args.append("--untracked-files=all")
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            args, capture_output=True, text=True, check=False, timeout=_GIT_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired:
+        return [], f"git status timed out after {_GIT_TIMEOUT_S}s"
     except (OSError, ValueError) as exc:
         return [], f"git status failed: {exc}"
     if proc.returncode != 0:
@@ -123,6 +137,42 @@ def _status_entries(path: Path, *, matching: bool) -> tuple[list[tuple[str, str]
     return entries, None
 
 
+def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tuple[list[str], bool]:
+    """Look inside one collapsed ignored directory for valuable files.
+
+    `git status` reports an ignored directory as a single entry, so classifying
+    it by NAME judges a container by its label: a `build/` holding a credential
+    and months of hand-written work classifies as reproducible build output.
+    This walks it, naming any file that matches a potentially-valuable pattern.
+
+    Returns (valuable_relative_paths, fully_inspected). `fully_inspected` is
+    False when the shared entry budget ran out, which makes the directory
+    UNINSPECTED rather than clean — a directory nobody looked inside cannot
+    support a claim about its contents.
+    """
+    base = root / rel_dir.rstrip("/")
+    valuable: list[str] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(base, onerror=None):
+            for name in filenames:
+                budget[0] -= 1
+                if budget[0] < 0:
+                    return valuable, False
+                full = Path(dirpath) / name
+                try:
+                    rel = full.relative_to(root).as_posix()
+                except ValueError:
+                    rel = full.as_posix()
+                if classify(rel) == "potentially_valuable":
+                    valuable.append(rel)
+            budget[0] -= len(dirnames)
+            if budget[0] < 0:
+                return valuable, False
+    except OSError:
+        return valuable, False
+    return valuable, True
+
+
 def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
     """Inventory one worktree: tracked changes, untracked files, ignored files.
 
@@ -141,6 +191,7 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
         "ignored_by_class": {name: [] for name in CLASS_NAMES},
         "counts": {"tracked_changes": 0, "untracked": 0, "ignored": 0},
         "non_reproducible_ignored": [],
+        "uninspected_ignored_directories": [],
         "caches_only_claim_supported": False,
         "characterization": "worktree could not be inventoried",
         "expanded_ignored_directories": bool(matching),
@@ -171,13 +222,29 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
         "untracked": len(result["untracked"]),
         "ignored": len(result["ignored"]),
     }
-    result["non_reproducible_ignored"] = sorted(
+    risky = {
         entry
         for name in CLASS_NAMES
         if name not in _REPRODUCIBLE
         for entry in result["ignored_by_class"][name]
-    )
-    result["caches_only_claim_supported"] = not result["non_reproducible_ignored"]
+    }
+
+    # A collapsed directory classified as reproducible is a container judged by
+    # its label. Look inside before letting its NAME clear it.
+    budget = [_SCAN_BUDGET]
+    uninspected: list[str] = []
+    for name in _REPRODUCIBLE:
+        for entry in result["ignored_by_class"][name]:
+            if not entry.endswith("/"):
+                continue
+            found, complete = _scan_collapsed_directory(candidate, entry, budget)
+            risky.update(found)
+            if not complete:
+                uninspected.append(entry)
+
+    result["non_reproducible_ignored"] = sorted(risky)
+    result["uninspected_ignored_directories"] = sorted(uninspected)
+    result["caches_only_claim_supported"] = not risky and not uninspected
     result["characterization"] = _characterize(result)
     return result
 
@@ -201,6 +268,14 @@ def _characterize(result: dict[str, Any]) -> str:
         return (
             f"{head}; {len(risky)} ignored entry(ies) are NOT reproducible tool "
             f"caches ({named}) — a caches-only characterization is unsupported"
+        )
+    uninspected = result["uninspected_ignored_directories"]
+    if uninspected:
+        named = ", ".join(uninspected[:5]) + (" ..." if len(uninspected) > 5 else "")
+        return (
+            f"{head}; {len(uninspected)} ignored directory(ies) were too large to "
+            f"inspect ({named}) — their contents are unknown, so a caches-only "
+            f"characterization is unsupported"
         )
     if counts["ignored"]:
         return f"{head}; every ignored entry classifies as a reproducible cache, dependency, build output, or log"

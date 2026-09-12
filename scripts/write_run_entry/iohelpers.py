@@ -13,43 +13,37 @@ from typing import Any
 from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402,F401
 
 
-# Stakes evidence that judgment_gate.stakes_reasons reads off the run record.
-# When a richer Review-G record replaces a thin Stop record (source: append_run),
-# these are carried forward if the incoming record omits them — they are facts of
-# the RUN (what it was gated on), not of whoever wrote the record, and erasing
-# them would flip the gate from a true WARN to a vacuous stakes_gated:false PASS.
-# Judgment STATUS fields (auditor_status/advisor_status) are deliberately NOT
-# carried — Review-G legitimately owns and overwrites those.
-_STAKES_CARRY_KEYS = ("synthesisDensity", "triggers", "stakes", "dispatch_tier", "riskSurfaceChange")
-
-# Additive evidence blocks written only when the caller supplied them. A
-# CORRECTING write that omits `--judge-decisions-json` means "not supplied this
-# pass", never "delete the auditor verdict" — so they carry forward when absent
-# from the incoming entry, and are replaced outright when present.
-_EVIDENCE_CARRY_KEYS = (
-    "security_findings",
-    "judge_decisions",
-    "budget_summary",
-    "models",
-    "harness",
-    "ledger_rows_for_run",
-)
-
-_CARRY_IF_ABSENT_KEYS = _STAKES_CARRY_KEYS + _EVIDENCE_CARRY_KEYS
+# A run's row is written by MORE THAN ONE process: write_run_entry (Review-G),
+# append_run (the Stop hook), scripts/learn/runner.py (`learn`), and
+# stop_closeout.py (`auditor_status`, `branch_closeout`, `createdRefs`,
+# `provenance`). An allowlist of keys to carry forward can only ever enumerate
+# what THIS writer knows about, so it silently deletes every other writer's
+# evidence on a correction. The merge therefore starts from the existing row and
+# lets the incoming entry overwrite it, which preserves position, lets a
+# correction win on every field it carries, and cannot lose a key this module
+# has never heard of. A field that must be REMOVED is removed explicitly, never
+# by omission.
 
 
 def upsert_merge(existing: dict, entry: dict) -> dict:
     """Build the replacement row for an existing run_id.
 
-    The incoming entry is authoritative for every field it carries; the existing
-    row only contributes keys the incoming entry omits and that are facts of the
-    RUN rather than of the writer. Returns a new dict — neither argument is
-    mutated, so callers keep their own entry intact.
+    Returns a new dict — neither argument is mutated, so callers keep their own
+    entry intact.
     """
-    merged = dict(entry)
-    for key in _CARRY_IF_ABSENT_KEYS:
-        if key in existing and key not in merged:
-            merged[key] = existing[key]
+    merged = dict(existing)
+    merged.update(entry)
+    # A judge verdict is scoped to the file set it was rendered against. A
+    # correction that widens filesTouched and supplies no new verdict would
+    # otherwise re-attribute the old one to files no judge ever saw, so the
+    # stale verdict is dropped rather than silently re-scoped. Supplying
+    # judge_decisions on the correction keeps them.
+    if (
+        "judge_decisions" not in entry
+        and "filesTouched" in entry
+        and entry.get("filesTouched") != existing.get("filesTouched")
+    ):
+        merged.pop("judge_decisions", None)
     return merged
 
 

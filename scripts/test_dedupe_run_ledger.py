@@ -105,5 +105,46 @@ class DedupeRunLedgerTests(unittest.TestCase):
         self.assertEqual(state["preBuildSha"], "abc123")
 
 
+class LockedReadFailureTests(unittest.TestCase):
+    """The re-read under the lock owes the same error contract as the first
+    read: a file that became unparseable in between exits with a message, not a
+    traceback."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name) / "state.json"
+        self.state.write_text(json.dumps({"runs": [{"run_id": "r1"}, {"run_id": "r1"}]}))
+        sys.path.insert(0, str(HERE))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_corruption_between_reads_returns_an_error(self) -> None:
+        import dedupe_run_ledger
+
+        state_path = self.state
+
+        class _CorruptingLock:
+            def __init__(self, path):
+                self.path = path
+
+            def __enter__(self):
+                state_path.write_text("{not json")
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        original = dedupe_run_ledger.LockedFile
+        dedupe_run_ledger.LockedFile = _CorruptingLock
+        try:
+            result = dedupe_run_ledger.repair(state_path, apply=True)
+        finally:
+            dedupe_run_ledger.LockedFile = original
+
+        self.assertIn("unreadable state.json under the lock", result["error"])
+        self.assertFalse(result["applied"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

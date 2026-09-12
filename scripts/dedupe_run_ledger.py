@@ -88,8 +88,14 @@ def repair(state_path: Path, *, apply: bool = False) -> dict:
     if apply and result["rows_removed"]:
         with LockedFile(state_path):
             # Re-read under the lock: another writer may have landed since the
-            # inspection read above.
-            current = json.loads(state_path.read_text(encoding="utf-8"))
+            # inspection read above. Same error contract as that read — a file
+            # that became unparseable in between exits 1 with a message, never a
+            # traceback.
+            try:
+                current = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                result["error"] = f"unreadable state.json under the lock: {exc}"
+                return result
             current_runs = current.get("runs")
             if not isinstance(current_runs, list):
                 result["error"] = "runs[] disappeared under the lock"

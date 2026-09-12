@@ -99,6 +99,61 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertIn("scratch/", result["ignored_by_class"]["unclassified"])
         self.assertFalse(result["caches_only_claim_supported"])
 
+    def test_credential_inside_a_reproducible_directory_blocks_the_claim(self) -> None:
+        """`git status` collapses an ignored directory to one entry, so judging
+        it by NAME judges a container by its label. A `build/` holding a
+        credential and hand-written work would otherwise be certified
+        reproducible - the exact characterization this module refuses to make."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n.env\n")
+        (wt / "build").mkdir()
+        (wt / "build" / "DESIGN.md").write_text("hand-written findings\n")
+        (wt / "build" / ".env").write_text("API_KEY=synthetic\n")
+
+        result = worktree_inventory.inventory(wt)
+        self.assertIn("build/", result["ignored"])
+        self.assertIn("build/.env", result["non_reproducible_ignored"],
+                      "the credential inside the collapsed directory must be named")
+        self.assertFalse(result["caches_only_claim_supported"])
+
+    def test_directory_too_large_to_inspect_reads_as_uninspected(self) -> None:
+        """A directory nobody looked inside cannot support a claim about its
+        contents. Budget exhaustion must read as unknown, never as clean."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("node_modules/\n")
+        (wt / "node_modules").mkdir()
+        for i in range(5):
+            (wt / "node_modules" / f"m{i}.js").write_text("x\n")
+
+        original = worktree_inventory._SCAN_BUDGET
+        try:
+            worktree_inventory._SCAN_BUDGET = 2
+            result = worktree_inventory.inventory(wt)
+        finally:
+            worktree_inventory._SCAN_BUDGET = original
+
+        self.assertIn("node_modules/", result["uninspected_ignored_directories"])
+        self.assertFalse(result["caches_only_claim_supported"])
+        self.assertIn("too large to inspect", result["characterization"])
+
+    def test_git_status_timeout_is_reported_not_raised(self) -> None:
+        """A fail-open wrapper catches raises, not hangs. A wedged git must
+        surface as an error the caller can read."""
+        wt = self._worktree()
+        original = subprocess.run
+
+        def _hang(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 30))
+
+        worktree_inventory.subprocess.run = _hang
+        try:
+            result = worktree_inventory.inventory(wt)
+        finally:
+            worktree_inventory.subprocess.run = original
+
+        self.assertFalse(result["ok"])
+        self.assertIn("timed out", result["error"])
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()

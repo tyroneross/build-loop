@@ -169,6 +169,66 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual([r["run_id"] for r in runs], ["run_dup", "run_other"])
         self.assertEqual(runs[0]["goal"], "corrected")
 
+    def test_upsert_preserves_another_writers_keys(self) -> None:
+        """The row is written by more than one process. scripts/learn/runner.py
+        writes `learn`; stop_closeout.py writes `auditor_status`,
+        `branch_closeout`, `createdRefs`, `provenance`. An allowlist can only
+        enumerate what THIS writer knows about, so a correction must not delete
+        keys it has never heard of."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [{
+            "run_id": "run_rich",
+            "goal": "old",
+            "outcome": "pass",
+            "learn": {"status": "full", "receipt": "r1"},
+            "branch_closeout": {"status": "clean"},
+            "createdRefs": [{"branch": "bl/run-1"}],
+            "provenance": {"written_by": "append_run"},
+            "auditor_status": "ran:dispatched-agent",
+        }]}))
+        result = run(self._base_args(**{"--run-id": "run_rich", "--goal": "corrected"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["goal"], "corrected")
+        for key in ("learn", "branch_closeout", "createdRefs", "provenance", "auditor_status"):
+            self.assertIn(key, row, f"a correction deleted {key}, written by another process")
+        self.assertEqual(row["learn"]["receipt"], "r1")
+
+    def test_widened_scope_drops_a_verdict_it_would_re_attribute(self) -> None:
+        """A judge verdict is scoped to the file set it was rendered against."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [{
+            "run_id": "run_scope",
+            "outcome": "partial",
+            "filesTouched": ["a.py"],
+            "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}],
+        }]}))
+        result = run(self._base_args(**{
+            "--run-id": "run_scope",
+            "--outcome": "partial",
+            "--files-touched": "a.py,b.py,c.py",
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["filesTouched"], ["a.py", "b.py", "c.py"])
+        self.assertNotIn("judge_decisions", row,
+                         "a verdict must not be re-attributed to files no judge saw")
+
+    def test_unchanged_scope_keeps_the_verdict(self) -> None:
+        """Precision: the drop fires on a scope CHANGE, not on every correction."""
+        judges = self.workdir / "j.json"
+        judges.write_text(json.dumps([{"judge_id": "independent-auditor", "verdict": "approve"}]))
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_same", "--files-touched": "a.py",
+            "--judge-decisions-json": str(judges)})).returncode, 0)
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_same", "--files-touched": "a.py", "--goal": "corrected"})).returncode, 0)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["judge_decisions"][0]["judge_id"], "independent-auditor")
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))
