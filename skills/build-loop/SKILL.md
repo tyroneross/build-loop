@@ -308,14 +308,21 @@ root from the already-resolved path of this `SKILL.md`. Do not assume a
 host-specific plugin-root environment variable, and do not use the target
 project's root unless Build Loop itself is the target.
 
-**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 "$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py" --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh" | "prompt_user"`. On `resume`:
+**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 "$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py" --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh" | "review"`. On `resume`:
 
 1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (already on disk — DO NOT re-derive).
 2. Dispatch build-orchestrator with prefix: `RESUME_MODE: run_id=<id>; remaining_chunks=<json>; iterate_attempt=<n>; concurrent_modifications=<json>`
 3. Agent §0 handles the rest — skips Phase 1+2, jumps to Phase 3 on `remaining_chunks` only.
 
-**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. When the host supplies a stable current session id, pass it explicitly as `--current-session-id "<id>"`; never infer ownership from heartbeat freshness. An exact session match proves continuity only, so a `decision: "resume"` result continues the existing run through the same Resume Mode path above—it never starts fresh. If the resolver returns `decision: "prompt_user"`, surface to the user verbatim:
-> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. When the host supplies a stable current session id, pass it explicitly as `--current-session-id "<id>"`; never infer ownership from heartbeat freshness. An exact session match proves continuity only, so a `decision: "resume"` result continues the existing run through the same Resume Mode path above—it never starts fresh.
+
+When the resolver returns `decision: "review"`, the host LLM owns the semantic decision. Read `autonomy_review`, `remaining_chunks`, `concurrent_modifications`, and the prior run's available `intent_path`, `goal_path`, and `plan_path`; compare them with the current user request:
+
+1. Choose `resume` when remaining work is actionable and aligned. Rerun the resolver with the packet's internal `run_id`, then enter Resume Mode.
+2. Choose `fresh` when no actionable work remains or the prior intent is unrelated. Rerun with `--archive-stale-run "<internal-run-id>" --decision-reason "<compact LLM rationale>"`; proceed only on `decision: "fresh"`, `archive_applied: true`, and `fresh_ready: true`.
+3. Never ask the user to interpret or choose from an internal run id. Keep the id in tool/state records. Report the recovery in plain language only when it materially affects the current work.
+
+The resolver's `recommended_default` is an evidence-based starting point: `fresh` when no work remains and history can be preserved, otherwise `resume`. The LLM may override it from intent evidence. Concurrent modifications default to preserving and reviewing the current files; redo a chunk only when the files do not satisfy the accepted intent. Do not ask the user to choose.
 
 If it instead returns `decision: "abort"` with
 `required_action: "archive_legacy_crash"`, immediately rerun the resolver with
@@ -334,7 +341,7 @@ invocation nonce and cannot authorize replacing the execution.
 
 This is the crash-resume staleness signal — heartbeat staleness on `state.json.execution`, no hook dependency, fires every fresh dispatch. (A crash-recovery concern, distinct from concurrent-presence collision, which is owned solely by Rally Point presence — see `KNOWN-ISSUES.md` §M4.)
 
-**Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
+**Concurrent-modification handling**: when `concurrent_modifications` is non-empty, the agent's §0 branch compares each flagged chunk with the accepted intent. Keep hand edits that satisfy the intent; redo only the chunks that do not. Record the rationale in run evidence and continue without a user choice.
 
 ## Output contract — applies to EVERY user-facing message, not just the Phase 4 report
 

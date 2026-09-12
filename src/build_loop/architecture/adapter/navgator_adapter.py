@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from .. import analysis as A
+from ..annotations import build_annotation_index, scan_annotations
 from ..scanner import scan_repo
 from ..schemas import Component, Connection, SCHEMA_VERSION
 from ..storage import (
@@ -38,6 +39,7 @@ from ..storage import (
     read_index,
     read_manifest,
     write_file_map,
+    write_annotations,
     write_graph,
     write_hashes,
     write_index,
@@ -304,6 +306,8 @@ class Adapter:
         write_graph(wd, graph)
         write_file_map(wd, {"files": result.file_map})
         write_hashes(wd, {"files": result.hashes})
+        annotation_index = build_annotation_index(scan_annotations(wd, result.file_map))
+        annotations_path = write_annotations(wd, annotation_index)
 
         rev: Dict[str, List[str]] = {}
         for conn in result.connections:
@@ -343,6 +347,8 @@ class Adapter:
                 "connections_count": len(result.connections),
                 "connection_counts_by_type": connection_counts_by_type,
                 "files_scanned": result.files_scanned,
+                "annotation_count": annotation_index["annotation_count"],
+                "annotations_path": str(annotations_path),
                 "generated_at": now_ms,
                 "last_scan": now_ms,
                 "last_full_scan_at": now_ms
@@ -361,6 +367,8 @@ class Adapter:
             "connections": len(result.connections),
             "connection_counts_by_type": connection_counts_by_type,
             "files_scanned": result.files_scanned,
+            "annotations": annotation_index["annotation_count"],
+            "annotations_path": str(annotations_path),
             "elapsed_ms": elapsed_ms,
             "arch_dir": str(arch_dir(wd)),
         }

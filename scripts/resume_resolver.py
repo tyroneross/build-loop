@@ -13,10 +13,12 @@ Inputs (CLI):
   --staleness-minutes  threshold for the heartbeat-staleness path (default 5)
   --current-session-id explicit host/thread identity for resume continuity
   --archive-terminal-legacy-crash  atomically archive proven terminal residue
+  --archive-stale-run  atomically preserve a reviewed stale run before fresh work
+  --decision-reason   compact host-LLM rationale for a stale-run archive
 
 Output (stdout, JSON):
   {
-    "decision": "resume" | "fresh" | "prompt_user" | "abort",
+    "decision": "resume" | "fresh" | "review" | "abort",
     "reason": "<human-readable>",
     "run_id": "<resolved-or-null>",
     "remaining_chunks": [{chunk_id, files, prior_status_if_any}],
@@ -736,6 +738,63 @@ def _abandon_legacy_crash(
     return True, "legacy crash explicitly abandoned; active identity cleared and referenced resources preserved"
 
 
+def _archive_stale_execution(
+    workdir: Path,
+    expected_execution: dict,
+    expected_run_id: str,
+    *,
+    decision_reason: str,
+    now: datetime,
+    staleness_minutes: int,
+) -> tuple[bool, str]:
+    """Preserve the exact reviewed schema-v1 execution, then clear its pointer."""
+    # BL:invariant | Fresh recovery archives the exact stale execution before clearing its active pointer | recovery,state
+    state_path = workdir / ".build-loop" / "state.json"
+    with LockedFile(state_path):
+        try:
+            state = _load_state(workdir)
+        except StateReadError as exc:
+            return False, str(exc)
+        if not isinstance(state, dict):
+            return False, "state.json disappeared or became unreadable before archive"
+        execution = state.get("execution")
+        if execution != expected_execution:
+            return False, "execution changed before archive; refusing to clear a different run"
+        if not isinstance(execution, dict):
+            return False, "execution is no longer an object"
+        if execution.get("run_id") != expected_run_id:
+            return False, "archive run id does not match the active execution"
+        structural_error = _validate_execution_v1(execution)
+        if structural_error:
+            return False, f"invalid schema-v1 execution: {structural_error}"
+        if execution.get("phase") == "report":
+            return False, "completed execution does not need stale-run archival"
+        heartbeat = _parse_iso(execution.get("last_heartbeat_at", ""))
+        age = _heartbeat_age(now, heartbeat)
+        if age is None or age.total_seconds() < 0:
+            return False, "execution heartbeat cannot prove stale ownership"
+        if age < timedelta(minutes=staleness_minutes):
+            return False, (
+                "execution heartbeat became fresh before archive "
+                f"({age.total_seconds():.0f}s old; threshold {staleness_minutes * 60}s)"
+            )
+        history = state.get("historicalExecutions")
+        if history is not None and not isinstance(history, list):
+            return False, "historicalExecutions is not a list; refusing a lossy archive"
+        archived = dict(execution)
+        archived["archive_disposition"] = "llm_started_fresh"
+        archived["archive_reason"] = decision_reason.strip()
+        archived["archived_at"] = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        history = list(history or [])
+        history.append(archived)
+        # Recovery evidence is forensic state. Preserve the complete history.
+        state["historicalExecutions"] = history
+        state["execution"] = {}
+        encoded = (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        atomic_write_bytes(state_path, encoded)
+    return True, "reviewed stale run archived; active execution cleared for fresh work"
+
+
 def _resolve_latest(state: dict, now: datetime, staleness_minutes: int) -> tuple[str | None, str]:
     """Return (run_id, reason) for --resume latest. None if no resumable run."""
     execution = state.get("execution")
@@ -938,6 +997,50 @@ def _resume_envelope(workdir: Path, execution: dict, run_id: str, reason: str) -
     }
 
 
+def _review_envelope(
+    workdir: Path,
+    execution: dict,
+    run_id: str,
+    age: timedelta,
+    *,
+    fresh_allowed: bool,
+) -> dict:
+    """Return the complete evidence packet the host LLM needs for disposition."""
+    result = _resume_envelope(
+        workdir,
+        execution,
+        run_id,
+        "stale incomplete run is available for autonomous review",
+    )
+    remaining = result["remaining_chunks"]
+    concurrent = result["concurrent_modifications"]
+    recommended = "resume" if remaining or concurrent or not fresh_allowed else "fresh"
+    result.update(
+        decision="review",
+        reason="stale incomplete build needs autonomous intent review",
+        ownership_verified=False,
+        autonomy_review={
+            "run_label": execution.get("run_label"),
+            "phase": execution.get("phase"),
+            "heartbeat_age_seconds": int(age.total_seconds()),
+            "completed_count": len(execution.get("completed_chunks", [])),
+            "queued_count": len(execution.get("queued_chunks", [])),
+            "in_flight_count": len(execution.get("in_flight_chunks", [])),
+            "remaining_count": len(remaining),
+            "fresh_allowed": fresh_allowed,
+            "recommended_default": recommended,
+            "decision_rule": (
+                "Resume when remaining work is actionable and aligned with the current intent; "
+                "otherwise archive this execution and start a separate fresh run."
+            ),
+            "intent_path": ".build-loop/intent.md",
+            "goal_path": ".build-loop/goal.md",
+            "plan_path": ".build-loop/plan.md",
+        },
+    )
+    return result
+
+
 def resolve(
     workdir: Path,
     resume_arg: str,
@@ -946,6 +1049,8 @@ def resolve(
     now: datetime | None = None,
     archive_terminal_legacy_crash: bool = False,
     abandon_legacy_crash: str | None = None,
+    archive_stale_run: str | None = None,
+    decision_reason: str | None = None,
     current_session_id: str | None = None,
 ) -> dict:
     """Top-level resolver. Returns the decision envelope (see module docstring)."""
@@ -967,7 +1072,7 @@ def resolve(
         return _abort_state_read(str(exc))
     if state is None:
         return {
-            "decision": "fresh" if not resume_arg and not archive_terminal_legacy_crash and not abandon_legacy_crash else "abort",
+            "decision": "fresh" if not resume_arg and not archive_terminal_legacy_crash and not abandon_legacy_crash and not archive_stale_run else "abort",
             "reason": "no .build-loop/state.json present",
             "run_id": None,
             "remaining_chunks": [],
@@ -979,19 +1084,38 @@ def resolve(
 
     execution = state.get("execution") if isinstance(state, dict) else None
 
-    if (archive_terminal_legacy_crash or abandon_legacy_crash) and resume_arg:
+    if (archive_terminal_legacy_crash or abandon_legacy_crash or archive_stale_run) and resume_arg:
         return {
             "decision": "abort",
-            "reason": "legacy crash archival or abandonment cannot be combined with --resume-arg",
+            "reason": "archive or abandonment operations cannot be combined with --resume-arg",
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
             "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
         }
 
-    if archive_terminal_legacy_crash and abandon_legacy_crash:
+    archive_actions = sum(bool(value) for value in (
+        archive_terminal_legacy_crash,
+        abandon_legacy_crash,
+        archive_stale_run,
+    ))
+    if archive_actions > 1:
         return {
             "decision": "abort",
-            "reason": "--archive-terminal-legacy-crash and --abandon-legacy-crash are mutually exclusive",
+            "reason": "archive and abandonment operations are mutually exclusive",
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
+            "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+        }
+    if archive_stale_run and not isinstance(decision_reason, str):
+        return {
+            "decision": "abort",
+            "reason": "--archive-stale-run requires --decision-reason from the host LLM",
+            "run_id": archive_stale_run, "remaining_chunks": [], "iterate_attempt": 0,
+            "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+        }
+    if isinstance(decision_reason, str) and not decision_reason.strip():
+        return {
+            "decision": "abort",
+            "reason": "--decision-reason must contain a concrete rationale",
+            "run_id": archive_stale_run, "remaining_chunks": [], "iterate_attempt": 0,
             "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
         }
 
@@ -1107,6 +1231,72 @@ def resolve(
                     "reconciled_run_id": execution_run_id,
                     "terminal_closeout": reconciliation,
                 }
+        if archive_stale_run:
+            if execution_run_id != archive_stale_run:
+                return {
+                    "decision": "abort",
+                    "reason": "archive run id does not match the active execution",
+                    "run_id": archive_stale_run,
+                    "remaining_chunks": [],
+                    "iterate_attempt": int(execution.get("iterate_attempt", 0)),
+                    "concurrent_modifications": [],
+                    "execution_block": execution,
+                    "envelopes": {},
+                    "archive_applied": False,
+                    "fresh_ready": False,
+                }
+            if _same_session_continuity(execution, current_session_id):
+                return {
+                    "decision": "abort",
+                    "reason": "current session owns this execution; continue it instead of archiving",
+                    "run_id": archive_stale_run,
+                    "remaining_chunks": [],
+                    "iterate_attempt": int(execution.get("iterate_attempt", 0)),
+                    "concurrent_modifications": [],
+                    "execution_block": execution,
+                    "envelopes": {},
+                    "archive_applied": False,
+                    "fresh_ready": False,
+                }
+            archived, archive_reason = _archive_stale_execution(
+                workdir,
+                execution,
+                archive_stale_run,
+                decision_reason=decision_reason or "",
+                now=now,
+                staleness_minutes=staleness_minutes,
+            )
+            if not archived:
+                return {
+                    "decision": "abort",
+                    "reason": archive_reason,
+                    "run_id": archive_stale_run,
+                    "remaining_chunks": [],
+                    "iterate_attempt": int(execution.get("iterate_attempt", 0)),
+                    "concurrent_modifications": [],
+                    "execution_block": execution,
+                    "envelopes": {},
+                    "archive_applied": False,
+                    "fresh_ready": False,
+                }
+            return {
+                "decision": "fresh",
+                "reason": archive_reason,
+                "run_id": None,
+                "remaining_chunks": [],
+                "iterate_attempt": 0,
+                "concurrent_modifications": [],
+                "execution_block": execution,
+                "envelopes": {},
+                "archive_applied": True,
+                "fresh_ready": True,
+                "preserved_resources": {
+                    "run_worktree_path": execution.get("run_worktree_path"),
+                    "run_worktree_branch": execution.get("run_worktree_branch"),
+                    "data_manifest_path": execution.get("data_manifest_path"),
+                    "data_root": execution.get("data_root"),
+                },
+            }
 
     # No --resume: surface heartbeat staleness check (M4 primary signal).
     if not resume_arg:
@@ -1160,19 +1350,14 @@ def resolve(
                 "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
                 "ownership_verified": False,
             }
-        return {
-            "decision": "prompt_user",
-            "reason": f"incomplete build detected (run_id={run_id}, "
-                      f"last heartbeat {age.total_seconds()/60:.1f} min ago); "
-                      f"resume with --resume {run_id} or start fresh",
-            "run_id": run_id,
-            "remaining_chunks": [],  # caller re-runs us with the literal run_id to compute
-            "iterate_attempt": int(execution.get("iterate_attempt", 0)),
-            "concurrent_modifications": [],
-            "execution_block": execution,
-            "envelopes": {},
-            "ownership_verified": False,
-        }
+        history = state.get("historicalExecutions")
+        return _review_envelope(
+            workdir,
+            execution,
+            run_id,
+            age,
+            fresh_allowed=history is None or isinstance(history, list),
+        )
 
     # --resume present.
     if resume_arg == "latest":
@@ -1283,6 +1468,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "branch, worktree, manifest, data, and history before starting fresh"
         ),
     )
+    p.add_argument(
+        "--archive-stale-run",
+        metavar="RUN_ID",
+        help="Archive the named stale schema-v1 execution after host-LLM review",
+    )
+    p.add_argument(
+        "--decision-reason",
+        help="Compact host-LLM rationale recorded with --archive-stale-run",
+    )
     return p.parse_args(argv)
 
 
@@ -1295,13 +1489,15 @@ def main(argv: list[str] | None = None) -> int:
             staleness_minutes=args.staleness_minutes,
             archive_terminal_legacy_crash=args.archive_terminal_legacy_crash,
             abandon_legacy_crash=args.abandon_legacy_crash,
+            archive_stale_run=args.archive_stale_run,
+            decision_reason=args.decision_reason,
             current_session_id=args.current_session_id,
         )
     except OSError as e:
         print(f"filesystem error: {e}", file=sys.stderr)
         return 2
     print(json.dumps(env, indent=2))
-    return 0 if env["decision"] in {"resume", "fresh", "prompt_user"} else 1
+    return 0 if env["decision"] in {"resume", "fresh", "review"} else 1
 
 
 if __name__ == "__main__":

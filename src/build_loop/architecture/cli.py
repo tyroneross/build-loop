@@ -9,6 +9,7 @@ Subcommands (all support ``--json``):
     connections <component-or-file>
     rules [--json]
     dead [--json]
+    annotations [query] [--json]
     llm-map [--json]                          (NavGator-only)
     schema [model] [--json]                   (NavGator-only)
     diagram [--mode summary|focus|layer] [--focus NAME] [--json]  (NavGator-only)
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import analysis as A
+from .annotations import build_annotation_index, find_annotations, scan_annotations
 from .adapter import (
     Adapter,
     AdapterError,
@@ -41,8 +43,10 @@ from .schemas import Component, Connection, SCHEMA_VERSION
 from .storage import (
     arch_dir,
     read_index,
+    read_annotations,
     read_manifest,
     write_file_map,
+    write_annotations,
     write_graph,
     write_hashes,
     write_index,
@@ -121,6 +125,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     write_file_map(repo, {"files": result.file_map})
     write_hashes(repo, {"files": result.hashes})
+    annotation_index = build_annotation_index(scan_annotations(repo, result.file_map))
+    annotations_path = write_annotations(repo, annotation_index)
 
     rev: Dict[str, List[str]] = {}
     for conn in result.connections:
@@ -158,6 +164,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         "connections_count": conn_count,
         "connection_counts_by_type": connection_counts_by_type,
         "files_scanned": result.files_scanned,
+        "annotation_count": annotation_index["annotation_count"],
+        "annotations_path": str(annotations_path),
         "generated_at": now_ms,
         "last_scan": now_ms,
         "last_full_scan_at": now_ms if not args.incremental else (prior.get("last_full_scan_at") or 0),
@@ -171,6 +179,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         "connections": len(result.connections),
         "connection_counts_by_type": connection_counts_by_type,
         "files_scanned": result.files_scanned,
+        "annotations": annotation_index["annotation_count"],
+        "annotations_path": str(annotations_path),
         "elapsed_ms": elapsed_ms,
         "arch_dir": str(arch_dir(repo)),
     }
@@ -180,6 +190,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(
             f"scan ok — {summary['components']} components, "
             f"{summary['connections']} connections, "
+            f"{summary['annotations']} annotations, "
             f"{summary['files_scanned']} files, {elapsed_ms}ms"
         )
     return 0
@@ -297,6 +308,36 @@ def cmd_dead(args: argparse.Namespace) -> int:
             print(f"unused packages ({len(report.unused_packages)}):")
             for pkg in report.unused_packages:
                 print(f"  {pkg}")
+    return 0
+
+
+def cmd_annotations(args: argparse.Namespace) -> int:
+    repo = _resolve_repo(args.repo)
+    index = read_annotations(repo)
+    if index is None:
+        print("No annotation index found. Run `scan` first.", file=sys.stderr)
+        return 2
+    annotations = index.get("annotations", [])
+    if not isinstance(annotations, list):
+        print("Annotation index is malformed. Run `scan` again.", file=sys.stderr)
+        return 1
+    matches = find_annotations(annotations, args.query) if args.query else annotations
+    payload = {
+        "ok": True,
+        "query": args.query,
+        "match_count": len(matches),
+        "matches": matches,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for item in matches:
+            keywords = ",".join(item.get("keywords", []))
+            suffix = f" | {keywords}" if keywords else ""
+            print(
+                f"{item['file']}:{item['line']} "
+                f"BL:{item['kind']} | {item['summary']}{suffix}"
+            )
     return 0
 
 
@@ -524,6 +565,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dead", help="Find orphan components / unused packages.")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_dead)
+
+    s = sub.add_parser(
+        "annotations",
+        help="Find human-readable BL: semantic annotations from the latest scan.",
+    )
+    s.add_argument("query", nargs="?", default="", help="Kind, text, keyword, or file query.")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_annotations)
 
     # NavGator-only escalation capabilities (routed through the adapter).
     s = sub.add_parser(

@@ -887,7 +887,11 @@ def test_resume_docs_use_runtime_root_and_list_every_decision():
     for text in (skill, protocol):
         assert "${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py" not in text
         assert '$RUNTIME_PLUGIN_ROOT/scripts/resume_resolver.py' in text
-    assert 'decision: "resume" | "abort" | "fresh" | "prompt_user"' in skill
+    assert 'decision: "resume" | "abort" | "fresh" | "review"' in skill
+    assert "prompt_user" not in skill
+    assert "asks the user whether to redo the chunk" not in skill
+    assert "AskUserQuestion" not in protocol
+    assert "never asks resume-or-fresh" in protocol
 
 
 @pytest.mark.parametrize(
@@ -955,14 +959,136 @@ def test_no_resume_missing_or_untrusted_heartbeat_aborts(tmp_path, heartbeat):
     assert env["ownership_verified"] is False
 
 
-def test_no_resume_stale_heartbeat_prompts_user(tmp_path):
+def test_no_resume_stale_run_returns_autonomous_review(tmp_path):
     _setup_started_run(tmp_path)
     # Now is 10 minutes after start — heartbeat is stale
     now = datetime(2026, 5, 6, 10, 10, 0, tzinfo=timezone.utc)
     env = resolve(tmp_path, "", now=now)
-    assert env["decision"] == "prompt_user"
+    assert env["decision"] == "review"
     assert env["run_id"] == "run_test_001"
-    assert "incomplete build detected" in env["reason"]
+    assert env["autonomy_review"]["recommended_default"] == "resume"
+    assert env["autonomy_review"]["remaining_count"] == 4
+    assert {row["chunk_id"] for row in env["remaining_chunks"]} == {
+        "c1", "c2", "c3", "c4",
+    }
+    assert "run_test_001" not in env["reason"]
+
+
+def test_no_resume_stale_run_without_remaining_work_recommends_fresh(tmp_path):
+    _setup_started_run(tmp_path, queued=())
+    now = datetime(2026, 5, 6, 10, 10, 0, tzinfo=timezone.utc)
+
+    env = resolve(tmp_path, "", now=now)
+
+    assert env["decision"] == "review"
+    assert env["remaining_chunks"] == []
+    assert env["autonomy_review"]["recommended_default"] == "fresh"
+
+
+def test_archive_reviewed_stale_run_preserves_history_and_resources(tmp_path):
+    state_path = _setup_started_run(tmp_path, queued=())
+    state = json.loads(state_path.read_text())
+    state["historicalExecutions"] = [{"run_id": "older"}]
+    state["execution"]["run_worktree_path"] = "/tmp/preserved-worktree"
+    state["execution"]["run_worktree_branch"] = "bl/preserved-branch"
+    state["execution"]["data_manifest_path"] = "/tmp/preserved-manifest.json"
+    state["execution"]["data_root"] = "/tmp/preserved-data"
+    original = dict(state["execution"])
+    state_path.write_text(json.dumps(state))
+    now = datetime(2026, 5, 6, 10, 10, 0, tzinfo=timezone.utc)
+
+    env = resolve(
+        tmp_path,
+        "",
+        now=now,
+        archive_stale_run="run_test_001",
+        decision_reason="No actionable work remains and the current request is unrelated.",
+    )
+
+    assert env["decision"] == "fresh"
+    assert env["archive_applied"] is True
+    assert env["fresh_ready"] is True
+    assert env["preserved_resources"]["run_worktree_branch"] == "bl/preserved-branch"
+    updated = json.loads(state_path.read_text())
+    assert updated["execution"] == {}
+    assert updated["historicalExecutions"][0] == {"run_id": "older"}
+    archived = updated["historicalExecutions"][-1]
+    for key, value in original.items():
+        assert archived[key] == value
+    assert archived["archive_disposition"] == "llm_started_fresh"
+    assert archived["archive_reason"].startswith("No actionable work")
+
+
+def test_archive_reviewed_stale_run_rejects_wrong_id_and_fresh_heartbeat(tmp_path):
+    state_path = _setup_started_run(tmp_path, queued=())
+    before = state_path.read_bytes()
+    stale_now = datetime(2026, 5, 6, 10, 10, 0, tzinfo=timezone.utc)
+
+    wrong = resolve(
+        tmp_path,
+        "",
+        now=stale_now,
+        archive_stale_run="different-run",
+        decision_reason="Unrelated work.",
+    )
+    assert wrong["decision"] == "abort"
+    assert state_path.read_bytes() == before
+
+    fresh = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 5, 6, 10, 1, 0, tzinfo=timezone.utc),
+        archive_stale_run="run_test_001",
+        decision_reason="Unrelated work.",
+    )
+    assert fresh["decision"] == "abort"
+    assert "became fresh" in fresh["reason"]
+    assert state_path.read_bytes() == before
+
+
+def test_archive_reviewed_stale_run_requires_llm_reason(tmp_path):
+    state_path = _setup_started_run(tmp_path, queued=())
+    before = state_path.read_bytes()
+
+    env = resolve(
+        tmp_path,
+        "",
+        now=datetime(2026, 5, 6, 10, 10, 0, tzinfo=timezone.utc),
+        archive_stale_run="run_test_001",
+    )
+
+    assert env["decision"] == "abort"
+    assert "--decision-reason" in env["reason"]
+    assert state_path.read_bytes() == before
+
+
+def test_archive_reviewed_stale_run_cli_returns_fresh_receipt(tmp_path):
+    _setup_started_run(tmp_path, run_id="run_cli_review", queued=())
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT / "scripts")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "resume_resolver.py"),
+            "--workdir",
+            str(tmp_path),
+            "--archive-stale-run",
+            "run_cli_review",
+            "--decision-reason",
+            "No actionable work remains.",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "fresh"
+    assert payload["archive_applied"] is True
+    assert payload["fresh_ready"] is True
 
 
 def _write_closed_schema_v1_execution(tmp_path: Path) -> tuple[Path, dict, str, Path]:
@@ -1161,7 +1287,7 @@ def test_terminal_lookalikes_keep_existing_stale_run_guard(
         now=datetime(2026, 9, 3, 14, 30, tzinfo=timezone.utc),
     )
 
-    assert env["decision"] == "prompt_user"
+    assert env["decision"] == "review"
     assert env["run_id"] == execution["run_id"]
     assert json.loads(state_path.read_text())["execution"] == expected_execution
 

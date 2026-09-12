@@ -686,7 +686,7 @@ def _release_identity(workdir: Path, run_id: str) -> None:
     effort (observed twice live, 2026-06-12/13). Archive the block to
     ``historicalExecutions`` (forensics, capped) and clear it so the next run
     mints fresh. ONLY a terminal ``pass`` Stop releases: partial/blocked runs
-    keep identity because ``resume_resolver``'s crash-resume prompt reads
+    keep identity because ``resume_resolver``'s autonomous crash recovery reads
     ``execution`` — the sweep likewise never releases for the same reason.
     """
     state_path = workdir / ".build-loop" / "state.json"

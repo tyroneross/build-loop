@@ -59,7 +59,10 @@ def test_is_navgator_available_via_mcp(tmp_path: Path, monkeypatch: pytest.Monke
 def _seed_python_repo(root: Path) -> None:
     """Minimal fixture: two Python files importing each other."""
     (root / "a.py").write_text("from b import x\n", encoding="utf-8")
-    (root / "b.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "b.py").write_text(
+        "# BL:purpose | Provide the imported fixture value | adapter,test\nx = 1\n",
+        encoding="utf-8",
+    )
 
 
 def test_native_mode_scan_uses_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,8 +74,14 @@ def test_native_mode_scan_uses_engine(tmp_path: Path, monkeypatch: pytest.Monkey
     assert result["ok"] is True
     assert result["components"] == 2
     assert result["files_scanned"] == 2
+    assert result["annotations"] == 1
     # Verify the engine wrote its index to .build-loop/architecture/.
     assert (tmp_path / ".build-loop" / "architecture" / "index.json").exists()
+    annotations = json.loads(
+        (tmp_path / ".build-loop" / "architecture" / "annotations.json").read_text()
+    )
+    assert annotations["annotation_count"] == 1
+    assert annotations["annotations"][0]["file"] == "b.py"
 
 
 def test_native_mode_llm_map_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

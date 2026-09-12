@@ -137,11 +137,11 @@ class SchemaCheckOrderingTests(unittest.TestCase):
         self.assertEqual(no_arg["decision"], "abort")
         self.assertNotIn("resume with --resume", no_arg["reason"])
 
-    def test_advice_that_is_offered_actually_works(self) -> None:
-        """Whatever run-id prompt_user names must resolve on the --resume path."""
+    def test_review_packet_run_can_resume(self) -> None:
+        """The internal run named by review must resolve on the resume path."""
         _write_state(self.root, [])
         prompt = resume_resolver.resolve(self.root, "")
-        self.assertEqual(prompt["decision"], "prompt_user")
+        self.assertEqual(prompt["decision"], "review")
 
         followed = resume_resolver.resolve(self.root, prompt["run_id"])
         self.assertEqual(

@@ -9,6 +9,7 @@ Layout (mirrors NavGator):
         file_map.json
         hashes.json
         reverse-deps.json
+        annotations.json
         timeline.json
         manifest.json
         components/COMP_*.json   (omitted in v0.1 — index.json carries them)
@@ -146,6 +147,12 @@ def write_manifest(repo_root: Path | str, manifest: Dict[str, Any]) -> Path:
     return p
 
 
+def write_annotations(repo_root: Path | str, annotations: Dict[str, Any]) -> Path:
+    p = ensure_arch_dir(repo_root) / "annotations.json"
+    atomic_write_json(p, annotations)
+    return p
+
+
 def read_index(repo_root: Path | str) -> Optional[Dict[str, Any]]:
     return read_json(arch_dir(repo_root) / "index.json")
 
@@ -156,3 +163,7 @@ def read_hashes(repo_root: Path | str) -> Dict[str, Any]:
 
 def read_manifest(repo_root: Path | str) -> Optional[Dict[str, Any]]:
     return read_json(arch_dir(repo_root) / "manifest.json")
+
+
+def read_annotations(repo_root: Path | str) -> Optional[Dict[str, Any]]:
+    return read_json(arch_dir(repo_root) / "annotations.json")

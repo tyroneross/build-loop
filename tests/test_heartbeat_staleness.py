@@ -1,7 +1,7 @@
 """Path C acceptance gate — heartbeat-staleness without --resume (M4 primary signal).
 
 Validates that re-dispatching /build-loop:run WITHOUT --resume after a crash
-correctly surfaces the resume prompt via the heartbeat-staleness path. This
+correctly surfaces an autonomous review packet via the heartbeat-staleness path. This
 is the primary M4 signal that fires regardless of whether the Stop hook ran.
 """
 from __future__ import annotations
@@ -44,16 +44,15 @@ def test_path_c_fresh_heartbeat_without_owner_aborts(tmp_path):
     assert env["ownership_verified"] is False
 
 
-def test_path_c_stale_heartbeat_prompts_user(tmp_path):
-    """Re-dispatch 10 minutes after crash: heartbeat is stale; surface prompt."""
+def test_path_c_stale_heartbeat_requests_autonomous_review(tmp_path):
+    """Re-dispatch 10 minutes after crash: heartbeat is stale; review internally."""
     state_path, started = _start_incomplete(tmp_path, run_id="run_path_c")
     now = started + timedelta(minutes=10)
     env = resolve(tmp_path, "", now=now)
-    assert env["decision"] == "prompt_user"
+    assert env["decision"] == "review"
     assert env["run_id"] == "run_path_c"
-    assert "Resume with `/build-loop:run --resume" not in env["reason"]  # SKILL.md owns the user-facing copy
-    assert "incomplete build detected" in env["reason"]
-    assert "10.0 min ago" in env["reason"]
+    assert env["autonomy_review"]["heartbeat_age_seconds"] == 600
+    assert env["autonomy_review"]["recommended_default"] == "resume"
 
 
 def test_path_c_default_threshold_is_5_minutes(tmp_path):
@@ -62,14 +61,14 @@ def test_path_c_default_threshold_is_5_minutes(tmp_path):
     fresh = resolve(tmp_path, "", now=started + timedelta(minutes=4))
     assert fresh["decision"] == "abort"
     stale = resolve(tmp_path, "", now=started + timedelta(minutes=6))
-    assert stale["decision"] == "prompt_user"
+    assert stale["decision"] == "review"
 
 
 def test_path_c_custom_threshold_honored(tmp_path):
     state_path, started = _start_incomplete(tmp_path)
     # 4 minutes; threshold lowered to 2 minutes → stale
     env = resolve(tmp_path, "", now=started + timedelta(minutes=4), staleness_minutes=2)
-    assert env["decision"] == "prompt_user"
+    assert env["decision"] == "review"
 
 
 def test_path_c_after_phase_report_no_prompt(tmp_path):
@@ -89,9 +88,9 @@ def test_path_c_secondary_signal_complements_primary(tmp_path):
     # Stop hook fires (a clean SIGTERM scenario)
     annotated = annotate_if_incomplete(tmp_path)
     assert annotated is True
-    # Heartbeat-staleness path still fires the prompt
+    # Heartbeat-staleness path still requests autonomous review.
     env = resolve(tmp_path, "", now=started + timedelta(minutes=10))
-    assert env["decision"] == "prompt_user"
+    assert env["decision"] == "review"
     assert env["execution_block"]["crash_signal"] == "stop_hook"
     assert env["execution_block"]["crashed_at"] is not None
 

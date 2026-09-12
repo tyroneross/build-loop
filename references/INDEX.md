@@ -41,6 +41,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [model-index-contract.md](model-index-contract.md) | Host-neutral CLI contract over the model index (`scripts/model_index.py`): subcommands, JSON shape, fingerprint/staleness rule, worked Codex/shell/local-agent examples | non-Claude hosts (Codex, shells, local runners), `scripts/model_index.py` |
 | [m-series-protocol.md](m-series-protocol.md) | M1 envelope persist, M2 heartbeat, M3 cost-ledger; crash-recovery snapshots | `agents/build-orchestrator.md` |
 | [resume-protocol.md](resume-protocol.md) | §0 crash-recovery flow when a build is re-dispatched mid-Execute | `agents/build-orchestrator.md` |
+| [code-annotations.md](code-annotations.md) | Compact `BL:` semantic annotation format, indexing, search, and Navgator boundary | architecture scans, implementers, reviewers |
 
 ## Agent/domain guidance
 

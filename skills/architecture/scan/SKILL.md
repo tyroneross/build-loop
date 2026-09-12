@@ -11,7 +11,7 @@ source_hash: 1b4e25d6198373d261502a296dad2ea96abc9e66166115007db940cd48fe7cbb
 
 # Architecture Scan & Status
 
-Scan project architecture, check health, and monitor staleness using Build Loop's native architecture engine (`python -m build_loop.architecture scan`). NavGator remains an optional escalation adapter for capabilities not yet ported into the native engine, such as `llm-map`, `schema`, and `diagram`.
+Scan project architecture, check health, and monitor staleness using Build Loop's native architecture engine (`python -m build_loop.architecture scan`). The same pass indexes human-readable `BL:` code annotations for semantic navigation. NavGator remains an optional escalation adapter for capabilities not yet ported into the native engine, such as `llm-map`, `schema`, and `diagram`.
 
 ## When to Activate
 
@@ -36,6 +36,7 @@ Use the native scanner to detect components and connections. It maps source impo
 
 After scanning, present a smart-brevity brief:
 - **Line 1**: "Scanned [project]. [N] components, [N] connections."
+- **Semantic annotations**: report the annotation count and use `annotations <query>` when intent or rationale would accelerate navigation
 - **Runtime edges**: summarize `connection_counts_by_type` when present
 - **What to watch**: low-confidence detections or missing route/package/service targets
 - **AI routing**: providers and model count if service/LLM calls detected
@@ -61,6 +62,7 @@ Health information is included in scan output:
 | "Scan my project" | native `scan` | Full scan |
 | "Refresh after edit" | native `scan --incremental` | Marks scan as incremental |
 | "What's my stack?" | read native manifest/index | No re-scan needed |
+| "Where is this intent/invariant?" | native `annotations <query>` plus Navgator structural commands | Semantic + structural lenses |
 | "Any unused packages?" | native `scan`, then `dead` | `dead` checks manifest declarations |
 | "Is architecture data fresh?" | read native manifest/index | Check timestamp |
 

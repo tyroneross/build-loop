@@ -21,7 +21,7 @@ When you see this prefix:
    - `queued` — never dispatched
    - `in_flight_no_clean_return` — dispatched-but-crashed (or returned with non-fixed status)
    - `completed_then_hand_modified` — M3 concurrent-modification demotion
-3. **For each `concurrent_modifications` entry**, surface to the user before re-dispatching: "Chunk `<id>` was previously marked complete, but `<files>` have been hand-edited since. Redo the chunk (default) or keep the hand-edits?" Use `AskUserQuestion`. Default is redo.
+3. **For each `concurrent_modifications` entry**, inspect the current files against the accepted intent. Preserve current files when they satisfy the intent; redo the chunk when they do not. Record the LLM rationale and continue without asking the user to interpret internal chunk or run identifiers.
 4. **Set `iterate_attempt` in your in-memory state** to the carried value — do NOT reset to 0. The 5x cap is preserved across resume.
 5. **Jump directly to Phase 3 Execute** dispatching only the `remaining_chunks`. All later phases (Review, Iterate, Report) proceed normally and follow the same M1/M2 heartbeat rules — every implementer return goes through `write_subagent_result.py`, every dispatch/return updates `state.json.execution`.
 6. **At Review-F**, the run completes normally with `update_execution_state(state_path, 'complete')`. There is no "resume completion" sentinel separate from a clean build; the M2 schema does not distinguish "completed-from-resume" from "completed-from-fresh-start."
@@ -66,9 +66,12 @@ When the host exposes a stable current session id, append
 invocation ownership, so it resumes the existing run and never authorizes a
 fresh one. Heartbeat freshness is never ownership proof.
 
-If the resolver returns `decision: "prompt_user"`, the Skill body surfaces to the user verbatim (using the `reason` field from the resolver):
+If the resolver returns `decision: "review"`, the Skill body gives the packet to the host LLM. The packet includes the actual remaining chunks, concurrent modifications, progress counts, prior intent/goal/plan locators, and a deterministic default. The LLM compares that evidence with the current request and chooses:
 
-> "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+- **Resume:** actionable remaining work aligns with the current intent. Rerun with the packet's internal run id and enter Resume Mode.
+- **Fresh:** no actionable work remains or the prior intent is unrelated. Rerun with `--archive-stale-run "<internal-run-id>" --decision-reason "<compact LLM rationale>"`.
+
+The fresh operation locks and re-reads `state.json`, requires the exact schema-v1 run and a still-stale heartbeat, appends the full execution plus the LLM rationale to `historicalExecutions`, preserves its worktree/branch/data locators, and clears only `execution`. New work starts only after `archive_applied: true` and `fresh_ready: true`. The host never surfaces an internal run id as a user decision and never asks resume-or-fresh.
 
 Before interpreting heartbeat age, the resolver also checks for the narrower
 case where strict branch closeout already made the execution impossible to
@@ -81,7 +84,7 @@ re-reads `state.json`, archives that exact execution as
 returns `fresh`; an explicit resume returns `abort` because the named run is
 already closed. A prepared/retained receipt, surviving resource, missing
 bundle, mismatched identity, queued/in-flight work, or malformed history keeps
-the existing abort/prompt behavior.
+the existing abort/review behavior.
 
 A terminal pre-schema crash is a separate, fail-closed path. The first read-only
 resolution returns `decision: "abort"` with
@@ -104,7 +107,7 @@ when the newest crash/heartbeat activity is older than the configured staleness
 threshold and the result reports `abandon_applied: true` and
 `fresh_ready: true`.
 
-This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
+This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but autonomous review does not depend on it.
 
 ## Resolver decision matrix
 
@@ -117,7 +120,8 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 | `""` (no owner proof)| heartbeat fresh          | `abort`      | refuse; another invocation may still be active                           |
 | `""` (no owner proof)| heartbeat missing/unparseable | `abort` | refuse; liveness and ownership are unknown                               |
 | `""` (no flag)       | verified strict closeout residue | `fresh` | exact execution archived atomically; closed run is not misreported as incomplete |
-| `""` (no flag)       | heartbeat stale          | `prompt_user`| skill surfaces resume-or-fresh prompt                                    |
+| `""` (no flag)       | heartbeat stale          | `review`     | host LLM reviews intent/work and resumes or archives for fresh work       |
+| `""` + reviewed archive | exact stale schema-v1 run | `fresh`   | preserve full execution/resources, clear active pointer, then start fresh |
 | `""` (no flag)       | terminal schema-less crash residue | `abort` | rerun with `--archive-terminal-legacy-crash`; proceed only after applied `fresh` |
 | `""` (archive mode)  | terminal schema-less crash residue | `fresh` | exact execution archived atomically; fresh identity may now be minted    |
 | `""` (no flag)       | ambiguous/active schema-less execution | `abort` | refuse archive and fresh start                                            |
@@ -133,7 +137,7 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 ## Cleanup behavior
 
 - **Successful build**: at Phase 4 Review-F, the orchestrator archives `.build-loop/subagent-results/<run-id>/` into `.build-loop/runs/<run-id>/` and removes the original directory. (Implementation pending — referenced in plan §Risks; subagent-results pile-up not a blocker for v0.11.)
-- **Crashed build envelopes**: NOT cleaned by Review-F (it never ran). They get cleaned at the start of the next `/build-loop:run` invocation when the user chooses "start fresh" instead of `--resume`. The prior run_id's directory is then archived as `.build-loop/runs/<run-id>.abandoned/`.
+- **Crashed build envelopes**: NOT cleaned by Review-F (it never ran). An LLM fresh decision preserves the execution and resource locators in history; cleanup remains a separate recoverable lifecycle action.
 - **Manual gc**: a `/build-loop:gc` command (future) clears anything older than 30 days as a last resort.
 
 ## Out-of-scope
