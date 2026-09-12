@@ -1789,6 +1789,18 @@ def collapse(
             continue
 
         if dry_run:
+            # The preview is where approval is granted, so it owes the same
+            # contents evidence the acting path prints. This is a read-only
+            # `git status`, safe in a dry run, and without it the operator
+            # approves a deletion on counts alone — the state this whole
+            # inventory exists to prevent.
+            if path and Path(str(path)).exists():
+                result["safety"].append({
+                    "branch": ref_branch,
+                    "stage": "dry-run",
+                    "path": str(path),
+                    "inventory": _worktree_inventory(Path(str(path)).resolve()),
+                })
             if is_merged:
                 result["deleted"].append(
                     {"branch": ref_branch, "path": path, "action": "would_delete"}

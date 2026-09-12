@@ -195,8 +195,19 @@ def append_run_entry(state_path: Path, entry: dict, defaulted: set[str] | None =
                 # returning on the first match would correct one and leave the
                 # stale twin, so the writer heals what it finds rather than
                 # waiting for dedupe_run_ledger.py to be remembered.
+                #
+                # Fold the extra rows IN before applying the incoming entry.
+                # Deleting them unmerged would discard whatever they alone carry
+                # — a later row can hold a security_findings payload the first
+                # row never had — and would make the writer's heal disagree with
+                # dedupe_run_ledger.py on the same inputs. Reusing the repair's
+                # own merge here makes the two identical by construction rather
+                # than by coincidence.
                 first = matches[0]
-                runs[first] = upsert_merge(runs[first], entry, defaulted)
+                healed = runs[first]
+                for i in matches[1:]:
+                    healed = upsert_merge(healed, runs[i], empty_collection_fields(runs[i]))
+                runs[first] = upsert_merge(healed, entry, defaulted)
                 for i in reversed(matches[1:]):
                     del runs[i]
                 atomic_write_bytes(state_path, _encode(state))

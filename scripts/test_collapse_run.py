@@ -565,9 +565,6 @@ class TestHumanSummarySurfacesContents:
             ],
         })
 
-        # Not --dry-run: the safety inspection (and therefore the inventory)
-        # runs on the mutating path, which is exactly where the operator needs
-        # to read what the deletion will take.
         collapse_run.main([
             "--workdir", str(repo), "--run-id", "latest", "--owner-released",
         ])
@@ -575,3 +572,32 @@ class TestHumanSummarySurfacesContents:
         printed = capsys.readouterr().err
         assert str(wt) in printed, "the worktree holding a .env must be named by default"
         assert "caches-only characterization is unsupported" in printed
+
+    def test_dry_run_preview_also_names_the_contents(self, tmp_path: Path, capsys) -> None:
+        """--dry-run is the surface an operator reads to DECIDE. Approval is
+        granted there, so the preview owes the same contents evidence the acting
+        path prints; counts alone cannot support it."""
+        repo = _make_repo(tmp_path)
+        (repo / ".gitignore").write_text(".env\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-m", "ignore rules")
+        _make_branch(repo, "feat-preview", merge_to_main=True)
+        wt = _make_worktree(repo, "feat-preview")
+        (wt / ".env").write_text("API_KEY=synthetic\n")
+
+        _write_state(repo, {
+            "run_id": "run_preview",
+            "createdRefs": [
+                {"branch": "feat-preview", "path": str(wt), "review_hold": False}
+            ],
+        })
+
+        collapse_run.main([
+            "--workdir", str(repo), "--run-id", "latest",
+            "--owner-released", "--dry-run",
+        ])
+
+        printed = capsys.readouterr().err
+        assert str(wt) in printed, "the preview must name the worktree holding a .env"
+        assert "caches-only characterization is unsupported" in printed
+        assert wt.exists(), "a dry run must not delete anything"

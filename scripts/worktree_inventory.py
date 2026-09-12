@@ -316,18 +316,23 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
 def _characterize(result: dict[str, Any]) -> str:
     """One operator-readable sentence naming what removal would delete."""
     counts = result["counts"]
-    # Judged FIRST, before the empty-counts read. When git could not open a
-    # directory it omits the entry entirely, so all three counts are zero and
-    # the negative claim "holds nothing" is the most confident wrong sentence
-    # the module could emit — and it is the one the reaper prints next to a
-    # warning marker.
+    # A git warning PREFIXES the evidence, it does not replace it. When git could
+    # not open a directory it omits that entry entirely, so all three counts can
+    # be zero and "holds nothing" becomes the most confident wrong sentence the
+    # module could emit — but when git DID read a .env alongside the directory it
+    # could not open, naming that .env is the whole point. Replacing the sentence
+    # would drop the named secret to report the incompleteness.
+    prefix = ""
     if result["status_warnings"]:
         first = result["status_warnings"][0]
-        return (
+        prefix = (
             f"git could not read part of this worktree ({first}) — its own listing "
             f"is incomplete, so no characterization of the contents holds, "
             f"including that it is empty"
         )
+        if not any(counts.values()):
+            return prefix
+        prefix += "; of what it COULD read, "
     if not any(counts.values()):
         return "worktree holds no tracked changes, untracked files, or ignored files"
     parts = []
@@ -337,7 +342,7 @@ def _characterize(result: dict[str, Any]) -> str:
         parts.append(f"{counts['untracked']} untracked file(s)")
     if counts["ignored"]:
         parts.append(f"{counts['ignored']} ignored entry(ies)")
-    head = "removal would delete " + ", ".join(parts)
+    head = prefix + "removal would delete " + ", ".join(parts)
     risky = result["non_reproducible_ignored"]
     if risky:
         named = ", ".join(risky[:5]) + (" ..." if len(risky) > 5 else "")

@@ -166,11 +166,21 @@ def _split_csv(s: str) -> list[str]:
 # default, which on a CORRECTION is indistinguishable from a deliberate wipe
 # unless the omission is recorded. Field names come from iohelpers so the two
 # halves of the contract cannot drift.
-_FLAG_TO_FIELD = dict(zip(
-    ("phases_json", "files_touched", "diagnostic_commands",
-     "manual_interventions_json", "active_experimental_artifacts"),
-    OMISSION_SENSITIVE_FIELDS,
-))
+# Keyed by name, not positionally zipped: a zip silently mis-maps every flag if
+# OMISSION_SENSITIVE_FIELDS is ever reordered, and silently truncates if a sixth
+# field is added without a sixth flag — so the new field would never receive the
+# omission exemption. The assertion makes either drift fail loudly at import.
+_FLAG_TO_FIELD = {
+    "phases_json": "phases",
+    "files_touched": "filesTouched",
+    "diagnostic_commands": "diagnosticCommands",
+    "manual_interventions_json": "manualInterventions",
+    "active_experimental_artifacts": "active_experimental_artifacts",
+}
+assert set(_FLAG_TO_FIELD.values()) == set(OMISSION_SENSITIVE_FIELDS), (
+    "flag->field map drifted from iohelpers.OMISSION_SENSITIVE_FIELDS: "
+    f"{sorted(set(_FLAG_TO_FIELD.values()) ^ set(OMISSION_SENSITIVE_FIELDS))}"
+)
 
 
 def _defaulted_fields(args: argparse.Namespace, git_contributed: bool = False) -> set[str]:

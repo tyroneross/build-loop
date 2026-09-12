@@ -369,6 +369,85 @@ class WriteRunEntryTests(unittest.TestCase):
         row = json.loads(self.state.read_text())["runs"][0]
         self.assertIn("changed.py", row["filesTouched"])
 
+    def test_self_heal_folds_in_a_duplicate_rather_than_deleting_it(self) -> None:
+        """The writer's self-heal deleted the extra duplicate rows unmerged, so
+        a key only the LATER row carried - a security_findings payload, say -
+        vanished. That is the same silent evidence loss the upsert was written to
+        stop, arriving through the heal instead of the append."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [
+            {"run_id": "run_heal", "filesTouched": ["a.py"],
+             "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}]},
+            {"run_id": "run_heal", "filesTouched": ["a.py"],
+             "security_findings": [{"severity": "HIGH", "mapped_risks": ["LLM06"]}]},
+        ]}))
+        result = run(self._base_args(**{"--run-id": "run_heal", "--goal": "corrected"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["security_findings"][0]["severity"], "HIGH",
+                         "a HIGH finding only the later duplicate carried must survive the heal")
+        self.assertEqual(runs[0]["judge_decisions"][0]["judge_id"], "independent-auditor",
+                         "an unchanged file set keeps the verdict through the heal")
+
+    def test_self_heal_drops_a_verdict_the_later_duplicate_rescoped(self) -> None:
+        """Precision: the scope guard still binds INSIDE the heal. A later
+        duplicate carrying a different file set and no new verdict must not
+        re-attribute the first row's verdict to files no judge saw."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [
+            {"run_id": "run_rescope", "filesTouched": ["a.py"],
+             "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}]},
+            {"run_id": "run_rescope", "filesTouched": ["b.py"],
+             "security_findings": [{"severity": "HIGH"}]},
+        ]}))
+        self.assertEqual(run(self._base_args(**{"--run-id": "run_rescope", "--goal": "g"})).returncode, 0)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertNotIn("judge_decisions", row)
+        self.assertEqual(row["security_findings"][0]["severity"], "HIGH",
+                         "dropping the rescoped verdict must not also drop the finding")
+
+    def test_self_heal_agrees_with_the_repair_tool(self) -> None:
+        """Whichever ordering rule is right, the writer's heal and
+        dedupe_run_ledger.py must produce the same row from the same inputs, or
+        a repair and a rewrite disagree about what the run recorded."""
+        sys.path.insert(0, str(HERE))
+        sys.path.insert(0, str(HERE / "write_run_entry"))
+        from iohelpers import dedupe_runs  # type: ignore
+
+        rows = [
+            {"run_id": "run_eq", "filesTouched": ["a.py"], "phases": {"assess": {"status": "pass"}}},
+            {"run_id": "run_eq", "filesTouched": ["b.py"], "security_findings": [{"severity": "HIGH"}]},
+        ]
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": json.loads(json.dumps(rows))}))
+        self.assertEqual(run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
+        via_writer = json.loads(self.state.read_text())["runs"][0]
+
+        repaired, _ = dedupe_runs(json.loads(json.dumps(rows)))
+        self.state.write_text(json.dumps({"runs": repaired}))
+        self.assertEqual(run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
+        via_repair = json.loads(self.state.read_text())["runs"][0]
+
+        for key in ("filesTouched", "phases", "security_findings"):
+            self.assertEqual(via_writer.get(key), via_repair.get(key),
+                             f"writer and repair disagree on {key}")
+
+    def test_flag_to_field_map_cannot_drift(self) -> None:
+        """The map was a positional zip: reordering the field tuple silently
+        mis-mapped every flag, and adding a sixth field silently truncated it."""
+        sys.path.insert(0, str(HERE / "write_run_entry"))
+        import importlib.util as iu
+
+        spec = iu.spec_from_file_location("wre_main", SCRIPT)
+        module = iu.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(set(module._FLAG_TO_FIELD.values()),
+                         set(module.OMISSION_SENSITIVE_FIELDS))
+        self.assertEqual(len(module._FLAG_TO_FIELD), len(module.OMISSION_SENSITIVE_FIELDS))
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

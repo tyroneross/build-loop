@@ -302,6 +302,31 @@ class WorktreeInventoryTests(unittest.TestCase):
                       result["characterization"])
         self.assertIn("not individually classified", result["characterization"])
 
+    def test_warning_prefixes_the_evidence_rather_than_replacing_it(self) -> None:
+        """When git reads a .env but cannot open a sibling directory, both facts
+        matter. Replacing the sentence with the incompleteness notice drops the
+        named secret to report that something was unreadable - and naming the
+        secret is the whole point."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text(".env\nbuild/\n")
+        (wt / ".env").write_text("API_KEY=synthetic\n")
+        (wt / "build").mkdir()
+        (wt / "build" / "cache.txt").write_text("x\n")
+        locked = wt / "build" / "locked"
+        locked.mkdir()
+        (locked / "more.txt").write_text("x\n")
+        locked.chmod(0o000)
+        try:
+            result = worktree_inventory.inventory(wt)
+        finally:
+            locked.chmod(0o755)
+
+        chars = result["characterization"]
+        self.assertTrue(result["status_warnings"])
+        self.assertIn("could not read part of this worktree", chars)
+        self.assertIn(".env", chars, "the secret git DID read must still be named")
+        self.assertFalse(result["caches_only_claim_supported"])
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()
