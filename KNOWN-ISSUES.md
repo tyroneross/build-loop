@@ -396,3 +396,119 @@ intention.
 
 **Why.** An advisory gate gets ignored under momentum. The failure was not
 missing tooling; the tooling ran and produced the right answer.
+
+## 2026-09-12 — Enforce gate: round-1 1e518873..c60d66ed (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** independent-auditor round 1 reviewed c60d66ed (the run-ledger upsert + worktree-ignored-file inventory) and returned nay: f1 the upsert's dedupe/merge path could delete another writer's row on a lossy merge; f2 a collapsed directory could be certified clean by the new ignored-file inventory.
+
+**When.** 2026-09-12
+
+**Impact.** A nay this early in the loop means the two backlog defects (BUIL-RUN-LEDGER-m2ae6jkv6y6f3p68qf2r9, BUIL-WORKTREE-LIFECYCLE-m2acgqww0sf9sn991fygs) were not actually closed by their first fix commit; merging c60d66ed as-is would have shipped a run-ledger writer that can still silently drop rows and a worktree inventory that can still certify an unseen directory as safe to remove.
+
+**Recommendation.** Keep the independent-auditor round mandatory before a fix commit is treated as closing its backlog item; do not let Iterate exit on a fix commit alone, only on a yay verdict.
+
+**Why.** The fixing agent's own tests (written per fix, mutation-checked) asserted the working path the fix targeted but not the collapsed-directory / lossy-merge case the auditor's adversarial reproduction found â€” a self-authored test validates the author's model of the bug, not the boundary the auditor probes.
+
+## 2026-09-12 — Enforce gate: round-2 1e518873..d1e02870 (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** independent-auditor round 2 reviewed d1e02870 (the round-1 fix) and returned nay: n1 every CLI correction to a run entry deleted the auditor's own verdict field on write; n2 the ignored-file walk swallowed unreadable subdirectories instead of flagging them; n4 set-iteration order was nondeterministic, so the same worktree could inventory differently across runs.
+
+**When.** 2026-09-12
+
+**Impact.** n1 meant fixing the round-1 findings introduced a NEW defect: any human or agent correction to a run-ledger row silently erased the judge verdict that record was supposed to carry forward, breaking the owed-verification chain for every later reader. n2/n4 meant the worktree inventory could under-report or non-reproducibly report ignored content on the exact class of directory the original defect was about.
+
+**Recommendation.** Add a regression test that writes a CLI correction over an existing judge-verdict-bearing row and asserts the verdict field survives; add a test that plants an unreadable subdirectory and asserts the inventory flags it rather than skipping it silently.
+
+**Why.** The round-1 fix changed the row-merge code path without an assertion protecting the verdict field specifically, and the ignored-file walk used a bare os.walk / set() without a fail-closed branch for unreadable entries or a stable sort order.
+
+## 2026-09-12 — Enforce gate: round-3 1e518873..0fd7ebaa (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** independent-auditor round 3 reviewed 0fd7ebaa (the round-2 fix) and returned nay: f1 the ledger's dedupe pass itself performed the exact wipe it was meant to repair; f2 the files-touched-from-git helper failed open (returned an empty/success result) when git itself errored; f3 the worktree characterize step asserted a directory was empty when it was actually unreadable.
+
+**When.** 2026-09-12
+
+**Impact.** f1 meant running the recommended repair tool (scripts/dedupe_run_ledger.py) on a ledger already containing the round-2 regression could destroy rows a second time under the banner of 'repairing' them. f2/f3 meant two different fail-open paths could both report a clean, safe state for a worktree or ledger that the tool had not actually been able to inspect.
+
+**Recommendation.** Require dedupe/repair tooling to prove idempotency (run twice, assert no further changes) before it is trusted as a repair path; require any git-shelling helper to fail CLOSED (flag as unknown) on a non-zero git exit rather than defaulting to an empty/clean result.
+
+**Why.** Both f2 and f3 share one root cause: the helper treated 'git returned nothing usable' as equivalent to 'there is nothing there,' rather than as a distinct unknown state that must block the safety verdict.
+
+## 2026-09-12 — Enforce gate: round-4 1e518873..34d18b7d (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** independent-auditor round 4 reviewed 34d18b7d (the round-3 fix) and returned nay: f6 the ledger writer's 'heal' path and its 'repair' path disagreed on which row to keep, and the writer's version destroyed a later write's keys; f7 a generic warning string had replaced the specific secret name the tool was supposed to surface; f8 a red-flag condition could not fire on preview/dry-run output because the check ran against a different code path than the real write.
+
+**When.** 2026-09-12
+
+**Impact.** f6 meant two code paths inside the same tool (the inline write-time heal and the standalone repair script) could each 'fix' the same duplicate differently, and the one an agent was more likely to hit first (the inline heal) was the lossy one. f7 degraded a security-relevant warning to the point an operator could not tell which secret was implicated. f8 meant a preview run of the safety check could look clean while the real run would not be.
+
+**Recommendation.** Assert writer/repair equivalence directly (same input, both code paths, same output) as a standing test rather than trusting them to agree by inspection; run the exact code path under test in both preview and real mode, never a parallel simulation of it.
+
+**Why.** The writer's inline heal and the standalone repair script were implemented independently against the same spec instead of one being a thin wrapper around the other, so they drifted; the preview path was built as a separate branch instead of the same function with a dry-run flag.
+
+## 2026-09-12 — Enforce gate: review-D round-1 (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** fact-checker (Review-D) found that inspect_worktree_safety omitted the new ignored-file inventory on four of the real-path verdicts it returns, so the operator-visible safety characterization was incomplete on exactly the surface this run's second defect was about.
+
+**When.** 2026-09-12
+
+**Impact.** An operator reading those four verdict paths would see a safety characterization that looked complete but silently excluded the ignored-file evidence the whole fix existed to add, reproducing the original 'tool caches only' over-claim risk on a subset of code paths even after the fix landed.
+
+**Recommendation.** When a fix adds a field to a safety verdict, add a test asserting that field is present on EVERY return path of the function, not only the path exercised by the fix's own reproduction case.
+
+**Why.** The fix threaded the new inventory field through the primary verdict path but the function had multiple real-path returns and the fix's own test suite only exercised one of them.
+
+## 2026-09-12 — Enforce gate: review-D round-2 (failed this run)
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** fact-checker (Review-D) found two issues: source is not the only writer-identifying key in the run ledger (run_close_lint also reads a hook_-prefixed run-id convention the upsert fix did not account for), and the phases field uses a shallow merge that erases phases.learn when a later writer updates a different phase key.
+
+**When.** 2026-09-12
+
+**Impact.** A run entry written by the hook_ path could fail to upsert correctly against the new source-keyed logic, reproducing a duplicate-row risk for a writer class the round-1/2 fixes did not cover; the phases shallow-merge could silently drop a completed Learn phase record any time a later phase (e.g. review) rewrote the phases object.
+
+**Recommendation.** Enumerate every writer-identifying key convention (source field AND hook_ run-id prefix) in one place the upsert logic reads from, rather than hard-coding source; merge the phases object key-by-key, never by replacement.
+
+**Why.** The upsert fix was written against the one writer-identification convention visible in the reproduction case, and the phases merge used the language's default dict-overwrite semantics instead of an explicit per-key merge.
+
+## 2026-09-12 — Basename-keyed backup clobbered write_run_entry mid-edit
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** A backup/staging step keyed its copy destination on basename rather than full relative path and copied `scripts/worktree_reaper/__main__.py` over `scripts/write_run_entry/__main__.py` while the latter was mid-edit — both files are named `__main__.py` inside their own package directories, and both paths appear in this run's `state.json` `filesTouched`, corroborating both were live this run
+
+**When.** 2026-09-12
+
+**Impact.** the in-progress write_run_entry fix was silently overwritten and would have shipped as the wrong module's contents had it not been caught before commit
+
+**Recommendation.** any backup or staging step that copies files by name into a shared or flat namespace must key on the full relative path, never basename alone
+
+**Why.** the backup loop's key derivation dropped the directory component, so two files that only collide on basename were treated as one file.
+
+Two further items surfaced this run and are referenced rather than re-filed here (see Issues §9 and Filed findings): `BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56` (self_mod_verify --auto-revert destroyed another session's uncommitted work) and `BUIL-RUN-LEDGER-m2b4bcfb37r3r3vjf6d12` (stale owed-verification manifest).
+
+Counterfactual: of the 5 independent-auditor rounds, 4 returned nay. Given the shared root cause above, requiring each fix's acceptance test to reproduce the auditor's own repro steps — rather than the author's model of the bug — before a round can close would plausibly have collapsed rounds 1-4 into fewer passes; round 5 itself reached yay only once verification moved to auditor-authored oracles. The auditor role itself should not be automated away: it is the gate that caught what self-testing structurally could not, and round 5 passed by raising its rigor, not by removing it
+
+## 2026-09-12 — One preflight family for the shared root cause behind 11 of this run's audit findings, not eleven separate gates
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+
+**What happened.** Findings f1/f2 (round 1), n1/n2/n4 (round 2), f1/f2/f3 (round 3), and f6/f7/f8 (round 4) — 11 distinct items across 4 audit rounds — share one suspected root cause per this run's judge_decisions: the fixing agent's own tests, though written per fix and mutation-checked, validated the fix's model of the bug rather than an independently-derived oracle, so each one passed the author's tests while failing the auditor's adversarial reproduction
+
+**When.** 2026-09-12
+
+**Impact.** without one shared control, this class of gap recurs on the next fix-then-self-test cycle regardless of how many of these 11 items get closed individually
+
+**Recommendation.** require the acceptance test that closes an independent-auditor finding to include an assertion derived from the auditor's own reproduction steps (an adversarial-oracle requirement), enforced once as a Review-A/Iterate gate rather than as 11 separate backlog items
+
+**Why.** self-authored tests structurally cannot see the case their author didn't imagine; only a test seeded from the adversary's reproduction closes that blind spot
