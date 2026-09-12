@@ -679,18 +679,28 @@ def inspect_worktree_safety(
             "path": str(candidate),
         }
 
+    # Removal deletes the whole directory, so the evidence an operator reads must
+    # cover the whole directory. `git status --porcelain` names tracked changes
+    # and untracked files but omits GITIGNORED ones, which is how a "tool caches
+    # only" characterization gets approved on an inventory that cannot support it.
+    # Computed BEFORE the registration checks: an unsafe verdict is exactly when
+    # an operator reaches for --force, so that is when the contents matter most.
+    inventory = _worktree_inventory(candidate)
+
     record = records.get(str(candidate))
     if record is None:
         return {
             "safe": False,
             "reason": "existing path is not a registered Git worktree",
             "path": str(candidate),
+            "inventory": inventory,
         }
     if record.get("branch") != branch:
         return {
             "safe": False,
             "reason": f"registered branch mismatch: {record.get('branch')!r}",
             "path": str(candidate),
+            "inventory": inventory,
         }
     if record.get("locked"):
         return {
@@ -698,13 +708,8 @@ def inspect_worktree_safety(
             "reason": "Git worktree is locked",
             "path": str(candidate),
             "lock_reason": record.get("lock_reason"),
+            "inventory": inventory,
         }
-
-    # Removal deletes the whole directory, so the evidence an operator reads must
-    # cover the whole directory. `git status --porcelain` names tracked changes
-    # and untracked files but omits GITIGNORED ones, which is how a "tool caches
-    # only" characterization gets approved on an inventory that cannot support it.
-    inventory = _worktree_inventory(candidate)
 
     status = _git(candidate, "status", "--porcelain", check=False)
     if status.returncode != 0:
@@ -729,6 +734,7 @@ def inspect_worktree_safety(
             "safe": False,
             "reason": live_cwd_error,
             "path": str(candidate),
+            "inventory": inventory,
         }
     owners = []
     for row in live_cwds or []:

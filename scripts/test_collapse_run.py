@@ -438,3 +438,105 @@ class TestCLI:
         )
         assert r.returncode == 1
         assert "state.json" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Removal evidence: every verdict about a real directory says what is in it
+# ---------------------------------------------------------------------------
+
+class TestWorktreeSafetyInventory:
+    """A removal deletes ignored files too, so the safety packet names them.
+
+    `git status` reports tracked and untracked files but omits GITIGNORED ones,
+    which is how a "tool caches only" characterization gets approved on evidence
+    that cannot support it. An UNSAFE verdict needs the inventory most: that is
+    when an operator reaches for `--force`.
+    """
+
+    def _repo_with_ignored_worktree(self, tmp_path: Path) -> tuple[Path, Path, str]:
+        repo = _make_repo(tmp_path)
+        (repo / ".gitignore").write_text("*.log\n.env\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-m", "ignore rules")
+        branch = "feature-x"
+        _make_branch(repo, branch)
+        wt = _make_worktree(repo, branch)
+        (wt / ".env").write_text("API_KEY=synthetic\n")
+        (wt / "debug.log").write_text("noise\n")
+        return repo, wt, branch
+
+    def test_clean_verdict_carries_the_ignored_set(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+        assert _git(wt, "status", "--short").stdout.strip() == "", (
+            "precondition: the short status an operator would read shows nothing"
+        )
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(wt), branch, live_cwds=[], live_cwd_error=None
+        )
+
+        assert safety["safe"] is True
+        assert ".env" in safety["inventory"]["ignored"]
+        assert safety["inventory"]["caches_only_claim_supported"] is False
+
+    def test_locked_worktree_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+        _git(repo, "worktree", "lock", str(wt))
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(wt), branch, live_cwds=[], live_cwd_error=None
+        )
+
+        assert safety["safe"] is False
+        assert safety["reason"] == "Git worktree is locked"
+        assert ".env" in safety["inventory"]["ignored"]
+
+    def test_unregistered_path_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        stray = repo.parent / "stray"
+        stray.mkdir()
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(stray), "feature-x", live_cwds=[], live_cwd_error=None
+        )
+
+        assert safety["safe"] is False
+        assert "not a registered Git worktree" in safety["reason"]
+        assert "inventory" in safety, "an unsafe verdict about a real directory owes an inventory"
+
+    def test_branch_mismatch_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(wt), "some-other-branch", live_cwds=[], live_cwd_error=None
+        )
+
+        assert safety["safe"] is False
+        assert "branch mismatch" in safety["reason"]
+        assert ".env" in safety["inventory"]["ignored"]
+
+    def test_live_cwd_scan_failure_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(wt), branch, live_cwds=None, live_cwd_error="ps scan failed"
+        )
+
+        assert safety["safe"] is False
+        assert safety["reason"] == "ps scan failed"
+        assert ".env" in safety["inventory"]["ignored"], (
+            "the inventory was already computed; dropping it here withholds evidence for free"
+        )
+
+    def test_dirty_worktree_verdict_carries_the_inventory(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+        (wt / "tracked-edit.txt").write_text("uncommitted\n")
+
+        safety = collapse_run.inspect_worktree_safety(
+            repo, str(wt), branch, live_cwds=[], live_cwd_error=None
+        )
+
+        assert safety["safe"] is False
+        assert safety["reason"] == "worktree is dirty"
+        assert "tracked-edit.txt" in safety["inventory"]["untracked"]
+        assert ".env" in safety["inventory"]["ignored"]

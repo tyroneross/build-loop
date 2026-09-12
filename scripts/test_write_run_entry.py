@@ -150,6 +150,25 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["judge_decisions"][0]["verdict"], "approve")
 
+    def test_write_heals_a_preexisting_duplicate(self) -> None:
+        """A ledger written before the upsert fix can already hold two rows for
+        one run_id. Correcting only the first would leave the stale twin behind
+        and keep the double-count that the fix exists to remove."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({
+            "runs": [
+                {"run_id": "run_dup", "outcome": "fail", "goal": "old"},
+                {"run_id": "run_other", "outcome": "pass", "goal": "other"},
+                {"run_id": "run_dup", "outcome": "partial", "goal": "older twin"},
+            ]
+        }))
+        result = run(self._base_args(**{"--run-id": "run_dup", "--goal": "corrected"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual([r["run_id"] for r in runs], ["run_dup", "run_other"])
+        self.assertEqual(runs[0]["goal"], "corrected")
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

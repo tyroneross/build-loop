@@ -126,11 +126,22 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
         # threshold — and lets judgment_gate resolve the stale row.
         run_id = entry.get("run_id")
         if run_id:
-            for i, r in enumerate(runs):
-                if isinstance(r, dict) and r.get("run_id") == run_id:
-                    runs[i] = upsert_merge(r, entry)
-                    atomic_write_bytes(state_path, _encode(state))
-                    return
+            matches = [
+                i for i, r in enumerate(runs)
+                if isinstance(r, dict) and r.get("run_id") == run_id
+            ]
+            if matches:
+                # Replace at the FIRST match and drop the rest. A ledger written
+                # before this fix can already hold two rows for one run_id;
+                # returning on the first match would correct one and leave the
+                # stale twin, so the writer heals what it finds rather than
+                # waiting for dedupe_run_ledger.py to be remembered.
+                first = matches[0]
+                runs[first] = upsert_merge(runs[first], entry)
+                for i in reversed(matches[1:]):
+                    del runs[i]
+                atomic_write_bytes(state_path, _encode(state))
+                return
         runs.append(entry)
         atomic_write_bytes(state_path, _encode(state))
 
