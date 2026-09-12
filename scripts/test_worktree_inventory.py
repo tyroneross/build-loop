@@ -154,6 +154,61 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("timed out", result["error"])
 
+    def test_symlinked_subdirectory_reads_as_uninspected(self) -> None:
+        """os.walk does not descend into a symlinked directory, so its contents
+        are unseen. A credential one symlink away must not read as clean."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n")
+        (wt / "build").mkdir()
+        (wt / "build" / "cache.txt").write_text("x\n")
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        (outside / ".env").write_text("API_KEY=synthetic\n")
+        (wt / "build" / "linked").symlink_to(outside, target_is_directory=True)
+
+        result = worktree_inventory.inventory(wt)
+        self.assertIn("build/", result["uninspected_ignored_directories"])
+        self.assertFalse(result["caches_only_claim_supported"])
+
+    def test_valuable_name_wins_over_a_reproducible_pattern(self) -> None:
+        """classify checks potentially_valuable first, so a valuable name is not
+        laundered by a reproducible-looking suffix or an enclosing cache dir."""
+        self.assertEqual(worktree_inventory.classify("build/secrets.log"), "potentially_valuable")
+        self.assertEqual(worktree_inventory.classify("node_modules/.env"), "potentially_valuable")
+        self.assertEqual(worktree_inventory.classify("dist/local.sqlite"), "potentially_valuable")
+        self.assertEqual(worktree_inventory.classify("run.log"), "log")
+
+    def test_budget_is_shared_across_directories(self) -> None:
+        """Two directories must not each get a fresh budget."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\nnode_modules/\n")
+        for name in ("build", "node_modules"):
+            (wt / name).mkdir()
+            for i in range(3):
+                (wt / name / f"f{i}.txt").write_text("x\n")
+
+        original = worktree_inventory._SCAN_BUDGET
+        try:
+            worktree_inventory._SCAN_BUDGET = 4
+            result = worktree_inventory.inventory(wt)
+        finally:
+            worktree_inventory._SCAN_BUDGET = original
+
+        self.assertTrue(result["uninspected_ignored_directories"],
+                        "a 4-entry budget cannot inspect 6 files across two directories")
+        self.assertFalse(result["caches_only_claim_supported"])
+
+    def test_deeply_nested_valuable_file_is_found(self) -> None:
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n")
+        deep = wt / "build" / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / "service.pem").write_text("synthetic\n")
+
+        result = worktree_inventory.inventory(wt)
+        self.assertIn("build/a/b/c/service.pem", result["non_reproducible_ignored"])
+        self.assertFalse(result["caches_only_claim_supported"])
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()

@@ -165,6 +165,10 @@ def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tu
                     rel = full.as_posix()
                 if classify(rel) == "potentially_valuable":
                     valuable.append(rel)
+            # os.walk does not descend into symlinked directories, so their
+            # contents are unseen. Unseen is uninspected, never clean.
+            if any(os.path.islink(os.path.join(dirpath, d)) for d in dirnames):
+                return valuable, False
             budget[0] -= len(dirnames)
             if budget[0] < 0:
                 return valuable, False
