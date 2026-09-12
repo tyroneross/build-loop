@@ -150,21 +150,49 @@ Always bundle before any self-modification. This is the rollback point.
 **Step 2 — Self-recursive / per-commit mode:**
 Self-modifications use the existing per-commit mode machinery (one commit at a time, reviewed before the next). `selfRecursive.enabled` is `true` when the working directory IS build-loop's own repo. Do not batch multiple self-modification commits without a gate pass between each.
 
-**Step 3 — Verify gate (MANDATORY before commit):**
+**Step 3a — Record the pre-run baseline BEFORE you edit anything:**
+```bash
+python3 scripts/self_mod_verify.py snapshot \
+  --workdir "$PWD" --out .build-loop/self-mod-baseline.json --json
+```
+This records the blob sha of every file that is ALREADY dirty, so the gate can tell a
+peer session's work-in-progress apart from yours. Run it first; a baseline taken after
+you start editing records your own edits as pre-existing and defeats its own purpose.
+
+**Step 3b — Verify gate (MANDATORY before commit):**
 ```bash
 python3 scripts/self_mod_verify.py \
   --workdir "$PWD" \
   --scope auto \
   --changed-files <space-separated file list> \
+  --baseline .build-loop/self-mod-baseline.json \
   --auto-revert \
   --json
 ```
+
+Three things the gate now refuses to do, each of which destroyed work on 2026-09-12
+(BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56):
+
+1. `--changed-files` is MANDATORY with `--auto-revert`. Without it the gate exits 2,
+   runs no tests, and reverts nothing, so a failing test can never sweep a peer's
+   uncommitted work off a shared checkout.
+2. A file dirty at snapshot time is restored to THAT content, never to HEAD. A
+   `--baseline` that is missing, malformed, or recorded against a different HEAD is
+   REFUSED, not downgraded to a HEAD revert — re-run `snapshot` rather than deleting
+   the flag.
+3. Every reverted file's pre-revert bytes are written to the object DB first, anchored
+   under `refs/self-mod-verify/backup/<stamp>/<n>` so `git gc` cannot reclaim them, and
+   reported as `reverted <path> -> blob <sha>` with a ready-to-paste
+   `git cat-file blob <sha> > <path>` recovery command.
+
+Prune old backup refs with:
+`git for-each-ref --format='%(refname)' refs/self-mod-verify | xargs -n1 git update-ref -d`
 `--scope auto` runs mapped tests for small changes and broader tests for multi-file/core changes (practical default). Use `--scope full` for the slow exhaustive option (900s, parallel when pytest-xdist is present).
 
 `verdict: pass` → the self-modification may commit.
 `verdict: fail` → the gate AUTO-REVERTS the change and writes the finding to `.build-loop/proposals/failed-gate/`. The change is NEVER committed. Do not retry a failed gate verdict without diagnosing the root cause.
 
-**Self-modifications execute — they do not stop the loop.** A self-modification that is part of the accepted plan (including edits to the gate, tests, or the self-improvement loop) executes behind the test-suite gate: `self_mod_verify.py --scope auto --auto-revert` must return `verdict: pass` (tests are the oracle; a failed gate auto-reverts the change). Build-loop never halts a planned self-modification for human approval. Oversight is post-hoc, not a gate: (a) self-modifying runs trigger an ADDITIONAL adversarial review (independent-auditor at build scope; the periodic deep self-review re-audits recent self-modifications) — non-blocking; (b) the end-of-run readback reports every self-modification and the additional-review findings so the human sees results at the end. The loop stays on task and reports once, at the end.
+**Self-modifications execute — they do not stop the loop.** A self-modification that is part of the accepted plan (including edits to the gate, tests, or the self-improvement loop) executes behind the test-suite gate: `self_mod_verify.py --scope auto --changed-files <this run's files> --auto-revert` must return `verdict: pass` (tests are the oracle; a failed gate auto-reverts the change). Build-loop never halts a planned self-modification for human approval. Oversight is post-hoc, not a gate: (a) self-modifying runs trigger an ADDITIONAL adversarial review (independent-auditor at build scope; the periodic deep self-review re-audits recent self-modifications) — non-blocking; (b) the end-of-run readback reports every self-modification and the additional-review findings so the human sees results at the end. The loop stays on task and reports once, at the end.
 
 **Step 4 — SAFE-only auto-apply:**
 Only changes that `classify_action.py` classifies as SAFE auto-apply through this path. Structural or architectural self-modifications — new phase, changed dispatch contract, agent-role change — surface as DECISION and are never auto-applied. They are queued to `.build-loop/proposals/needs-decision/` for explicit user action.
@@ -204,9 +232,12 @@ python3 scripts/self_mod_verify.py \
   --workdir "$PWD" \
   --scope auto \
   --changed-files <the files you changed> \
+  --baseline .build-loop/self-mod-baseline.json \
   --auto-revert \
   --json
 ```
+(`--changed-files` is mandatory with `--auto-revert`; record the baseline first with
+`self_mod_verify.py snapshot --workdir "$PWD" --out .build-loop/self-mod-baseline.json`.)
 - `verdict: pass` → commit the change via the normal per-commit mode (one commit per self-modification; do not batch). The self-modification is recorded for the end-of-run readback.
 - `verdict: fail` → the gate has already auto-reverted the change. Move the proposal to `.build-loop/proposals/failed-gate/` and continue with the next proposal. NEVER commit a failed-gate self-modification.
 - Skip any `target: self` proposal that `classify_action.py` does not classify as SAFE (RISKY → isolate to worktree-branch + log; DECISION → queue to `.build-loop/proposals/needs-decision/`, do not apply).

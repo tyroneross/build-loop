@@ -8,4 +8,4 @@ When implementing F-03, gate the canonical `run-closeout` phase post on live ter
 
 Recovery anchor: `.build-loop/bundles/pre-selfmod-20260712T011700.bundle` was created and verified before self-modification.
 
-Final gate: targeted tests, acceptance rerun, `self_mod_verify.py --auto-revert`, and an independent audit must all pass before merge.
+Final gate: targeted tests, acceptance rerun, `self_mod_verify.py --changed-files <the files you changed> --auto-revert`, and an independent audit must all pass before merge.

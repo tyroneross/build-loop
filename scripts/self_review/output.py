@@ -241,8 +241,11 @@ def _build_proposal_body(
             "",
             "This proposal modifies build-loop's own code. Before committing, run:",
             "```",
+            "python3 scripts/self_mod_verify.py snapshot --workdir . "
+            "--out .build-loop/self-mod-baseline.json --json  # BEFORE editing",
             "python3 scripts/self_mod_verify.py --workdir . --scope full "
-            "--auto-revert --json",
+            "--changed-files <the files you changed> "
+            "--baseline .build-loop/self-mod-baseline.json --auto-revert --json",
             "```",
             "Commit ONLY if verdict == \"pass\".",
             "",

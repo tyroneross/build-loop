@@ -15,6 +15,17 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "self_mod_verify.py"
 
 
+def _payload(stdout: str) -> dict:
+    """Parse the result JSON out of stdout.
+
+    stdout carries the indent=2 JSON object followed (on a revert) by the
+    human-readable `reverted <path> -> blob <sha>` recovery lines, so a bare
+    json.loads over the whole stream would choke on the trailing text.
+    """
+    obj, _end = json.JSONDecoder().raw_decode(stdout[stdout.index("{"):])
+    return obj
+
+
 def _run(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT)] + args,
@@ -80,7 +91,7 @@ class TestVerdictPass(unittest.TestCase):
     def test_passing_suite_verdict_pass(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
         self.assertEqual(r.returncode, 0, msg=f"stderr: {r.stderr}")
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "pass")
         self.assertGreater(payload["passed"], 0)
         self.assertEqual(payload["failed"], 0)
@@ -89,7 +100,7 @@ class TestVerdictPass(unittest.TestCase):
     def test_json_shape_complete(self) -> None:
         """JSON output has exactly the expected keys; no meta_modification / meta_files."""
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         expected_keys = {
             "scope", "ran", "passed", "failed", "failed_tests", "reverted",
             "verdict", "timed_out", "errors", "effective_scope", "error_reason",
@@ -123,13 +134,13 @@ class TestVerdictFail(unittest.TestCase):
     def test_failing_suite_verdict_fail(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
         self.assertEqual(r.returncode, 1, msg=f"Expected exit 1; stderr: {r.stderr}")
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "fail")
         self.assertGreater(payload["failed"], 0)
 
     def test_failing_suite_populates_failed_tests(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         # failed_tests should name the failing test
         self.assertGreater(len(payload["failed_tests"]), 0,
                            msg="failed_tests should be non-empty on failure")
@@ -182,7 +193,7 @@ class TestAutoRevert(unittest.TestCase):
             "--auto-revert",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(r.returncode, 1, msg=f"Expected exit 1: {r.stderr}")
         self.assertEqual(payload["verdict"], "fail")
         self.assertTrue(payload["reverted"],
@@ -192,21 +203,438 @@ class TestAutoRevert(unittest.TestCase):
         self.assertIn("ORIGINAL = True", content,
                       msg="File should be restored to original content after revert")
 
-    def test_auto_revert_no_changed_files_is_noop(self) -> None:
-        """--auto-revert with no --changed-files is a warning, not a crash."""
-        _write_failing_test(self.scripts_dir, "test_noop.py")
+    def test_auto_revert_without_changed_files_is_a_usage_error(self) -> None:
+        """(a) --auto-revert with no --changed-files exits non-zero, reverts nothing,
+        and leaves a PLANTED dirty file byte-identical.
+
+        Regression BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56: the gate used to derive the
+        revert set from git status and `git restore --staged --worktree` every dirty
+        tracked file in the checkout, destroying a peer session's unstaged edits.
+        """
+        # A committed file that a CONCURRENT session has since edited (unstaged),
+        # carrying a mapped test that FAILS — the exact 2026-09-12 shape: the peer's
+        # work-in-progress pulls its own test into the derived scope, that test
+        # fails, and the revert then deletes the edits it just judged.
+        peer = self.scripts_dir / "peer_wip.py"
+        peer.write_text("PEER = 'committed'\n")
+        _write_failing_test(self.scripts_dir, "test_peer_wip.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        peer_wip = "PEER = 'uncommitted work from another session'\n"
+        peer.write_text(peer_wip)
+
+        # --scope auto is the path that used to derive the change set from git.
         r = _run([
             "--workdir", str(self.workdir),
-            "--scope", "full",
+            "--scope", "auto",
             "--auto-revert",
             "--json",
         ])
-        # Should exit 1 (fail) but NOT crash; reverted stays False (no files to revert)
-        self.assertEqual(r.returncode, 1)
-        payload = json.loads(r.stdout)
-        self.assertEqual(payload["verdict"], "fail")
+        payload = _payload(r.stdout)
+        self.assertNotEqual(r.returncode, 0,
+                            msg="an unsafe --auto-revert invocation must not exit 0")
+        self.assertEqual(r.returncode, 2, msg=f"expected usage error exit 2: {r.stderr}")
+        self.assertEqual(payload["verdict"], "error", msg=payload)
+        self.assertEqual(payload["error_reason"], "auto_revert_requires_changed_files")
         self.assertFalse(payload["reverted"],
                          msg="reverted must be False when no --changed-files given")
+        self.assertEqual(payload["reverted_blobs"], [])
+        # The gate ran NOTHING and touched NOTHING.
+        self.assertEqual(payload["ran"], [])
+        self.assertEqual(peer.read_text(), peer_wip,
+                         msg="a dirty file this run never listed must be untouched")
+
+    def test_auto_revert_prints_recoverable_blob(self) -> None:
+        """(b) A reverted file's PRE-REVERT bytes are recoverable byte-identical
+        from the printed blob sha."""
+        impl = self.scripts_dir / "mymod.py"
+        impl.write_text("ORIGINAL = True\n")
+        _write_failing_test(self.scripts_dir, "test_mymod.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+
+        # Snapshot BEFORE the edit → impl is clean, so it is absent from the baseline.
+        baseline = self.workdir / "baseline.json"
+        snap = _run(["snapshot", "--workdir", str(self.workdir),
+                     "--out", str(baseline), "--json"])
+        self.assertEqual(snap.returncode, 0, msg=snap.stderr)
+
+        pre_revert = "ORIGINAL = False  # this run's broken self-mod\n"
+        impl.write_text(pre_revert)
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/mymod.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertTrue(payload["reverted"], msg=payload)
+        # The file went back to HEAD (it was clean at snapshot time).
+        self.assertIn("ORIGINAL = True", impl.read_text())
+
+        # ...and the destroyed content is addressable.
+        blobs = {e["path"]: e for e in payload["reverted_blobs"]}
+        self.assertIn("scripts/mymod.py", blobs, msg=payload["reverted_blobs"])
+        sha = blobs["scripts/mymod.py"]["blob"]
+        self.assertTrue(sha, msg="a reverted file must carry a blob sha")
+        self.assertIn(f"reverted scripts/mymod.py -> blob {sha}", r.stdout,
+                      msg="the path -> blob sha line must be on stdout")
+        # Execute the emitted command rather than string-matching it: the
+        # command IS the safety property, so a shell-broken one (unquoted path,
+        # wrong cat-file form) must fail the test, not satisfy an assertEqual.
+        subprocess.run(
+            blobs["scripts/mymod.py"]["recover"],
+            shell=True, cwd=str(self.workdir), check=True, capture_output=True,
+        )
+        self.assertEqual(impl.read_text(), pre_revert,
+                         msg="the emitted recover command must restore the exact bytes")
+        # The backup is anchored under a ref, so `git gc --prune` cannot reclaim it.
+        ref = blobs["scripts/mymod.py"].get("ref")
+        self.assertTrue(ref, msg=f"backup blob must be anchored: {blobs}")
+        resolved = subprocess.run(
+            ["git", "-C", str(self.workdir), "rev-parse", ref],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(resolved, sha)
+
+    def test_pre_existing_dirt_restores_to_baseline_not_head(self) -> None:
+        """(c) A file dirty BEFORE the run, listed in --changed-files with a
+        baseline, is restored to the baseline content, not to HEAD."""
+        impl = self.scripts_dir / "shared.py"
+        impl.write_text("VALUE = 'head'\n")
+        _write_failing_test(self.scripts_dir, "test_shared.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+
+        # Pre-existing dirt (another session's unstaged edit), THEN the snapshot.
+        pre_run = "VALUE = 'peer work in progress'\n"
+        impl.write_text(pre_run)
+        baseline = self.workdir / "baseline.json"
+        snap = _run(["snapshot", "--workdir", str(self.workdir),
+                     "--out", str(baseline), "--json"])
+        self.assertEqual(snap.returncode, 0, msg=snap.stderr)
+        self.assertIn("scripts/shared.py", _payload(snap.stdout)["files"])
+
+        # This run then edits the same file and the suite fails.
+        impl.write_text("VALUE = 'this run, broken'\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertTrue(payload["reverted"], msg=payload)
+        self.assertEqual(impl.read_text(), pre_run,
+                         msg="pre-existing dirt must be restored to baseline, not HEAD")
+        self.assertNotIn("VALUE = 'head'", impl.read_text())
+        self.assertEqual(payload["baseline_used"], str(baseline))
+
+    def test_unlisted_dirty_file_never_touched_on_failure(self) -> None:
+        """(d) A dirty file NOT in --changed-files is untouched even when the
+        suite fails and the listed file is reverted."""
+        mine = self.scripts_dir / "mine.py"
+        mine.write_text("MINE = 'head'\n")
+        theirs = self.scripts_dir / "theirs.py"
+        theirs.write_text("THEIRS = 'head'\n")
+        _write_failing_test(self.scripts_dir, "test_mine.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+
+        mine.write_text("MINE = 'broken by this run'\n")
+        peer_wip = "THEIRS = 'uncommitted peer work'\n"
+        theirs.write_text(peer_wip)
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/mine.py",
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertTrue(payload["reverted"], msg=payload)
+        self.assertIn("MINE = 'head'", mine.read_text())
+        self.assertEqual(theirs.read_text(), peer_wip,
+                         msg="an unlisted dirty file must never be reverted")
+        touched = {e["path"] for e in payload["reverted_blobs"]}
+        self.assertNotIn("scripts/theirs.py", touched, msg=payload["reverted_blobs"])
+
+    def _commit_impl_and_failing_test(self, name: str = "shared.py") -> Path:
+        impl = self.scripts_dir / name
+        impl.write_text("VALUE = 'head'\n")
+        _write_failing_test(self.scripts_dir, f"test_{name}")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        return impl
+
+    def test_unusable_baseline_refuses_rather_than_reverting_to_head(self) -> None:
+        """A --baseline that was REQUESTED but cannot be loaded must refuse.
+
+        Degrading silently to the no-baseline path is strictly worse than never
+        passing the flag: the caller believes attribution is on, and the file
+        gets reverted to HEAD anyway — exactly the loss the flag prevents.
+        """
+        impl = self._commit_impl_and_failing_test()
+        pre_run = "VALUE = 'peer work in progress'\n"
+        impl.write_text(pre_run)
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(self.workdir / "does-not-exist.json"),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertEqual(payload["reverted_blobs"], [])
+        self.assertEqual(impl.read_text(), pre_run,
+                         msg="an unusable baseline must not fall back to a HEAD revert")
+        joined = "\n".join(payload["errors"])
+        self.assertIn("--baseline unreadable", joined, msg=joined)
+        self.assertIn("refusing to revert", joined, msg=joined)
+
+    def test_stale_baseline_is_refused(self) -> None:
+        """A baseline recorded against a different HEAD would restore bytes that
+        predate the intervening commits. Refuse it."""
+        impl = self._commit_impl_and_failing_test()
+        impl.write_text("VALUE = 'dirty at snapshot'\n")
+        baseline = self.workdir / "baseline.json"
+        _run(["snapshot", "--workdir", str(self.workdir), "--out", str(baseline), "--json"])
+
+        # HEAD moves after the snapshot.
+        (self.scripts_dir / "unrelated.py").write_text("X = 1\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "scripts/unrelated.py"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "move HEAD"],
+                       check=True, capture_output=True)
+
+        current = "VALUE = 'this run'\n"
+        impl.write_text(current)
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertEqual(impl.read_text(), current)
+        self.assertIn("--baseline stale", "\n".join(payload["errors"]))
+
+    def test_non_blob_sha_in_baseline_does_not_write_garbage(self) -> None:
+        """`cat-file -p` pretty-prints a commit or tree and would write that
+        metadata over the file. The typed `cat-file blob` form must reject it."""
+        impl = self._commit_impl_and_failing_test()
+        pre_run = "VALUE = 'peer work'\n"
+        impl.write_text(pre_run)
+        head = subprocess.run(
+            ["git", "-C", str(self.workdir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        baseline = self.workdir / "baseline.json"
+        # A hand-edited/foreign baseline pointing at a COMMIT, not a blob.
+        baseline.write_text(json.dumps({
+            "schema_version": 1, "head": head, "files": {
+                "scripts/shared.py": {"blob": head, "deleted": False}}}))
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(impl.read_text(), pre_run,
+                         msg="a non-blob baseline sha must never be written to the file")
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertIn("baseline restore failed", "\n".join(payload["errors"]))
+
+    def test_baseline_deletion_is_not_resurrected(self) -> None:
+        """A file DELETED before the run must stay deleted, not come back from HEAD."""
+        impl = self._commit_impl_and_failing_test()
+        impl.unlink()
+        baseline = self.workdir / "baseline.json"
+        snap = _run(["snapshot", "--workdir", str(self.workdir),
+                     "--out", str(baseline), "--json"])
+        recorded = _payload(snap.stdout)["files"]["scripts/shared.py"]
+        self.assertTrue(recorded["deleted"], msg=recorded)
+
+        # This run recreates it (the change under test), then the suite fails.
+        impl.write_text("VALUE = 'recreated by this run'\n")
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertTrue(payload["reverted"], msg=payload)
+        self.assertFalse(impl.exists(),
+                         msg="a pre-run deletion must be re-applied, not undone")
+
+    def test_recover_command_round_trips_a_path_with_a_space(self) -> None:
+        """The emitted recovery command must WORK for a path containing a space.
+
+        Unquoted, `git cat-file blob <sha> > scripts/with space.py` redirects to
+        `scripts/with` and passes `space.py` as an argument, so the operator's
+        recovery silently writes the wrong file and the content stays lost.
+        Driving _revert_files directly keeps the fixture off pytest's collector,
+        which cannot import a test module whose filename contains a space.
+        """
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_quoting", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        spaced = self.scripts_dir / "with space.py"
+        spaced.write_text("V = 'head'\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        pre_revert = "V = 'this run, about to be reverted'\n"
+        spaced.write_text(pre_revert)
+
+        errors: list[str] = []
+        blobs: list[dict] = []
+        self.assertTrue(mod._revert_files(
+            self.workdir, ["scripts/with space.py"], errors, reverted_blobs=blobs,
+        ), msg=errors)
+        self.assertEqual(spaced.read_text(), "V = 'head'\n")
+
+        entry = next(e for e in blobs if e["path"] == "scripts/with space.py")
+        subprocess.run(entry["recover"], shell=True, cwd=str(self.workdir),
+                       check=True, capture_output=True)
+        self.assertEqual(spaced.read_text(), pre_revert,
+                         msg=f"recover command did not round-trip: {entry['recover']!r}")
+
+    def test_backup_failure_abandons_the_whole_revert(self) -> None:
+        """'A revert that cannot write the blob does not proceed' — including for
+        the files whose backup DID succeed."""
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_backupfail", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        a = self.scripts_dir / "a.py"
+        b = self.scripts_dir / "b.py"
+        a.write_text("A = 'head'\n")
+        b.write_text("B = 'head'\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        a_dirty, b_dirty = "A = 'edited'\n", "B = 'edited'\n"
+        a.write_text(a_dirty)
+        b.write_text(b_dirty)
+
+        calls: list[str] = []
+        real = mod._hash_object
+
+        def flaky(workdir, rel):
+            calls.append(rel)
+            if rel == "scripts/b.py":
+                return None, f"blob backup failed for {rel}: planted"
+            return real(workdir, rel)
+
+        mod._hash_object = flaky
+        errors: list[str] = []
+        blobs: list[dict] = []
+        reverted = mod._revert_files(
+            self.workdir, ["scripts/a.py", "scripts/b.py"], errors, reverted_blobs=blobs,
+        )
+        self.assertFalse(reverted, msg=errors)
+        self.assertEqual(blobs, [], msg="no blob is reported when the revert is abandoned")
+        self.assertEqual(a.read_text(), a_dirty,
+                         msg="a file whose backup SUCCEEDED must still not be reverted")
+        self.assertEqual(b.read_text(), b_dirty)
+        self.assertIn("revert ABANDONED", "\n".join(errors))
+
+    def test_snapshot_records_quoted_and_spaced_paths(self) -> None:
+        """snapshot must record a dirty file whose path git would QUOTE.
+
+        `git diff --name-only` escapes non-ASCII paths as "caf\\303\\251.py", so a
+        newline-split reader silently drops them from the baseline — and a file
+        missing from the baseline is treated as clean and reverted to HEAD.
+        """
+        weird = self.scripts_dir / "café.py"
+        spaced = self.scripts_dir / "with space.py"
+        weird.write_text("A = 1\n")
+        spaced.write_text("B = 1\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        weird.write_text("A = 2  # pre-run dirt\n")
+        spaced.write_text("B = 2  # pre-run dirt\n")
+
+        snap = _run(["snapshot", "--workdir", str(self.workdir), "--json"])
+        self.assertEqual(snap.returncode, 0, msg=snap.stderr)
+        recorded = _payload(snap.stdout)["files"]
+        self.assertIn("scripts/café.py", recorded, msg=sorted(recorded))
+        self.assertIn("scripts/with space.py", recorded, msg=sorted(recorded))
+
+    def test_staged_dirt_without_baseline_is_refused(self) -> None:
+        """Without a --baseline the gate cannot attribute STAGED dirt to this run,
+        so it refuses to revert that file and says so."""
+        impl = self.scripts_dir / "staged.py"
+        impl.write_text("VALUE = 'head'\n")
+        _write_failing_test(self.scripts_dir, "test_staged.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+
+        staged_content = "VALUE = 'staged by someone'\n"
+        impl.write_text(staged_content)
+        subprocess.run(["git", "-C", str(self.workdir), "add", "scripts/staged.py"],
+                       check=True, capture_output=True)
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/staged.py",
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertEqual(impl.read_text(), staged_content)
+        joined = "\n".join(payload["errors"])
+        self.assertIn("refusing to revert scripts/staged.py", joined, msg=joined)
+        self.assertIn("no --baseline recorded", joined, msg=joined)
 
 
 class TestScopeChanged(unittest.TestCase):
@@ -244,7 +672,7 @@ class TestScopeChanged(unittest.TestCase):
             "--changed-files", str(impl),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         # Only test_impl.py runs → passes; test_other.py is NOT run
         self.assertEqual(payload["verdict"], "pass",
                          msg="Only test_impl.py should run; test_other.py must be excluded")
@@ -267,7 +695,7 @@ class TestScopeChanged(unittest.TestCase):
             "--changed-files", str(impl),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests")
         self.assertEqual(r.returncode, 3,
                          msg="no_tests must be non-green (exit 3), never exit 0")
@@ -291,7 +719,7 @@ class TestScopeChanged(unittest.TestCase):
             "--changed-files", str(doc),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests", msg=f"stderr={r.stderr!r}")
         self.assertEqual(r.returncode, 3, msg=f"stderr={r.stderr!r}")
         self.assertEqual(payload["ran"], [])
@@ -322,7 +750,7 @@ class TestScopeChanged(unittest.TestCase):
             "--changed-files", str(source_test), str(mirror_test),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "pass", msg=f"stderr={r.stderr!r}")
         self.assertEqual(
             [Path(p).resolve() for p in payload["ran"]],
@@ -343,7 +771,7 @@ class TestScopeChanged(unittest.TestCase):
             "--changed-files", str(mirror_test),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests", msg=f"stderr={r.stderr!r}")
         self.assertEqual(payload["ran"], [])
 
@@ -401,7 +829,7 @@ class TestNoPytest(unittest.TestCase):
 
     def test_no_scripts_dir_gives_no_tests(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests")
         self.assertEqual(r.returncode, 3,
                          msg=f"no_tests must be non-green (exit 3); stderr: {r.stderr}")
@@ -437,7 +865,7 @@ class TestScopeAuto(unittest.TestCase):
             "--changed-files", str(impl),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["scope"], "auto")
         self.assertEqual(payload["effective_scope"], "changed")
 
@@ -454,7 +882,7 @@ class TestScopeAuto(unittest.TestCase):
             ["--workdir", str(self.workdir), "--scope", "auto", "--json"]
             + ["--changed-files"] + changed
         )
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["scope"], "auto")
         self.assertEqual(payload["effective_scope"], "broad")
 
@@ -596,7 +1024,7 @@ class TestNoMetaHalt(unittest.TestCase):
             "--changed-files", "scripts/self_mod_verify.py",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertNotEqual(payload["verdict"], "needs_human",
                             msg=f"Gate file must not trigger needs_human: {payload}")
         self.assertIn(payload["verdict"], ("pass", "no_tests"),
@@ -616,7 +1044,7 @@ class TestNoMetaHalt(unittest.TestCase):
             "--changed-files", str(test_file),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertNotEqual(payload["verdict"], "needs_human",
                             msg=f"Test file must not trigger needs_human: {payload}")
         # test_something.py is included directly (it IS a test file), runs and passes
@@ -636,7 +1064,7 @@ class TestNoMetaHalt(unittest.TestCase):
             "--changed-files", "scripts/self_mod_verify.py",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertNotEqual(payload["verdict"], "needs_human",
                             msg=f"Gate file with failing tests must give fail, not needs_human: {payload}")
         self.assertEqual(payload["verdict"], "fail",
@@ -647,7 +1075,7 @@ class TestNoMetaHalt(unittest.TestCase):
         """The meta_modification and meta_files keys are gone from the JSON output."""
         _write_passing_test(self.scripts_dir)
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertNotIn("meta_modification", payload)
         self.assertNotIn("meta_files", payload)
 
@@ -673,7 +1101,7 @@ class TestJsonStdoutPurity(unittest.TestCase):
     def test_stdout_is_valid_json(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
         try:
-            payload = json.loads(r.stdout)
+            payload = _payload(r.stdout)
         except json.JSONDecodeError as exc:
             self.fail(f"stdout is not valid JSON: {exc}\nstdout={r.stdout!r}")
         self.assertIsInstance(payload, dict)
@@ -705,7 +1133,7 @@ class TestJsonStdoutPurity(unittest.TestCase):
             "--json",
         ])
         try:
-            payload = json.loads(r.stdout)
+            payload = _payload(r.stdout)
         except json.JSONDecodeError as exc:
             self.fail(f"stdout not valid JSON: {exc}\nstdout={r.stdout!r}")
         self.assertIn(payload["verdict"], ("pass", "no_tests"))
@@ -796,7 +1224,7 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
             "--json",
         ])
         # Should not error due to unrecognised argument
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertIn("verdict", payload)
 
 
@@ -922,7 +1350,7 @@ class TestVerdictError(unittest.TestCase):
         # Exit code 2 = error (not 0=pass, not 1=fail)
         self.assertEqual(r.returncode, 2,
                          msg=f"Expected exit 2 on collection error; stderr: {r.stderr}")
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "error",
                          msg=f"Collection failure must be verdict=error; got {payload['verdict']}")
         self.assertIsNotNone(payload.get("error_reason"),
@@ -935,7 +1363,7 @@ class TestVerdictError(unittest.TestCase):
         """The human summary on stderr must include error_reason when present."""
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
         # Only relevant if we actually get verdict=error
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         if payload["verdict"] == "error":
             self.assertIn("error_reason", r.stderr,
                           msg=f"stderr summary must include error_reason; stderr={r.stderr!r}")
@@ -944,11 +1372,11 @@ class TestVerdictError(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Tests: git-derived change set + no_changes verdict
 # ---------------------------------------------------------------------------
-# The documented gate invocation is `--scope auto --auto-revert` with NO
-# --changed-files. Historically that resolved to an empty test set → a green
-# no_tests that gated nothing. These cover the fix: derive the change set from
-# git (tracked diff + untracked new files), and emit an explicit non-green
-# no_changes verdict when git shows no changes at all.
+# A read-only `--scope auto` run with NO --changed-files historically resolved to
+# an empty test set → a green no_tests that gated nothing. These cover the fix:
+# derive the TEST SCOPE from git (tracked diff + untracked new files), and emit an
+# explicit non-green no_changes verdict when git shows no changes at all. The
+# derived set never feeds a revert — see TestAutoRevert.
 
 class TestGitDerivedChangeSet(unittest.TestCase):
     def setUp(self) -> None:
@@ -983,7 +1411,7 @@ class TestGitDerivedChangeSet(unittest.TestCase):
             "--changed-files", str(impl),
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "pass",
                          msg=f"test_impl.py should run and pass: {payload}")
         self.assertFalse(payload["derived_from_git"],
@@ -1006,7 +1434,7 @@ class TestGitDerivedChangeSet(unittest.TestCase):
             "--scope", "auto",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertTrue(payload["derived_from_git"],
                         msg=f"gate must auto-derive the change set from git: {payload}")
         self.assertEqual(payload["verdict"], "pass",
@@ -1032,7 +1460,7 @@ class TestGitDerivedChangeSet(unittest.TestCase):
             "--scope", "auto",
             "--json",
         ], cwd=str(self.scripts_dir))
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertTrue(payload["derived_from_git"],
                         msg=f"untracked new files must be derived: {payload}")
         ran_names = [Path(f).name for f in payload["ran"]]
@@ -1053,10 +1481,9 @@ class TestGitDerivedChangeSet(unittest.TestCase):
         r = _run([
             "--workdir", str(self.workdir),
             "--scope", "auto",
-            "--auto-revert",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "no_changes",
                          msg=f"clean tree must yield no_changes, not pass/no_tests: {payload}")
         self.assertEqual(r.returncode, 3,
@@ -1073,7 +1500,7 @@ class TestGitDerivedChangeSet(unittest.TestCase):
             "--scope", "changed",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertNotEqual(payload["verdict"], "pass")
         self.assertEqual(payload["verdict"], "no_changes")
 
@@ -1087,7 +1514,7 @@ class TestGitDerivedChangeSet(unittest.TestCase):
             "--scope", "full",
             "--json",
         ])
-        payload = json.loads(r.stdout)
+        payload = _payload(r.stdout)
         self.assertEqual(payload["verdict"], "pass",
                          msg=f"full scope must run the suite, not no_changes: {payload}")
         self.assertFalse(payload["derived_from_git"])
@@ -1098,10 +1525,10 @@ class TestGitDerivedChangeSet(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestRevertPartitioning(unittest.TestCase):
-    """A failing derived-set revert must restore the TRACKED file, report the
-    UNTRACKED file (never delete it), and populate errors[]. Regression: the old
-    code handed the mixed list to one `git restore`, which exits 1 on any
-    untracked path having restored NOTHING — a silent no-op revert."""
+    """A revert restores only the TRACKED files the caller explicitly listed,
+    reports UNTRACKED ones (never deletes them), and populates errors[].
+    Regression: the old code handed a mixed list to one `git restore`, which
+    exits 1 on any untracked path having restored NOTHING — a silent no-op."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -1134,12 +1561,13 @@ class TestRevertPartitioning(unittest.TestCase):
         r = _run([
             "--workdir", str(self.workdir),
             "--scope", "auto",
+            "--changed-files", "scripts/impl.py", "scripts/extra.py",
             "--auto-revert",
             "--json",
         ])
-        payload = json.loads(r.stdout)
-        # Change set derived from git spans BOTH files; test_impl.py fails.
-        self.assertTrue(payload["derived_from_git"], msg=payload)
+        payload = _payload(r.stdout)
+        # Explicit list → never derived from git.
+        self.assertFalse(payload["derived_from_git"], msg=payload)
         self.assertEqual(payload["verdict"], "fail", msg=payload)
         self.assertEqual(r.returncode, 1, msg=f"stderr={r.stderr!r}")
 
@@ -1154,13 +1582,41 @@ class TestRevertPartitioning(unittest.TestCase):
         self.assertTrue(extra.exists(),
                         msg="untracked file must never be deleted by revert")
 
-        # ...and errors[] is non-empty, reporting the untracked file explicitly
-        # plus the derived-set breadth warning.
+        # ...and errors[] is non-empty, reporting the untracked file explicitly.
         self.assertTrue(payload["errors"], "errors[] must be non-empty")
         joined = "\n".join(payload["errors"])
         self.assertIn("untracked, not reverted", joined, msg=joined)
         self.assertIn("extra.py", joined, msg=joined)
-        self.assertIn("breadth warning", joined, msg=joined)
+
+    def test_derived_change_set_is_refused_at_the_revert(self) -> None:
+        """Defence in depth: even if a derived change set reached the revert, it
+        is refused rather than sweeping every dirty file in the checkout."""
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_derived", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("VALUE = 1\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        peer_wip = "VALUE = 2  # peer, uncommitted\n"
+        impl.write_text(peer_wip)
+
+        errors: list[str] = []
+        blobs: list[dict] = []
+        reverted = mod._revert_files(
+            self.workdir, ["scripts/impl.py"], errors,
+            derived_from_git=True, reverted_blobs=blobs,
+        )
+        self.assertFalse(reverted, msg=errors)
+        self.assertEqual(blobs, [])
+        self.assertEqual(impl.read_text(), peer_wip,
+                         msg="a git-derived change set must never be reverted")
+        self.assertIn("refusing to revert", "\n".join(errors))
 
 
 # ---------------------------------------------------------------------------
