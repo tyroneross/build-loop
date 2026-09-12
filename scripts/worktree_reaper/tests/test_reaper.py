@@ -414,3 +414,29 @@ def test_degraded_inventory_keeps_the_packet_shape(tmp_path: Path) -> None:
     assert degraded["error"] == "boom"
     assert degraded["non_reproducible_ignored"] == []
     assert "characterization" in degraded
+
+
+def test_default_output_surfaces_the_caches_only_red_flag(tmp_path: Path) -> None:
+    """The strongest signal this tool produces must reach the surface a human
+    reads by default, not only --json."""
+    import io
+    import contextlib
+
+    from worktree_reaper import __main__ as reaper_cli
+
+    repo = _make_repo(tmp_path)
+    (repo / ".gitignore").write_text(".env\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore rules")
+    path, branch, run_id = _make_run_worktree(repo, "444444")
+    (path / ".env").write_text("API_KEY=synthetic\n")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        reaper_cli.main(["--workdir", str(repo)])
+
+    printed = err.getvalue()
+    assert str(path) in printed, "the candidate holding a .env must be named by default"
+    assert "caches-only characterization is unsupported" in printed
