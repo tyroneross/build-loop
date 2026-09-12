@@ -286,9 +286,12 @@ def check(
             )
             return envelope
         if require_learn:
-            # LAST match, not first: a run_id can own two rows (write_run_entry
-            # blind-appends when the existing row is already orchestrator-grade),
-            # and the later row is the run closing now. learn/runner.py's
+            # LAST match, not first. The cause is now historical: write_run_entry
+            # used to blind-append when the existing row was already
+            # orchestrator-grade, so a run_id could own two rows. It upserts as of
+            # 2026-09-12, but ledgers written before that still carry duplicates
+            # (repair with scripts/dedupe_run_ledger.py), and on a single row
+            # last-match and first-match are the same row. learn/runner.py's
             # _canonical_run() is the writer half of this contract — move one and
             # you must move the other, or Learn stamps a row this never reads.
             complete, reason = _learn_complete(workdir, matches[-1])

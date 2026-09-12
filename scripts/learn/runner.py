@@ -522,10 +522,14 @@ def _summary(receipt: dict[str, Any]) -> dict[str, Any]:
 def _canonical_run(runs: list[Any], run_id: str) -> dict[str, Any] | None:
     """The LAST ``runs[]`` record carrying ``run_id`` — the canonical one.
 
-    A run_id can appear more than once: ``write_run_entry`` replaces a thin
-    Stop-hook row in place but blind-appends when the existing row is already a
-    richer orchestrator record, so two Review-G writes under one session id
-    leave two rows. The later row is the run currently closing.
+    A run_id could appear more than once: ``write_run_entry`` used to replace a
+    thin Stop-hook row in place but blind-append when the existing row was
+    already a richer orchestrator record, so two Review-G writes under one
+    session id left two rows. It upserts on run_id as of 2026-09-12, so new
+    ledgers hold one row per run and last-match reads that row. Ledgers written
+    before then still carry duplicates until
+    ``scripts/dedupe_run_ledger.py --apply`` repairs them, and for those the
+    later row is the run that closed.
 
     ``run_close_lint.py`` grades ``matches[-1]``. This function is the writer
     side of that same contract — keep them in step. Reading from the front
