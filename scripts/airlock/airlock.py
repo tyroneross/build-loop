@@ -17,7 +17,7 @@ The envelope marker is plain text on purpose: every model reads it, no host
 mechanism required. Named per-surface, following agent-rally-point's
 convention of one marker per trust surface (see rally-cli backends.rs).
 """
-import json, os, sys, subprocess
+import json, os, re, sys, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rules
 
@@ -52,12 +52,57 @@ def _paragraphs(text):
         yield "\n".join(cur)
 
 
+IMPORT_RE = re.compile(r"^\s*@([^\s`]+)\s*$", re.M)
+
+
+def _resolve_imports(path, text, depth=0, seen=None):
+    """Follow CLAUDE.md `@path` imports, which load at launch just like the
+    file itself.
+
+    Anthropic documents `@AGENTS.md` as the recommended way to make Claude Code
+    read an existing AGENTS.md, so the payload is routinely one hop away from
+    the file being scanned and a direct read of CLAUDE.md sees nothing. Claude
+    Code resolves relative to the importing file and caps at four hops; both are
+    mirrored here. Import parsing skips code spans, so a backticked path is not
+    an import.
+    """
+    if seen is None:
+        seen = set()
+    if depth >= 4:
+        return []
+    out = []
+    base = os.path.dirname(os.path.abspath(path))
+    for m in IMPORT_RE.finditer(text):
+        target = os.path.normpath(os.path.join(base, os.path.expanduser(m.group(1))))
+        if target in seen or not os.path.isfile(target):
+            continue
+        seen.add(target)
+        try:
+            body = open(target, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        out.append((target, body))
+        out += _resolve_imports(target, body, depth + 1, seen)
+    return out
+
+
 def scan_file(path):
     try:
         text = open(path, encoding="utf-8", errors="replace").read()
     except OSError as e:
         return {"path": path, "error": str(e), "verdict": "unreadable"}
     worst, findings = "none", []
+    imported = _resolve_imports(path, text)
+    for src, body in imported:
+        for para in _paragraphs(body):
+            v = rules.classify(para)
+            if v != "none":
+                findings.append({"tier": v, "via_import": src,
+                                 "excerpt": para.strip()[:200]})
+                if v == "covert":
+                    worst = "covert"
+                elif worst == "none":
+                    worst = "suspected"
     for para in _paragraphs(text):
         v = rules.classify(para)
         if v != "none":
