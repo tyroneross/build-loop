@@ -122,7 +122,7 @@ def _encode(state: Any) -> bytes:
     return (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def append_run_entry(state_path: Path, entry: dict, defaulted: set[str] | None = None) -> None:
+def append_run_entry(state_path: Path, entry: dict, defaulted: set[str] | None = None) -> str:
     with LockedFile(state_path):
         state = read_json(state_path)
         if state is None:
@@ -161,9 +161,10 @@ def append_run_entry(state_path: Path, entry: dict, defaulted: set[str] | None =
                 for i in reversed(matches[1:]):
                     del runs[i]
                 atomic_write_bytes(state_path, _encode(state))
-                return
+                return "updated" if len(matches) == 1 else "deduplicated"
         runs.append(entry)
         atomic_write_bytes(state_path, _encode(state))
+        return "appended"
 
 
 def append_experiment_row(jsonl_path: Path, row: dict) -> None:

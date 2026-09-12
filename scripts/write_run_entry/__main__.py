@@ -384,8 +384,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"attribution may be dead (check the Stop cost_ledger_hook)")
 
     try:
-        append_run_entry(state_path, entry, defaulted)
-        log(f"appended run entry to {state_path} (run_id={run_id})")
+        # Report what actually happened. "appended" on an upsert is precisely the
+        # class of false claim this writer exists to stop.
+        action = append_run_entry(state_path, entry, defaulted)
+        log(f"{action} run entry in {state_path} (run_id={run_id})")
         # GAP-1, same contract as scripts/append_run.py: past the exit-3 gate,
         # a record that still carries no auditor verdict leaves a manifest
         # naming what is owed. The gate above only fires on scope=build + pass

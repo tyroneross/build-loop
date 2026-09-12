@@ -292,6 +292,23 @@ class WriteRunEntryTests(unittest.TestCase):
         row = json.loads(self.state.read_text())["runs"][0]
         self.assertEqual(row["filesTouched"], [])
 
+    def test_log_reports_the_action_it_actually_took(self) -> None:
+        """"appended" on an upsert is the class of false claim this writer
+        exists to stop."""
+        first = run(self._base_args(**{"--run-id": "run_log"}))
+        self.assertIn("appended run entry", first.stderr)
+        second = run(self._base_args(**{"--run-id": "run_log", "--goal": "corrected"}))
+        self.assertIn("updated run entry", second.stderr)
+        self.assertNotIn("appended run entry", second.stderr)
+
+    def test_log_reports_a_dedupe_distinctly(self) -> None:
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [
+            {"run_id": "run_dup2", "goal": "a"}, {"run_id": "run_dup2", "goal": "b"},
+        ]}))
+        result = run(self._base_args(**{"--run-id": "run_dup2", "--goal": "corrected"}))
+        self.assertIn("deduplicated run entry", result.stderr)
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))
