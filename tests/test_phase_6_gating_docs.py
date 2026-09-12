@@ -197,9 +197,12 @@ def test_helper_script_imports_and_exposes_scan() -> None:
 
     assert callable(getattr(ers, "scan", None)), "scan() not exposed"
     out = ers.scan(REPO_ROOT / "_does_not_exist")
-    assert out == {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}, (
-        "scan(missing-dir) must return empty envelope, not raise."
-    )
+    # The envelope is additive — the detector splices patterns[] and may gain
+    # further skip counters — so assert the contract, not the exact key set.
+    assert out["patterns"] == [], "scan(missing-dir) must return empty envelope, not raise."
+    assert out["scannedFiles"] == 0
+    for counter in ("dispositionedSkipped", "placeholderSkipped"):
+        assert out[counter] == 0, f"{counter} must be reported, not omitted"
 
 
 def test_detector_agent_documents_second_signal_source() -> None:

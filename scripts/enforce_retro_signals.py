@@ -24,6 +24,10 @@ and use a normalized form as the signature:
 Threshold: signature appears in >= 2 **distinct** run-id prefixes. (One
 run dropping the same candidate twice in `-01.md` + `-02.md` counts once.)
 
+Two classes of candidate never count toward that threshold: ones a human has
+already dispositioned (see ``_is_dispositioned``) and ones whose body is an
+unresolved template naming no gate (see ``_PLACEHOLDER_SIGNATURES``).
+
 CLI: ``python3 scripts/enforce_retro_signals.py --workdir <dir> --json``
 prints the envelope to stdout. Library: ``scan(workdir: Path) -> dict``.
 
@@ -54,6 +58,27 @@ _WHITESPACE = re.compile(r"\s+")
 
 _DISPOSED_BOX = re.compile(r"^\s*-\s*\[[xX]\]", re.M)
 _DISPOSED_FM = re.compile(r"^status:\s*(done|adopted|rejected|closed|superseded)\b", re.M | re.I)
+
+# Candidate bodies that name nothing. Matched against the NORMALIZED signature
+# (lowercased, whitespace-collapsed), so one pattern covers every spelling of
+# the same empty text.
+#
+# Before 2026-09-12 the producer (`scripts/retrospective/sections.py:
+# _enforce_signals`) fell back to the literal word "rule" when a judge decision
+# carried no `checkpoint_id`, writing `Enforce gate: rule (failed this run)`.
+# Two ross-labs-astro run-ids emitted that byte-identical text, hitting the
+# >=2-distinct-run threshold below and raising Phase 6 work order
+# learn-4290d6ae4098 against a candidate with no gate in it. The producer no
+# longer emits it; this filter stops the files ALREADY on disk from counting,
+# which no producer fix can do retroactively.
+_PLACEHOLDER_SIGNATURES = (
+    re.compile(r"^enforce gate: rule \(failed this run\)$"),
+)
+
+
+def _is_placeholder(signature: str) -> bool:
+    """Is this normalized signature an unresolved template, not a candidate?"""
+    return any(pattern.match(signature) for pattern in _PLACEHOLDER_SIGNATURES)
 
 
 def _is_dispositioned(body: str) -> bool:
@@ -126,6 +151,8 @@ def scan(workdir: Path) -> dict[str, Any]:
     Returns:
         {
           "scannedFiles": int,
+          "dispositionedSkipped": int,   # human already decided these
+          "placeholderSkipped": int,     # unresolved templates, no gate named
           "patterns": [
             {
               "type": "enforce_recurrence",
@@ -145,7 +172,12 @@ def scan(workdir: Path) -> dict[str, Any]:
         }
     """
     proposals_dir = workdir / PROPOSAL_SUBDIR
-    envelope: dict[str, Any] = {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}
+    envelope: dict[str, Any] = {
+        "scannedFiles": 0,
+        "dispositionedSkipped": 0,
+        "placeholderSkipped": 0,
+        "patterns": [],
+    }
     if not proposals_dir.is_dir():
         return envelope
 
@@ -153,6 +185,7 @@ def scan(workdir: Path) -> dict[str, Any]:
     buckets: dict[str, dict[str, Any]] = {}
     scanned = 0
     dispositioned = 0
+    placeholders = 0
     for p in sorted(proposals_dir.iterdir()):
         if not p.is_file() or p.suffix != ".md":
             continue
@@ -175,6 +208,11 @@ def scan(workdir: Path) -> dict[str, Any]:
         sig = _normalize(text)
         if not sig:
             continue
+        if _is_placeholder(sig):
+            # An unresolved template names no gate, so recurrence across runs
+            # measures the template, not a real signal.
+            placeholders += 1
+            continue
         bucket = buckets.setdefault(sig, {"run_ids": set(), "evidence": []})
         bucket["run_ids"].add(run_id)
         if len(bucket["evidence"]) < 5:
@@ -188,6 +226,7 @@ def scan(workdir: Path) -> dict[str, Any]:
 
     envelope["scannedFiles"] = scanned
     envelope["dispositionedSkipped"] = dispositioned
+    envelope["placeholderSkipped"] = placeholders
 
     for sig, bucket in buckets.items():
         run_count = len(bucket["run_ids"])

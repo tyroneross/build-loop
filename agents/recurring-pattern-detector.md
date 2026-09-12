@@ -71,12 +71,15 @@ _Source: post-push retrospective (<YYYY-MM-DD>)_
 - [ ] Reject — note reason below
 ```
 
-A pre-computed scan of this directory is available via `python3 scripts/enforce_retro_signals.py --workdir "$PWD" --json` — its envelope is the SAME shape you emit (`{"scannedFiles": N, "patterns": [...]}`) so you may splice its `patterns[]` directly into your output. When the helper is unavailable, read the directory directly:
+A pre-computed scan of this directory is available via `python3 scripts/enforce_retro_signals.py --workdir "$PWD" --json` — its envelope is a superset of the shape you emit (`{"scannedFiles": N, "dispositionedSkipped": N, "placeholderSkipped": N, "patterns": [...]}`) so you may splice its `patterns[]` directly into your output. When the helper is unavailable, read the directory directly:
 
 1. List files matching `<run-id>-<NN>.md` (the `<run-id>` prefix is everything before the trailing `-<digits>.md`; run-ids may contain hyphens).
 2. Extract the `## Candidate` body (between the heading and the next `##`).
-3. Normalize: lowercase + collapse whitespace + truncate to 120 chars → `signature`.
-4. Group by signature; count DISTINCT `<run-id>` prefixes per signature (a single run dropping the same candidate twice in `-01.md` + `-02.md` counts ONCE).
+3. Skip two classes of file before counting anything:
+   - **Already dispositioned** — a checked `- [x]` box in `## Disposition`, or frontmatter `status:` of `done|adopted|rejected|closed|superseded`. Counting these lets closed work outrank open work forever.
+   - **Unresolved template** — a candidate body that names nothing, e.g. the literal `Enforce gate: rule (failed this run)`. Its recurrence measures the template, not a signal: two ross-labs-astro run-ids emitted that exact text on 2026-09-12 and raised work order `learn-4290d6ae4098` on a candidate with no gate in it.
+4. Normalize: lowercase + collapse whitespace + truncate to 120 chars → `signature`.
+5. Group by signature; count DISTINCT `<run-id>` prefixes per signature (a single run dropping the same candidate twice in `-01.md` + `-02.md` counts ONCE).
 
 If `.build-loop/proposals/enforce-from-retro/` does not exist or is empty, signal source 2 contributes zero patterns. Silent skip is correct, do not error.
 

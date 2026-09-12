@@ -44,10 +44,15 @@ def workdir(tmp_path: Path) -> Path:
 def test_empty_dir_returns_zero_patterns(workdir: Path) -> None:
     """No proposals dir at all → envelope with scannedFiles=0, patterns=[]."""
     out = ers.scan(workdir)
-    # dispositionedSkipped is additive: the detector splices patterns[], so a
+    # The skip counters are additive: the detector splices patterns[], so a
     # superset envelope is safe, and a skipped-count that is never reported
-    # would be the same silent drop this key exists to prevent.
-    assert out == {"scannedFiles": 0, "dispositionedSkipped": 0, "patterns": []}
+    # would be the same silent drop these keys exist to prevent.
+    assert out == {
+        "scannedFiles": 0,
+        "dispositionedSkipped": 0,
+        "placeholderSkipped": 0,
+        "patterns": [],
+    }
 
 
 def test_one_run_only_does_not_cross_threshold(workdir: Path) -> None:
@@ -209,3 +214,54 @@ def test_proposed_status_is_not_terminal(tmp_path):
     for run in ("run-aaa", "run-bbb"):
         (d / f"{run}-01.md").write_text(_candidate("enforce gate: still open", status="proposed"))
     assert len(ers.scan(tmp_path)["patterns"]) == 1
+
+
+PLACEHOLDER_TEXT = "Enforce gate: rule (failed this run)"
+
+
+def test_placeholder_candidates_do_not_count_toward_recurrence(tmp_path):
+    """The defect this closes (ross-labs-astro, 2026-09-12).
+
+    Two run-ids — `session-20b35f7a-...` and `session-transcript-normalized` —
+    each wrote a candidate whose entire body was the unresolved template
+    `Enforce gate: rule (failed this run)`. Identical text across 2 distinct
+    run-ids is exactly this scanner's threshold, so Phase 6 Learn raised work
+    order learn-4290d6ae4098 against a candidate that names no gate.
+    """
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("session-20b35f7a-2916-4b0e-972e-f716ce85b273",
+                "session-transcript-normalized"):
+        _write_candidate(d, run, 1, PLACEHOLDER_TEXT)
+
+    out = ers.scan(tmp_path)
+    assert out["patterns"] == [], "an unresolved template still raised a pattern"
+    assert out["placeholderSkipped"] == 2
+    assert out["scannedFiles"] == 2, "skipped files must still be counted as scanned"
+
+
+def test_placeholder_filter_is_case_and_whitespace_insensitive(tmp_path):
+    """The filter matches the NORMALIZED signature, so spelling drift in the
+    template (casing, wrapped lines) cannot slip past it."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    _write_candidate(d, "run-aaa", 1, "ENFORCE GATE: RULE (FAILED THIS RUN)")
+    _write_candidate(d, "run-bbb", 1, "Enforce gate:   rule\n(failed this run)")
+
+    out = ers.scan(tmp_path)
+    assert out["patterns"] == []
+    assert out["placeholderSkipped"] == 2
+
+
+def test_named_gate_candidates_still_recur(tmp_path):
+    """Mutation check the other way: if this fails, the placeholder filter has
+    silenced real enforce-gate candidates, not only the empty template."""
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        _write_candidate(d, run, 1, "Enforce gate: Review-A (failed this run)")
+
+    out = ers.scan(tmp_path)
+    assert len(out["patterns"]) == 1, out
+    assert out["patterns"][0]["count"] == 2
+    assert out["placeholderSkipped"] == 0
