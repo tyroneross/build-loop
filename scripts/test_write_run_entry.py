@@ -309,6 +309,66 @@ class WriteRunEntryTests(unittest.TestCase):
         result = run(self._base_args(**{"--run-id": "run_dup2", "--goal": "corrected"}))
         self.assertIn("deduplicated run entry", result.stderr)
 
+    def test_files_touched_from_git_that_yields_nothing_is_not_a_supplied_set(self) -> None:
+        """--files-touched-from-git fails open to an empty list when preBuildSha
+        is absent or unresolvable, which a squash or rebase produces. Treating
+        that empty result as a supplied file set wiped the recorded set and the
+        verdict scoped to it - through the repo's own documented Review-G
+        remediation command, which passes this flag and no --judge-decisions-json."""
+        judges = self.workdir / "j.json"
+        judges.write_text(json.dumps([{"judge_id": "independent-auditor", "verdict": "nay"}]))
+        first = run(self._base_args(**{
+            "--run-id": "run_git", "--files-touched": "b.py",
+            "--judge-decisions-json": str(judges),
+        }))
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+
+        state = json.loads(self.state.read_text())
+        state["preBuildSha"] = "0" * 40  # the shape a squash or rebase leaves behind
+        self.state.write_text(json.dumps(state))
+
+        correction = subprocess.run(
+            [sys.executable, str(SCRIPT), "--workdir", str(self.workdir),
+             "--run-id", "run_git", "--goal", "corrected", "--outcome", "partial",
+             "--files-touched-from-git"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(correction.returncode, 0, msg=correction.stderr)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["filesTouched"], ["b.py"],
+                         "an unresolvable preBuildSha must not read as an empty file set")
+        self.assertEqual(row["judge_decisions"][0]["verdict"], "nay")
+
+    def test_files_touched_from_git_still_supplies_a_real_set(self) -> None:
+        """Precision: when git DOES produce files, they are a supplied value."""
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.workdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=self.workdir, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=self.workdir, check=True)
+        (self.workdir / "seed.txt").write_text("seed\n")
+        subprocess.run(["git", "add", "seed.txt"], cwd=self.workdir, check=True)
+        subprocess.run(["git", "commit", "-m", "seed"], cwd=self.workdir, check=True, capture_output=True)
+        base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.workdir, text=True).strip()
+        (self.workdir / "changed.py").write_text("x\n")
+        subprocess.run(["git", "add", "changed.py"], cwd=self.workdir, check=True)
+        subprocess.run(["git", "commit", "-m", "work"], cwd=self.workdir, check=True, capture_output=True)
+
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_git2", "--files-touched": "old.py"})).returncode, 0)
+        state = json.loads(self.state.read_text())
+        state["preBuildSha"] = base
+        self.state.write_text(json.dumps(state))
+
+        correction = subprocess.run(
+            [sys.executable, str(SCRIPT), "--workdir", str(self.workdir),
+             "--run-id", "run_git2", "--goal", "g", "--outcome", "pass",
+             "--files-touched-from-git"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(correction.returncode, 0, msg=correction.stderr)
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertIn("changed.py", row["filesTouched"])
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

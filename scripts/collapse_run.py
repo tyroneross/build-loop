@@ -2410,6 +2410,18 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
 
+    # This is the path that actually deletes, so the ignored set belongs on the
+    # surface a human reads, not only under --json. A removal takes the whole
+    # directory; counts alone cannot tell an operator what is in it.
+    for row in result.get("safety") or []:
+        inv = (row or {}).get("inventory") or {}
+        if inv.get("caches_only_claim_supported") is False:
+            print(
+                f"  ! {inv.get('path', row.get('branch'))}: "
+                f"{inv.get('characterization', 'contents unknown')}",
+                file=sys.stderr,
+            )
+
     if args.json_output:
         print(json.dumps(result, indent=2))
 

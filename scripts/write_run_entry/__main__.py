@@ -41,6 +41,7 @@ for _d in (str(_PKG_DIR), str(_SCRIPTS_DIR)):
         sys.path.insert(0, _d)
 
 from iohelpers import (  # type: ignore  # noqa: E402
+    OMISSION_SENSITIVE_FIELDS,
     CorruptStateError,
     append_experiment_rows,
     append_run_entry,
@@ -163,25 +164,30 @@ def _split_csv(s: str) -> list[str]:
 
 # CLI flag -> the runs[] field it fills. A flag left unsupplied yields an empty
 # default, which on a CORRECTION is indistinguishable from a deliberate wipe
-# unless the omission is recorded.
-_OMISSION_SENSITIVE_FIELDS = {
-    "phases_json": "phases",
-    "files_touched": "filesTouched",
-    "diagnostic_commands": "diagnosticCommands",
-    "manual_interventions_json": "manualInterventions",
-    "active_experimental_artifacts": "active_experimental_artifacts",
-}
+# unless the omission is recorded. Field names come from iohelpers so the two
+# halves of the contract cannot drift.
+_FLAG_TO_FIELD = dict(zip(
+    ("phases_json", "files_touched", "diagnostic_commands",
+     "manual_interventions_json", "active_experimental_artifacts"),
+    OMISSION_SENSITIVE_FIELDS,
+))
 
 
-def _defaulted_fields(args: argparse.Namespace) -> set[str]:
-    """Entry fields filled from an empty default rather than a supplied value."""
+def _defaulted_fields(args: argparse.Namespace, git_contributed: bool = False) -> set[str]:
+    """Entry fields filled from an empty default rather than a supplied value.
+
+    `git_contributed` is whether --files-touched-from-git actually produced
+    files. The flag being SET is not enough: that route fails open to an empty
+    list when preBuildSha is absent or unresolvable (a squash or rebase does
+    this), and treating the empty result as a supplied file set is what wiped
+    the recorded set and the auditor verdict scoped to it.
+    """
     defaulted = {
         field
-        for attr, field in _OMISSION_SENSITIVE_FIELDS.items()
+        for attr, field in _FLAG_TO_FIELD.items()
         if getattr(args, attr, None) is None
     }
-    # --files-touched-from-git supplies the file set by another route.
-    if getattr(args, "files_touched_from_git", False):
+    if git_contributed:
         defaulted.discard("filesTouched")
     return defaulted
 
@@ -239,18 +245,31 @@ def _load_optional_payloads(args: argparse.Namespace) -> dict:
     }
 
 
-def _resolve_files_touched(args: argparse.Namespace, state_path: Path, workdir: Path) -> list[str]:
-    """Combine --files-touched CSV with optional git-diff expansion."""
+def _resolve_files_touched(
+    args: argparse.Namespace, state_path: Path, workdir: Path
+) -> tuple[list[str], bool]:
+    """Combine --files-touched CSV with optional git-diff expansion.
+
+    Returns (files, git_contributed). The second element distinguishes "git
+    produced a file set" from "git produced nothing" — a distinction the flag
+    alone cannot make, and the one that decides whether an empty result is a
+    supplied value or an absent one.
+    """
     files_touched = _split_csv(args.files_touched or "")
     if not args.files_touched_from_git:
-        return files_touched
+        return files_touched, False
     state_existing = read_json(state_path) if state_path.exists() else {}
     pre_sha = state_existing.get("preBuildSha") if isinstance(state_existing, dict) else None
-    if pre_sha:
-        files_touched.extend(f for f in files_touched_from_git(workdir, pre_sha) if f not in files_touched)
-    else:
+    if not pre_sha:
         log("warn: --files-touched-from-git set but state.json has no preBuildSha; skipping git diff")
-    return files_touched
+        return files_touched, False
+    from_git = files_touched_from_git(workdir, pre_sha)
+    if not from_git:
+        log(f"warn: --files-touched-from-git produced no files from {pre_sha}..HEAD; "
+            "treating the file set as not supplied rather than as empty")
+        return files_touched, False
+    files_touched.extend(f for f in from_git if f not in files_touched)
+    return files_touched, True
 
 
 def _build_entry(
@@ -341,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"validation error: {e}")
         return 1
 
-    files_touched = _resolve_files_touched(args, state_path, workdir)
+    files_touched, git_contributed = _resolve_files_touched(args, state_path, workdir)
     active = _split_csv(args.active_experimental_artifacts or "")
     diagnostic_commands = [
         c for c in (args.diagnostic_commands or "").splitlines() if c.strip()
@@ -350,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     # set, phase map, or the auditor verdict scoped to them. argparse cannot
     # distinguish "not supplied" from "empty" once a default has been applied,
     # so the omission is recorded here, at the only place that still knows.
-    defaulted = _defaulted_fields(args)
+    defaulted = _defaulted_fields(args, git_contributed)
     run_id = args.run_id or compute_run_id(args.goal)
     date = iso_utc()
 

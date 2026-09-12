@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     # The strongest signal this tool produces belongs on the surface a human
     # actually reads. Under --json it was reaching only a parser.
-    for row in result.candidates:
+    for row in (*result.candidates, *result.skipped_unmerged):
         inv = row.get("inventory") or {}
         if inv.get("caches_only_claim_supported") is False:
             print(

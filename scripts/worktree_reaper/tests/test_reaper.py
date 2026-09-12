@@ -440,3 +440,28 @@ def test_default_output_surfaces_the_caches_only_red_flag(tmp_path: Path) -> Non
     printed = err.getvalue()
     assert str(path) in printed, "the candidate holding a .env must be named by default"
     assert "caches-only characterization is unsupported" in printed
+
+
+def test_default_output_flags_an_unmerged_skip_too(tmp_path: Path) -> None:
+    """Every list the reaper inventories surfaces its red flag by default, or
+    the inventory should not be computed for it."""
+    import io
+    import contextlib
+
+    from worktree_reaper import __main__ as reaper_cli
+
+    repo = _make_repo(tmp_path)
+    (repo / ".gitignore").write_text(".env\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore rules")
+    path, branch, run_id = _make_run_worktree(repo, "555555", unmerged=True)
+    (path / ".env").write_text("API_KEY=synthetic\n")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        reaper_cli.main(["--workdir", str(repo)])
+
+    printed = err.getvalue()
+    assert str(path) in printed, "an unmerged skip holding a .env must be named by default"

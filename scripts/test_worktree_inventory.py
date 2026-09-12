@@ -248,6 +248,11 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertEqual(result["ignored"], [], "precondition: git omits the directory entirely")
         self.assertTrue(result["status_warnings"])
         self.assertFalse(result["caches_only_claim_supported"])
+        # The sentence, not only the boolean. All three counts are zero here, so
+        # "holds nothing" is the most confident wrong claim the module could
+        # make - and it is the one the reaper prints beside a warning marker.
+        self.assertIn("could not read part of this worktree", result["characterization"])
+        self.assertNotIn("holds no tracked changes", result["characterization"])
 
     def test_scan_order_is_deterministic_under_budget_exhaustion(self) -> None:
         """An evidence packet an operator approves a deletion against must be

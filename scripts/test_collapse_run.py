@@ -540,3 +540,38 @@ class TestWorktreeSafetyInventory:
         assert safety["reason"] == "worktree is dirty"
         assert "tracked-edit.txt" in safety["inventory"]["untracked"]
         assert ".env" in safety["inventory"]["ignored"]
+
+
+class TestHumanSummarySurfacesContents:
+    """collapse_run is the path that actually deletes, so the ignored set
+    belongs on the surface a human reads, not only under --json. A removal takes
+    the whole directory; counts alone cannot support an approval."""
+
+    def test_default_summary_names_a_worktree_holding_an_ignored_secret(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".gitignore").write_text(".env\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-m", "ignore rules")
+        _make_branch(repo, "feat-contents", merge_to_main=True)
+        wt = _make_worktree(repo, "feat-contents")
+        (wt / ".env").write_text("API_KEY=synthetic\n")
+
+        _write_state(repo, {
+            "run_id": "run_contents",
+            "createdRefs": [
+                {"branch": "feat-contents", "path": str(wt), "review_hold": False}
+            ],
+        })
+
+        # Not --dry-run: the safety inspection (and therefore the inventory)
+        # runs on the mutating path, which is exactly where the operator needs
+        # to read what the deletion will take.
+        collapse_run.main([
+            "--workdir", str(repo), "--run-id", "latest", "--owner-released",
+        ])
+
+        printed = capsys.readouterr().err
+        assert str(wt) in printed, "the worktree holding a .env must be named by default"
+        assert "caches-only characterization is unsupported" in printed

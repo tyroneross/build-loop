@@ -36,6 +36,29 @@ from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E4
 _WRITER_OWNED_KEYS = ("source",)
 
 
+# The runs[] fields a CLI fills with an EMPTY default when its flag is not
+# supplied. Canonical here, next to the merge that acts on it — __main__ imports
+# it rather than keeping a second copy that can drift.
+OMISSION_SENSITIVE_FIELDS = (
+    "phases",
+    "filesTouched",
+    "diagnosticCommands",
+    "manualInterventions",
+    "active_experimental_artifacts",
+)
+
+
+def empty_collection_fields(row: dict) -> set[str]:
+    """Omission-sensitive fields that are falsy on a row.
+
+    For a HISTORICAL row there is no caller left to ask what was supplied, and
+    the pre-fix writer always wrote `filesTouched: []` and `phases: {}` on a
+    goal-only correction. An empty collection on such a row therefore carries no
+    information about that field and must not overwrite a recorded one.
+    """
+    return {f for f in OMISSION_SENSITIVE_FIELDS if not row.get(f)}
+
+
 def upsert_merge(existing: dict, entry: dict, defaulted: set[str] | None = None) -> dict:
     """Build the replacement row for an existing run_id.
 
@@ -91,7 +114,15 @@ def dedupe_runs(runs: list) -> tuple[list, list[str]]:
         if run_id in index_of:
             i = index_of[run_id]
             prior = out[i]
-            out[i] = upsert_merge(prior, row) if isinstance(prior, dict) else row
+            # Pass the later row's empty collections as defaulted. Without this
+            # the repair tool applies the PRE-FIX writer's own wipe: that writer
+            # always emitted filesTouched [] and phases {} on a goal-only
+            # correction, which is the duplicate shape this tool exists to heal.
+            out[i] = (
+                upsert_merge(prior, row, empty_collection_fields(row))
+                if isinstance(prior, dict)
+                else row
+            )
             if run_id not in duplicates:
                 duplicates.append(run_id)
             continue

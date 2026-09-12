@@ -60,6 +60,10 @@ Every run's final report carries this section, sourced from collapse_run.py's JS
 ## Branch hygiene
 created N · closed M · retained R: [<branch-name>, ...]
 · bundle-verified: yes|no · receipt: <path/status> · strict-success: yes|no
+· contents-checked: <worktree path> — <characterization>   (one line per worktree whose
+  safety[].inventory reports caches_only_claim_supported: false; omit when all are true)
 ```
+
+`contents-checked` is not optional decoration. A removal deletes the whole directory including gitignored files, so a worktree whose inventory refuses the caches-only claim must name what it holds before anyone approves the deletion — counts alone cannot support that approval. Fields: `safety[].inventory.characterization`, `.non_reproducible_ignored`, `.uninspected_ignored_directories`, `.caches_only_claim_supported` (produced by `scripts/worktree_inventory.py`).
 
 When collapse reports `retained` or `surfaced_unmerged` entries, surface them and require an explicit later disposition. When a run created zero refs (typical solo-on-main run), emit one line: `Branch hygiene: clean — no run-created branches/worktrees; on main.` Do not derive the run-wide `closeout_status` solely from branch cleanup; `runs[N].branch_closeout` and its receipt are the branch-hygiene projection.

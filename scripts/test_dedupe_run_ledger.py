@@ -77,6 +77,46 @@ class DedupeRunLedgerTests(unittest.TestCase):
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["judge_decisions"][0]["judge_id"], "independent-auditor")
 
+    def test_repair_does_not_apply_the_pre_fix_writers_own_wipe(self) -> None:
+        """The exact legacy duplicate shape this tool exists to heal. The pre-fix
+        writer always emitted `filesTouched: []` and `phases: {}` on a goal-only
+        correction, so the later row's empty collections carry no information -
+        and letting them win would delete the file set, the phase map, and the
+        auditor verdict scoped to them while repairing the duplicate."""
+        self._write([
+            {
+                "run_id": "r1", "goal": "original", "outcome": "pass",
+                "filesTouched": ["a.py", "b.py"],
+                "phases": {"assess": {"status": "pass"}},
+                "diagnosticCommands": ["pytest -q"],
+                "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "nay"}],
+            },
+            {
+                "run_id": "r1", "goal": "corrected", "outcome": "pass",
+                "filesTouched": [], "phases": {}, "diagnosticCommands": [],
+            },
+        ])
+        report = self._report("--apply")
+        self.assertEqual((report["rows_before"], report["rows_after"]), (2, 1))
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["goal"], "corrected", "the later row still wins on supplied fields")
+        self.assertEqual(row["filesTouched"], ["a.py", "b.py"])
+        self.assertEqual(row["phases"], {"assess": {"status": "pass"}})
+        self.assertEqual(row["diagnosticCommands"], ["pytest -q"])
+        self.assertEqual(row["judge_decisions"][0]["verdict"], "nay",
+                         "a blocking verdict must survive the repair")
+
+    def test_repair_still_takes_a_later_non_empty_collection(self) -> None:
+        """Precision: the guard protects EMPTY collections, not every later value."""
+        self._write([
+            {"run_id": "r1", "filesTouched": ["a.py"]},
+            {"run_id": "r1", "filesTouched": ["c.py", "d.py"]},
+        ])
+        self._report("--apply")
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["filesTouched"], ["c.py", "d.py"])
+
     def test_clean_ledger_is_a_no_op(self) -> None:
         self._write([{"run_id": "r1"}, {"run_id": "r2"}])
         before = self.state.read_text()

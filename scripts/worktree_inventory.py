@@ -316,6 +316,18 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
 def _characterize(result: dict[str, Any]) -> str:
     """One operator-readable sentence naming what removal would delete."""
     counts = result["counts"]
+    # Judged FIRST, before the empty-counts read. When git could not open a
+    # directory it omits the entry entirely, so all three counts are zero and
+    # the negative claim "holds nothing" is the most confident wrong sentence
+    # the module could emit — and it is the one the reaper prints next to a
+    # warning marker.
+    if result["status_warnings"]:
+        first = result["status_warnings"][0]
+        return (
+            f"git could not read part of this worktree ({first}) — its own listing "
+            f"is incomplete, so no characterization of the contents holds, "
+            f"including that it is empty"
+        )
     if not any(counts.values()):
         return "worktree holds no tracked changes, untracked files, or ignored files"
     parts = []
@@ -332,12 +344,6 @@ def _characterize(result: dict[str, Any]) -> str:
         return (
             f"{head}; {len(risky)} ignored entry(ies) are NOT reproducible tool "
             f"caches ({named}) — a caches-only characterization is unsupported"
-        )
-    if result["status_warnings"]:
-        first = result["status_warnings"][0]
-        return (
-            f"{head}; git could not read part of this worktree ({first}) — its own "
-            f"listing is incomplete, so no characterization of the contents holds"
         )
     uninspected = result["uninspected_ignored_directories"]
     if uninspected:
