@@ -68,7 +68,9 @@ def _inventory(path: Path) -> dict[str, Any]:
     try:
         return worktree_inventory.inventory(path)
     except Exception as exc:  # noqa: BLE001 — reporting must not raise
-        return {"ok": False, "error": str(exc), "path": str(path)}
+        # Full packet shape, so a reader cannot mistake "we could not look" for
+        # "we looked and it is clean".
+        return worktree_inventory.error_result(path, str(exc))
 
 
 def _git_available(workdir: Path) -> bool:

@@ -192,15 +192,35 @@ def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tu
     return valuable, not walk_errors
 
 
-def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
-    """Inventory one worktree: tracked changes, untracked files, ignored files.
+def error_result(path: str | Path, error: str) -> dict[str, Any]:
+    """A degraded inventory that keeps the packet's shape.
 
-    `matching=True` expands ignored directories into individual files. The
-    default collapses them (`node_modules/`), which keeps the operator packet
-    readable without hiding any top-level entry.
+    A caller whose inventory failed must still read `caches_only_claim_supported`
+    as False rather than KeyError or, worse, default it to True. "We could not
+    look" and "we looked and it is clean" must never be the same value.
     """
-    candidate = Path(path).resolve()
-    result: dict[str, Any] = {
+    result = _empty_result(Path(path))
+    result["error"] = error
+    return result
+
+
+# Why the inside-a-container check is PATTERN-based and not a full
+# classification: classify() reads every path segment, so a container's own name
+# launders its contents — `out/design-final.sketch` classifies build_output
+# because of the `out` segment, while the identical file at the worktree root
+# classifies unclassified and blocks the claim. Classifying relative to the
+# container instead removes the laundering but makes `build/main.js` and every
+# other ordinary generated file unclassified, which turns the claim False in any
+# repo that has a dist/ — a gate that is always red is a gate nobody reads.
+# Extension allowlists were rejected too: they trade one incomplete taxonomy for
+# a larger one. So the scan looks for the high-signal shapes it CAN name
+# (credentials, databases, patches, notes) and the packet states plainly that
+# this is what was checked, rather than certifying a completeness it does not
+# have. Anything stronger needs content inspection, not more name rules.
+
+
+def _empty_result(candidate: Path) -> dict[str, Any]:
+    return {
         "path": str(candidate),
         "ok": False,
         "error": None,
@@ -211,11 +231,24 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
         "counts": {"tracked_changes": 0, "untracked": 0, "ignored": 0},
         "non_reproducible_ignored": [],
         "uninspected_ignored_directories": [],
+        "pattern_checked_directories": [],
         "status_warnings": [],
         "caches_only_claim_supported": False,
         "characterization": "worktree could not be inventoried",
-        "expanded_ignored_directories": bool(matching),
+        "expanded_ignored_directories": False,
     }
+
+
+def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
+    """Inventory one worktree: tracked changes, untracked files, ignored files.
+
+    `matching=True` expands ignored directories into individual files. The
+    default collapses them (`node_modules/`), which keeps the operator packet
+    readable without hiding any top-level entry.
+    """
+    candidate = Path(path).resolve()
+    result = _empty_result(candidate)
+    result["expanded_ignored_directories"] = bool(matching)
     if not candidate.exists():
         result["error"] = "path does not exist"
         return result
@@ -252,19 +285,27 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
 
     # A collapsed directory classified as reproducible is a container judged by
     # its label. Look inside before letting its NAME clear it.
+    # Sorted, not set-iteration order: the budget is consumed in the order the
+    # classes are visited, so a set literal would let the per-process hash seed
+    # decide WHICH directories got inspected and therefore which files the packet
+    # names. An operator approving a deletion needs the same evidence every run.
     budget = [_SCAN_BUDGET]
     uninspected: list[str] = []
-    for name in _REPRODUCIBLE:
-        for entry in result["ignored_by_class"][name]:
+    pattern_checked: list[str] = []
+    for name in sorted(_REPRODUCIBLE):
+        for entry in sorted(result["ignored_by_class"][name]):
             if not entry.endswith("/"):
                 continue
             found, complete = _scan_collapsed_directory(candidate, entry, budget)
             risky.update(found)
-            if not complete:
+            if complete:
+                pattern_checked.append(entry)
+            else:
                 uninspected.append(entry)
 
     result["non_reproducible_ignored"] = sorted(risky)
     result["uninspected_ignored_directories"] = sorted(uninspected)
+    result["pattern_checked_directories"] = sorted(pattern_checked)
     result["caches_only_claim_supported"] = (
         not risky and not uninspected and not result["status_warnings"]
     )
@@ -307,7 +348,17 @@ def _characterize(result: dict[str, Any]) -> str:
             f"characterization is unsupported"
         )
     if counts["ignored"]:
-        return f"{head}; every ignored entry classifies as a reproducible cache, dependency, build output, or log"
+        tail = ("; every ignored entry classifies as a reproducible cache, "
+                "dependency, build output, or log")
+        checked = result["pattern_checked_directories"]
+        if checked:
+            named = ", ".join(checked[:5]) + (" ..." if len(checked) > 5 else "")
+            tail += (
+                f", and {len(checked)} collapsed directory(ies) ({named}) were "
+                f"searched for credentials, databases, and patches — their files "
+                f"were not individually classified"
+            )
+        return head + tail
     return head
 
 

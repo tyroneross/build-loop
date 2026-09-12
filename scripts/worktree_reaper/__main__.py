@@ -89,6 +89,16 @@ def main(argv: list[str] | None = None) -> int:
         f"errors={len(result.errors)}",
         file=sys.stderr,
     )
+    # The strongest signal this tool produces belongs on the surface a human
+    # actually reads. Under --json it was reaching only a parser.
+    for row in result.candidates:
+        inv = row.get("inventory") or {}
+        if inv.get("caches_only_claim_supported") is False:
+            print(
+                f"  ! {row.get('path')}: {inv.get('characterization', 'contents unknown')}",
+                file=sys.stderr,
+            )
+
     if args.json_output:
         print(json.dumps(result.to_dict(), indent=2))
 

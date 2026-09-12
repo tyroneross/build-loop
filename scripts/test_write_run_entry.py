@@ -249,6 +249,49 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertTrue(run_close_lint.is_orchestrator_grade(row),
                         "a Review-G close must not read as a floor record")
 
+    def test_correction_that_restates_only_goal_keeps_the_verdict(self) -> None:
+        """The shape every real Review-G correction takes. A correction that does
+        not restate --files-touched has widened nothing, so the run's file set,
+        phase map, and the auditor verdict scoped to them all survive. Before
+        this guard the empty default read as a scope change and deleted the
+        verdict - and push_hold.py treats an absent verdict as NO HOLD, so a
+        blocking `nay` would vanish silently."""
+        judges = self.workdir / "j.json"
+        judges.write_text(json.dumps([{"judge_id": "independent-auditor", "verdict": "nay"}]))
+        first = run(self._base_args(**{
+            "--run-id": "run_real",
+            "--files-touched": "a.py,b.py",
+            "--judge-decisions-json": str(judges),
+        }))
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+
+        correction = subprocess.run(
+            [sys.executable, str(SCRIPT), "--workdir", str(self.workdir),
+             "--run-id", "run_real", "--goal", "corrected", "--outcome", "partial"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(correction.returncode, 0, msg=correction.stderr)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["goal"], "corrected")
+        self.assertEqual(row["filesTouched"], ["a.py", "b.py"],
+                         "an unsupplied flag must not wipe the recorded file set")
+        self.assertEqual(row["judge_decisions"][0]["verdict"], "nay",
+                         "a blocking verdict must not vanish from a goal-only correction")
+        self.assertEqual(row["phases"]["assess"]["status"], "pass",
+                         "an unsupplied --phases-json must not wipe the phase map")
+
+    def test_explicitly_empty_file_set_still_clears_it(self) -> None:
+        """Precision: the guard protects OMISSION, not every empty value. A
+        caller that deliberately passes an empty file set still clears it."""
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_clear", "--files-touched": "a.py"})).returncode, 0)
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_clear", "--files-touched": ""})).returncode, 0)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["filesTouched"], [])
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

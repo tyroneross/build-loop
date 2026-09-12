@@ -249,6 +249,54 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertTrue(result["status_warnings"])
         self.assertFalse(result["caches_only_claim_supported"])
 
+    def test_scan_order_is_deterministic_under_budget_exhaustion(self) -> None:
+        """An evidence packet an operator approves a deletion against must be
+        reproducible. Set-iteration order let the per-process hash seed decide
+        which directories got inspected, so two runs on one unchanged worktree
+        could name different files."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\nlogs/\nnode_modules/\n.cache/\n")
+        for name in ("build", "logs", "node_modules", ".cache"):
+            (wt / name).mkdir()
+            for i in range(4):
+                (wt / name / f"f{i}.txt").write_text("x\n")
+
+        original = worktree_inventory._SCAN_BUDGET
+        try:
+            worktree_inventory._SCAN_BUDGET = 6
+            runs = [worktree_inventory.inventory(wt)["uninspected_ignored_directories"]
+                    for _ in range(3)]
+        finally:
+            worktree_inventory._SCAN_BUDGET = original
+
+        self.assertEqual(runs[0], runs[1])
+        self.assertEqual(runs[1], runs[2])
+        self.assertTrue(runs[0], "precondition: a 6-entry budget cannot cover 16 files")
+
+    def test_error_result_keeps_the_full_packet_shape(self) -> None:
+        degraded = worktree_inventory.error_result("/nowhere", "boom")
+        clean_keys = set(worktree_inventory.inventory(self._worktree()).keys())
+        self.assertEqual(set(degraded.keys()), clean_keys)
+        self.assertFalse(degraded["caches_only_claim_supported"])
+        self.assertEqual(degraded["error"], "boom")
+
+    def test_packet_states_what_it_checked_inside_a_collapsed_directory(self) -> None:
+        """The scan can name credentials, databases, and patches inside a
+        collapsed directory; it cannot classify every file there without either
+        laundering by container name or turning the claim red on every repo with
+        a dist/. The packet says which of those two it did rather than implying
+        completeness it does not have."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n")
+        (wt / "build").mkdir()
+        (wt / "build" / "main.js").write_text("compiled\n")
+
+        result = worktree_inventory.inventory(wt)
+        self.assertIn("build/", result["pattern_checked_directories"])
+        self.assertIn("searched for credentials, databases, and patches",
+                      result["characterization"])
+        self.assertIn("not individually classified", result["characterization"])
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()

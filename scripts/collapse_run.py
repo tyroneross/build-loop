@@ -634,7 +634,9 @@ def _worktree_inventory(candidate: Path) -> dict[str, Any]:
     try:
         return worktree_inventory.inventory(candidate)
     except Exception as exc:  # noqa: BLE001 — evidence gathering must not raise
-        return {"ok": False, "error": str(exc), "path": str(candidate)}
+        # Full packet shape, so a reader cannot mistake "we could not look" for
+        # "we looked and it is clean".
+        return worktree_inventory.error_result(candidate, str(exc))
 
 
 def inspect_worktree_safety(

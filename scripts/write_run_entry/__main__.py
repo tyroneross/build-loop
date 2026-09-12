@@ -79,8 +79,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "in judge_decisions[] (exit 3 if absent). Default 'none' = no gate."
         ),
     )
-    p.add_argument("--phases-json", default="{}", help="Per-phase status dict as JSON string")
-    p.add_argument("--files-touched", default="", help="Comma-separated list of files touched")
+    p.add_argument("--phases-json", default=None, help="Per-phase status dict as JSON string")
+    p.add_argument("--files-touched", default=None, help="Comma-separated list of files touched")
     p.add_argument(
         "--files-touched-from-git",
         action="store_true",
@@ -88,17 +88,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--diagnostic-commands",
-        default="",
+        default=None,
         help="Newline-separated commands run during build",
     )
     p.add_argument(
         "--manual-interventions-json",
-        default="[]",
+        default=None,
         help="JSON list of {phase, note} objects",
     )
     p.add_argument(
         "--active-experimental-artifacts",
-        default="",
+        default=None,
         help="Comma-separated experimental artifact names that triggered this run",
     )
     p.add_argument("--run-id", default=None, help="Override run_id (default: compute from goal + now)")
@@ -161,6 +161,31 @@ def _split_csv(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
+# CLI flag -> the runs[] field it fills. A flag left unsupplied yields an empty
+# default, which on a CORRECTION is indistinguishable from a deliberate wipe
+# unless the omission is recorded.
+_OMISSION_SENSITIVE_FIELDS = {
+    "phases_json": "phases",
+    "files_touched": "filesTouched",
+    "diagnostic_commands": "diagnosticCommands",
+    "manual_interventions_json": "manualInterventions",
+    "active_experimental_artifacts": "active_experimental_artifacts",
+}
+
+
+def _defaulted_fields(args: argparse.Namespace) -> set[str]:
+    """Entry fields filled from an empty default rather than a supplied value."""
+    defaulted = {
+        field
+        for attr, field in _OMISSION_SENSITIVE_FIELDS.items()
+        if getattr(args, attr, None) is None
+    }
+    # --files-touched-from-git supplies the file set by another route.
+    if getattr(args, "files_touched_from_git", False):
+        defaulted.discard("filesTouched")
+    return defaulted
+
+
 def files_touched_from_git(workdir: Path, pre_sha: str) -> list[str]:
     try:
         out = subprocess.check_output(
@@ -193,10 +218,14 @@ def _load_optional_payloads(args: argparse.Namespace) -> dict:
     security/judge/budget/models/harness objects). A dict keeps the growing set of
     optional payloads from turning the signature into an ever-widening tuple.
     """
-    phases = json.loads(args.phases_json)
+    phases = json.loads(args.phases_json) if args.phases_json is not None else {}
     if not isinstance(phases, dict):
         raise ValueError("--phases-json must decode to an object")
-    manual_interventions = json.loads(args.manual_interventions_json)
+    manual_interventions = (
+        json.loads(args.manual_interventions_json)
+        if args.manual_interventions_json is not None
+        else []
+    )
     if not isinstance(manual_interventions, list):
         raise ValueError("--manual-interventions-json must decode to a list")
     return {
@@ -212,7 +241,7 @@ def _load_optional_payloads(args: argparse.Namespace) -> dict:
 
 def _resolve_files_touched(args: argparse.Namespace, state_path: Path, workdir: Path) -> list[str]:
     """Combine --files-touched CSV with optional git-diff expansion."""
-    files_touched = _split_csv(args.files_touched)
+    files_touched = _split_csv(args.files_touched or "")
     if not args.files_touched_from_git:
         return files_touched
     state_existing = read_json(state_path) if state_path.exists() else {}
@@ -313,8 +342,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     files_touched = _resolve_files_touched(args, state_path, workdir)
-    active = _split_csv(args.active_experimental_artifacts)
-    diagnostic_commands = [c for c in args.diagnostic_commands.splitlines() if c.strip()]
+    active = _split_csv(args.active_experimental_artifacts or "")
+    diagnostic_commands = [
+        c for c in (args.diagnostic_commands or "").splitlines() if c.strip()
+    ]
+    # A correcting write that restates only --goal must not wipe the run's file
+    # set, phase map, or the auditor verdict scoped to them. argparse cannot
+    # distinguish "not supplied" from "empty" once a default has been applied,
+    # so the omission is recorded here, at the only place that still knows.
+    defaulted = _defaulted_fields(args)
     run_id = args.run_id or compute_run_id(args.goal)
     date = iso_utc()
 
@@ -348,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"attribution may be dead (check the Stop cost_ledger_hook)")
 
     try:
-        append_run_entry(state_path, entry)
+        append_run_entry(state_path, entry, defaulted)
         log(f"appended run entry to {state_path} (run_id={run_id})")
         # GAP-1, same contract as scripts/append_run.py: past the exit-3 gate,
         # a record that still carries no auditor verdict leaves a manifest

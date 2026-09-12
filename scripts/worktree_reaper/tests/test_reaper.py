@@ -392,3 +392,25 @@ def test_unmerged_skip_report_also_carries_the_inventory(tmp_path: Path) -> None
 
     assert result.candidates == []
     assert "debug.log" in result.skipped_unmerged[0]["inventory"]["ignored"]
+
+
+def test_degraded_inventory_keeps_the_packet_shape(tmp_path: Path) -> None:
+    """"We could not look" and "we looked and it is clean" must never be the
+    same value to a packet reader."""
+    from worktree_reaper import reaper as reaper_mod
+
+    # Patch the module object the reaper actually bound: `scripts.worktree_inventory`
+    # and top-level `worktree_inventory` are two distinct objects under the
+    # dual-import pattern, and patching the wrong one silently no-ops.
+    module = reaper_mod.worktree_inventory
+    original = module.inventory
+    module.inventory = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        degraded = reaper_mod._inventory(tmp_path)
+    finally:
+        module.inventory = original
+
+    assert degraded["caches_only_claim_supported"] is False
+    assert degraded["error"] == "boom"
+    assert degraded["non_reproducible_ignored"] == []
+    assert "characterization" in degraded
