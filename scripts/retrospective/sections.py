@@ -807,6 +807,17 @@ def _enforce_signals(
     identity rather than a gate name, so it is not a stand-in for the missing
     checkpoint — the real records that triggered this carried
     ``judge: independent-auditor`` and no checkpoint at all.
+
+    KNOWN CONSEQUENCE, stated so nobody reads this as live code: **no producer
+    currently writes ``checkpoint_id`` on an actionable verdict**, so this branch
+    emits nothing today. Measured 2026-09-12 across build-loop's own 58 runs and
+    ~315 judge decisions: exactly 6 carry a checkpoint (``review-g`` ×4,
+    ``build``, ``integration-final``) and all 6 are ``approve``. The branch
+    stays because the fix belongs at the producer of `judge_decisions` — a judge
+    that fails a named gate should record that gate — not here. Until one does,
+    every actionable decision still reaches the reader through §1 (lessons) and
+    §9 (issues) via ``_judge_context``; only the promoted candidate is withheld.
+    Backlog: ``BUIL-RETROSPECTIVE-m2b6y0c909hzfmq8vz2az``.
     """
     out: list[str] = []
     for c in clusters:

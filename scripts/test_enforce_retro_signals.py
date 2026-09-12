@@ -265,3 +265,74 @@ def test_named_gate_candidates_still_recur(tmp_path):
     assert len(out["patterns"]) == 1, out
     assert out["patterns"][0]["count"] == 2
     assert out["placeholderSkipped"] == 0
+
+
+def test_empty_gate_name_is_a_placeholder(tmp_path):
+    """The pre-fix producer's SECOND empty shape.
+
+    A whitespace-only `checkpoint_id` was truthy under the old
+    `checkpoint_id or judge_id or "rule"` chain, so it wrote
+    `Enforce gate:     (failed this run)` — a name-less candidate that the
+    `rule`-only filter missed.
+    """
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        _write_candidate(d, run, 1, "Enforce gate:    (failed this run)")
+
+    out = ers.scan(tmp_path)
+    assert out["patterns"] == []
+    assert out["placeholderSkipped"] == 2
+
+
+def test_judge_named_candidates_do_not_count_toward_recurrence(tmp_path):
+    """The defect the first fix missed (build-loop's own queue, 2026-09-12).
+
+    19 of 52 candidates in build-loop's queue said `Enforce gate: <judge>`, not
+    one said `rule`, and the strongest signal in the whole queue was
+    `inline-self-verification` at count=6 / confidence=high. That name is what a
+    nested orchestrator calls itself when GAP-1 leaves it unable to dispatch the
+    real auditor — an actor, not a practice a run failed. A filter that caught
+    only the `rule` spelling was inert against every real file on disk.
+    """
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for i, run in enumerate(("run-aaa", "run-bbb", "run-ccc"), start=1):
+        _write_candidate(d, run, i, "Enforce gate: inline-self-verification (failed this run)")
+    _write_candidate(d, "run-ddd", 1, "Enforce gate: independent-auditor (failed this run)")
+    _write_candidate(d, "run-eee", 1, "Enforce gate: independent-auditor (failed this run)")
+
+    out = ers.scan(tmp_path)
+    assert out["patterns"] == [], "a judge identity still counted as a gate"
+    assert out["placeholderSkipped"] == 5
+
+
+def test_real_checkpoint_ids_are_never_treated_as_placeholders(tmp_path):
+    """The negative control that bounds the widened filter.
+
+    These are the checkpoint ids build-loop's own judges actually record. If any
+    is skipped, the filter has started eating the signal it exists to protect.
+    """
+    for gate in ("review-g", "build", "integration-final", "final-integration", "Review-A"):
+        d = tmp_path / gate / ".build-loop" / "proposals" / "enforce-from-retro"
+        d.mkdir(parents=True)
+        for run in ("run-aaa", "run-bbb"):
+            _write_candidate(d, run, 1, f"Enforce gate: {gate} (failed this run)")
+        out = ers.scan(tmp_path / gate)
+        assert len(out["patterns"]) == 1, f"{gate} was wrongly filtered: {out}"
+        assert out["placeholderSkipped"] == 0, gate
+
+
+def test_non_enforce_gate_candidates_are_untouched(tmp_path):
+    """The filter keys on the `Enforce gate: ... (failed this run)` shape only.
+
+    Automation-ritual candidates share the queue and must keep recurring.
+    """
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+    for run in ("run-aaa", "run-bbb"):
+        _write_candidate(d, run, 1, "Automate recurring ritual (×16): Bash → SendMessage → Bash — draft a script/hook")
+
+    out = ers.scan(tmp_path)
+    assert len(out["patterns"]) == 1, out
+    assert out["placeholderSkipped"] == 0

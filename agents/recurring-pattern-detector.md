@@ -77,7 +77,7 @@ A pre-computed scan of this directory is available via `python3 scripts/enforce_
 2. Extract the `## Candidate` body (between the heading and the next `##`).
 3. Skip two classes of file before counting anything:
    - **Already dispositioned** — a checked `- [x]` box in `## Disposition`, or frontmatter `status:` of `done|adopted|rejected|closed|superseded`. Counting these lets closed work outrank open work forever.
-   - **Unresolved template** — a candidate body that names nothing, e.g. the literal `Enforce gate: rule (failed this run)`. Its recurrence measures the template, not a signal: two ross-labs-astro run-ids emitted that exact text on 2026-09-12 and raised work order `learn-4290d6ae4098` on a candidate with no gate in it.
+   - **`Enforce gate: <name>` where `<name>` is not a gate** — empty, the literal word `rule`, or a judge identity (`independent-auditor`, `inline-self-verification`, `plan-critic`, `mock-scanner`, `fact-checker`, …). Only a checkpoint id (`review-g`, `build`, `final-integration`) is a gate. Recurrence on an actor's name measures how often that actor ran: two ross-labs-astro run-ids emitted `Enforce gate: rule (failed this run)` and raised work order `learn-4290d6ae4098`, and build-loop's own queue carried `inline-self-verification` at count=6 / confidence=high — the name a nested orchestrator gives itself when GAP-1 blocks it from dispatching the real auditor.
 4. Normalize: lowercase + collapse whitespace + truncate to 120 chars → `signature`.
 5. Group by signature; count DISTINCT `<run-id>` prefixes per signature (a single run dropping the same candidate twice in `-01.md` + `-02.md` counts ONCE).
 

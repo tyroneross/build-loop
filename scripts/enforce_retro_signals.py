@@ -25,8 +25,8 @@ Threshold: signature appears in >= 2 **distinct** run-id prefixes. (One
 run dropping the same candidate twice in `-01.md` + `-02.md` counts once.)
 
 Two classes of candidate never count toward that threshold: ones a human has
-already dispositioned (see ``_is_dispositioned``) and ones whose body is an
-unresolved template naming no gate (see ``_PLACEHOLDER_SIGNATURES``).
+already dispositioned (see ``_is_dispositioned``) and ``Enforce gate: <name>``
+candidates whose name is not a gate (see ``_NOT_A_GATE_NAMES``).
 
 CLI: ``python3 scripts/enforce_retro_signals.py --workdir <dir> --json``
 prints the envelope to stdout. Library: ``scan(workdir: Path) -> dict``.
@@ -59,26 +59,59 @@ _WHITESPACE = re.compile(r"\s+")
 _DISPOSED_BOX = re.compile(r"^\s*-\s*\[[xX]\]", re.M)
 _DISPOSED_FM = re.compile(r"^status:\s*(done|adopted|rejected|closed|superseded)\b", re.M | re.I)
 
-# Candidate bodies that name nothing. Matched against the NORMALIZED signature
-# (lowercased, whitespace-collapsed), so one pattern covers every spelling of
-# the same empty text.
+# `Enforce gate: <name> (failed this run)` candidates whose <name> is not a gate.
+# Matched against the NORMALIZED signature (lowercased, whitespace-collapsed), so
+# one rule covers every spelling of the same text.
 #
 # Before 2026-09-12 the producer (`scripts/retrospective/sections.py:
-# _enforce_signals`) fell back to the literal word "rule" when a judge decision
-# carried no `checkpoint_id`, writing `Enforce gate: rule (failed this run)`.
-# Two ross-labs-astro run-ids emitted that byte-identical text, hitting the
-# >=2-distinct-run threshold below and raising Phase 6 work order
-# learn-4290d6ae4098 against a candidate with no gate in it. The producer no
-# longer emits it; this filter stops the files ALREADY on disk from counting,
-# which no producer fix can do retroactively.
-_PLACEHOLDER_SIGNATURES = (
-    re.compile(r"^enforce gate: rule \(failed this run\)$"),
-)
+# _enforce_signals`) resolved that slot as `checkpoint_id or judge_id or "rule"`,
+# so a judge decision carrying no checkpoint still produced a candidate naming
+# either the judge or the literal word "rule". Both name an ACTOR or nothing,
+# never a gate, so their recurrence measures how often that actor ran.
+#
+# Two failures, one class. In ross-labs-astro two run-ids emitted
+# `Enforce gate: rule (failed this run)` and Phase 6 Learn raised work order
+# learn-4290d6ae4098 on it. In build-loop's own queue the judge-named spelling
+# was live at `count=6, confidence=high` on `inline-self-verification` — which is
+# not a practice a run failed, but the name a nested orchestrator gives itself
+# when GAP-1 leaves it unable to dispatch the real auditor.
+#
+# The producer no longer emits either shape. This filter is for the files ALREADY
+# on disk, which no producer fix reaches.
+_NOT_A_GATE_NAMES = frozenset({
+    # The old fallback's own literal.
+    "rule",
+    # Judge identities measured in build-loop's queue on 2026-09-12: 19
+    # `Enforce gate:` candidates across 52 files, every one naming a judge and
+    # none naming a checkpoint. This set is CLOSED — the producer can no longer
+    # write a judge name here, so a newly-added agent never needs an entry.
+    "inline-self-verification",
+    "independent-auditor",
+    "independent-auditor-hook",
+    "sol-independent-auditor",
+    "commit-auditor",
+    "sonnet-critic",
+    "plan-critic",
+    "scope-auditor",
+    "mock-scanner",
+    "fact-checker",
+    "self-mod-verify",
+})
+_ENFORCE_GATE_SHAPE = re.compile(r"^enforce gate:(?P<name>.*)\(failed this run\)$")
 
 
 def _is_placeholder(signature: str) -> bool:
-    """Is this normalized signature an unresolved template, not a candidate?"""
-    return any(pattern.match(signature) for pattern in _PLACEHOLDER_SIGNATURES)
+    """Does this normalized signature name no gate?
+
+    True for an empty name and for any name in ``_NOT_A_GATE_NAMES``. A real
+    checkpoint id (``review-g``, ``build``, ``final-integration``) returns False
+    and keeps counting.
+    """
+    m = _ENFORCE_GATE_SHAPE.match(signature)
+    if not m:
+        return False
+    name = m.group("name").strip()
+    return not name or name in _NOT_A_GATE_NAMES
 
 
 def _is_dispositioned(body: str) -> bool:
