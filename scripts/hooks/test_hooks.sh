@@ -422,6 +422,70 @@ else
 fi
 rm -rf "$DC4" "$FAKEBIN_PNPM"
 
+# Case 16: pnpm version unresolvable in this environment (empty fake bindir —
+# `pnpm` not on PATH at all) -> deny must NOT name the injector (re-running it
+# hits the identical unresolvable-version path and reports enforced:false
+# again — the second unactionable-deny cause fixed alongside Case 15).
+DC5=$(mktemp -d)
+mkdir -p "${DC5}/.build-loop"
+echo '{"name":"t"}' > "${DC5}/package.json"
+echo '{}' > "${DC5}/.build-loop/config.json"
+touch "${DC5}/pnpm-lock.yaml"
+FAKEBIN_EMPTY=$(mktemp -d)
+# Symlink only python3 in — pnpm must be genuinely unresolvable, but the
+# hook's own JSON-parsing python3 calls still need to run.
+ln -s "$(command -v python3)" "${FAKEBIN_EMPTY}/python3"
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"pnpm add lodash\"},\"cwd\":\"${DC5}\"}" \
+    | PATH="${FAKEBIN_EMPTY}:/bin:/usr/bin" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$(dc_decision "$R")" = "deny" ] \
+    && ! printf '%s' "$R" | grep -q "inject_dependency_cooldown.py"; then
+    pass "Case 16: pnpm version unresolvable -> deny, message does not name the injector"
+else
+    fail "Case 16: pnpm version unresolvable -> deny w/o injector advice" "got: ${R}"
+fi
+rm -rf "$DC5" "$FAKEBIN_EMPTY"
+
+# Case 17: crafted {package_manager: pnpm, allowlist_mechanism: hook,
+# enforced: true} envelope must NOT take Regime A (finding f3) — Regime A is
+# npm-only and appends the npm-only `--min-release-age=0` flag, which pnpm
+# does not accept. `mechanism == "hook"` alone stopped being a sound npm-only
+# proxy once a pnpm envelope could also carry it. Fake the injector (via
+# CLAUDE_PLUGIN_ROOT) to emit this crafted envelope directly, since no real
+# reachable path currently produces it.
+DC6=$(mktemp -d)
+mkdir -p "${DC6}/.build-loop"
+echo '{"name":"t"}' > "${DC6}/package.json"
+echo '{}' > "${DC6}/.build-loop/config.json"
+touch "${DC6}/pnpm-lock.yaml"
+FAKE_PLUGIN_ROOT=$(mktemp -d)
+mkdir -p "${FAKE_PLUGIN_ROOT}/scripts"
+cat > "${FAKE_PLUGIN_ROOT}/scripts/inject_dependency_cooldown.py" <<'PYEOF'
+#!/usr/bin/env python3
+import json
+print(json.dumps({
+    "status": "configured",
+    "package_manager": "pnpm",
+    "threshold_days": 7,
+    "enforced": True,
+    "allowlist": ["@tyroneross/*"],
+    "allowlist_mechanism": "hook",
+    "config_file": "pnpm-workspace.yaml",
+    "pnpm_version": "10.16.0",
+    "reason": "",
+    "changed": False,
+}))
+PYEOF
+chmod +x "${FAKE_PLUGIN_ROOT}/scripts/inject_dependency_cooldown.py"
+
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"pnpm add @tyroneross/foo\"},\"cwd\":\"${DC6}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$FAKE_PLUGIN_ROOT" bash "$DEP_HOOK")
+if ! printf '%s' "$R" | grep -q -- "--min-release-age"; then
+    pass "Case 17: pnpm envelope carrying mechanism=hook, enforced=true -> Regime A does not fire (no npm-only flag appended)"
+else
+    fail "Case 17: crafted pnpm hook+enforced envelope must not take Regime A" "got: ${R}"
+fi
+rm -rf "$DC6" "$FAKE_PLUGIN_ROOT"
+
 # ---------------------------------------------------------------------------
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

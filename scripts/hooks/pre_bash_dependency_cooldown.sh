@@ -18,12 +18,20 @@
 #
 # For ungated projects (not enforced): npm/yarn add/install rewrites with
 # `--before=<date 7d ago>`. For commands that can't be safely rewritten
-# (pnpm add, `npm ci`) it denies with an actionable message. pnpm has two
-# distinct not-enforced causes with two distinct remedies: pnpm < 10.16.0
-# (no native minimumReleaseAge exists there at all -> deny names the pnpm
-# upgrade, not the injector, since re-running it can never fix this) vs.
-# cooldown simply not yet injected on a new-enough pnpm (-> deny names the
-# injector, today's behavior).
+# (pnpm add, `npm ci`) it denies with an actionable message. pnpm has THREE
+# distinct not-enforced causes with three distinct remedies — naming the
+# wrong one traps the user in a deny loop the injector can never clear:
+#   1. pnpm < 10.16.0 (no native minimumReleaseAge exists there at all) ->
+#      deny names the pnpm upgrade, not the injector.
+#   2. pnpm_version unresolvable in this environment (CLI not on PATH, or a
+#      non-semver `packageManager` pin in package.json makes corepack/`pnpm
+#      --version` exit non-zero) -> deny names PATH/pin remedies + the
+#      BUILD_LOOP_HOOKS=off escape hatch, not the injector — re-running it
+#      hits the identical unresolvable-version path and reports
+#      enforced:false again.
+#   3. cooldown simply not yet injected on a new-enough, resolvable pnpm ->
+#      deny names the injector (today's behavior; this is the only one of
+#      the three where re-running it actually clears the state).
 #
 # Mirrors scripts/hooks/pre_bash_autonomy.sh exactly: stdin event JSON,
 # scope-guard to build-loop projects, silent `{}` exit 0 on the common path,
@@ -178,7 +186,16 @@ enforced = os.environ.get("_BL_ENFORCED", "0") == "1"
 mechanism = os.environ.get("_BL_MECHANISM", "")
 # True only on npm-with-active-native-config: native min-release-age covers
 # transitive deps; this hook only adds the allowlist bypass on top.
-npm_native_active = enforced and mechanism == "hook"
+# `mechanism == "hook"` was a sound npm-only proxy before pnpm could also
+# carry it (pnpm_version-unresolvable envelopes now do — see the pnpm
+# fallback branch's `allowlist_mechanism: "hook"`). Nothing currently pairs
+# `hook` with `enforced: true` on pnpm (that pnpm branch hardcodes
+# `enforced: False`), but that's an unasserted invariant, not a checked one
+# — assert `package_manager == "npm"` explicitly so a future change that
+# lets a pnpm envelope carry hook+enforced=true can't silently route into
+# npm-only Regime A and emit the npm-only `--min-release-age=0` flag against
+# a pnpm command (pnpm does not accept that flag).
+npm_native_active = enforced and mechanism == "hook" and check.get("package_manager") == "npm"
 
 
 def write_deny_diagnostic(reason):
@@ -397,6 +414,30 @@ if is_pnpm:
             f"Upgrade pnpm to >= 10.16.0 (minimumReleaseAge does not exist before "
             f"that version) — re-running the injector will not fix this on pnpm "
             f"{pnpm_ver_str} (constitution:C-SUPPLY/dependency_cooldown).",
+        )
+    elif check.get("pnpm_version") is None:
+        # Second unactionable-deny cause: pnpm's own version is unresolvable
+        # in THIS environment (CLI not on PATH, or `pnpm --version` exits
+        # non-zero — e.g. a non-semver `packageManager` pin in package.json
+        # that corepack rejects). Re-running the injector cannot fix this:
+        # it hits the identical unresolvable-version path and reports
+        # enforced:false again, so naming the injector here is unactionable
+        # advice (the original trap this branch exists to close). Surface
+        # the injector's own reason (single source of truth) and name
+        # remedies that can actually clear the state.
+        injector_reason = check.get("reason") or (
+            "pnpm CLI unavailable to verify version in this environment"
+        )
+        emit(
+            "deny",
+            f"Supply-chain cooldown ({days}d) not enforced: {injector_reason}. "
+            f"Re-running the injector cannot fix this — the pnpm version is "
+            f"unresolvable here. Remedies: (1) make `pnpm` resolvable on PATH "
+            f"in this environment, (2) fix or remove a non-semver "
+            f"`packageManager` pin in package.json that corepack rejects "
+            f"(this makes `pnpm --version` fail even with a working pnpm on "
+            f"PATH), or (3) set BUILD_LOOP_HOOKS=off to bypass this hook "
+            f"(constitution:C-SUPPLY/dependency_cooldown).",
         )
     else:
         emit(

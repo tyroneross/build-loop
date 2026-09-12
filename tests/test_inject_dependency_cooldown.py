@@ -411,3 +411,79 @@ def test_threshold_minutes_math(tmp_path):
     rc, env = _run(wd)
     assert env["threshold_days"] == 7
     assert "10080" in (wd / "pnpm-workspace.yaml").read_text()  # 7*24*60
+
+
+def test_pnpm_block_style_exclude_round_trips_to_valid_yaml(tmp_path):
+    """Finding f2 regression: a user-authored BLOCK-style
+    ``minimumReleaseAgeExclude`` (the natural YAML form, and the form
+    pnpm's own release notes use) must round-trip to valid YAML with the
+    user's entries preserved — not leave orphaned continuation lines that
+    make the file unparseable AND silently drop the user's allowlist
+    entries."""
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    (wd / "pnpm-workspace.yaml").write_text(
+        "packages:\n"
+        "  - '.'\n"
+        "minimumReleaseAge: 10080\n"
+        "minimumReleaseAgeExclude:\n"
+        "  - '@acme/*'\n"
+        "  - 'internal-lib'\n"
+    )
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    ws = (wd / "pnpm-workspace.yaml").read_text()
+
+    # No orphaned continuation lines: every line is either a top-level key
+    # or a "- " item that immediately follows its owning key.
+    lines = ws.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("- ") and i > 0:
+            assert lines[i - 1].rstrip().endswith(":") or lines[i - 1].strip().startswith(
+                "- "
+            ), f"orphaned continuation line: {line!r} (prev: {lines[i - 1]!r})"
+
+    try:
+        import yaml  # type: ignore
+
+        parsed = yaml.safe_load(ws)
+        assert parsed["minimumReleaseAgeExclude"] == [
+            "@tyroneross/*",
+            "@acme/*",
+            "internal-lib",
+        ]
+        assert parsed["packages"] == ["."]
+    except ImportError:
+        # No PyYAML in this test env — structural assertion only.
+        assert "@acme/*" in ws
+        assert "internal-lib" in ws
+        assert '  - \'@acme/*\'' not in ws  # old continuation line consumed
+
+    # Preserved, not dropped.
+    assert "@acme/*" in ws
+    assert "internal-lib" in ws
+
+    # Idempotent on this healed/merged path too.
+    first = ws
+    rc2, env2 = _run(wd, env_path=fake_path)
+    assert (wd / "pnpm-workspace.yaml").read_text() == first
+    assert env2["changed"] is False
+
+
+def test_yarn_block_style_preapproved_round_trips(tmp_path):
+    """Same bug shape as the pnpm exclude list, for yarn's
+    ``npmPreapprovedPackages``."""
+    wd = _mk(tmp_path, lockfile="yarn.lock")
+    (wd / ".yarnrc.yml").write_text(
+        "npmMinimalAgeGate: 10080\nnpmPreapprovedPackages:\n  - 'acme-pkg'\n"
+    )
+    rc, env = _run(wd)
+    assert rc == 0
+    rc_content = (wd / ".yarnrc.yml").read_text()
+    assert "acme-pkg" in rc_content
+    lines = rc_content.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("- ") and i > 0:
+            assert lines[i - 1].rstrip().endswith(":") or lines[i - 1].strip().startswith(
+                "- "
+            ), f"orphaned continuation line: {line!r}"

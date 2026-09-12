@@ -33,9 +33,20 @@ corrected 2026-09-12 against pnpm's own changelog — ``minimumReleaseAge`` /
   |---------------|----------------------|---------|---------------------|--------------------------|
   | npm >= 11.10  | min-release-age      | DAYS    | .npmrc              | NONE (npm/cli#8994)      |
   | pnpm >= 10.16 | minimumReleaseAge    | MINUTES | pnpm-workspace.yaml | minimumReleaseAgeExclude |
-  | pnpm 10.16.x  | minimum-release-age  | MINUTES | .npmrc              | (workspace yaml)         |
+  | pnpm 10.16.x  | minimum-release-age [UNVERIFIED] | MINUTES | .npmrc  | (workspace yaml)         |
   | pnpm < 10.16  | NONE — no native cooldown; falls back to the hook       |
   | yarn >= 4.10  | npmMinimalAgeGate    | MINUTES | .yarnrc.yml         | npmPreapprovedPackages   |
+
+  [UNVERIFIED] the pnpm 10.16.x `.npmrc` kebab-key row: believed read by
+  pnpm 10.16-10.x; confirmed NOT read by pnpm 11.x (verified 2026-09-12
+  against a real pnpm 11.10.0 — inert there). No source substantiates the
+  10.16-10.x claim either; pnpm/pnpm release notes pages 1-3 show the kebab
+  name only in v12.0.0-rc.9, as the CLI override `--config.minimum-release-age`,
+  never as a documented `.npmrc` key. Kept, not deleted, because the
+  10.16-10.x range can't be tested in this environment and removing it
+  risks dropping a gate that may work there. `pnpm-workspace.yaml`
+  `minimumReleaseAge` is the key PROVEN to work (verified live via `pnpm
+  config get`).
 
   npm has NO native exclude mechanism (open issue npm/cli#8994). For npm the
   allowlist is therefore enforced by the PreToolUse backstop hook, NOT by
@@ -266,20 +277,57 @@ def _pnpm_recognizes(workdir: Path, key: str, expected: str) -> bool | None:
 # Per-package-manager config merge (idempotent line-merge, no yaml dep)
 # ---------------------------------------------------------------------------
 def _merge_lines(existing: str, updates: dict[str, str]) -> tuple[str, bool]:
-    """Replace-or-append ``key=value`` / ``key: value`` lines idempotently."""
+    """Replace-or-append ``key=value`` / ``key: value`` lines idempotently.
+
+    When a matched key's OLD line is followed by more-indented continuation
+    lines — a YAML block-style sequence or mapping value, e.g. a
+    user-authored::
+
+        minimumReleaseAgeExclude:
+          - '@acme/*'
+          - 'internal-lib'
+
+    — those continuation lines are consumed (dropped) along with the key
+    line being replaced. Without this, replacing only the key line leaves
+    the old block's continuation lines orphaned beneath the new flow-style
+    value, producing invalid YAML (``yaml.safe_load`` raises ``ParserError``)
+    that never self-heals on a later run. This only fires for keys present
+    in ``updates`` — a key the caller did NOT ask to replace (e.g. an
+    already-populated ``packages:`` this tool intentionally never touches)
+    is left byte-for-byte untouched, continuation lines included.
+
+    Callers that want the OLD block's values preserved rather than dropped
+    must extract them (see ``_extract_list_value``) and fold them into the
+    replacement value themselves before calling this function — this
+    function only merges *lines*, it has no opinion on value semantics.
+    """
     lines = existing.splitlines() if existing else []
     seen: set[str] = set()
     out: list[str] = []
-    for line in lines:
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
         replaced = False
         for lhs, full in updates.items():
             if line.strip().startswith(lhs):
                 out.append(full)
                 seen.add(lhs)
                 replaced = True
+                key_indent = len(line) - len(line.lstrip())
+                i += 1
+                while i < n:
+                    nxt = lines[i]
+                    if not nxt.strip():
+                        break
+                    nxt_indent = len(nxt) - len(nxt.lstrip())
+                    if nxt_indent <= key_indent:
+                        break
+                    i += 1
                 break
         if not replaced:
             out.append(line)
+            i += 1
     for lhs, full in updates.items():
         if lhs not in seen:
             out.append(full)
@@ -288,6 +336,77 @@ def _merge_lines(existing: str, updates: dict[str, str]) -> tuple[str, bool]:
         new += "\n"
     changed = new != (existing if existing.endswith("\n") or not existing else existing + "\n")
     return new, changed
+
+
+def _yaml_unquote(val: str) -> str:
+    """Strip one layer of matching '...' or "..." quoting, if present."""
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        return val[1:-1]
+    return val
+
+
+def _extract_list_value(existing: str, key: str) -> list[str]:
+    """Return items from an existing ``key:`` value, in EITHER YAML style.
+
+    Block style::
+
+        minimumReleaseAgeExclude:
+          - '@acme/*'
+          - 'internal-lib'
+
+    Flow style (what this tool itself writes, and what the value becomes on
+    a second run)::
+
+        minimumReleaseAgeExclude: ["@tyroneross/*", "@acme/*"]
+
+    Both return the item list. Returns ``[]`` when the key is absent or its
+    inline value isn't a ``[...]`` list.
+
+    Handling BOTH styles (not just block) is required for idempotency: after
+    the first run merges a user's block-style entries into the flow-style
+    value this tool writes, a naive block-only extractor would return ``[]``
+    on the SECOND run (the value is now inline) and silently drop the very
+    entries the first run just preserved. Reading whichever style is
+    currently on disk — the file is the single source of truth — means
+    entries are preserved indefinitely across repeated runs, and an entry a
+    user manually removes from the file stays removed.
+    """
+    lines = existing.splitlines() if existing else []
+    key_prefix = key if key.endswith(":") else key + ":"
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == key_prefix or stripped.startswith(key_prefix + " "):
+            rest = stripped[len(key_prefix):].strip()
+            if rest:
+                if rest.startswith("[") and rest.endswith("]"):
+                    inner = rest[1:-1].strip()
+                    if not inner:
+                        return []
+                    return [
+                        _yaml_unquote(part.strip())
+                        for part in inner.split(",")
+                        if part.strip()
+                    ]
+                return []  # inline scalar — not a list, nothing to extract
+            # Block style: consume more-indented "- item" continuation lines.
+            key_indent = len(line) - len(line.lstrip())
+            items: list[str] = []
+            j = idx + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if not nxt.strip():
+                    break
+                nxt_indent = len(nxt) - len(nxt.lstrip())
+                if nxt_indent <= key_indent:
+                    break
+                item = nxt.strip()
+                if item.startswith("-"):
+                    val = _yaml_unquote(item[1:].strip())
+                    if val:
+                        items.append(val)
+                j += 1
+            return items
+    return []
 
 
 def _write_npm(workdir: Path, allowlist: list[str], days: int, check: bool) -> dict[str, Any]:
@@ -456,12 +575,32 @@ def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
         # lands after existing content — valid YAML either way.
         ws_updates["packages:"] = "packages: ['.']"
     ws_updates["minimumReleaseAge:"] = f"minimumReleaseAge: {minutes}"
-    ws_updates["minimumReleaseAgeExclude:"] = f"minimumReleaseAgeExclude: {_yaml_list(allowlist)}"
+    # A user may have hand-authored this key in block style (the natural
+    # YAML form, and the form pnpm's own release notes use). Merge those
+    # entries into the flow-style value we write rather than dropping them —
+    # the exclude list is a user-authored security exemption.
+    preserved_exclude = _extract_list_value(ws_existing, "minimumReleaseAgeExclude")
+    merged_exclude = list(allowlist)
+    for item in preserved_exclude:
+        if item not in merged_exclude:
+            merged_exclude.append(item)
+    ws_updates["minimumReleaseAgeExclude:"] = f"minimumReleaseAgeExclude: {_yaml_list(merged_exclude)}"
     ws_new, ws_changed = _merge_lines(ws_existing, ws_updates)
     if ws_changed:
         _atomic_write(ws, ws_new)
 
-    # pnpm 10.16.x reads kebab `minimum-release-age` (MINUTES) from .npmrc.
+    # [UNVERIFIED] believed: pnpm 10.16.x-10.x reads kebab
+    # `minimum-release-age` (MINUTES) from .npmrc. Confirmed NOT read by pnpm
+    # 11.x (verified 2026-09-12 against a real pnpm 11.10.0 — the key is
+    # inert there). Across pnpm/pnpm release notes pages 1-3 the kebab name
+    # appears only in v12.0.0-rc.9, and only as the CLI override form
+    # `--config.minimum-release-age`, never documented as an `.npmrc` key.
+    # No source found that substantiates this write for the 10.16-10.x
+    # range either — kept anyway (not deleted) because that range can't be
+    # tested here and removing it risks dropping a gate that may work on
+    # that line; `pnpm-workspace.yaml` `minimumReleaseAge` above is the key
+    # PROVEN to work (verified via `pnpm config get` in `_write_pnpm`/
+    # `_pnpm_recognizes`).
     npmrc_existing = npmrc.read_text(encoding="utf-8") if npmrc.is_file() else ""
     npmrc_new, npmrc_changed = _merge_lines(
         npmrc_existing, {"minimum-release-age=": f"minimum-release-age={minutes}"}
@@ -508,9 +647,16 @@ def _write_yarn(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
             "changed": False,
         }
 
+    # Same block-style preservation as the pnpm exclude list above (DRY —
+    # same bug shape, same user-authored-security-exemption rationale).
+    preserved_preapproved = _extract_list_value(existing, "npmPreapprovedPackages")
+    merged_preapproved = list(allowlist)
+    for item in preserved_preapproved:
+        if item not in merged_preapproved:
+            merged_preapproved.append(item)
     updates = {
         "npmMinimalAgeGate:": f"npmMinimalAgeGate: {minutes}",
-        "npmPreapprovedPackages:": f"npmPreapprovedPackages: {_yaml_list(allowlist)}",
+        "npmPreapprovedPackages:": f"npmPreapprovedPackages: {_yaml_list(merged_preapproved)}",
     }
     new, changed = _merge_lines(existing, updates)
     if changed:
