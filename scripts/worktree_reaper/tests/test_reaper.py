@@ -121,7 +121,12 @@ def test_default_is_report_only_and_non_destructive(tmp_path: Path) -> None:
     result = reap_worktrees(repo)
 
     assert result.dry_run is True
-    assert result.candidates == [{"path": str(path), "branch": branch, "run_id": run_id}]
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert {k: candidate[k] for k in ("path", "branch", "run_id")} == {
+        "path": str(path), "branch": branch, "run_id": run_id
+    }
+    assert candidate["inventory"]["ok"] is True
     assert result.bundled_and_removed == []
     assert path.exists()
     assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}").returncode == 0
@@ -345,3 +350,45 @@ def test_cli_act_requires_owner_release(tmp_path: Path) -> None:
     assert proc.returncode == 1
     assert path.exists()
     assert "owner-released" in proc.stdout
+
+
+def test_candidate_report_names_ignored_files_removal_would_delete(tmp_path: Path) -> None:
+    """A removal deletes ignored files too, so the report that precedes it must
+    name them. `git status --short` does not, which is how "tool caches only"
+    gets approved on evidence that cannot support it."""
+    repo = _make_repo(tmp_path)
+    (repo / ".gitignore").write_text("*.log\n.env\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore rules")
+    path, branch, run_id = _make_run_worktree(repo, "222222")
+    (path / ".env").write_text("API_KEY=real\n")
+    (path / "debug.log").write_text("noise\n")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    result = reap_worktrees(repo)
+
+    assert _git(path, "status", "--short").stdout.strip() == "", (
+        "precondition: the short status an operator would read shows nothing"
+    )
+    inventory = result.candidates[0]["inventory"]
+    assert ".env" in inventory["ignored"]
+    assert "debug.log" in inventory["ignored"]
+    assert ".env" in inventory["non_reproducible_ignored"]
+    assert inventory["caches_only_claim_supported"] is False
+
+
+def test_unmerged_skip_report_also_carries_the_inventory(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / ".gitignore").write_text("*.log\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore rules")
+    path, branch, run_id = _make_run_worktree(repo, "333333", unmerged=True)
+    (path / "debug.log").write_text("noise\n")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    result = reap_worktrees(repo)
+
+    assert result.candidates == []
+    assert "debug.log" in result.skipped_unmerged[0]["inventory"]["ignored"]

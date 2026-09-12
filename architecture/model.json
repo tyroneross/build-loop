@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f7eaeb8c2e410cf15df10f88b1aa12ae86cd5689302b79b4b79309d2ebfaadda"
+    "content_sha256": "0a9e2e565abdbaf9557f23494c101112d9898dc2d41746613827307274f4e5cf"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1964,6 +1964,7 @@
       "scripts/working_branch_echo.py": "Echo the working-copy branch + SHA when the runtime is self-recursive.",
       "scripts/working_state_writer.py": "working_state_writer.py — per-step execution observability for build-loop.",
       "scripts/worktree_guard.py": "Guard build-loop worktree creation so worktrees never sprawl outside the canonical location.",
+      "scripts/worktree_inventory.py": "worktree_inventory.py — what a worktree removal would actually delete.",
       "scripts/worktree_isolation_lint.py": "Worktree-isolation lint — block background committing agents from the live checkout.",
       "scripts/worktree_reaper/__init__.py": "Report stale ``.build-loop/worktrees/run-*`` candidates.",
       "scripts/worktree_reaper/__main__.py": "CLI entry point for report-only worktree discovery and explicit delegation.",

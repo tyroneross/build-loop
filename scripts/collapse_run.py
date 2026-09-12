@@ -56,6 +56,11 @@ except ImportError:  # package import
     from scripts.rally_point import actor_identity
     from scripts.rally_point import backend_adapter as rally_backend
 
+try:
+    import worktree_inventory
+except ImportError:  # package import
+    from scripts import worktree_inventory  # type: ignore
+
 
 STATE_REL = Path(".build-loop") / "state.json"
 RECEIPT_DIR_REL = Path(".build-loop") / "branch-closeout"
@@ -621,6 +626,17 @@ def _path_contains_cwd(path: Path, cwd: Path) -> bool:
     return cwd == path or path in cwd.parents
 
 
+def _worktree_inventory(candidate: Path) -> dict[str, Any]:
+    """Full deletion inventory (tracked + untracked + IGNORED) for a worktree.
+
+    Fail-open: an inventory error degrades the evidence, it never vetoes a
+    removal the other checks already cleared."""
+    try:
+        return worktree_inventory.inventory(candidate)
+    except Exception as exc:  # noqa: BLE001 — evidence gathering must not raise
+        return {"ok": False, "error": str(exc), "path": str(candidate)}
+
+
 def inspect_worktree_safety(
     workdir: Path,
     path: str | None,
@@ -684,18 +700,26 @@ def inspect_worktree_safety(
             "lock_reason": record.get("lock_reason"),
         }
 
+    # Removal deletes the whole directory, so the evidence an operator reads must
+    # cover the whole directory. `git status --porcelain` names tracked changes
+    # and untracked files but omits GITIGNORED ones, which is how a "tool caches
+    # only" characterization gets approved on an inventory that cannot support it.
+    inventory = _worktree_inventory(candidate)
+
     status = _git(candidate, "status", "--porcelain", check=False)
     if status.returncode != 0:
         return {
             "safe": False,
             "reason": (status.stderr or status.stdout).strip() or "worktree status failed",
             "path": str(candidate),
+            "inventory": inventory,
         }
     if status.stdout.strip():
         return {
             "safe": False,
             "reason": "worktree is dirty",
             "path": str(candidate),
+            "inventory": inventory,
         }
 
     if live_cwds is None and live_cwd_error is None:
@@ -720,11 +744,13 @@ def inspect_worktree_safety(
             "reason": "live process cwd is inside worktree",
             "path": str(candidate),
             "owners": owners,
+            "inventory": inventory,
         }
     return {
         "safe": True,
         "reason": "registered, unlocked, clean, and no live process cwd",
         "path": str(candidate),
+        "inventory": inventory,
     }
 
 

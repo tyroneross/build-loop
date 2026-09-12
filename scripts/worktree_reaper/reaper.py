@@ -21,6 +21,11 @@ try:
 except ImportError:  # direct __main__.py path inserts scripts/ on sys.path
     import collapse_run  # type: ignore
 
+try:
+    from scripts import worktree_inventory
+except ImportError:  # direct __main__.py path inserts scripts/ on sys.path
+    import worktree_inventory  # type: ignore
+
 
 WORKTREE_ROOT_REL = Path(".build-loop") / "worktrees"
 STATE_REL = Path(".build-loop") / "state.json"
@@ -55,6 +60,15 @@ def _git(workdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def _inventory(path: Path) -> dict[str, Any]:
+    """Deletion inventory for a candidate worktree. Fail-open: a broken
+    inventory degrades the report, it never changes what the reaper does."""
+    try:
+        return worktree_inventory.inventory(path)
+    except Exception as exc:  # noqa: BLE001 — reporting must not raise
+        return {"ok": False, "error": str(exc), "path": str(path)}
 
 
 def _git_available(workdir: Path) -> bool:
@@ -305,11 +319,20 @@ def reap_worktrees(
                     "branch": branch,
                     "run_id": run_id,
                     "reason": "branch is not merged into main",
+                    "inventory": _inventory(entry),
                 }
             )
             continue
 
-        candidate = {"path": str(entry), "branch": branch, "run_id": run_id}
+        # Removal deletes the whole directory, so the report an operator reads
+        # before approving one carries the whole directory — ignored files
+        # included. Without them, "tool caches only" is an unsupported claim.
+        candidate = {
+            "path": str(entry),
+            "branch": branch,
+            "run_id": run_id,
+            "inventory": _inventory(entry),
+        }
         result.candidates.append(candidate)
         if not effective_act:
             continue
