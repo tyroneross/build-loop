@@ -25,6 +25,16 @@ from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E4
 # by omission.
 
 
+# Keys that identify the WRITER rather than the run. Carrying these forward
+# would relabel the row: `source` marks a thin Stop-hook record, and its ABSENCE
+# is how run_close_lint.is_orchestrator_grade, append_run, and stop_closeout all
+# recognize a rich orchestrator record. A Review-G write over a thin row must
+# therefore drop it, or run_close_lint reports `floor_only` for a run the
+# orchestrator genuinely closed and the Stop hook believes it may overwrite a
+# record it must not.
+_WRITER_OWNED_KEYS = ("source",)
+
+
 def upsert_merge(existing: dict, entry: dict) -> dict:
     """Build the replacement row for an existing run_id.
 
@@ -33,6 +43,9 @@ def upsert_merge(existing: dict, entry: dict) -> dict:
     """
     merged = dict(existing)
     merged.update(entry)
+    for key in _WRITER_OWNED_KEYS:
+        if key not in entry:
+            merged.pop(key, None)
     # A judge verdict is scoped to the file set it was rendered against. A
     # correction that widens filesTouched and supplies no new verdict would
     # otherwise re-attribute the old one to files no judge ever saw, so the

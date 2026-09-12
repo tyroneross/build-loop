@@ -229,6 +229,26 @@ class WriteRunEntryTests(unittest.TestCase):
         row = json.loads(self.state.read_text())["runs"][0]
         self.assertEqual(row["judge_decisions"][0]["judge_id"], "independent-auditor")
 
+    def test_review_g_write_sheds_the_floor_writers_source_label(self) -> None:
+        """`source: append_run` marks a thin Stop-hook record, and its ABSENCE is
+        how run_close_lint.is_orchestrator_grade, append_run, and stop_closeout
+        recognize a rich orchestrator record. Carrying it forward would make a
+        genuinely closed run read as floor_only."""
+        sys.path.insert(0, str(HERE))
+        import run_close_lint
+
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text(json.dumps({"runs": [{
+            "run_id": "run_thin", "source": "append_run", "outcome": "pass", "goal": "thin",
+        }]}))
+        result = run(self._base_args(**{"--run-id": "run_thin", "--goal": "orchestrator close"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertNotIn("source", row)
+        self.assertTrue(run_close_lint.is_orchestrator_grade(row),
+                        "a Review-G close must not read as a floor record")
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

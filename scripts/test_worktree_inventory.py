@@ -66,7 +66,7 @@ class WorktreeInventoryTests(unittest.TestCase):
         wt = self._worktree()
         (wt / "__pycache__").mkdir()
         (wt / "__pycache__" / "mod.pyc").write_bytes(b"\x00")
-        (wt / ".env").write_text("API_KEY=real\n")
+        (wt / ".env").write_text("API_KEY=synthetic\n")
 
         result = worktree_inventory.inventory(wt)
         self.assertIn(".env", result["ignored"])

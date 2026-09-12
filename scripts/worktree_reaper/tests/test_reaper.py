@@ -361,7 +361,7 @@ def test_candidate_report_names_ignored_files_removal_would_delete(tmp_path: Pat
     _git(repo, "add", ".gitignore")
     _git(repo, "commit", "-m", "ignore rules")
     path, branch, run_id = _make_run_worktree(repo, "222222")
-    (path / ".env").write_text("API_KEY=real\n")
+    (path / ".env").write_text("API_KEY=synthetic\n")
     (path / "debug.log").write_text("noise\n")
     _age_folder(path)
     _write_state(repo, run_id, branch, path)
