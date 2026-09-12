@@ -395,6 +395,33 @@ else
 fi
 rm -rf "$DC3"
 
+# Case 15: pnpm < 10.16.0 (native minimumReleaseAge doesn't exist there) ->
+# deny must name the pnpm upgrade, not the injector — re-running the
+# injector on such a repo can never fix it (it will always, correctly,
+# report enforced:false again).
+DC4=$(mktemp -d)
+mkdir -p "${DC4}/.build-loop"
+echo '{"name":"t"}' > "${DC4}/package.json"
+echo '{}' > "${DC4}/.build-loop/config.json"
+touch "${DC4}/pnpm-lock.yaml"
+FAKEBIN_PNPM=$(mktemp -d)
+cat > "${FAKEBIN_PNPM}/pnpm" <<'SH'
+#!/bin/bash
+if [ "$1" = "--version" ]; then echo "9.0.0"; exit 0; fi
+exit 0
+SH
+chmod +x "${FAKEBIN_PNPM}/pnpm"
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"pnpm add lodash\"},\"cwd\":\"${DC4}\"}" \
+    | PATH="${FAKEBIN_PNPM}:${PATH}" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$(dc_decision "$R")" = "deny" ] \
+    && printf '%s' "$R" | grep -qi "upgrade pnpm" \
+    && ! printf '%s' "$R" | grep -q "inject_dependency_cooldown.py"; then
+    pass "Case 15: pnpm < 10.16.0 -> deny names the pnpm upgrade, not the injector"
+else
+    fail "Case 15: pnpm < 10.16.0 deny message" "got: ${R}"
+fi
+rm -rf "$DC4" "$FAKEBIN_PNPM"
+
 # ---------------------------------------------------------------------------
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

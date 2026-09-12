@@ -1,4 +1,4 @@
-"""Tests for ``scripts/inject_dependency_cooldown.py`` (v0.11.1 corrected contract).
+"""Tests for ``scripts/inject_dependency_cooldown.py`` (v0.11.2 corrected contract).
 
 Covers the bugfix contract:
 1. npm path writes ``.npmrc`` ``min-release-age=<days>`` (kebab, DAYS) — NOT
@@ -8,8 +8,8 @@ Covers the bugfix contract:
    package manager does NOT recognize it (false-positive fix) — proven with a
    fake-npm shim emitting "Unknown project config".
 3. pnpm lockfile -> ``pnpm-workspace.yaml`` ``minimumReleaseAge`` MINUTES +
-   exclude, AND ``.npmrc`` kebab ``minimum-release-age`` MINUTES for 10.x.
-   ``allowlist_mechanism == "native"``.
+   exclude, AND ``.npmrc`` kebab ``minimum-release-age`` MINUTES for 10.16.x.
+   ``allowlist_mechanism == "native"`` (pnpm >= 10.16.0 only).
 4. yarn lockfile -> ``.yarnrc.yml`` ``npmMinimalAgeGate`` numeric MINUTES +
    ``npmPreapprovedPackages``. ``allowlist_mechanism == "native"``.
 5. Idempotency: a second run produces a byte-identical file.
@@ -17,6 +17,17 @@ Covers the bugfix contract:
 7. No package.json -> skipped, exit 0.
 8. Real npm enforcement: when machine npm recognizes the correct key,
    --check after a write reports enforced:true.
+9. pnpm floor (v0.11.2 fix): ``minimumReleaseAge``/``minimumReleaseAgeExclude``
+   do not exist before pnpm 10.16.0. A from-scratch write on pnpm < 10.16.0
+   writes NOTHING and reports ``enforced:false``, ``status:fallback-hook``,
+   ``allowlist_mechanism:"hook"`` — proven with a fake-pnpm shim. ``--check``
+   gets the same gate.
+10. pnpm ``packages`` field (v0.11.2 fix): the injector seeds
+    ``packages: ['.']`` whenever ``pnpm-workspace.yaml`` has NO ``packages``
+    field at all — a from-scratch write, or an existing file left with only
+    cooldown/settings keys by a prior buggy run or by ``pnpm approve-builds``
+    (older pnpm hard-fails install without it); an existing ``packages``
+    field is preserved byte-for-byte, never rewritten.
 """
 
 from __future__ import annotations
@@ -107,6 +118,46 @@ def _fake_npm_bin(tmp_path: Path, *, reject: bool) -> str:
     return f"{bindir}:{os.environ.get('PATH','')}"
 
 
+def _fake_pnpm_bin_cwd_sensitive(tmp_path: Path) -> str:
+    """Finding 2 regression fixture: reports a NEW-enough version only when
+    invoked with cwd == the marked target directory (a ``PNPM_MARKER`` file
+    dropped in it), and an OLD version otherwise. Proves the version
+    detector is invoked with ``cwd=workdir`` rather than inheriting whatever
+    directory the calling process happens to be in — this repo's own
+    ambient package.json carries a ``packageManager`` pin that makes a
+    cwd-less ``pnpm --version`` fail, which is exactly how this bug was
+    field-caught."""
+    bindir = tmp_path / "fakebin_pnpm_cwd"
+    bindir.mkdir(exist_ok=True)
+    pnpm = bindir / "pnpm"
+    body = (
+        "#!/bin/bash\n"
+        'if [ "$1" = "--version" ]; then\n'
+        '  if [ -f "PNPM_MARKER" ]; then echo "10.16.0"; else echo "1.0.0"; fi\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    pnpm.write_text(body)
+    pnpm.chmod(0o755)
+    return f"{bindir}:{os.environ.get('PATH','')}"
+
+
+def _fake_pnpm_bin(tmp_path: Path, *, version: str) -> str:
+    """Create a fake `pnpm` on PATH reporting the given ``--version``."""
+    bindir = tmp_path / "fakebin_pnpm"
+    bindir.mkdir(exist_ok=True)
+    pnpm = bindir / "pnpm"
+    body = (
+        "#!/bin/bash\n"
+        f'if [ "$1" = "--version" ]; then echo "{version}"; exit 0; fi\n'
+        "exit 0\n"
+    )
+    pnpm.write_text(body)
+    pnpm.chmod(0o755)
+    return f"{bindir}:{os.environ.get('PATH','')}"
+
+
 # --- npm: correct key, no exclude, mechanism=hook --------------------------
 @pytest.mark.skipif(not _npm_supports_native(), reason="machine npm < 11.10.0")
 def test_npm_writes_correct_kebab_key(tmp_path):
@@ -178,6 +229,149 @@ def test_yarn_writes_numeric_minutes(tmp_path):
     body = (wd / ".yarnrc.yml").read_text()
     assert "npmMinimalAgeGate: 10080" in body  # numeric minutes (string 7d bugged)
     assert "npmPreapprovedPackages:" in body
+
+
+# --- pnpm floor (v0.11.2): < 10.16.0 has NO native cooldown ---------------
+def test_pnpm_old_version_writes_nothing_and_falls_back_to_hook(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")  # no pre-existing workspace file
+    fake_path = _fake_pnpm_bin(tmp_path, version="9.0.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    assert env["status"] == "fallback-hook"
+    assert env["enforced"] is False
+    assert env["allowlist_mechanism"] == "hook"
+    assert env["pnpm_version"] == "9.0.0"
+    assert "10.16.0" in env["reason"]
+    # The defect this fixes: writing an inert key (and no `packages` field)
+    # broke every subsequent pnpm command. Fixed by writing nothing.
+    assert not (wd / "pnpm-workspace.yaml").is_file()
+    assert not (wd / ".npmrc").is_file()
+
+
+def test_pnpm_old_version_check_reports_not_enforced(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    # Pre-existing (inert) key on disk must not fool --check.
+    (wd / "pnpm-workspace.yaml").write_text(
+        "packages:\n  - '.'\nminimumReleaseAge: 10080\n"
+    )
+    fake_path = _fake_pnpm_bin(tmp_path, version="9.5.2")
+    rc, env = _run(wd, "--check", env_path=fake_path)
+    assert rc == 0
+    assert env["enforced"] is False
+    assert env["status"] == "fallback-hook"
+    assert env["allowlist_mechanism"] == "hook"
+
+
+def test_pnpm_new_version_writes_and_enforces(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    assert env["status"] == "configured"
+    assert env["enforced"] is True
+    assert env["allowlist_mechanism"] == "native"
+    assert env["pnpm_version"] == "10.16.0"
+    ws = (wd / "pnpm-workspace.yaml").read_text()
+    assert "minimumReleaseAge: 10080" in ws
+    assert "minimumReleaseAgeExclude:" in ws
+
+
+# --- Finding 2: version detector must run in workdir, not ambient cwd -----
+def test_pnpm_version_detected_in_target_workdir(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    (wd / "PNPM_MARKER").write_text("")  # only the target dir has this
+    fake_path = _fake_pnpm_bin_cwd_sensitive(tmp_path)
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    # cwd=workdir -> shim sees PNPM_MARKER -> reports 10.16.0 -> native path.
+    assert env["pnpm_version"] == "10.16.0"
+    assert env["status"] == "configured"
+    assert env["enforced"] is True
+
+
+def test_npm_version_detected_in_target_workdir(tmp_path):
+    wd = _mk(tmp_path)  # no lockfile -> npm path
+    (wd / "PNPM_MARKER").write_text("")  # reuse the same marker convention
+    bindir = tmp_path / "fakebin_npm_cwd"
+    bindir.mkdir(exist_ok=True)
+    npm = bindir / "npm"
+    npm.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "--version" ]; then\n'
+        '  if [ -f "PNPM_MARKER" ]; then echo "11.14.1"; else echo "1.0.0"; fi\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "config" ] && [ "$2" = "get" ]; then echo "7"; exit 0; fi\n'
+        "exit 0\n"
+    )
+    npm.chmod(0o755)
+    fake_path = f"{bindir}:{os.environ.get('PATH','')}"
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    assert env["npm_version"] == "11.14.1"
+    assert env["enforced"] is True
+
+
+# --- pnpm `packages` field (v0.11.2): required for older pnpm -------------
+def test_pnpm_from_scratch_write_seeds_packages_field(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")  # no pre-existing workspace file
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    ws = (wd / "pnpm-workspace.yaml").read_text()
+    assert "packages:" in ws
+    assert "['.']" in ws
+    # This is the regression test for the reported broken install: a
+    # workspace file with ONLY the cooldown keys is invalid on pnpm that
+    # requires `packages`.
+
+
+def test_pnpm_existing_packages_field_preserved_byte_for_byte(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    (wd / "pnpm-workspace.yaml").write_text("packages:\n  - 'pkgs/*'\n")
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    ws = (wd / "pnpm-workspace.yaml").read_text()
+    assert "- 'pkgs/*'" in ws
+    assert "['.']" not in ws  # never seeded over an existing packages field
+
+
+def test_pnpm_already_broken_settings_only_file_self_heals(tmp_path):
+    """Finding 1 regression: an EXISTING pnpm-workspace.yaml written by a
+    prior buggy run (or by `pnpm approve-builds`) with only the cooldown
+    keys and no `packages` field must gain one on re-run — not stay broken
+    forever because `creating_new` was False."""
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")
+    (wd / "pnpm-workspace.yaml").write_text(
+        "minimumReleaseAge: 10080\nminimumReleaseAgeExclude: [\"@tyroneross/*\"]\n"
+    )
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    rc, env = _run(wd, env_path=fake_path)
+    assert rc == 0
+    ws = (wd / "pnpm-workspace.yaml").read_text()
+    assert "packages:" in ws
+    assert "['.']" in ws
+    assert "minimumReleaseAge: 10080" in ws  # cooldown keys survive
+    assert "minimumReleaseAgeExclude:" in ws
+
+    # Idempotent on this healed path too.
+    first = ws
+    rc2, env2 = _run(wd, env_path=fake_path)
+    assert (wd / "pnpm-workspace.yaml").read_text() == first
+    assert env2["changed"] is False
+
+
+def test_idempotent_pnpm_from_scratch(tmp_path):
+    wd = _mk(tmp_path, lockfile="pnpm-lock.yaml")  # no pre-existing workspace file
+    fake_path = _fake_pnpm_bin(tmp_path, version="10.16.0")
+    _run(wd, env_path=fake_path)
+    first_ws = (wd / "pnpm-workspace.yaml").read_text()
+    first_npmrc = (wd / ".npmrc").read_text()
+    rc, env = _run(wd, env_path=fake_path)
+    assert (wd / "pnpm-workspace.yaml").read_text() == first_ws
+    assert (wd / ".npmrc").read_text() == first_npmrc
+    assert env["changed"] is False
 
 
 def test_idempotent_pnpm(tmp_path):

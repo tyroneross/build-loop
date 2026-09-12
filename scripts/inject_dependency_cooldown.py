@@ -25,20 +25,34 @@ hardcoded-only — extra scopes/names are honored, the self-author default is
 not removable).
 
 Authoritative ecosystem facts (verified empirically on npm 11.14.1,
-2026-05-16; source mcollina gist + npm `config ls -l` + Socket.dev):
+2026-05-16; source mcollina gist + npm `config ls -l` + Socket.dev; pnpm floor
+corrected 2026-09-12 against pnpm's own changelog — ``minimumReleaseAge`` /
+``minimumReleaseAgeExclude`` do not exist before pnpm 10.16.0):
 
   | PM            | key                  | unit    | file                | exclude/allowlist        |
   |---------------|----------------------|---------|---------------------|--------------------------|
   | npm >= 11.10  | min-release-age      | DAYS    | .npmrc              | NONE (npm/cli#8994)      |
-  | pnpm >= 11    | minimumReleaseAge    | MINUTES | pnpm-workspace.yaml | minimumReleaseAgeExclude |
-  | pnpm 10.x     | minimum-release-age  | MINUTES | .npmrc              | (workspace yaml)         |
+  | pnpm >= 10.16 | minimumReleaseAge    | MINUTES | pnpm-workspace.yaml | minimumReleaseAgeExclude |
+  | pnpm 10.16.x  | minimum-release-age  | MINUTES | .npmrc              | (workspace yaml)         |
+  | pnpm < 10.16  | NONE — no native cooldown; falls back to the hook       |
   | yarn >= 4.10  | npmMinimalAgeGate    | MINUTES | .yarnrc.yml         | npmPreapprovedPackages   |
 
   npm has NO native exclude mechanism (open issue npm/cli#8994). For npm the
   allowlist is therefore enforced by the PreToolUse backstop hook, NOT by
   native config. ``allowlist_mechanism`` in the envelope tells the hook which
   regime is active: ``"native"`` (pnpm/yarn — hook stands down once enforced)
-  or ``"hook"`` (npm — hook stays engaged to honor the allowlist).
+  or ``"hook"`` (npm, and pnpm < 10.16.0 — hook stays engaged to honor the
+  allowlist).
+
+  pnpm < 10.16.0 additionally REQUIRES a non-empty ``packages`` field in
+  ``pnpm-workspace.yaml`` or every pnpm command fails with
+  ``ERR_PNPM_INVALID_WORKSPACE_CONFIGURATION`` (pnpm/pnpm#8968); modern pnpm
+  treats a missing ``packages`` field as "root package only". The injector
+  seeds ``packages: ['.']`` whenever the file has NO ``packages`` field at
+  all — whether the file is being created fresh or already exists without
+  one (e.g. a settings-only file left by a prior buggy run, or by ``pnpm
+  approve-builds``) — so an already-broken repo self-heals on the next run.
+  It never touches an existing ``packages`` field.
 
   npm errors hard if both ``min-release-age`` config and a ``--before`` flag
   are present in one invocation ("--before cannot be provided when using
@@ -70,7 +84,8 @@ Output envelope (``--json``):
       "allowlist": ["@tyroneross/*", ...],
       "allowlist_mechanism": "native"|"hook"|null,
       "config_file": "<rel-path>"|null,
-      "npm_version": "11.14.1"|null,     # npm path only
+      "npm_version": "11.14.1"|null,      # npm path only
+      "pnpm_version": "10.16.0"|null,     # pnpm path only
       "changed": true|false              # did this run modify a file?
     }
 
@@ -91,6 +106,7 @@ from typing import Any
 
 DEFAULT_ALLOWLIST = ["@tyroneross/*"]
 NPM_NATIVE_MIN = (11, 10, 0)  # first npm with native min-release-age
+PNPM_NATIVE_MIN = (10, 16, 0)  # first pnpm with minimumReleaseAge
 
 # Documenting header for the written .npmrc. Marker line makes the prepend
 # idempotent across re-runs. npm's native min-release-age has NO scope-exclusion
@@ -154,10 +170,32 @@ def _detect_pm(workdir: Path) -> str:
     return "npm"
 
 
-def _npm_version() -> tuple[int, int, int] | None:
+def _npm_version(workdir: Path) -> tuple[int, int, int] | None:
+    """Run in ``workdir`` — corepack resolves ``packageManager`` per-project,
+    so the version that will actually run installs there is the one that
+    matters. Running with no ``cwd`` picks up whatever directory the caller
+    happens to be in, which can silently detect the wrong project's pin."""
     try:
         out = subprocess.run(
-            ["npm", "--version"], capture_output=True, text=True, timeout=10
+            ["npm", "--version"], cwd=str(workdir), capture_output=True, text=True, timeout=10
+        )
+        if out.returncode != 0:
+            return None
+        m = re.match(r"(\d+)\.(\d+)\.(\d+)", out.stdout.strip())
+        if not m:
+            return None
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _pnpm_version(workdir: Path) -> tuple[int, int, int] | None:
+    """Mirrors ``_npm_version()``. ``None`` on any failure — CLI absent,
+    non-zero exit (e.g. a corepack ``packageManager`` mismatch in the
+    ambient cwd's package.json), or unparseable output."""
+    try:
+        out = subprocess.run(
+            ["pnpm", "--version"], cwd=str(workdir), capture_output=True, text=True, timeout=10
         )
         if out.returncode != 0:
             return None
@@ -253,7 +291,7 @@ def _merge_lines(existing: str, updates: dict[str, str]) -> tuple[str, bool]:
 
 
 def _write_npm(workdir: Path, allowlist: list[str], days: int, check: bool) -> dict[str, Any]:
-    ver = _npm_version()
+    ver = _npm_version(workdir)
     target = workdir / ".npmrc"
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
     has_key = bool(re.search(r"(?m)^\s*min-release-age\s*=", existing))
@@ -328,7 +366,30 @@ def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
     npmrc = workdir / ".npmrc"
     ws_existing = ws.read_text(encoding="utf-8") if ws.is_file() else ""
     has_key = bool(re.search(r"(?m)^\s*minimumReleaseAge\s*:", ws_existing))
-    base = {"package_manager": "pnpm", "allowlist_mechanism": "native"}
+    ver = _pnpm_version(workdir)
+    ver_str = ".".join(map(str, ver)) if ver else None
+    base = {"package_manager": "pnpm", "pnpm_version": ver_str}
+
+    if ver is not None and ver < PNPM_NATIVE_MIN:
+        # Native minimumReleaseAge doesn't exist on this pnpm. Writing it
+        # anyway is what broke the field-reported install (an inert
+        # workspace-yaml key on a pnpm that also requires `packages`).
+        # Write NOTHING and keep the hook engaged.
+        return {
+            **base,
+            "allowlist_mechanism": "hook",
+            "status": "fallback-hook",
+            "reason": (
+                f"pnpm {ver_str} < 10.16.0 — native minimumReleaseAge "
+                "unavailable; PreToolUse backstop hook is the active gate "
+                "on this machine"
+            ),
+            "enforced": False,
+            "config_file": "pnpm-workspace.yaml" if ws.is_file() else None,
+            "changed": False,
+        }
+
+    base["allowlist_mechanism"] = "native"
 
     if check:
         if not has_key:
@@ -342,14 +403,32 @@ def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
             }
         rec = _pnpm_recognizes(workdir, "minimumReleaseAge", str(minutes))
         if rec is None:
-            # pnpm CLI absent — fall back to file presence. The native yaml
-            # config carries the exclude list and is honored by pnpm at
-            # install time regardless of CLI availability here.
+            if ver is not None:
+                # config-get itself failed (e.g. a minimal shim), but we
+                # already confirmed via --version that this pnpm is new
+                # enough to support the key natively.
+                return {
+                    **base,
+                    "status": "configured",
+                    "reason": (
+                        "pnpm config get unavailable for live verify; "
+                        f"pnpm {ver_str} >= 10.16.0 confirms native support"
+                    ),
+                    "enforced": True,
+                    "config_file": "pnpm-workspace.yaml",
+                    "changed": False,
+                }
+            # Version itself is unverifiable — do not overclaim enforcement
+            # on file presence alone (the false-positive class this fix
+            # closes for pnpm, mirroring the npm v0.11.1 fix).
             return {
                 **base,
                 "status": "configured",
-                "reason": "pnpm CLI unavailable for live verify; config-file present (native exclude carried in yaml)",
-                "enforced": True,
+                "reason": (
+                    "pnpm CLI unavailable to verify version; config-file "
+                    "present but native support on this machine is unconfirmed"
+                ),
+                "enforced": False,
                 "config_file": "pnpm-workspace.yaml",
                 "changed": False,
             }
@@ -362,15 +441,27 @@ def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
             "changed": False,
         }
 
-    ws_updates = {
-        "minimumReleaseAge:": f"minimumReleaseAge: {minutes}",
-        "minimumReleaseAgeExclude:": f"minimumReleaseAgeExclude: {_yaml_list(allowlist)}",
-    }
+    # Write path (ver is None [unverifiable] or ver >= 10.16.0 [confirmed]).
+    ws_updates: dict[str, str] = {}
+    has_packages = bool(re.search(r"(?m)^\s*packages\s*:", ws_existing))
+    if not has_packages:
+        # Required on pnpm < 10.16 (ERR_PNPM_INVALID_WORKSPACE_CONFIGURATION
+        # without it); harmless no-op on modern pnpm (root package only).
+        # Seed whenever the field is absent — not only on a from-scratch
+        # write — so an already-broken settings-only file (written by a
+        # prior buggy run, or by `pnpm approve-builds`, which writes only
+        # `onlyBuiltDependencies`) self-heals on the next run instead of
+        # staying permanently invalid. Never touches an existing `packages:`
+        # field. `_merge_lines` appends unseen keys at the end, so this line
+        # lands after existing content — valid YAML either way.
+        ws_updates["packages:"] = "packages: ['.']"
+    ws_updates["minimumReleaseAge:"] = f"minimumReleaseAge: {minutes}"
+    ws_updates["minimumReleaseAgeExclude:"] = f"minimumReleaseAgeExclude: {_yaml_list(allowlist)}"
     ws_new, ws_changed = _merge_lines(ws_existing, ws_updates)
     if ws_changed:
         _atomic_write(ws, ws_new)
 
-    # pnpm 10.x reads kebab `minimum-release-age` (MINUTES) from .npmrc.
+    # pnpm 10.16.x reads kebab `minimum-release-age` (MINUTES) from .npmrc.
     npmrc_existing = npmrc.read_text(encoding="utf-8") if npmrc.is_file() else ""
     npmrc_new, npmrc_changed = _merge_lines(
         npmrc_existing, {"minimum-release-age=": f"minimum-release-age={minutes}"}
@@ -378,10 +469,21 @@ def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
     if npmrc_changed:
         _atomic_write(npmrc, npmrc_new)
 
+    if ver is not None:
+        reason = ""
+        enforced = True
+    else:
+        reason = (
+            "pnpm CLI not found on PATH; version could not be verified — "
+            "config written but native enforcement on this machine is unconfirmed"
+        )
+        enforced = False
+
     return {
         **base,
         "status": "configured",
-        "enforced": True,
+        "reason": reason,
+        "enforced": enforced,
         "config_file": "pnpm-workspace.yaml",
         "changed": ws_changed or npmrc_changed,
     }

@@ -18,7 +18,12 @@
 #
 # For ungated projects (not enforced): npm/yarn add/install rewrites with
 # `--before=<date 7d ago>`. For commands that can't be safely rewritten
-# (pnpm add, `npm ci`) it denies with an actionable message.
+# (pnpm add, `npm ci`) it denies with an actionable message. pnpm has two
+# distinct not-enforced causes with two distinct remedies: pnpm < 10.16.0
+# (no native minimumReleaseAge exists there at all -> deny names the pnpm
+# upgrade, not the injector, since re-running it can never fix this) vs.
+# cooldown simply not yet injected on a new-enough pnpm (-> deny names the
+# injector, today's behavior).
 #
 # Mirrors scripts/hooks/pre_bash_autonomy.sh exactly: stdin event JSON,
 # scope-guard to build-loop projects, silent `{}` exit 0 on the common path,
@@ -366,15 +371,41 @@ if is_npm or is_yarn_add:
     )
     sys.exit(0)
 
-# pnpm has no --before equivalent; deny with the actionable fix.
+# pnpm has no --before equivalent; deny with the actionable fix. Two
+# distinct causes need two distinct remedies: an old pnpm (< 10.16.0) can
+# never be fixed by re-running the injector (minimumReleaseAge doesn't
+# exist there at all), so that path must name the pnpm upgrade instead —
+# re-running the injector on such a repo will always, correctly, report
+# enforced:false again, making "run the injector" unactionable advice.
 if is_pnpm:
-    emit(
-        "deny",
-        f"Supply-chain cooldown ({days}d) not enforced and pnpm has no "
-        f"--before equivalent. Run `python3 scripts/inject_dependency_cooldown.py "
-        f"--workdir .` to write pnpm-workspace.yaml minimumReleaseAge "
-        f"(constitution:C-SUPPLY/dependency_cooldown), then retry.",
-    )
+    pnpm_ver_str = check.get("pnpm_version")
+    pnpm_too_old = False
+    if check.get("status") == "fallback-hook" and pnpm_ver_str:
+        m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(pnpm_ver_str))
+        if m and tuple(int(x) for x in m.groups()) < (10, 16, 0):
+            pnpm_too_old = True
+
+    if pnpm_too_old:
+        # Surface the injector's own reason string (single source of truth)
+        # rather than re-deriving the explanation here.
+        injector_reason = check.get("reason") or (
+            f"pnpm {pnpm_ver_str} < 10.16.0 — native minimumReleaseAge unavailable"
+        )
+        emit(
+            "deny",
+            f"Supply-chain cooldown ({days}d) not enforced: {injector_reason}. "
+            f"Upgrade pnpm to >= 10.16.0 (minimumReleaseAge does not exist before "
+            f"that version) — re-running the injector will not fix this on pnpm "
+            f"{pnpm_ver_str} (constitution:C-SUPPLY/dependency_cooldown).",
+        )
+    else:
+        emit(
+            "deny",
+            f"Supply-chain cooldown ({days}d) not enforced and pnpm has no "
+            f"--before equivalent. Run `python3 scripts/inject_dependency_cooldown.py "
+            f"--workdir .` to write pnpm-workspace.yaml minimumReleaseAge "
+            f"(constitution:C-SUPPLY/dependency_cooldown), then retry.",
+        )
     sys.exit(0)
 
 # Anything that slipped through — fail open.
