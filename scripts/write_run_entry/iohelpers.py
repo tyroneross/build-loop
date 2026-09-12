@@ -55,6 +55,14 @@ def empty_collection_fields(row: dict) -> set[str]:
     the pre-fix writer always wrote `filesTouched: []` and `phases: {}` on a
     goal-only correction. An empty collection on such a row therefore carries no
     information about that field and must not overwrite a recorded one.
+
+    This deliberately DIVERGES from the live CLI, which marks a field defaulted
+    only when its flag was absent and so honours an explicit `--files-touched ""`
+    as a deliberate clear. A historical row records no such distinction, so the
+    repair cannot honour it and biases toward preserving data. The cost is that a
+    deliberate clear captured in a pre-fix duplicate row is not replayed; the
+    alternative is deleting a recorded file set on a guess, which is the defect
+    this tool repairs.
     """
     return {f for f in OMISSION_SENSITIVE_FIELDS if not row.get(f)}
 

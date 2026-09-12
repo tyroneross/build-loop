@@ -117,6 +117,20 @@ class DedupeRunLedgerTests(unittest.TestCase):
         row = json.loads(self.state.read_text())["runs"][0]
         self.assertEqual(row["filesTouched"], ["c.py", "d.py"])
 
+    def test_repair_biases_toward_preserving_over_replaying_a_clear(self) -> None:
+        """A historical row records no difference between "not supplied" and
+        "deliberately cleared", so the repair preserves rather than guesses. This
+        pins the tradeoff so a later change does not silently flip it."""
+        self._write([
+            {"run_id": "r1", "filesTouched": ["a.py"]},
+            {"run_id": "r1", "filesTouched": [], "goal": "cleared on purpose"},
+        ])
+        self._report("--apply")
+        row = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(row["filesTouched"], ["a.py"],
+                         "the repair preserves; only the live CLI can honour an explicit clear")
+        self.assertEqual(row["goal"], "cleared on purpose")
+
     def test_clean_ledger_is_a_no_op(self) -> None:
         self._write([{"run_id": "r1"}, {"run_id": "r2"}])
         before = self.state.read_text()
