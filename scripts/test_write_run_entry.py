@@ -448,6 +448,25 @@ class WriteRunEntryTests(unittest.TestCase):
                          set(module.OMISSION_SENSITIVE_FIELDS))
         self.assertEqual(len(module._FLAG_TO_FIELD), len(module.OMISSION_SENSITIVE_FIELDS))
 
+    def test_self_heal_is_stable_across_duplicate_count(self) -> None:
+        """Three and four duplicates must fold to the same shape two do, and the
+        FIRST row's unique key must survive alongside the later rows'."""
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        rows = [{"run_id": "run_many", "filesTouched": ["a.py"], "k0": "first-only"}]
+        for i in range(1, 4):
+            rows.append({"run_id": "run_many", "filesTouched": ["a.py"], f"k{i}": f"row{i}-only"})
+        self.state.write_text(json.dumps({"runs": rows}))
+
+        result = run(self._base_args(**{"--run-id": "run_many", "--goal": "corrected"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("deduplicated run entry", result.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual(len(runs), 1)
+        for i in range(4):
+            self.assertIn(f"k{i}", runs[0], f"the heal dropped k{i}")
+        self.assertEqual(runs[0]["goal"], "corrected")
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

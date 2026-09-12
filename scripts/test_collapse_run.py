@@ -600,4 +600,18 @@ class TestHumanSummarySurfacesContents:
         printed = capsys.readouterr().err
         assert str(wt) in printed, "the preview must name the worktree holding a .env"
         assert "caches-only characterization is unsupported" in printed
-        assert wt.exists(), "a dry run must not delete anything"
+
+        # Gathering evidence must not become acting. The inventory is a
+        # read-only `git status` plus an os.walk, so a preview that now reads
+        # more must still write nothing.
+        assert wt.exists(), "a dry run must not remove the worktree"
+        assert (wt / ".env").read_text() == "API_KEY=synthetic\n"
+        assert _git(repo, "branch", "--list", "feat-preview").stdout.strip() != "", (
+            "a dry run must not delete the branch"
+        )
+        assert _read_state(repo)["runs"][0] == {
+            "run_id": "run_preview",
+            "createdRefs": [
+                {"branch": "feat-preview", "path": str(wt), "review_hold": False}
+            ],
+        }, "a dry run must not project state"
