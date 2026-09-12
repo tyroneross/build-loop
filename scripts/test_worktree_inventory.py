@@ -327,6 +327,29 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertIn(".env", chars, "the secret git DID read must still be named")
         self.assertFalse(result["caches_only_claim_supported"])
 
+    def test_status_call_takes_no_optional_index_lock(self) -> None:
+        """The module's contract says it never mutates anything. Plain
+        `git status` may refresh and rewrite the worktree index, which would make
+        that claim false and would contend for index.lock with a concurrent
+        writer - and this call now runs on collapse_run's dry-run preview."""
+        captured = {}
+        original = worktree_inventory.subprocess.run
+
+        def _capture(args, **kwargs):
+            captured["argv"] = list(args)
+            return original(args, **kwargs)
+
+        worktree_inventory.subprocess.run = _capture
+        try:
+            worktree_inventory.inventory(self._worktree())
+        finally:
+            worktree_inventory.subprocess.run = original
+
+        self.assertIn("--no-optional-locks", captured["argv"])
+        self.assertLess(captured["argv"].index("--no-optional-locks"),
+                        captured["argv"].index("status"),
+                        "the flag is a git-level option and must precede the subcommand")
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()

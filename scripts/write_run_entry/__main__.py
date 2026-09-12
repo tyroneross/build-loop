@@ -177,10 +177,13 @@ _FLAG_TO_FIELD = {
     "manual_interventions_json": "manualInterventions",
     "active_experimental_artifacts": "active_experimental_artifacts",
 }
-assert set(_FLAG_TO_FIELD.values()) == set(OMISSION_SENSITIVE_FIELDS), (
-    "flag->field map drifted from iohelpers.OMISSION_SENSITIVE_FIELDS: "
-    f"{sorted(set(_FLAG_TO_FIELD.values()) ^ set(OMISSION_SENSITIVE_FIELDS))}"
-)
+if set(_FLAG_TO_FIELD.values()) != set(OMISSION_SENSITIVE_FIELDS):
+    # raise, not assert: `python3 -O` strips asserts, and a drift guard that
+    # disappears under optimization guards nothing.
+    raise RuntimeError(
+        "flag->field map drifted from iohelpers.OMISSION_SENSITIVE_FIELDS: "
+        f"{sorted(set(_FLAG_TO_FIELD.values()) ^ set(OMISSION_SENSITIVE_FIELDS))}"
+    )
 
 
 def _defaulted_fields(args: argparse.Namespace, git_contributed: bool = False) -> set[str]:

@@ -417,23 +417,33 @@ class WriteRunEntryTests(unittest.TestCase):
         sys.path.insert(0, str(HERE / "write_run_entry"))
         from iohelpers import dedupe_runs  # type: ignore
 
-        rows = [
-            {"run_id": "run_eq", "filesTouched": ["a.py"], "phases": {"assess": {"status": "pass"}}},
-            {"run_id": "run_eq", "filesTouched": ["b.py"], "security_findings": [{"severity": "HIGH"}]},
-        ]
         self.state.parent.mkdir(parents=True, exist_ok=True)
-        self.state.write_text(json.dumps({"runs": json.loads(json.dumps(rows))}))
-        self.assertEqual(run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
-        via_writer = json.loads(self.state.read_text())["runs"][0]
+        for count in (2, 3, 4):
+            with self.subTest(duplicates=count):
+                rows = [
+                    {"run_id": "run_eq", "filesTouched": ["a.py"],
+                     "phases": {"assess": {"status": "pass"}},
+                     "judge_decisions": [{"judge_id": "independent-auditor", "verdict": "approve"}]},
+                    {"run_id": "run_eq", "filesTouched": ["a.py"],
+                     "security_findings": [{"severity": "HIGH"}], "source": "append_run"},
+                ]
+                for i in range(2, count):
+                    rows.append({"run_id": "run_eq", "filesTouched": ["a.py"], f"extra{i}": i})
 
-        repaired, _ = dedupe_runs(json.loads(json.dumps(rows)))
-        self.state.write_text(json.dumps({"runs": repaired}))
-        self.assertEqual(run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
-        via_repair = json.loads(self.state.read_text())["runs"][0]
+                self.state.write_text(json.dumps({"runs": json.loads(json.dumps(rows))}))
+                self.assertEqual(
+                    run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
+                via_writer = json.loads(self.state.read_text())["runs"][0]
 
-        for key in ("filesTouched", "phases", "security_findings"):
-            self.assertEqual(via_writer.get(key), via_repair.get(key),
-                             f"writer and repair disagree on {key}")
+                repaired, _ = dedupe_runs(json.loads(json.dumps(rows)))
+                self.state.write_text(json.dumps({"runs": repaired}))
+                self.assertEqual(
+                    run(self._base_args(**{"--run-id": "run_eq", "--goal": "g"})).returncode, 0)
+                via_repair = json.loads(self.state.read_text())["runs"][0]
+
+                # The WHOLE row, not a named subset. A three-key check cannot see
+                # a regression in source, judge_decisions, or anything unnamed.
+                self.assertEqual(via_writer, via_repair)
 
     def test_flag_to_field_map_cannot_drift(self) -> None:
         """The map was a positional zip: reordering the field tuple silently
@@ -447,6 +457,13 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual(set(module._FLAG_TO_FIELD.values()),
                          set(module.OMISSION_SENSITIVE_FIELDS))
         self.assertEqual(len(module._FLAG_TO_FIELD), len(module.OMISSION_SENSITIVE_FIELDS))
+        # Key side too. getattr(args, attr, None) defaults to None, so a renamed
+        # argparse dest would make its field read as permanently defaulted - the
+        # same silent mis-mapping, moved one column over.
+        dests = set(vars(module.parse_args(
+            ["--workdir", str(self.workdir), "--goal", "g", "--outcome", "pass"])))
+        self.assertLessEqual(set(module._FLAG_TO_FIELD), dests,
+                             "a flag->field key names no argparse dest")
 
     def test_self_heal_is_stable_across_duplicate_count(self) -> None:
         """Three and four duplicates must fold to the same shape two do, and the

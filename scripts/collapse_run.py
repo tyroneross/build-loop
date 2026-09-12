@@ -1794,11 +1794,22 @@ def collapse(
             # `git status`, safe in a dry run, and without it the operator
             # approves a deletion on counts alone — the state this whole
             # inventory exists to prevent.
-            if path and Path(str(path)).exists():
+            # Same path scope as the acting path: a preview must not inspect a
+            # worktree the acting path would refuse to touch. Same row shape too
+            # — one list, one shape, so a reader never has to know which stage
+            # produced a row.
+            previewable = (
+                path
+                and (not require_run_root or _approved_run_worktree_path(workdir, path))
+                and Path(str(path)).exists()
+            )
+            if previewable:
                 result["safety"].append({
                     "branch": ref_branch,
                     "stage": "dry-run",
                     "path": str(path),
+                    "safe": None,
+                    "reason": "preview only; no safety inspection performed",
                     "inventory": _worktree_inventory(Path(str(path)).resolve()),
                 })
             if is_merged:

@@ -615,3 +615,37 @@ class TestHumanSummarySurfacesContents:
                 {"branch": "feat-preview", "path": str(wt), "review_hold": False}
             ],
         }, "a dry run must not project state"
+
+        # One list, one row shape: a reader must not have to know which stage
+        # produced a row before it can read `safe`.
+        preview = collapse_run.collapse(
+            repo, run_id="latest", owner_released=True, dry_run=True
+        )
+        assert preview["safety"], "the preview must record a safety row"
+        for row in preview["safety"]:
+            assert "safe" in row and "reason" in row, f"heterogeneous safety row: {sorted(row)}"
+
+    def test_dry_run_skips_a_worktree_the_acting_path_would_refuse(
+        self, tmp_path: Path
+    ) -> None:
+        """The preview inspects the same set of paths the acting path is willing
+        to act on. Under --require-run-root a path outside .build-loop/worktrees
+        is refused there, so the preview must not git-status and walk it either."""
+        repo = _make_repo(tmp_path)
+        _make_branch(repo, "feat-outside", merge_to_main=True)
+        wt = _make_worktree(repo, "feat-outside")  # deliberately outside .build-loop/worktrees
+
+        _write_state(repo, {
+            "run_id": "run_outside",
+            "createdRefs": [
+                {"branch": "feat-outside", "path": str(wt), "review_hold": False}
+            ],
+        })
+
+        result = collapse_run.collapse(
+            repo, run_id="latest", owner_released=True, dry_run=True, require_run_root=True
+        )
+
+        assert result["safety"] == [], (
+            "the preview inspected a path the acting path would refuse"
+        )

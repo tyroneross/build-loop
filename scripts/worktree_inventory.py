@@ -111,7 +111,14 @@ def _status_entries(
     vanishes from the inventory rather than appearing as a risk. A warning means
     git's own view is incomplete, so the caller must not certify anything.
     """
-    args = ["git", "-C", str(path), "status", "--porcelain=v1", "-z", "--ignored=traditional"]
+    # --no-optional-locks: plain `git status` may refresh and REWRITE the
+    # worktree index as a side effect, which would make this module's
+    # "never mutates anything" contract false and would contend for index.lock
+    # with a concurrent writer. Same flag, same reason, as coordination_status.py.
+    args = [
+        "git", "--no-optional-locks", "-C", str(path),
+        "status", "--porcelain=v1", "-z", "--ignored=traditional",
+    ]
     if matching:
         # Traditional mode collapses an ignored directory to `scratch/` unless
         # every file is requested; `--ignored=matching` collapses it either way.
