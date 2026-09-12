@@ -100,8 +100,17 @@ def classify(rel_path: str) -> str:
     return "unclassified"
 
 
-def _status_entries(path: Path, *, matching: bool) -> tuple[list[tuple[str, str]], str | None]:
-    """Return [(xy_code, path), ...] from one read-only `git status` call."""
+def _status_entries(
+    path: Path, *, matching: bool
+) -> tuple[list[tuple[str, str]], str | None, list[str]]:
+    """Return ([(xy_code, path), ...], error, warnings) from one `git status`.
+
+    The third element matters as much as the first. git exits 0 while warning on
+    stderr that it could not open a directory, and when an ignored directory
+    holds nothing it CAN read, git omits the entry entirely — the directory
+    vanishes from the inventory rather than appearing as a risk. A warning means
+    git's own view is incomplete, so the caller must not certify anything.
+    """
     args = ["git", "-C", str(path), "status", "--porcelain=v1", "-z", "--ignored=traditional"]
     if matching:
         # Traditional mode collapses an ignored directory to `scratch/` unless
@@ -112,11 +121,13 @@ def _status_entries(path: Path, *, matching: bool) -> tuple[list[tuple[str, str]
             args, capture_output=True, text=True, check=False, timeout=_GIT_TIMEOUT_S
         )
     except subprocess.TimeoutExpired:
-        return [], f"git status timed out after {_GIT_TIMEOUT_S}s"
+        return [], f"git status timed out after {_GIT_TIMEOUT_S}s", []
     except (OSError, ValueError) as exc:
-        return [], f"git status failed: {exc}"
+        return [], f"git status failed: {exc}", []
     if proc.returncode != 0:
-        return [], (proc.stderr or proc.stdout).strip() or "git status failed"
+        return [], (proc.stderr or proc.stdout).strip() or "git status failed", []
+
+    warnings = [line.strip() for line in (proc.stderr or "").splitlines() if line.strip()]
 
     entries: list[tuple[str, str]] = []
     fields = [f for f in proc.stdout.split("\0")]
@@ -134,7 +145,7 @@ def _status_entries(path: Path, *, matching: bool) -> tuple[list[tuple[str, str]
         if code and code[0] in ("R", "C"):
             i += 1
         i += 1
-    return entries, None
+    return entries, None, warnings
 
 
 def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tuple[list[str], bool]:
@@ -152,8 +163,12 @@ def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tu
     """
     base = root / rel_dir.rstrip("/")
     valuable: list[str] = []
+    # os.walk's default is to SWALLOW errors and keep going, so an unreadable
+    # subdirectory would vanish from the walk and the directory would still
+    # report as fully inspected. A directory we could not read is uninspected.
+    walk_errors: list[OSError] = []
     try:
-        for dirpath, dirnames, filenames in os.walk(base, onerror=None):
+        for dirpath, dirnames, filenames in os.walk(base, onerror=walk_errors.append):
             for name in filenames:
                 budget[0] -= 1
                 if budget[0] < 0:
@@ -174,7 +189,7 @@ def _scan_collapsed_directory(root: Path, rel_dir: str, budget: list[int]) -> tu
                 return valuable, False
     except OSError:
         return valuable, False
-    return valuable, True
+    return valuable, not walk_errors
 
 
 def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
@@ -196,6 +211,7 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
         "counts": {"tracked_changes": 0, "untracked": 0, "ignored": 0},
         "non_reproducible_ignored": [],
         "uninspected_ignored_directories": [],
+        "status_warnings": [],
         "caches_only_claim_supported": False,
         "characterization": "worktree could not be inventoried",
         "expanded_ignored_directories": bool(matching),
@@ -204,10 +220,11 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
         result["error"] = "path does not exist"
         return result
 
-    entries, error = _status_entries(candidate, matching=matching)
+    entries, error, warnings = _status_entries(candidate, matching=matching)
     if error:
         result["error"] = error
         return result
+    result["status_warnings"] = warnings
 
     for code, rel in entries:
         if not rel:
@@ -248,7 +265,9 @@ def inventory(path: str | Path, *, matching: bool = False) -> dict[str, Any]:
 
     result["non_reproducible_ignored"] = sorted(risky)
     result["uninspected_ignored_directories"] = sorted(uninspected)
-    result["caches_only_claim_supported"] = not risky and not uninspected
+    result["caches_only_claim_supported"] = (
+        not risky and not uninspected and not result["status_warnings"]
+    )
     result["characterization"] = _characterize(result)
     return result
 
@@ -272,6 +291,12 @@ def _characterize(result: dict[str, Any]) -> str:
         return (
             f"{head}; {len(risky)} ignored entry(ies) are NOT reproducible tool "
             f"caches ({named}) — a caches-only characterization is unsupported"
+        )
+    if result["status_warnings"]:
+        first = result["status_warnings"][0]
+        return (
+            f"{head}; git could not read part of this worktree ({first}) — its own "
+            f"listing is incomplete, so no characterization of the contents holds"
         )
     uninspected = result["uninspected_ignored_directories"]
     if uninspected:

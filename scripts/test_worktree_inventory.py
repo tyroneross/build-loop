@@ -209,6 +209,46 @@ class WorktreeInventoryTests(unittest.TestCase):
         self.assertIn("build/a/b/c/service.pem", result["non_reproducible_ignored"])
         self.assertFalse(result["caches_only_claim_supported"])
 
+    def test_unreadable_subdirectory_blocks_the_claim(self) -> None:
+        """git exits 0 while warning on stderr that it could not open a
+        directory, and os.walk swallows the same error by default. A worktree
+        neither tool could fully read supports no claim about its contents."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n")
+        (wt / "build").mkdir()
+        (wt / "build" / "cache.txt").write_text("x\n")
+        locked = wt / "build" / "locked"
+        locked.mkdir()
+        (locked / ".env").write_text("API_KEY=synthetic\n")
+        locked.chmod(0o000)
+        try:
+            result = worktree_inventory.inventory(wt)
+        finally:
+            locked.chmod(0o755)
+
+        self.assertTrue(result["status_warnings"], "git's stderr warning must not be discarded")
+        self.assertFalse(result["caches_only_claim_supported"])
+        self.assertIn("could not read part of this worktree", result["characterization"])
+
+    def test_directory_git_cannot_enumerate_at_all_blocks_the_claim(self) -> None:
+        """When an ignored directory holds nothing git can read, git omits the
+        entry entirely — the directory vanishes rather than appearing as a risk.
+        The stderr warning is the only evidence it existed."""
+        wt = self._worktree()
+        (wt / ".gitignore").write_text("build/\n")
+        locked = wt / "build" / "locked"
+        locked.mkdir(parents=True)
+        (locked / ".env").write_text("API_KEY=synthetic\n")
+        locked.chmod(0o000)
+        try:
+            result = worktree_inventory.inventory(wt)
+        finally:
+            locked.chmod(0o755)
+
+        self.assertEqual(result["ignored"], [], "precondition: git omits the directory entirely")
+        self.assertTrue(result["status_warnings"])
+        self.assertFalse(result["caches_only_claim_supported"])
+
     def test_matching_expands_ignored_directories(self) -> None:
         wt = self._worktree()
         (wt / "scratch").mkdir()
