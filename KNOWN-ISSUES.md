@@ -409,7 +409,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 **Recommendation.** Keep the independent-auditor round mandatory before a fix commit is treated as closing its backlog item; do not let Iterate exit on a fix commit alone, only on a yay verdict.
 
-**Why.** The fixing agent's own tests (written per fix, mutation-checked) asserted the working path the fix targeted but not the collapsed-directory / lossy-merge case the auditor's adversarial reproduction found â€” a self-authored test validates the author's model of the bug, not the boundary the auditor probes.
+**Why.** The fixing agent's own tests (written per fix, mutation-checked) asserted the working path the fix targeted but not the collapsed-directory / lossy-merge case the auditor's adversarial reproduction found  -  a self-authored test validates the author's model of the bug, not the boundary the auditor probes.
 
 ## 2026-09-12 — Enforce gate: round-2 1e518873..d1e02870 (failed this run)
 
@@ -485,7 +485,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
-**What happened.** A backup/staging step keyed its copy destination on basename rather than full relative path and copied `scripts/worktree_reaper/__main__.py` over `scripts/write_run_entry/__main__.py` while the latter was mid-edit — both files are named `__main__.py` inside their own package directories, and both paths appear in this run's `state.json` `filesTouched`, corroborating both were live this run
+**What happened.** A backup/staging step keyed its copy destination on basename rather than full relative path and copied `scripts/worktree_reaper/__main__.py` over `scripts/write_run_entry/__main__.py` while the latter was mid-edit - both files are named `__main__.py` inside their own package directories, and both paths appear in this run's `state.json` `filesTouched`, corroborating both were live this run
 
 **When.** 2026-09-12
 
@@ -495,15 +495,15 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 **Why.** the backup loop's key derivation dropped the directory component, so two files that only collide on basename were treated as one file.
 
-Two further items surfaced this run and are referenced rather than re-filed here (see Issues §9 and Filed findings): `BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56` (self_mod_verify --auto-revert destroyed another session's uncommitted work) and `BUIL-RUN-LEDGER-m2b4bcfb37r3r3vjf6d12` (stale owed-verification manifest).
+**Related.** Two further items surfaced this run and are referenced rather than re-filed here: `BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56` (self_mod_verify --auto-revert destroyed another session's uncommitted work) and `BUIL-RUN-LEDGER-m2b4bcfb37r3r3vjf6d12` (stale owed-verification manifest).
 
-Counterfactual: of the 5 independent-auditor rounds, 4 returned nay. Given the shared root cause above, requiring each fix's acceptance test to reproduce the auditor's own repro steps — rather than the author's model of the bug — before a round can close would plausibly have collapsed rounds 1-4 into fewer passes; round 5 itself reached yay only once verification moved to auditor-authored oracles. The auditor role itself should not be automated away: it is the gate that caught what self-testing structurally could not, and round 5 passed by raising its rigor, not by removing it
+**Counterfactual.** Of the 5 independent-auditor rounds, 4 returned nay. Given the shared root cause above, requiring each fix's acceptance test to reproduce the auditor's own repro steps, rather than the author's model of the bug, would plausibly have collapsed rounds 1-4 into fewer passes. Round 5 reached yay only once verification moved to auditor-authored oracles. The auditor role itself should not be automated away: it is the gate that caught what self-testing structurally could not, and round 5 passed by raising its rigor, not by removing it.
 
 ## 2026-09-12 — One preflight family for the shared root cause behind 11 of this run's audit findings, not eleven separate gates
 
 _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
-**What happened.** Findings f1/f2 (round 1), n1/n2/n4 (round 2), f1/f2/f3 (round 3), and f6/f7/f8 (round 4) — 11 distinct items across 4 audit rounds — share one suspected root cause per this run's judge_decisions: the fixing agent's own tests, though written per fix and mutation-checked, validated the fix's model of the bug rather than an independently-derived oracle, so each one passed the author's tests while failing the auditor's adversarial reproduction
+**What happened.** Findings f1/f2 (round 1), n1/n2/n4 (round 2), f1/f2/f3 (round 3), and f6/f7/f8 (round 4) - 11 distinct items across 4 audit rounds - share one suspected root cause per this run's judge_decisions: the fixing agent's own tests, though written per fix and mutation-checked, validated the fix's model of the bug rather than an independently-derived oracle, so each one passed the author's tests while failing the auditor's adversarial reproduction
 
 **When.** 2026-09-12
 
