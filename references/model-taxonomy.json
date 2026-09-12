@@ -445,6 +445,29 @@
       "status": "verified",
       "aliases": []
     },
+    "gpt-6-astra": {
+      "provider": "openai",
+      "label": "GPT-6 Astra",
+      "segment": "generative_reasoning",
+      "tier": "T1",
+      "tags": [
+        "ultra-frontier",
+        "coding",
+        "computer-use",
+        "agentic",
+        "tool-capable",
+        "long-context",
+        "high-consequence"
+      ],
+      "released": "2026-09-03",
+      "status": "verified",
+      "aliases": [
+        "astra"
+      ],
+      "context_window": 1050000,
+      "evidence": "Registered 2026-09-12. RELEASE CONFIRMED: OpenAI shipped GPT-6 Astra 2026-09-03 (openai.com/index/gpt-6-astra/, InfoQ 2026-09); available in ChatGPT, Codex and the API; ~1.05M context, MRCR 96.3% in the 512K-1M range. Codex CLI v0.153.1 added first-class gpt-6-astra config without changing the default model or showing it in the picker; this host runs codex-cli 0.154.0. Activation probe from this host succeeded: `codex exec --model gpt-6-astra` returned the requested sentinel. Host advertises it at ~/.codex/config.toml [tui.model_availability_nux]. Referenced before registration at scripts/parallelism.py:74 and asserted xlarge at scripts/test_parallelism.py:461; introduced 2026-09-07 in ed5d00fd into prose and the resource heuristic ONLY, never the registry. Tier T1 not T0: T0 denotes restricted access and Astra is generally available. NOTE: OpenAI's system card places Astra at a critical cyber capability threshold; treat high-consequence dispatch accordingly.",
+      "evidence_tier": "T1 vendor release + T1 host activation probe"
+    },
     "gpt-5.6-terra": {
       "provider": "openai",
       "label": "GPT-5.6 Terra",
