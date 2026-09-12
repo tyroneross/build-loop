@@ -80,6 +80,76 @@ class WriteRunEntryTests(unittest.TestCase):
         record = json.loads(self.state.read_text())["runs"][0]
         self.assertEqual(record["commit"], head)
 
+    def test_same_run_id_upserts_one_row(self) -> None:
+        """A correcting write replaces the row for its run_id in place.
+
+        A second row for one run_id double-counts the run for every consumer
+        that aggregates over runs[] — Phase 6 Learn's sample counter and
+        recurring-pattern-detector's 3-run threshold.
+        """
+        run_id = "run_20260912T000000Z_deadbeef"
+        first = run(self._base_args(**{"--run-id": run_id, "--outcome": "fail"}))
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        second = run(self._base_args(**{
+            "--run-id": run_id,
+            "--outcome": "pass",
+            "--goal": "corrected goal",
+        }))
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual(len(runs), 1, msg=f"expected one row per run_id, got {runs}")
+        self.assertEqual(runs[0]["run_id"], run_id)
+        self.assertEqual(runs[0]["outcome"], "pass")
+        self.assertEqual(runs[0]["goal"], "corrected goal")
+
+    def test_upsert_preserves_row_position(self) -> None:
+        """The corrected row keeps its index; the ledger does not reshuffle."""
+        first = run(self._base_args(**{"--run-id": "run_aaa", "--goal": "first"}))
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        self.assertEqual(run(self._base_args(**{"--run-id": "run_bbb", "--goal": "second"})).returncode, 0)
+        correction = run(self._base_args(**{"--run-id": "run_aaa", "--goal": "first corrected"}))
+        self.assertEqual(correction.returncode, 0, msg=correction.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual([r["run_id"] for r in runs], ["run_aaa", "run_bbb"])
+        self.assertEqual(runs[0]["goal"], "first corrected")
+
+    def test_upsert_carries_evidence_the_correction_omits(self) -> None:
+        """Omitting --judge-decisions-json on a correction means 'not supplied
+        this pass', never 'delete the auditor verdict'."""
+        judges = self.workdir / "judges.json"
+        judges.write_text(json.dumps([
+            {"judge_id": "independent-auditor", "verdict": "approve"}
+        ]))
+        first = run(self._base_args(**{
+            "--run-id": "run_ccc",
+            "--judge-decisions-json": str(judges),
+        }))
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        second = run(self._base_args(**{"--run-id": "run_ccc", "--goal": "corrected"}))
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["judge_decisions"][0]["judge_id"], "independent-auditor")
+        self.assertEqual(runs[0]["goal"], "corrected")
+
+    def test_upsert_replaces_evidence_the_correction_supplies(self) -> None:
+        """Carry-forward must not make a supplied field uncorrectable."""
+        first_judges = self.workdir / "j1.json"
+        first_judges.write_text(json.dumps([{"judge_id": "plan-critic", "verdict": "rethink"}]))
+        second_judges = self.workdir / "j2.json"
+        second_judges.write_text(json.dumps([{"judge_id": "plan-critic", "verdict": "approve"}]))
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_ddd", "--judge-decisions-json": str(first_judges)})).returncode, 0)
+        self.assertEqual(run(self._base_args(**{
+            "--run-id": "run_ddd", "--judge-decisions-json": str(second_judges)})).returncode, 0)
+
+        runs = json.loads(self.state.read_text())["runs"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["judge_decisions"][0]["verdict"], "approve")
+
     def test_second_run_appends(self) -> None:
         self.assertEqual(run(self._base_args()).returncode, 0)
         r2 = run(self._base_args(**{"--goal": "second build"}))

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "627dbe45cc8dd65fb1037b02768b84448feb315bc42703c69562a002c775e9b5"
+    "content_sha256": "f7eaeb8c2e410cf15df10f88b1aa12ae86cd5689302b79b4b79309d2ebfaadda"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1645,6 +1645,7 @@
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
       "scripts/decision_surface.py": "decision_surface — the shared core behind every decision-surface variant.",
+      "scripts/dedupe_run_ledger.py": "dedupe_run_ledger.py — one-shot repair for `.build-loop/state.json.runs[]`.",
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",
       "scripts/detect_attribution_layers.py": "Detect whether a repo carries the canonical four-layer attribution stack.",
       "scripts/detect_decision_rot.py": "Decision rot detector — flag decisions older than threshold-days.",

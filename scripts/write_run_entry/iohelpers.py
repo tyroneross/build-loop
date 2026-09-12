@@ -22,6 +22,63 @@ from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E4
 # carried — Review-G legitimately owns and overwrites those.
 _STAKES_CARRY_KEYS = ("synthesisDensity", "triggers", "stakes", "dispatch_tier", "riskSurfaceChange")
 
+# Additive evidence blocks written only when the caller supplied them. A
+# CORRECTING write that omits `--judge-decisions-json` means "not supplied this
+# pass", never "delete the auditor verdict" — so they carry forward when absent
+# from the incoming entry, and are replaced outright when present.
+_EVIDENCE_CARRY_KEYS = (
+    "security_findings",
+    "judge_decisions",
+    "budget_summary",
+    "models",
+    "harness",
+    "ledger_rows_for_run",
+)
+
+_CARRY_IF_ABSENT_KEYS = _STAKES_CARRY_KEYS + _EVIDENCE_CARRY_KEYS
+
+
+def upsert_merge(existing: dict, entry: dict) -> dict:
+    """Build the replacement row for an existing run_id.
+
+    The incoming entry is authoritative for every field it carries; the existing
+    row only contributes keys the incoming entry omits and that are facts of the
+    RUN rather than of the writer. Returns a new dict — neither argument is
+    mutated, so callers keep their own entry intact.
+    """
+    merged = dict(entry)
+    for key in _CARRY_IF_ABSENT_KEYS:
+        if key in existing and key not in merged:
+            merged[key] = existing[key]
+    return merged
+
+
+def dedupe_runs(runs: list) -> tuple[list, list[str]]:
+    """Collapse duplicate run_id rows, keeping each id at its FIRST position.
+
+    Later rows for the same run_id win on value (they are the corrections) while
+    the earliest row's index is preserved, so ledger ordering does not shuffle.
+    Returns (deduped_rows, duplicate_run_ids).
+    """
+    index_of: dict[str, int] = {}
+    out: list = []
+    duplicates: list[str] = []
+    for row in runs:
+        run_id = row.get("run_id") if isinstance(row, dict) else None
+        if not isinstance(run_id, str) or not run_id:
+            out.append(row)
+            continue
+        if run_id in index_of:
+            i = index_of[run_id]
+            prior = out[i]
+            out[i] = upsert_merge(prior, row) if isinstance(prior, dict) else row
+            if run_id not in duplicates:
+                duplicates.append(run_id)
+            continue
+        index_of[run_id] = len(out)
+        out.append(row)
+    return out, duplicates
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -60,24 +117,18 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
         if runs is None:
             runs = []
             state["runs"] = runs
-        # A thin Stop-hook record (source: append_run) may already exist for this
-        # run_id (the structural inline closeout fired before this orchestrator
-        # Review-G write). Replace it in place rather than blind-appending a
-        # duplicate — two entries for one run_id would let judgment_gate resolve
-        # the thin one and FAIL a run whose auditor genuinely ran. A richer
-        # (non-append_run) existing record is left untouched.
+        # UPSERT on run_id: one run_id owns exactly one row. A prior row may be a
+        # thin Stop-hook record (source: append_run, written before this Review-G
+        # write) or an earlier Review-G record this write is CORRECTING. Either
+        # way, replace it in place at its original index. Blind-appending a second
+        # row double-counts the run for every consumer that aggregates over runs[]
+        # — Phase 6 Learn's sample counter and recurring-pattern-detector's 3-run
+        # threshold — and lets judgment_gate resolve the stale row.
         run_id = entry.get("run_id")
         if run_id:
             for i, r in enumerate(runs):
-                if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") == "append_run":
-                    # Preserve the run's stakes evidence the thin record captured,
-                    # unless this richer record already carries it. Merge into a
-                    # copy so the caller's entry dict is never mutated in place.
-                    merged = dict(entry)
-                    for k in _STAKES_CARRY_KEYS:
-                        if k in r and k not in merged:
-                            merged[k] = r[k]
-                    runs[i] = merged
+                if isinstance(r, dict) and r.get("run_id") == run_id:
+                    runs[i] = upsert_merge(r, entry)
                     atomic_write_bytes(state_path, _encode(state))
                     return
         runs.append(entry)
