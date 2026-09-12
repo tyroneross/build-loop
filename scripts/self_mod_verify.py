@@ -32,9 +32,15 @@ Revert safety (BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56, two files lost 2026-09-12):
     is never derived from git status, because a derived set spans every dirty
     file in the checkout including another session's uncommitted work.
   * Every reverted file's working-tree bytes are written to the object DB FIRST
-    (``git hash-object -w``); the sha and its ``git cat-file blob <sha> > <path>``
-    recovery command are printed and returned in ``reverted_blobs``. A file whose
-    backup cannot be written is not reverted, and neither is any other file.
+    (``git hash-object -w``) and anchored under ``refs/self-mod-verify/backup/``
+    so ``git gc`` cannot reclaim them; the sha and a repo-anchored, shell-quoted
+    ``git -C <repo> cat-file blob <sha> > <abs-path>`` recovery command are
+    printed and returned in ``reverted_blobs``. A file whose backup cannot be
+    written or anchored is not reverted, and neither is any other file.
+  * Caller paths are LITERAL filenames, never git pathspecs (``--literal-pathspecs``
+    on every git call), symlinks are refused rather than followed to a referent the
+    caller never listed, and a file whose content changed between its backup and its
+    restore is skipped — on a shared checkout that content belongs to someone else.
   * ``--baseline`` (from the ``snapshot`` subcommand) records pre-run blob shas,
     so a file that was ALREADY dirty is restored to its pre-run content, never to
     HEAD. With no baseline, a listed file carrying STAGED changes is refused
@@ -101,6 +107,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -390,8 +397,8 @@ def _git_changed_files(workdir: Path) -> tuple[list[str], list[str]]:
     seen: set[str] = set()
     derivation_errors: list[str] = []
     arms = (
-        ("tracked-diff", ["git", "-C", str(workdir), "diff", "--name-only", "-z", "HEAD"]),
-        ("untracked", ["git", "-C", str(workdir), "ls-files", "--others",
+        ("tracked-diff", ["git", "--literal-pathspecs", "-C", str(workdir), "diff", "--name-only", "-z", "HEAD"]),
+        ("untracked", ["git", "--literal-pathspecs", "-C", str(workdir), "ls-files", "--others",
                        "--exclude-standard", "-z"]),
     )
     for label, cmd in arms:
@@ -537,16 +544,28 @@ def _partition_tracked(
         p = Path(raw)
         if not p.is_absolute():
             p = workdir / p
+        # Resolve the PARENT chain but never the final component. Resolving the
+        # whole path follows a tracked symlink `alias.py` to its referent
+        # `target.py` and silently retargets the revert at a file the caller
+        # never listed. Leaving the parents unresolved instead breaks ordinary
+        # absolute paths, because macOS hands out `/var/...` while the resolved
+        # workdir is `/private/var/...`. Parent-only resolution satisfies both.
         try:
-            rel = p.resolve().relative_to(workdir.resolve()).as_posix()
-        except ValueError:
+            norm = p.parent.resolve() / p.name
+        except OSError:
+            norm = Path(os.path.normpath(str(p)))
+        try:
+            rel = norm.relative_to(workdir.resolve()).as_posix()
+        except (ValueError, OSError):
             rel = raw  # outside the repo → falls through to untracked
+        if rel.startswith("../") or rel == "..":
+            rel = raw  # escaped the repo root → untracked, never restored
         rels.append(rel)
 
     tracked_set: set[str] = set()
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "ls-files", "-z", "--"] + rels,
+            ["git", "--literal-pathspecs", "-C", str(workdir), "ls-files", "-z", "--"] + rels,
             capture_output=True,
             text=True,
             timeout=15,
@@ -578,11 +597,19 @@ def _hash_object(workdir: Path, rel: str) -> tuple[str | None, str | None]:
     exact pre-revert bytes.
     """
     abs_path = workdir / rel
+    if abs_path.is_symlink():
+        # git hash-object on a symlink hashes its REFERENT, so a backup taken
+        # here would preserve the wrong bytes and a restore would write through
+        # the link, possibly outside the repo. Refuse rather than guess.
+        return None, (
+            f"refusing to back up {rel}: it is a symlink, and a backup would "
+            "capture its target's bytes rather than the link itself"
+        )
     if not abs_path.exists():
         return None, None
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "hash-object", "-w", "--", str(abs_path)],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "hash-object", "-w", "--", str(abs_path)],
             capture_output=True,
             text=True,
             timeout=15,
@@ -602,7 +629,7 @@ def _has_staged_changes(workdir: Path, rel: str) -> bool | None:
     """True when ``rel``'s INDEX content differs from HEAD. None when unknown."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "diff", "--cached", "--name-only", "HEAD", "--", rel],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "diff", "--cached", "--name-only", "HEAD", "--", rel],
             capture_output=True,
             text=True,
             timeout=15,
@@ -614,7 +641,9 @@ def _has_staged_changes(workdir: Path, rel: str) -> bool | None:
     return bool(r.stdout.strip())
 
 
-def _restore_blob_to_worktree(workdir: Path, rel: str, blob: str) -> str | None:
+def _restore_blob_to_worktree(
+    workdir: Path, rel: str, blob: str, mode: str | None = None
+) -> str | None:
     """Write blob ``blob``'s bytes over ``rel``, and point the index at it too.
 
     Returns an error string, or None on success.
@@ -632,7 +661,7 @@ def _restore_blob_to_worktree(workdir: Path, rel: str, blob: str) -> str | None:
     """
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "cat-file", "blob", blob],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "cat-file", "blob", blob],
             capture_output=True,
             timeout=15,
         )
@@ -646,10 +675,18 @@ def _restore_blob_to_worktree(workdir: Path, rel: str, blob: str) -> str | None:
     except OSError as exc:
         return f"baseline restore failed for {rel}: {exc}"
 
-    mode = _index_mode(workdir, rel) or "100644"
+    # Prefer the mode the SNAPSHOT recorded; the current index mode is this
+    # run's, which may be exactly the change being reverted.
+    mode = mode or _index_mode(workdir, rel) or "100644"
+    if mode == "100755":
+        try:
+            target = workdir / rel
+            target.chmod(target.stat().st_mode | 0o111)
+        except OSError:
+            pass  # index mode still carries it; worktree bit is best-effort
     try:
         u = subprocess.run(
-            ["git", "-C", str(workdir), "update-index", "--cacheinfo",
+            ["git", "--literal-pathspecs", "-C", str(workdir), "update-index", "--cacheinfo",
              f"{mode},{blob},{rel}"],
             capture_output=True, text=True, timeout=15,
         )
@@ -668,7 +705,7 @@ def _index_mode(workdir: Path, rel: str) -> str | None:
     """Current index file mode for ``rel`` (e.g. ``100644``/``100755``)."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "ls-files", "--stage", "-z", "--", rel],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "ls-files", "--stage", "-z", "--", rel],
             capture_output=True, text=True, timeout=15,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -685,12 +722,19 @@ def _delete_worktree_file(workdir: Path, rel: str) -> str | None:
     except OSError as exc:
         return f"baseline deletion failed for {rel}: {exc}"
     try:
-        subprocess.run(
-            ["git", "-C", str(workdir), "rm", "--cached", "--quiet", "--", rel],
+        r = subprocess.run(
+            ["git", "--literal-pathspecs", "-C", str(workdir), "rm", "--cached", "--quiet", "--", rel],
             capture_output=True, text=True, timeout=15,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return f"baseline deletion: index entry for {rel} not removed: {exc}"
+    if r.returncode != 0:
+        # Swallowing this made the caller report reverted:true with the index
+        # untouched — a success claim over a half-applied deletion.
+        return (
+            f"baseline deletion: worktree file {rel} removed but `git rm --cached` "
+            f"failed ({r.stderr.strip() or r.returncode}); the index still holds it"
+        )
     return None
 
 
@@ -698,7 +742,7 @@ def _restore_to_head(workdir: Path, rel: str, errors: list[str]) -> bool:
     """``git restore --staged --worktree`` one file, with a legacy fallback."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(workdir), "restore", "--staged", "--worktree", "--", rel],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "restore", "--staged", "--worktree", "--", rel],
             capture_output=True,
             text=True,
             timeout=15,
@@ -708,7 +752,7 @@ def _restore_to_head(workdir: Path, rel: str, errors: list[str]) -> bool:
         if r.stderr.strip():
             errors.append(f"git restore failed for {rel}: {r.stderr.strip()}")
         r2 = subprocess.run(
-            ["git", "-C", str(workdir), "checkout", "--", rel],
+            ["git", "--literal-pathspecs", "-C", str(workdir), "checkout", "--", rel],
             capture_output=True,
             text=True,
             timeout=15,
@@ -750,17 +794,46 @@ def _load_baseline(
     if not isinstance(files, dict):
         errors.append(f"--baseline malformed ({path}): no files object")
         return None
+    recorded_workdir = raw.get("workdir")
+    if workdir is not None and isinstance(recorded_workdir, str) and recorded_workdir:
+        # Compare RESOLVED directories. normpath alone reports the same checkout
+        # as foreign whenever the two spellings differ by a symlink — on macOS
+        # `/var/...` vs `/private/var/...` — which would reject every legitimate
+        # baseline taken through the unresolved path. Resolving a DIRECTORY is
+        # safe; the symlink hazard this file guards against is on the final file
+        # component, handled in _partition_tracked.
+        try:
+            same = Path(recorded_workdir).resolve() == workdir.resolve()
+        except OSError:
+            same = os.path.normpath(recorded_workdir) == os.path.normpath(str(workdir))
+        if not same:
+            errors.append(
+                f"--baseline foreign ({path}): recorded for {recorded_workdir}, not "
+                f"{workdir}. Its blob shas describe a different checkout."
+            )
+            return None
     if workdir is not None:
         recorded_head = raw.get("head")
         try:
             r = subprocess.run(
-                ["git", "-C", str(workdir), "rev-parse", "HEAD"],
+                ["git", "--literal-pathspecs", "-C", str(workdir), "rev-parse", "HEAD"],
                 capture_output=True, text=True, timeout=15,
             )
             current_head = r.stdout.strip() if r.returncode == 0 else None
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             current_head = None
-        if current_head and recorded_head and recorded_head != current_head:
+        # Both sides must be PRESENT and EQUAL. Accepting a null/missing head, or
+        # an unreadable current HEAD, let a foreign or undated baseline through on
+        # a technicality — the check has to fail closed to be a check at all.
+        if not recorded_head or not current_head:
+            errors.append(
+                f"--baseline unverifiable ({path}): recorded head "
+                f"{recorded_head or 'missing'}, current head "
+                f"{current_head or 'unreadable'}. Cannot confirm it describes this "
+                "commit, so it is not trusted."
+            )
+            return None
+        if recorded_head != current_head:
             errors.append(
                 f"--baseline stale ({path}): recorded against {recorded_head[:12]} but "
                 f"HEAD is {current_head[:12]}. Restoring its blobs would write content "
@@ -772,10 +845,21 @@ def _load_baseline(
         if not isinstance(entry, dict):
             continue
         blob = entry.get("blob")
-        deleted = bool(entry.get("deleted"))
+        raw_deleted = entry.get("deleted")
+        # Strictly boolean: `"deleted": "false"` is a truthy STRING and would
+        # otherwise re-delete a file the snapshot said was present.
+        deleted = raw_deleted is True
+        if not isinstance(raw_deleted, (bool, type(None))):
+            errors.append(
+                f"--baseline entry for {rel} has a non-boolean 'deleted' field; ignoring it"
+            )
+            continue
         if isinstance(blob, str) or deleted:
-            out[rel] = {"blob": blob if isinstance(blob, str) else None,
-                        "deleted": deleted}
+            out[rel] = {
+                "blob": blob if isinstance(blob, str) else None,
+                "deleted": deleted,
+                "mode": entry.get("mode") if isinstance(entry.get("mode"), str) else None,
+            }
     return out
 
 
@@ -924,27 +1008,63 @@ def _revert_files(
             staged_backups.append({
                 "path": rel,
                 "blob": sha,
-                # shlex.quote: an unquoted `> scripts/with space.py` redirects to
-                # `scripts/with` and drops the content the operator is trying to
-                # recover. The recovery command IS the safety property here.
-                "recover": f"git cat-file blob {sha} > {shlex.quote(rel)}",
+                # Absolute + `-C <repo>`: a cwd-relative command looks up the
+                # blob in whatever repo the operator happens to be standing in
+                # and redirects into the wrong path. shlex.quote because an
+                # unquoted `> scripts/with space.py` redirects to `scripts/with`.
+                # The recovery command IS the safety property here.
+                "recover": (
+                    f"git -C {shlex.quote(str(workdir))} cat-file blob {sha} "
+                    f"> {shlex.quote(str(workdir / rel))}"
+                ),
             })
 
     # Anchor the backups under a ref so they survive `git gc --prune`. An
     # unreferenced loose object is recoverable only until the next prune, which
     # would make "every revert is recoverable" true for a window rather than
-    # true. Refs may point directly at blobs.
-    _anchor_backup_blobs(workdir, staged_backups, errors)
+    # true. Refs may point directly at blobs. A backup that could not be anchored
+    # is not durably recoverable, so it ABANDONS the revert for the same reason a
+    # failed hash-object does — best-effort anchoring would silently reintroduce
+    # the window this exists to close.
+    if not _anchor_backup_blobs(workdir, staged_backups, errors):
+        errors.append(
+            "revert ABANDONED: a backup blob could not be anchored to a ref, so it "
+            "would be reclaimable by `git gc` before anyone recovered it. "
+            "Nothing was reverted."
+        )
+        return False
 
     blobs.extend(staged_backups)
 
     # --- Apply ---
+    # Each file is re-hashed immediately before it is restored. Between the
+    # backup loop above and here, a peer on this shared checkout can write new
+    # content; restoring then destroys bytes no backup holds. A mismatch means
+    # the file moved under us, so skip it and say so rather than destroy it.
+    backed_up = {b["path"]: b.get("blob") for b in staged_backups}
     any_restored = False
     for rel, kind, blob in targets:
+        current, hash_err = _hash_object(workdir, rel)
+        if hash_err:
+            errors.append(f"skipping {rel}: {hash_err}")
+            continue
+        if current != backed_up.get(rel):
+            errors.append(
+                f"skipping {rel}: its content changed after the backup was taken "
+                "(another session is writing it); not reverted, nothing destroyed"
+            )
+            continue
         if kind == "baseline" and blob:
-            err = _restore_blob_to_worktree(workdir, rel, blob)
+            err = _restore_blob_to_worktree(
+                workdir, rel, blob, (baseline or {}).get(rel, {}).get("mode")
+            )
             if err:
                 errors.append(err)
+                # The worktree write happens BEFORE the index update, so an index
+                # failure still changed the file. Reporting reverted:false there
+                # would claim nothing happened. Count it and carry the warning.
+                if "INDEX" in err or "index update failed" in err:
+                    any_restored = True
                 continue
             any_restored = True
         elif kind == "baseline-deleted":
@@ -958,15 +1078,20 @@ def _revert_files(
     return any_restored
 
 
-def _anchor_backup_blobs(workdir: Path, backups: list[dict], errors: list[str]) -> None:
+def _anchor_backup_blobs(workdir: Path, backups: list[dict], errors: list[str]) -> bool:
     """Point a ref at each backup blob so `git gc --prune` cannot reclaim it.
 
-    Refs live under ``refs/self-mod-verify/backup/<utc-stamp>/<n>``; prune them
-    with ``git for-each-ref --format='%(refname)' refs/self-mod-verify | xargs -n1
-    git update-ref -d``. Best-effort: a failure to anchor is reported, never
-    fatal — the blob still exists, just on the default prune clock.
+    Refs live under ``refs/self-mod-verify/backup/<utc-stamp>-<pid>/<n>``; prune
+    them with ``git for-each-ref --format='%(refname)' refs/self-mod-verify |
+    xargs -n1 git update-ref -d``. Returns False when ANY blob could not be
+    anchored, which aborts the revert — an unanchored backup is reclaimable by
+    `git gc` and therefore not the durable recoverability the caller promises.
+
+    The pid in the stamp keeps two concurrent gate runs in the same second from
+    generating identical ref names and overwriting each other's anchors.
     """
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
+    ok = True
     for n, entry in enumerate(backups):
         sha = entry.get("blob")
         if not sha:
@@ -974,19 +1099,22 @@ def _anchor_backup_blobs(workdir: Path, backups: list[dict], errors: list[str]) 
         ref = f"refs/self-mod-verify/backup/{stamp}/{n}"
         try:
             r = subprocess.run(
-                ["git", "-C", str(workdir), "update-ref", ref, sha],
+                ["git", "--literal-pathspecs", "-C", str(workdir), "update-ref", ref, sha],
                 capture_output=True, text=True, timeout=15,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            errors.append(f"backup blob {sha[:12]} not anchored ({exc}); prune-window only")
+            errors.append(f"backup blob {sha[:12]} not anchored ({exc})")
+            ok = False
             continue
         if r.returncode != 0:
             errors.append(
                 f"backup blob {sha[:12]} not anchored "
-                f"({r.stderr.strip() or r.returncode}); recover before the next git gc"
+                f"({r.stderr.strip() or r.returncode})"
             )
+            ok = False
             continue
         entry["ref"] = ref
+    return ok
 
 
 def snapshot(workdir: Path) -> dict:
@@ -1007,7 +1135,7 @@ def snapshot(workdir: Path) -> dict:
     def _git(args: list[str]) -> tuple[int, str]:
         try:
             r = subprocess.run(
-                ["git", "-C", str(workdir)] + args,
+                ["git", "--literal-pathspecs", "-C", str(workdir)] + args,
                 capture_output=True, text=True, timeout=15,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
@@ -1042,9 +1170,15 @@ def snapshot(workdir: Path) -> dict:
                 # omitted entry reads as "clean at snapshot", and the revert
                 # would then resurrect the file from HEAD, silently undoing
                 # whoever deleted it.
-                files[rel] = {"blob": None, "deleted": True}
+                files[rel] = {"blob": None, "deleted": True, "mode": None}
                 continue
-            files[rel] = {"blob": sha, "deleted": False}
+            # Record the mode too: restoring content alone silently downgrades a
+            # 100755 file to 100644 when the failed run changed its bit.
+            files[rel] = {
+                "blob": sha,
+                "deleted": False,
+                "mode": _index_mode(workdir, rel),
+            }
 
     return {
         "schema_version": 1,

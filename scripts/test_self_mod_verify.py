@@ -446,6 +446,60 @@ class TestAutoRevert(unittest.TestCase):
         self.assertEqual(impl.read_text(), current)
         self.assertIn("--baseline stale", "\n".join(payload["errors"]))
 
+    def test_baseline_without_a_recorded_head_is_refused(self) -> None:
+        """A baseline that cannot prove which commit it describes is not trusted.
+
+        Accepting a null/missing head let a foreign or undated snapshot through
+        on a technicality; the identity check has to fail closed.
+        """
+        impl = self._commit_impl_and_failing_test()
+        pre_run = "VALUE = 'peer work'\n"
+        impl.write_text(pre_run)
+        baseline = self.workdir / "baseline.json"
+        baseline.write_text(json.dumps({
+            "schema_version": 1, "head": None, "workdir": str(self.workdir),
+            "files": {"scripts/shared.py": {"blob": "0" * 40, "deleted": False}}}))
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertEqual(impl.read_text(), pre_run)
+        self.assertIn("--baseline unverifiable", "\n".join(payload["errors"]))
+
+    def test_foreign_baseline_workdir_is_refused(self) -> None:
+        """Blob shas from a different checkout describe different content."""
+        impl = self._commit_impl_and_failing_test()
+        pre_run = "VALUE = 'peer work'\n"
+        impl.write_text(pre_run)
+        head = subprocess.run(
+            ["git", "-C", str(self.workdir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        baseline = self.workdir / "baseline.json"
+        baseline.write_text(json.dumps({
+            "schema_version": 1, "head": head, "workdir": "/some/other/repo",
+            "files": {"scripts/shared.py": {"blob": "0" * 40, "deleted": False}}}))
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", "scripts/shared.py",
+            "--baseline", str(baseline),
+            "--auto-revert",
+            "--json",
+        ])
+        payload = _payload(r.stdout)
+        self.assertFalse(payload["reverted"], msg=payload)
+        self.assertEqual(impl.read_text(), pre_run)
+        self.assertIn("--baseline foreign", "\n".join(payload["errors"]))
+
     def test_non_blob_sha_in_baseline_does_not_write_garbage(self) -> None:
         """`cat-file -p` pretty-prints a commit or tree and would write that
         metadata over the file. The typed `cat-file blob` form must reject it."""
@@ -500,6 +554,141 @@ class TestAutoRevert(unittest.TestCase):
         self.assertTrue(payload["reverted"], msg=payload)
         self.assertFalse(impl.exists(),
                          msg="a pre-run deletion must be re-applied, not undone")
+
+    def test_glob_pathspec_cannot_reach_an_unlisted_file(self) -> None:
+        """A caller path is a LITERAL path, never a git pathspec.
+
+        `git restore -- 'scripts/*'` expands the glob and restores every match.
+        Verified destructive on 2026-09-12: without --literal-pathspecs it wiped
+        the uncommitted edits of two files when one was listed. That is the same
+        defect class as the original incident, reached through a different door.
+        """
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_glob", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        peer = self.scripts_dir / "peer.py"
+        peer.write_text("PEER = 'head'\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        peer_wip = "PEER = 'uncommitted peer work'\n"
+        peer.write_text(peer_wip)
+
+        errors: list[str] = []
+        blobs: list[dict] = []
+        # Layer 1: exact-membership in _partition_tracked keeps a glob out of the
+        # revert set entirely.
+        mod._revert_files(self.workdir, ["scripts/*"], errors, reverted_blobs=blobs)
+        self.assertEqual(peer.read_text(), peer_wip,
+                         msg="a glob pathspec must never reach an unlisted file")
+        self.assertEqual(blobs, [])
+
+        # Layer 2: even handed straight to the restore helper, the glob must be
+        # treated as a literal filename and match nothing. This is the layer
+        # --literal-pathspecs provides; without it git expands the glob here and
+        # wipes peer.py's uncommitted edit.
+        mod._restore_to_head(self.workdir, "scripts/*", errors)
+        self.assertEqual(peer.read_text(), peer_wip,
+                         msg="git must treat the caller path as literal, not as a glob")
+
+    def test_symlink_is_not_followed_to_an_unlisted_target(self) -> None:
+        """Listing a tracked symlink must not revert its referent.
+
+        Path.resolve() normalises `alias.py` to `target.py`, which would back up
+        and restore a file the caller never named.
+        """
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_link", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        target = self.scripts_dir / "target.py"
+        target.write_text("T = 'head'\n")
+        alias = self.scripts_dir / "alias.py"
+        alias.symlink_to("target.py")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        target_wip = "T = 'uncommitted work on the TARGET'\n"
+        target.write_text(target_wip)
+
+        errors: list[str] = []
+        blobs: list[dict] = []
+        mod._revert_files(self.workdir, ["scripts/alias.py"], errors, reverted_blobs=blobs)
+        self.assertEqual(target.read_text(), target_wip,
+                         msg="the symlink's referent was never listed and must not be reverted")
+        self.assertNotIn("scripts/target.py", {b["path"] for b in blobs})
+
+    def test_content_changed_after_backup_is_not_destroyed(self) -> None:
+        """If a peer rewrites the file between backup and restore, skip it.
+
+        Restoring anyway destroys bytes no backup holds, which is precisely the
+        unrecoverable-loss shape this whole change exists to remove.
+        """
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_race", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        impl = self.scripts_dir / "raced.py"
+        impl.write_text("V = 'head'\n")
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+        impl.write_text("V = 'this run'\n")
+
+        # Simulate the peer write landing between the backup and the restore.
+        real = mod._hash_object
+        seen: list[str] = []
+        peer_write = "V = 'PEER WROTE THIS AFTER THE BACKUP'\n"
+
+        def racing(workdir, rel):
+            result = real(workdir, rel)
+            if rel == "scripts/raced.py" and not seen:
+                seen.append(rel)
+                impl.write_text(peer_write)
+            return result
+
+        mod._hash_object = racing
+        errors: list[str] = []
+        blobs: list[dict] = []
+        reverted = mod._revert_files(
+            self.workdir, ["scripts/raced.py"], errors, reverted_blobs=blobs,
+        )
+        self.assertFalse(reverted, msg=errors)
+        self.assertEqual(impl.read_text(), peer_write,
+                         msg="content written after the backup must not be destroyed")
+        self.assertIn("changed after the backup", "\n".join(errors))
+
+    def test_failed_index_removal_is_reported_not_swallowed(self) -> None:
+        """`git rm --cached` failing must surface, not read as a clean deletion.
+
+        Ignoring its return code let the caller report reverted:true while the
+        index still held the file — a success claim over a half-applied change.
+        """
+        import importlib.util  # noqa: PLC0415 - local to this regression test
+
+        spec = importlib.util.spec_from_file_location("smv_rmfail", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # A file present on disk but absent from the index: `git rm --cached`
+        # exits non-zero with "did not match any files".
+        stray = self.scripts_dir / "not_in_index.py"
+        stray.write_text("X = 1\n")
+
+        err = mod._delete_worktree_file(self.workdir, "scripts/not_in_index.py")
+        self.assertIsNotNone(err, msg="a failed index removal must return an error")
+        self.assertIn("git rm --cached", err)
+        self.assertIn("the index still holds it", err)
 
     def test_recover_command_round_trips_a_path_with_a_space(self) -> None:
         """The emitted recovery command must WORK for a path containing a space.

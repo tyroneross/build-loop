@@ -183,7 +183,10 @@ Three things the gate now refuses to do, each of which destroyed work on 2026-09
 3. Every reverted file's pre-revert bytes are written to the object DB first, anchored
    under `refs/self-mod-verify/backup/<stamp>/<n>` so `git gc` cannot reclaim them, and
    reported as `reverted <path> -> blob <sha>` with a ready-to-paste
-   `git cat-file blob <sha> > <path>` recovery command.
+   `git -C <repo> cat-file blob <sha> > <abs-path>` recovery command. The command is
+   repo-anchored and shell-quoted, so it works from any directory and for paths
+   containing spaces. A file whose content CHANGED between the backup and the
+   restore is skipped rather than overwritten, and a symlink is refused outright.
 
 Prune old backup refs with:
 `git for-each-ref --format='%(refname)' refs/self-mod-verify | xargs -n1 git update-ref -d`
