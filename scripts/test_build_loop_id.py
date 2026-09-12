@@ -98,6 +98,28 @@ def test_generate_at_phase_1_when_absent(tmp_path: Path):
     assert (runs / exec_block["build_loop_id"]).is_dir()
 
 
+def test_fresh_execution_imports_flat_execstate_dependencies(tmp_path: Path, monkeypatch):
+    """Fresh identity mint works when only the plugin root is importable."""
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    original_path = list(sys.path)
+    scripts_dir = str(_HERE)
+    write_run_entry_dir = str(_HERE / "write_run_entry")
+    monkeypatch.setattr(
+        sys,
+        "path",
+        [entry for entry in original_path if entry not in {scripts_dir, write_run_entry_dir}],
+    )
+    for module_name in ("execstate", "atomic_io", "iohelpers"):
+        sys.modules.pop(module_name, None)
+
+    execution = bli.generate_or_resume(workdir, tool="codex", session_id="s")
+
+    assert execution["schema_version"] == 1
+    assert scripts_dir in sys.path
+    assert write_run_entry_dir in sys.path
+
+
 def test_fresh_identity_is_immediately_resolvable(tmp_path: Path):
     workdir = tmp_path / "repo"
     workdir.mkdir()

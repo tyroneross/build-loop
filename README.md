@@ -166,6 +166,17 @@ Debugging is also auto-invoked by the loop itself on a review failure. The forme
 
 Build Loop includes the Coding Debugger core natively. The loop searches before investigation and stores verified fixes afterward through `bin/build-loop-debugger.js`; both operations use the existing project-local `.claude/memory/` structured store. The standalone debugger package and MCP server are not required.
 
+### Inspect a run without a model
+
+`scripts/run_status.py` reports one run from persisted lifecycle state and bounded local Git inspection. The JSON distinguishes `stale`, `crashed`, `awaiting_closeout`, `completed`, `abandoned`, and `unknown`; it also reports heartbeat freshness, run-ledger evidence, preserved worktree state, branch integration, and any commits ahead of the current checkout. A fresh heartbeat remains `unknown` at the top level because it does not prove the process is still alive.
+
+```bash
+python3 scripts/run_status.py <run-id> --workdir /path/to/project
+python3 scripts/run_status.py <run-id> --workdir /path/to/project --emit-telemetry
+```
+
+Both paths make zero model calls and consume zero tokens. `--emit-telemetry` appends a custom observation envelope to the gitignored `.build-loop/telemetry/run-status.jsonl`; a later exporter would own mapping and transport into an OpenTelemetry backend. The writer refuses symlinked telemetry directories. Process liveness remains `unknown` until execution state carries a safely verifiable process identity; the command does not infer it from a fresh heartbeat or a similarly named process.
+
 ## Host surfaces
 
 The repo ships three agent surfaces from one source:

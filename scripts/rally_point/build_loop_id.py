@@ -159,7 +159,16 @@ def _fresh_execution_block(build_loop_id: str, started_at_iso: str) -> dict[str,
     """Create the canonical schema-v1 execution block at identity mint time."""
     import sys as _sys
 
-    write_run_entry_dir = Path(__file__).resolve().parent.parent / "write_run_entry"
+    scripts_dir = Path(__file__).resolve().parent.parent
+    write_run_entry_dir = scripts_dir / "write_run_entry"
+    # execstate intentionally uses flat imports for its sibling helpers.  A
+    # caller importing this module as ``rally_point.build_loop_id`` therefore
+    # needs both directories available: write_run_entry for execstate itself,
+    # and scripts for atomic_io/iohelpers.  Provisioning a fresh run used to
+    # fail here with ``ModuleNotFoundError: atomic_io`` when only the narrower
+    # directory was inserted.
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
     if str(write_run_entry_dir) not in _sys.path:
         _sys.path.insert(0, str(write_run_entry_dir))
     from execstate import build_start_block  # type: ignore
