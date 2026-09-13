@@ -16,7 +16,8 @@ which model fired on a tiered surface.
 
 Tier→model resolution mirrors the rest of build-loop: pass `--tier` and the model
 is resolved via `model_overrides.resolve_model` (repo config → state → fallback →
-tier default, where `frontier` defaults to `fable`), so the recorded row carries
+tier default, where `frontier` defaults to `opus` — Fable is reachable only via
+`scripts/frontier_gate.py`), so the recorded row carries
 both `tier` and the resolved `model`. Pass `--model` to record an explicit id
 instead (skips resolution).
 
@@ -26,7 +27,7 @@ Example — record that the autonomous loop passed item `q-7` on the Frontier ti
         --workdir . --item-id q-7 --status passed \
         --validator independent-auditor --tier frontier
 
-emits the row with `tier=frontier, model=<resolved, e.g. fable>`.
+emits the row with `tier=frontier, model=<resolved, e.g. opus>`.
 """
 from __future__ import annotations
 

@@ -73,9 +73,10 @@ _LEGACY_SEGMENT = "generative_reasoning"
 TIERS = set(_LEGACY_ORDER)
 
 # Derived from the taxonomy: each legacy token's default = the first preferred
-# model for (generative_reasoning, its-ladder-rung). frontier->fable,
-# thinking->opus, code->sonnet, pattern->haiku — same values as before, now
-# sourced from references/model-taxonomy.json instead of hand-maintained here.
+# model for (generative_reasoning, its-ladder-rung). As the index stands today:
+# frontier->opus, thinking->opus, code->sonnet, pattern->haiku. Never restate a
+# value here as fixed — it is sourced from references/model-taxonomy.json, and
+# verifying it means running `scripts/model_index.py resolve --tier <t>`.
 def _derive_tier_defaults() -> dict[str, str]:
     out: dict[str, str] = {}
     for token in _LEGACY_ORDER:
