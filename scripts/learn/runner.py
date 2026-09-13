@@ -540,11 +540,11 @@ def _run_date(row: dict[str, Any]) -> datetime | None:
 
 def _control_mean(
     runs: list[dict[str, Any]],
-    artifact: str,
     applied_run_ids: set[str],
     since: datetime | None = None,
+    min_controls: int | None = None,
 ) -> tuple[float | None, int]:
-    """Mean outcome metric over runs that did NOT apply this artifact.
+    """Mean outcome metric over runs that applied NO experimental artifact.
 
     Without this the promotion compared the treatment's mean against a target a
     drafting agent typed, with nothing measuring what the same runs would have
@@ -555,6 +555,25 @@ def _control_mean(
     class its own description matches, so its sample is self-selected; a
     same-window control is the cheapest correction available from data the
     ledger already holds.
+
+    A run that applied a DIFFERENT experimental artifact is excluded too, not
+    only a run that applied THIS one. "Didn't apply this artifact" let another
+    experiment's own treatment runs pad this control arm -- their outcomes
+    carry that OTHER artifact's effect, so they are not a no-treatment
+    baseline either. The control arm is every run this ledger can show applied
+    nothing.
+
+    The artifact NAME is no longer a parameter. It selected which runs to
+    exclude, and now that every artifact-bearing run is excluded it selected
+    nothing -- a parameter that reads as per-artifact filtering while doing
+    none is the same dead-surface defect as a constant nobody checks.
+
+    `min_controls` raises the floor above `CONTROL_FLOOR` when the caller
+    passes a treatment arm larger than 8: comparing 40 treatment runs against
+    the bare floor of 8 controls is a comparison against a much smaller and
+    differently-composed sample. The effective floor is
+    `max(CONTROL_FLOOR, min_controls)`; a caller that passes nothing keeps the
+    floor at `CONTROL_FLOOR`.
     """
     values: list[float] = []
     for row in runs:
@@ -573,12 +592,15 @@ def _control_mean(
             if when is None or when < since or when > _sweep_now():
                 continue
         active = row.get("active_experimental_artifacts")
-        if isinstance(active, list) and artifact in active:
+        # ANY non-empty list disqualifies the row from the control arm, not
+        # just a list containing THIS artifact -- see the docstring above.
+        if isinstance(active, list) and len(active) > 0:
             continue
         value = _outcome_metric(row.get("outcome"))
         if value is not None:
             values.append(value)
-    if len(values) < CONTROL_FLOOR:
+    floor = max(CONTROL_FLOOR, min_controls) if min_controls else CONTROL_FLOOR
+    if len(values) < floor:
         return None, len(values)
     return sum(values) / len(values), len(values)
 
@@ -683,14 +705,46 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                 ),
             })
             continue
+        # The floor counts DISTINCT RUNS, not rows. append_experiment_row
+        # upserts on (event, run_id) as of the fix for Finding 7, but a log
+        # written before that existed -- or caught mid-race by two writers --
+        # can still hold more than one row for the same run_id, and a row
+        # count let one run manufacture N samples toward this floor. A row
+        # with no run_id cannot be told apart from another row with no
+        # run_id, so it cannot be counted as its own distinct sample; such
+        # rows are excluded from the distinct count rather than each counted
+        # as one, which would let unidentifiable rows pad the floor the same
+        # way duplicates did.
+        distinct_applied_run_ids = {
+            str(row.get("run_id"))
+            for row in applied
+            if isinstance(row.get("run_id"), str) and row.get("run_id")
+        }
         floor = max(8, int(created.get("sample_size_target") or 8))
-        if len(applied) < floor:
+        if len(distinct_applied_run_ids) < floor:
             continue
         baseline = created.get("baseline_value")
         target = created.get("target_value")
         if not isinstance(baseline, (int, float)) or not isinstance(target, (int, float)):
             continue
-        observed = sum(float(row["metric_value"]) for row in applied) / len(applied)
+        # ONE VALUE PER RUN, matching the floor above. Counting distinct runs for
+        # eligibility and then averaging ROWS left the duplicate ledger this fix
+        # exists for still able to weight one run N times in the mean that
+        # decides promotion -- the floor was closed and the estimate was not.
+        # Last row wins, matching append_experiment_row's own upsert semantics
+        # (a rewrite supersedes; a superseded value must not survive in the
+        # average). Rows with no run_id cannot be attributed, so they are
+        # averaged individually rather than collapsed together.
+        _by_run: dict[str, float] = {}
+        _unattributed: list[float] = []
+        for row in applied:
+            rid = row.get("run_id")
+            if isinstance(rid, str) and rid:
+                _by_run[rid] = float(row["metric_value"])
+            else:
+                _unattributed.append(float(row["metric_value"]))
+        _values = list(_by_run.values()) + _unattributed
+        observed = sum(_values) / len(_values)
         name = str(created.get("artifact") or path.stem)
         applied_ids = {str(row.get("run_id") or "") for row in applied}
         # The control arm is built from run OUTCOMES, so it can only be compared
@@ -736,7 +790,14 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
             comparison = "level (caller-supplied metric; control arm not comparable)"
         else:
             window_start = _sweep_now() - timedelta(days=CONTROL_WINDOW_DAYS)
-            control, control_n = _control_mean(all_runs, name, applied_ids, window_start)
+            # The control floor scales with the treatment arm: 40 treatment
+            # runs compared against the bare CONTROL_FLOOR of 8 controls is a
+            # comparison against a much smaller, differently-composed sample.
+            required_control_floor = max(CONTROL_FLOOR, len(distinct_applied_run_ids))
+            control, control_n = _control_mean(
+                all_runs, applied_ids, window_start,
+                min_controls=len(distinct_applied_run_ids),
+            )
             comparison = "delta vs control"
         if outcome_measured and control is None:
             # No control arm means no comparison. Report it instead of promoting
@@ -746,7 +807,10 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                 "artifact": name,
                 "log": path.name,
                 "control_runs_available": control_n,
-                "control_runs_required": CONTROL_FLOOR,
+                # The EFFECTIVE floor this sweep applied, not the constant --
+                # a receipt naming CONTROL_FLOOR when the treatment arm forced
+                # a higher floor states a requirement the sweep did not use.
+                "control_runs_required": required_control_floor,
                 "reason": (
                     "fewer than the required non-applied runs are available to "
                     "compare against, so an improvement cannot be attributed to "
@@ -771,7 +835,12 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                 "sample-sweep",
                 artifact_path=str(artifact.relative_to(workdir)),
                 experiment_log=str(path.relative_to(workdir)),
-                sample_size=len(applied),
+                # sample_size is now the DISTINCT-RUN count the floor was
+                # graded against (Finding 7); sample_rows keeps the row count
+                # available since a rewound/duplicated ledger can still carry
+                # more rows than distinct runs.
+                sample_size=len(distinct_applied_run_ids),
+                sample_rows=len(applied),
                 target_metric={
                     "name": created.get("baseline_metric"),
                     "baseline": baseline,

@@ -227,6 +227,16 @@ def append_experiment_row(jsonl_path: Path, row: dict) -> None:
     an eight-run floor on its own, and a corrected outcome left the superseded
     value in the average. One run contributes one row; a rewrite replaces it.
 
+    Replacing only the FIRST match left every later duplicate in place, so a
+    log written before this upsert existed -- or one caught mid-race by two
+    writers -- could already hold more than one row for the same (event,
+    run_id). The one run still contributed N rows to the sweep even though
+    every write after the first was correcting, not adding, evidence. This
+    write now heals what it finds: it replaces at the first match's position
+    (preserving ledger order for every other row) and DELETES every later row
+    sharing (event, run_id), so one run can never leave more than one row of
+    its own kind behind.
+
     A row with no `run_id` cannot be identified, so it appends as before.
     """
     with LockedFile(jsonl_path):
@@ -235,6 +245,7 @@ def append_experiment_row(jsonl_path: Path, row: dict) -> None:
         event = row.get("event")
         if run_id and jsonl_path.exists():
             lines = jsonl_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            match_indices: list[int] = []
             for index, raw in enumerate(lines):
                 try:
                     prior = json.loads(raw)
@@ -245,9 +256,14 @@ def append_experiment_row(jsonl_path: Path, row: dict) -> None:
                     and prior.get("run_id") == run_id
                     and prior.get("event") == event
                 ):
-                    lines[index] = line
-                    atomic_write_bytes(jsonl_path, "".join(lines).encode("utf-8"))
-                    return
+                    match_indices.append(index)
+            if match_indices:
+                first = match_indices[0]
+                lines[first] = line
+                for index in reversed(match_indices[1:]):
+                    del lines[index]
+                atomic_write_bytes(jsonl_path, "".join(lines).encode("utf-8"))
+                return
         existing = jsonl_path.read_bytes() if jsonl_path.exists() else b""
         atomic_write_bytes(jsonl_path, existing + line.encode("utf-8"))
 
