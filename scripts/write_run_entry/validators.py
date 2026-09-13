@@ -29,6 +29,10 @@ VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 VALID_JUDGE_VERDICTS = {"approve", "rethink", "new_approach"}
 VALID_AUDITOR_VERDICTS = {
     "yay", "nay", "suggest", "suggest_correction", "look-again", "look_again",
+    # Recorded by hand on at least one real run (buildloop-model-roles-20260906).
+    # A vocabulary that rejects verdicts the ledger actually contains re-arms a
+    # debt that was genuinely discharged.
+    "pass", "fail",
 }
 ALL_JUDGE_VERDICTS = VALID_JUDGE_VERDICTS | VALID_AUDITOR_VERDICTS
 # judge_id substring that identifies the independent commit auditor (covers both the
@@ -104,7 +108,15 @@ def rendered_verdict(item: object) -> bool:
     status = str(item.get("status") or "").strip().lower()
     if verdict in NON_VERDICT_VALUES or verdict not in ALL_JUDGE_VERDICTS:
         return False
-    if status in NON_VERDICT_STATUSES or status in FAILED_STATUSES:
+    # NON_VERDICT_STATUSES is deliberately NOT checked here. It predates the
+    # verdict allowlist and meant "packet emitted, not yet answered" -- but
+    # `audit_record_verdict.py` fills the verdict IN PLACE and leaves the
+    # status as `packet_emitted`, so treating that status as disqualifying
+    # rejected 103 real rows in this repo's own ledger, including three passing
+    # code-touching runs whose auditor verdict would have silently re-armed.
+    # An unanswered packet already fails the allowlist above, which is the
+    # check that actually distinguishes answered from not.
+    if status in FAILED_STATUSES:
         return False
     return True
 
@@ -186,13 +198,21 @@ def vendor_provider(vendor: object) -> str | None:
     # resolved to no provider and a legitimate round stayed owed with no reason
     # given.
     tokens = [tok for tok in re.split(r"[^a-z0-9]+", text) if tok]
-    # Joined pairs first: "llama.cpp" must resolve to the local runtime, not to
-    # meta via its bare "llama" token.
-    joined = ["".join(pair) for pair in zip(tokens, tokens[1:])]
-    for candidate in [*joined, *tokens]:
-        for provider, aliases in KNOWN_VENDOR_PROVIDERS.items():
-            if candidate in aliases:
-                return provider
+    # First recognised provider in POSITION order, trying the joined pair at
+    # each position before the bare token there. Scanning every joined pair
+    # ahead of every token let a later phrase win: "openai via llama.cpp
+    # fallback" resolved to the local runtime, so on a codex host a same-vendor
+    # OpenAI review counted as a different vendor. The pair-before-token rule
+    # still keeps "llama.cpp" from resolving to meta via its bare "llama".
+    for index, token in enumerate(tokens):
+        candidates = []
+        if index + 1 < len(tokens):
+            candidates.append(token + tokens[index + 1])
+        candidates.append(token)
+        for candidate in candidates:
+            for provider, aliases in KNOWN_VENDOR_PROVIDERS.items():
+                if candidate in aliases:
+                    return provider
     return None
 
 
@@ -237,11 +257,14 @@ def cross_vendor_present(
         if provider == own_provider:
             continue
         if wanted_range and wanted_range != "unknown":
-            # A review of an OBSOLETE diff is not a review of this one. The file
-            # is append-only, so a verdict on the same run's earlier range would
-            # otherwise discharge a debt armed by later commits.
+            # A review of an OBSOLETE diff is not a review of this one, and an
+            # entry that names NO range is not evidence about this one either:
+            # the file is append-only, so accepting an unstamped row let a
+            # verdict on the same run's earlier commits discharge a debt armed
+            # by later ones. The emitted dispatch command spells `diff_range`,
+            # so a round run as instructed records it.
             entry_range = str(item.get("diff_range") or "").strip()
-            if entry_range and entry_range != wanted_range:
+            if entry_range != wanted_range:
                 continue
         return True
     return False

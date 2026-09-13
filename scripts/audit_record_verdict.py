@@ -121,6 +121,11 @@ def main() -> int:
     target["verdict"] = args.verdict
     target["reason"] = args.reason[:200]
     target["verdict_ts"] = now
+    # The row is no longer an un-answered packet. Leaving `status:
+    # packet_emitted` on a row that now carries a verdict made the record
+    # self-contradictory, and every reader had to know that the verdict field
+    # overrides the status field.
+    target["status"] = "verdict_recorded"
     if oracle_completeness is not None:
         target["oracle_completeness"] = oracle_completeness
 

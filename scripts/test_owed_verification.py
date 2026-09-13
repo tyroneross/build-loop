@@ -35,6 +35,10 @@ SCRIPT = Path(__file__).resolve().parent / "owed_verification.py"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import owed_verification as ov  # noqa: E402
 
+# The real repository, for the range-resolution tests: `_normalise_range`
+# calls git, and a temp dir has no commits to resolve.
+ROOT_REPO = Path(__file__).resolve().parent.parent
+
 
 def _run_cli(workdir: Path, *args: str) -> tuple[int, dict]:
     proc = subprocess.run(
@@ -282,9 +286,12 @@ LOW_RISK_FILES = ["README.md"]
 AUDITOR_VERDICT = {"judge_id": "independent-auditor", "verdict": "yay"}
 # A real second-vendor entry NAMES its vendor. Without that field the id is
 # just a label an agent typed, which is what the debt exists to prevent.
+# A real second-vendor entry also names the RANGE it reviewed: the file is
+# append-only, so an unstamped verdict would discharge a debt armed by later
+# commits. The default range matches the `diff_range="A..B"` these tests arm.
 CROSS_VENDOR_VERDICT = {
     "judge_id": "cross-vendor-audit", "verdict": "yay",
-    "vendor": "openai/codex-cli 0.154.0",
+    "vendor": "openai/codex-cli 0.154.0", "diff_range": "A..B",
 }
 
 
@@ -1075,7 +1082,7 @@ class TestSecondCrossVendorRoundRegressions(_Base):
         record = self._record("run_cv", judge_decisions=[
             dict(AUDITOR_VERDICT),
             {"judge_id": "cross-vendor-audit", "verdict": "yay",
-             "vendor": "openai via claude-code peer"},
+             "vendor": "openai via claude-code peer", "diff_range": "A..B"},
         ])
         self.assertIsNone(
             ov.enforce_for_run_record(self.workdir, record, written_by="t", diff_range="A..B")
@@ -1127,7 +1134,10 @@ class TestThirdRoundRegressions(_Base):
             {
                 "run_id": "RUN_B", "host": "claude_code",
                 "filesTouched": list(HIGH_RISK_FILES),
-                "judge_decisions": [dict(AUDITOR_VERDICT), dict(CROSS_VENDOR_VERDICT)],
+                "judge_decisions": [
+                    dict(AUDITOR_VERDICT),
+                    {**CROSS_VENDOR_VERDICT, "diff_range": "b0..b1"},
+                ],
                 "auditor_status": "ran:dispatched-agent",
             },
             written_by="test", diff_range="b0..b1",
@@ -1383,3 +1393,194 @@ class TestFourthRoundRegressions(_Base):
             [(d["verifier"], d["run_id"]) for d in ov.check_manifest(self.workdir)["debts"]],
             [(ov.CROSS_VENDOR_VERIFIER, "RUN_B")],
         )
+
+
+class TestFifthRoundRegressions(_Base):
+    """The final pass: two Highs, both 'the fix exists but nothing calls it'."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # A REAL git repo in the run's own workdir. `_normalise_range` resolves
+        # against the workdir, so a bare temp dir cannot exercise the mechanism
+        # at all -- the comparison would silently fall back to a string compare
+        # and the test would certify the fallback instead of the fix.
+        self._git("init", "-q")
+        self._git("config", "user.email", "test@example.invalid")
+        self._git("config", "user.name", "test")
+        self._shas = []
+        for index in range(3):
+            (self.workdir / f"f{index}.txt").write_text(str(index), encoding="utf-8")
+            self._git("add", f"f{index}.txt")
+            self._git("commit", "-q", "-m", f"c{index}", "--no-verify")
+            self._shas.append(self._git("rev-parse", "HEAD").strip())
+
+    def _git(self, *args: str) -> str:
+        import subprocess
+
+        return subprocess.run(
+            ["git", "-C", str(self.workdir), *args],
+            capture_output=True, text=True, check=False,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(self.workdir),
+                 "GIT_CONFIG_NOSYSTEM": "1"},
+        ).stdout
+
+    def _repo_range(self) -> tuple[str, str]:
+        """Two real, resolvable ranges in this run's own repository."""
+        return f"{self._shas[0]}..{self._shas[1]}", f"{self._shas[1]}..{self._shas[2]}"
+
+    def test_an_obsolete_range_verdict_is_rejected_on_the_production_path(self) -> None:
+        """The guard existed with a signature no production caller passed.
+
+        `cross_vendor_present` grew a diff_range parameter and the only real
+        caller passed two arguments, so the check was dormant on every run and
+        only a direct-call test saw it -- the exact anti-pattern this module's
+        own comment names.
+        """
+        old_range, new_range = self._repo_range()
+        (self.workdir / ".build-loop" / "judge-decisions.json").write_text(
+            json.dumps([{**CROSS_VENDOR_VERDICT, "run_id": "run_cv",
+                         "diff_range": old_range}]),
+            encoding="utf-8",
+        )
+        record = {
+            "run_id": "run_cv", "host": "claude_code",
+            "filesTouched": list(HIGH_RISK_FILES),
+            "judge_decisions": [dict(AUDITOR_VERDICT)],
+            "auditor_status": "ran:dispatched-agent",
+        }
+        manifest = ov.enforce_for_run_record(
+            self.workdir, record, written_by="test", diff_range=new_range
+        )
+        self.assertIsNotNone(manifest, "an obsolete-range verdict must not discharge")
+        self.assertIn(ov.CROSS_VENDOR_VERIFIER, manifest["owed"])
+
+    def test_a_current_range_verdict_still_discharges_on_the_production_path(self) -> None:
+        """The guard must not refuse a legitimate round and wedge the run.
+
+        The real-world shape: the run side resolves `<sha>..HEAD` while the
+        reviewer recorded two concrete shas. A literal string compare calls
+        those different and leaves the debt armed with only the waiver as an
+        exit, which is why the comparison resolves both sides first.
+        """
+        base, head = self._shas[1], self._shas[2]
+        # Run side: symbolic. Recorded verdict: concrete. Same two commits.
+        new_range = f"{base}..HEAD"
+        (self.workdir / ".build-loop" / "judge-decisions.json").write_text(
+            json.dumps([{**CROSS_VENDOR_VERDICT, "run_id": "run_cv",
+                         "diff_range": f"{base}..{head}"}]),
+            encoding="utf-8",
+        )
+        record = {
+            "run_id": "run_cv", "host": "claude_code",
+            "filesTouched": list(HIGH_RISK_FILES),
+            "judge_decisions": [dict(AUDITOR_VERDICT)],
+            "auditor_status": "ran:dispatched-agent",
+        }
+        self.assertIsNone(
+            ov.enforce_for_run_record(
+                self.workdir, record, written_by="test", diff_range=new_range
+            )
+        )
+
+    def test_a_symbolic_range_matches_the_same_resolved_commits(self) -> None:
+        """The run side resolves `<sha>..HEAD`; a reviewer records concrete shas.
+
+        Comparing the literal strings would refuse a real round and leave the
+        debt permanently armed with only the waiver as an exit.
+        """
+        base, head = self._shas[1], self._shas[2]
+        self.assertEqual(
+            ov._normalise_range(self.workdir, f"{base}..HEAD"),
+            ov._normalise_range(self.workdir, f"{base}..{head}"),
+        )
+
+    def test_an_unresolvable_range_compares_as_itself(self) -> None:
+        """Fail OPEN on resolution: a false reject wedges, a false accept ships."""
+        self.assertEqual(ov._normalise_range(self.workdir, "nope..alsonope"),
+                         "nope..alsonope")
+        self.assertEqual(ov._normalise_range(self.workdir, "unknown"), "unknown")
+
+
+class TestVerdictAndVendorEvidence(_Base):
+    """The regression the fifth cross-vendor round caught in the fix itself."""
+
+    def test_a_recorded_hook_verdict_is_not_rejected_by_its_stale_status(self) -> None:
+        """The status check re-armed 103 real rows in this repo's own ledger.
+
+        `audit_record_verdict.py` fills the verdict IN PLACE and used to leave
+        `status: packet_emitted`, so treating that status as disqualifying
+        rejected every verdict the hook path ever recorded -- including three
+        passing code-touching runs whose auditor debt would have re-armed.
+        """
+        from write_run_entry.validators import auditor_present
+
+        self.assertTrue(auditor_present([{
+            "judge_id": "independent-auditor-hook", "verdict": "yay",
+            "status": "packet_emitted", "verdict_ts": "2026-09-13T00:00:00Z",
+        }]))
+        # An un-answered packet still fails, on the verdict rather than the status.
+        self.assertFalse(auditor_present([{
+            "judge_id": "independent-auditor-hook", "verdict": "pending",
+            "status": "packet_emitted",
+        }]))
+
+    def test_the_live_ledger_keeps_every_verdict_it_already_recorded(self) -> None:
+        """Run the real predicate over the repo's REAL rows, not a fixture.
+
+        A synthetic table cannot see a vocabulary the ledger actually contains;
+        this is the check that caught `verdict: "pass"` and the stale status.
+        """
+        from write_run_entry.validators import rendered_verdict
+
+        state = Path(__file__).resolve().parent.parent / ".build-loop" / "state.json"
+        if not state.exists():
+            self.skipTest("no local ledger to check")
+        data = json.loads(state.read_text(encoding="utf-8"))
+        rejected = [
+            entry
+            for run in data.get("runs", [])
+            for entry in (run.get("judge_decisions") or [])
+            if isinstance(entry, dict)
+            and str(entry.get("verdict") or "").strip().lower() not in ("", "pending")
+            and not rendered_verdict(entry)
+        ]
+        self.assertEqual(
+            rejected, [],
+            "the verdict predicate rejects rows the ledger already holds; a run "
+            "that was genuinely audited would re-arm its debt",
+        )
+
+    def test_a_verdict_naming_no_range_is_not_evidence_about_this_one(self) -> None:
+        from write_run_entry.validators import cross_vendor_present
+
+        unstamped = {
+            "judge_id": "cross-vendor-audit", "verdict": "nay",
+            "vendor": "openai/codex", "run_id": "r",
+        }
+        self.assertFalse(cross_vendor_present([unstamped], "claude_code", "aaa..bbb"))
+        self.assertTrue(cross_vendor_present([unstamped], "claude_code", None))
+
+    def test_the_first_provider_in_position_order_wins(self) -> None:
+        """A later local-runtime phrase overrode the reviewing provider."""
+        from write_run_entry.validators import vendor_provider
+
+        for value, expected in (
+            ("openai via llama.cpp fallback", "openai"),
+            ("openai via lm-studio fallback", "openai"),
+            ("llama.cpp", "local"),
+            ("anthropic via ollama proxy", "anthropic"),
+        ):
+            with self.subTest(vendor=value):
+                self.assertEqual(vendor_provider(value), expected)
+
+    def test_a_debts_list_holding_junk_is_unreadable_not_empty(self) -> None:
+        for payload in (
+            {"status": "incomplete", "debts": [{}], "owed": []},
+            {"debts": [7], "owed": []},
+            {"debts": [{"run_id": "r"}], "owed": []},
+        ):
+            with self.subTest(payload=str(payload)):
+                (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+                    json.dumps(payload), encoding="utf-8"
+                )
+                self.assertEqual(ov.check_manifest(self.workdir)["status"], "incomplete")

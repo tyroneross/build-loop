@@ -385,9 +385,19 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
     # A shape this module cannot read is UNKNOWN debt, not zero debt. A
     # non-list `debts` next to a non-list `owed` -- {"debts": {}, "owed": 7} --
     # produced ([], []) and a "complete" review on a manifest nobody can parse.
+    raw_debts_probe = existing.get("debts")
     unreadable = (
-        existing.get("debts") is not None and not isinstance(existing.get("debts"), list)
+        raw_debts_probe is not None and not isinstance(raw_debts_probe, list)
     ) or (raw_owed is not None and not isinstance(raw_owed, list))
+    # A LIST whose entries this module cannot read is just as unreadable as a
+    # non-list: {"debts": [{}]} and {"debts": [7]} were silently filtered to
+    # zero debt and reported a complete review. Checking only the outer
+    # container type made the fail-closed guard shallower than its docstring.
+    if isinstance(raw_debts_probe, list) and raw_debts_probe:
+        if any(
+            not isinstance(d, dict) or not d.get("verifier") for d in raw_debts_probe
+        ):
+            unreadable = True
     if unreadable and not legacy_owed:
         return ([{
             "verifier": "unknown",
@@ -796,14 +806,31 @@ def cross_vendor_reason_for_record(
 
     host = record.get("host")
     decisions = list(record.get("judge_decisions") or [])
+    # The range guard lives in `cross_vendor_present`; it was added with a
+    # signature nobody called, so it never fired on a real run -- the anti-
+    # pattern this same file names: a property reachable only from a kwarg no
+    # production path passes is a test of the implementation, not the tool.
+    wanted_range = diff_range
+    if workdir is not None and diff_range and diff_range != "unknown":
+        wanted_range = _normalise_range(workdir, diff_range)
+        decisions = [
+            ({**d, "diff_range": _normalise_range(workdir, str(d.get("diff_range")))}
+             if isinstance(d, dict) and d.get("diff_range") else d)
+            for d in decisions
+        ]
     if workdir is not None:
         # Also read the judge-decisions FILE. The debt arms precisely because
         # the verdict was not available at run-record-write time, so the round
         # is run afterwards and appended there -- and nothing re-read it, which
         # left `clear` (the waiver) as the only visible way out of a debt the
         # operator had actually discharged.
-        decisions.extend(_judge_decisions_file(workdir, str(record.get("run_id") or "")))
-    if cross_vendor_present(decisions, host):
+        extra = _judge_decisions_file(workdir, str(record.get("run_id") or ""))
+        decisions.extend(
+            {**d, "diff_range": _normalise_range(workdir, str(d.get("diff_range")))}
+            if d.get("diff_range") else d
+            for d in extra
+        )
+    if cross_vendor_present(decisions, host, wanted_range):
         return None
 
     explicit = _explicit_cross_vendor_flag(record)
@@ -847,6 +874,39 @@ def owed_verifiers_for_record(
 
 JUDGE_DECISIONS_RELPATH = Path(".build-loop") / "judge-decisions.json"
 
+
+def _normalise_range(workdir: Path, rng: str) -> str:
+    """Resolve a range's endpoints to concrete shas, or return it unchanged.
+
+    The run side resolves to `<preBuildSha>..HEAD` while a reviewer records
+    concrete shas, so comparing the literal strings would refuse a legitimate
+    round and leave the debt permanently armed with only the waiver as an exit.
+    Resolving both sides first makes the comparison mean what it says. Fails
+    OPEN to the original text: an unresolvable range compares as itself, and an
+    equal-or-unknown comparison never rejects.
+    """
+    import subprocess  # noqa: WPS433 (deferred; enforcement is fail-open)
+
+    text = str(rng or "").strip()
+    if ".." not in text:
+        return text
+    base, _, head = text.partition("..")
+    out = []
+    for ref in (base, head):
+        ref = ref.strip()
+        if not ref:
+            return text
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(workdir), "rev-parse", ref],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+        except Exception:  # noqa: BLE001
+            return text
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return text
+        out.append(proc.stdout.strip())
+    return f"{out[0]}..{out[1]}"
 
 def _judge_decisions_file(workdir: Path, run_id: str) -> list[dict[str, Any]]:
     """Verdicts in `.build-loop/judge-decisions.json` that belong to THIS run.
