@@ -7,7 +7,8 @@ Usage:
     python3 scripts/handoff [--workdir DIR] [--output FILE] [--json] [--full-git]
 
 Reads:
-  .build-loop/intent.md        — north star
+  .build-loop/intent.md        — north star (withheld with a WARN when the
+                                 file marks itself stale; see `_stale_marker`)
   .build-loop/goal.md          — current goal + F-criteria
   .build-loop/state.json       — phase, execution, runs[]
   .build-loop/feedback.md      — gotchas/lessons (optional)
@@ -44,6 +45,43 @@ def _read_file(path: Path) -> tuple[str | None, str | None]:
         return path.read_text(encoding="utf-8").strip(), None
     except OSError as exc:
         return None, str(exc)
+
+
+# A hand-written file that says it is stale. `.build-loop/` is otherwise
+# treated as always-current run state, but intent.md is hand-written and
+# outlives the run it was written for: ross-labs-astro's opened with
+# "STALE — DO NOT INHERIT" and described a run closed three weeks earlier,
+# and the composer inlined it verbatim into "## 1. North Star (intent)".
+# A resuming session is TOLD to trust that section, so inheriting a file
+# that disowns itself is worse than having no section at all.
+_STALE_WORD_RE = re.compile(r"\bstale\b", re.IGNORECASE)
+_STALE_FRONTMATTER_RE = re.compile(r"^\s*stale\s*:\s*(true|yes)\s*$", re.IGNORECASE)
+_STALE_HEAD_LINES = 5
+
+
+def _stale_marker(raw: str) -> str | None:
+    """Return the line marking *raw* as stale, or None.
+
+    Two shapes, both cheap and both author-visible:
+      1. the word STALE (case-insensitive, word-bounded) anywhere in the
+         first five lines — where a "STALE — DO NOT INHERIT" banner goes;
+      2. a ``stale: true`` (or ``yes``) key in YAML frontmatter.
+    Scanning only the head keeps a file that merely DISCUSSES staleness in
+    its body from being suppressed.
+    """
+    if not raw:
+        return None
+    lines = raw.splitlines()
+    for line in lines[:_STALE_HEAD_LINES]:
+        if _STALE_WORD_RE.search(line):
+            return line.strip()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if _STALE_FRONTMATTER_RE.match(line):
+                return line.strip()
+    return None
 
 
 def _read_state(bl: Path) -> dict:
@@ -518,6 +556,29 @@ def compose(workdir: Path, *, full_git: bool = False) -> dict:
         return "n/a"
 
     intent = _load_md("intent.md")
+    # WARN, do not fail closed: every other absent or unusable source in this
+    # composer renders as an explicit "none"/"n/a" and the document still
+    # gets written (module docstring: "never crash"). A resumer who cannot
+    # get a handoff at all is worse off than one holding a handoff whose
+    # §1 names the file to go fix. The marker text is surfaced instead of
+    # the body so the reader can see WHY it was withheld.
+    intent_stale = _stale_marker(intent) if intent != "n/a" else None
+    if intent_stale:
+        if "intent.md" in sources:
+            sources.remove("intent.md")
+        errors.append(
+            f"intent.md carries a staleness marker ({intent_stale!r}); "
+            "§1 North Star was NOT inherited"
+        )
+        intent = (
+            "**WARN — `.build-loop/intent.md` is marked stale and was NOT "
+            "inherited.**\n\n"
+            f"Marker found in `.build-loop/intent.md`: `{intent_stale}`\n\n"
+            "Do not treat this run as a continuation of whatever that file "
+            "describes. Establish the north star from the current goal (§2), "
+            "the live phase (§3) and the user, then rewrite "
+            "`.build-loop/intent.md` before the next handoff."
+        )
     goal = _load_md("goal.md")
     feedback = _load_md("feedback.md")
 

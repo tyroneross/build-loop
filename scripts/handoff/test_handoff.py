@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 from handoff.__main__ import (
     _is_pushed,
+    _stale_marker,
     _remote_url_for,
     compose,
     _queue_items,
@@ -396,3 +397,66 @@ def test_untracked_file_is_not_reported_as_pushed(tmp_path):
     f = d / "brand-new.md"
     f.write_text("x")
     assert _is_pushed(f) is False
+
+
+class TestStaleIntent:
+    """Regression for BUIL-BUILD-m2eb8dmq3x6pt2pcp5y1t.
+
+    `_load_md("intent.md")` inlined the file unconditionally into "## 1.
+    North Star (intent)". `ross-labs-astro/.build-loop/intent.md` opens with
+    "STALE — DO NOT INHERIT" and describes a run closed on 2026-08-24; the
+    composed handoff reproduced it verbatim, so a resuming session was told
+    to trust a north star its own author had disowned.
+    """
+
+    def _bl_with_intent(self, tmp_path: Path, body: str) -> Path:
+        bl = tmp_path / ".build-loop"
+        bl.mkdir()
+        (bl / "intent.md").write_text(body, encoding="utf-8")
+        (bl / "goal.md").write_text("# Goal\nF1: passes.", encoding="utf-8")
+        return tmp_path
+
+    def test_marker_detected_in_banner_and_frontmatter(self) -> None:
+        assert _stale_marker("STALE — DO NOT INHERIT\n\n# Intent\nOld thing.")
+        assert _stale_marker("# Intent\n\n> stale: this predates the rewrite\nBody.")
+        assert _stale_marker("---\nstale: true\n---\n# Intent\nOld thing.")
+
+    def test_no_marker_on_a_live_intent(self) -> None:
+        assert _stale_marker("# Intent\nBuild something great.") is None
+        # The word appearing deep in the BODY is a discussion, not a banner.
+        body = "# Intent\n" + "\n".join(f"line {i}" for i in range(10))
+        assert _stale_marker(body + "\nWatch out for stale caches.\n") is None
+
+    def test_stale_intent_body_is_not_inherited(self, tmp_path: Path) -> None:
+        wd = self._bl_with_intent(
+            tmp_path,
+            "STALE — DO NOT INHERIT\n\n# Intent\n"
+            "Ship the 2026-08-24 mobile UI pass.\n",
+        )
+        result = compose(wd)
+        doc = result["document"]
+        assert "Ship the 2026-08-24 mobile UI pass." not in doc, (
+            "the stale intent body was reproduced verbatim"
+        )
+        assert "WARN" in doc and ".build-loop/intent.md" in doc
+        assert "STALE — DO NOT INHERIT" in doc, (
+            "the marker text itself must be surfaced so the reader sees why"
+        )
+
+    def test_stale_intent_warns_and_drops_the_source(self, tmp_path: Path) -> None:
+        wd = self._bl_with_intent(
+            tmp_path, "---\nstale: true\n---\n# Intent\nClosed work.\n"
+        )
+        result = compose(wd)
+        assert "intent.md" not in result["sources"]
+        assert any("staleness marker" in e for e in result["errors"]), result["errors"]
+        # WARN, not fail-closed: the document still composes.
+        assert result["document"].startswith("# Build-Loop Handoff")
+        assert "## 2. Current Goal" in result["document"]
+
+    def test_live_intent_is_still_inherited(self, tmp_path: Path) -> None:
+        wd = self._bl_with_intent(tmp_path, "# Intent\nBuild something great.")
+        result = compose(wd)
+        assert "Build something great." in result["document"]
+        assert "intent.md" in result["sources"]
+        assert result["errors"] == []
