@@ -399,7 +399,7 @@ missing tooling; the tooling ran and produced the right answer.
 
 ## 2026-09-12 — Enforce gate: round-1 1e518873..c60d66ed (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** independent-auditor round 1 reviewed c60d66ed (the run-ledger upsert + worktree-ignored-file inventory) and returned nay: f1 the upsert's dedupe/merge path could delete another writer's row on a lossy merge; f2 a collapsed directory could be certified clean by the new ignored-file inventory.
 
@@ -413,7 +413,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Enforce gate: round-2 1e518873..d1e02870 (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** independent-auditor round 2 reviewed d1e02870 (the round-1 fix) and returned nay: n1 every CLI correction to a run entry deleted the auditor's own verdict field on write; n2 the ignored-file walk swallowed unreadable subdirectories instead of flagging them; n4 set-iteration order was nondeterministic, so the same worktree could inventory differently across runs.
 
@@ -427,7 +427,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Enforce gate: round-3 1e518873..0fd7ebaa (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** independent-auditor round 3 reviewed 0fd7ebaa (the round-2 fix) and returned nay: f1 the ledger's dedupe pass itself performed the exact wipe it was meant to repair; f2 the files-touched-from-git helper failed open (returned an empty/success result) when git itself errored; f3 the worktree characterize step asserted a directory was empty when it was actually unreadable.
 
@@ -441,7 +441,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Enforce gate: round-4 1e518873..34d18b7d (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** independent-auditor round 4 reviewed 34d18b7d (the round-3 fix) and returned nay: f6 the ledger writer's 'heal' path and its 'repair' path disagreed on which row to keep, and the writer's version destroyed a later write's keys; f7 a generic warning string had replaced the specific secret name the tool was supposed to surface; f8 a red-flag condition could not fire on preview/dry-run output because the check ran against a different code path than the real write.
 
@@ -455,7 +455,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Enforce gate: review-D round-1 (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** fact-checker (Review-D) found that inspect_worktree_safety omitted the new ignored-file inventory on four of the real-path verdicts it returns, so the operator-visible safety characterization was incomplete on exactly the surface this run's second defect was about.
 
@@ -469,7 +469,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Enforce gate: review-D round-2 (failed this run)
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** fact-checker (Review-D) found two issues: source is not the only writer-identifying key in the run ledger (run_close_lint also reads a hook_-prefixed run-id convention the upsert fix did not account for), and the phases field uses a shallow merge that erases phases.learn when a later writer updates a different phase key.
 
@@ -483,7 +483,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — Basename-keyed backup clobbered write_run_entry mid-edit
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** A backup/staging step keyed its copy destination on basename rather than full relative path and copied `scripts/worktree_reaper/__main__.py` over `scripts/write_run_entry/__main__.py` while the latter was mid-edit - both files are named `__main__.py` inside their own package directories, and both paths appear in this run's `state.json` `filesTouched`, corroborating both were live this run
 
@@ -501,7 +501,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/
 
 ## 2026-09-12 — One preflight family for the shared root cause behind 11 of this run's audit findings, not eleven separate gates
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop/.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
+_Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000Z-claude_code-defects.md`_
 
 **What happened.** Findings f1/f2 (round 1), n1/n2/n4 (round 2), f1/f2/f3 (round 3), and f6/f7/f8 (round 4) - 11 distinct items across 4 audit rounds - share one suspected root cause per this run's judge_decisions: the fixing agent's own tests, though written per fix and mutation-checked, validated the fix's model of the bug rather than an independently-derived oracle, so each one passed the author's tests while failing the auditor's adversarial reproduction
 
