@@ -448,10 +448,60 @@ def _artifact_path(workdir: Path, name: str) -> Path | None:
     return next((path for path in options if path.exists()), None)
 
 
+def _head_created_row(path: Path, max_lines: int = 500) -> dict[str, Any] | None:
+    """Scan a log's HEAD for its `created` row.
+
+    The bounded reader keeps the first physical line plus the tail, so on an
+    oversized log a `created` row that is not line 1 falls outside the retained
+    window and the experiment is silently skipped. That ordering is now
+    reachable: the writer creates the log on first append, so `applied` can
+    precede `created`. Bounded to the head of the file; returns None when no
+    baseline is there.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for index, line in enumerate(handle):
+                if index >= max_lines:
+                    return None
+                try:
+                    row = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(row, dict) and row.get("event") == "created":
+                    return row
+    except OSError:
+        return None
+    return None
+
+
+def _metric_scale_mismatch(created: dict[str, Any], applied: list[dict[str, Any]]) -> bool:
+    """True when outcome-derived rows are being graded against another metric.
+
+    An outcome-derived `metric_value` lives on 0..1. An experiment whose
+    baseline or target sits outside that range is measuring something else
+    entirely -- "seconds to complete", baseline 10, target 5 -- and eight
+    passing runs would otherwise report observed 1.0 and "target met" on
+    evidence the experiment never collected.
+    """
+    if not applied or not all(row.get("metric_source") == "run_outcome" for row in applied):
+        return False
+    for key in ("baseline_value", "target_value"):
+        value = created.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value < 0.0 or value > 1.0:
+                return True
+    return False
+
+
+def _is_measured(value: Any) -> bool:
+    """True for a real numeric metric. `True`/`False` are ints in Python and are not."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     config = _read_json(workdir / ".build-loop" / "config.json", {})
     enabled = isinstance(config, dict) and config.get("autoPromote") is True
-    result = {"enabled": enabled, "scanned": 0, "eligible": 0}
+    result = {"enabled": enabled, "scanned": 0, "eligible": 0, "metric_missing": 0}
     if not enabled:
         return [], result
     orders: list[dict[str, Any]] = []
@@ -466,12 +516,49 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
             result.setdefault("truncated_inputs", []).extend(truncated_inputs)
         created = next((row for row in rows if row.get("event") == "created"), None)
         if not created:
+            created = _head_created_row(path)
+        if not created:
             continue
-        applied = [
+        # Non-confounded applied rows are the sample; the ones carrying a real
+        # number are the MEASURED sample. The difference used to vanish inside
+        # one filter, which is how every promotion gate sat inert without
+        # saying so: the sole production writer wrote `metric_value: None`, the
+        # filter dropped every row, and the sweep reported "not eligible" —
+        # indistinguishable from an experiment that simply had not run enough
+        # times. An unmeasurable sample is now named as `metric_missing`.
+        eligible_rows = [
             row for row in rows
             if row.get("event") == "applied" and row.get("confounded") is False
-            and isinstance(row.get("metric_value"), (int, float))
         ]
+        applied = [row for row in eligible_rows if _is_measured(row.get("metric_value"))]
+        unmeasured = len(eligible_rows) - len(applied)
+        if unmeasured:
+            result["metric_missing"] += unmeasured
+            result.setdefault("metric_missing_detail", []).append({
+                "artifact": str(created.get("artifact") or path.stem),
+                "log": path.name,
+                "non_confounded_applied": len(eligible_rows),
+                "measured": len(applied),
+                "missing": unmeasured,
+                "reason": (
+                    "applied rows carry no numeric metric_value, so they cannot "
+                    "count toward the promotion sample"
+                ),
+            })
+        if _metric_scale_mismatch(created, applied):
+            result["metric_mismatch"] = result.get("metric_mismatch", 0) + 1
+            result.setdefault("metric_mismatch_detail", []).append({
+                "artifact": str(created.get("artifact") or path.stem),
+                "log": path.name,
+                "baseline_metric": created.get("baseline_metric"),
+                "baseline_value": created.get("baseline_value"),
+                "target_value": created.get("target_value"),
+                "reason": (
+                    "applied rows carry outcome-derived metric_value on a 0..1 scale, "
+                    "which cannot be graded against this experiment's baseline/target"
+                ),
+            })
+            continue
         floor = max(8, int(created.get("sample_size_target") or 8))
         if len(applied) < floor:
             continue

@@ -15,6 +15,31 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 
+def _append_applied_rows(
+    workdir: Path, artifact: str, *, count: int, start: int = 0, outcome: str = "pass"
+) -> None:
+    """Write applied rows with the PRODUCTION writer, never a fixture.
+
+    The A/B promotion gate was inert for exactly this reason: the sole
+    production writer of applied rows hardcoded `metric_value: None`, which
+    fails this consumer's numeric filter, and the tests injected 0.9 into row
+    fixtures no writer produced. A consumer test that builds its own input
+    cannot see a writer that stopped producing it.
+    """
+    from write_run_entry.iohelpers import append_experiment_rows
+
+    experiments = workdir / ".build-loop" / "experiments"
+    experiments.mkdir(parents=True, exist_ok=True)
+    for index in range(start, start + count):
+        append_experiment_rows(
+            experiments,
+            f"sample-{index}",
+            [artifact],
+            outcome,
+            "2026-09-12T00:00:00Z",
+        )
+
+
 def _write_state(workdir: Path, count: int, *, cause: str | None = None) -> str:
     runs = []
     for index in range(count):
@@ -376,13 +401,15 @@ def test_sample_sweep_emits_reviewer_order_only_for_eligible_artifact(tmp_path: 
             "sample_size_target": 8,
         }
     ]
-    rows.extend(
-        {"event": "applied", "run_id": f"sample-{index}", "metric_value": 0.9, "confounded": False}
-        for index in range(8)
-    )
     (experiments / "steady.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
     )
+    # Applied rows come from the PRODUCTION writer, not a fixture. Injecting
+    # metric_value 0.9 here is what hid the defect: the sole production writer
+    # hardcoded `metric_value: None`, which fails this consumer's numeric
+    # filter, so the promotion path was exercised only against data no writer
+    # produced and `len(applied)` was always 0 on a real run.
+    _append_applied_rows(tmp_path, "steady", count=8)
 
     result = _runner().run(tmp_path, run_id=run_id, source="test")
 
@@ -407,17 +434,16 @@ def test_oversized_experiment_preserves_created_row_and_changes_digest_on_append
         "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8,
     }
     filler = {"event": "ignored", "detail": "x" * 500}
-    applied = {"event": "applied", "metric_value": 0.9, "confounded": False}
-    rows = [created, *(filler for _ in range(1_100)), *(applied for _ in range(8))]
+    rows = [created, *(filler for _ in range(1_100))]
     log.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    _append_applied_rows(tmp_path, "large", count=8)
 
     first = runner.run(tmp_path, run_id=run_id, source="test")
     reviewer = next(order for order in first["work_orders"] if order["role"] == "promotion-reviewer")
     assert reviewer["pattern_key"] == "large"
     assert str(log) in first["stages"]["sample_sweep"]["truncated_inputs"]
 
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(applied) + "\n")
+    _append_applied_rows(tmp_path, "large", count=1, start=8)
     second = runner.run(tmp_path, run_id=run_id, source="test")
 
     assert second["already"] is False
@@ -668,3 +694,181 @@ def test_actual_legacy_rows_do_not_collapse_into_a_none_pattern() -> None:
 def test_generic_notice_filter_preserves_real_causal_detail() -> None:
     note = "fired-by-stop-hook (inline run; Fable session later corrected the auditor floor)"
     assert _runner()._manual_intervention_signature({"note": note}) == note
+
+
+# ---------------------------------------------------------------------------
+# Writer -> consumer, end to end.
+#
+# Every A/B promotion gate was inert and no test saw it, because the writer and
+# the consumer were only ever tested apart: the writer's tests asserted a row
+# was appended without asserting it was MEASURABLE, and the consumer's tests
+# built their own rows with metric_value 0.9. These two tests run the real
+# production writer (`scripts/write_run_entry/__main__.py`, the CLI Review-G
+# actually invokes) and then the real consumer, so the seam is covered.
+# ---------------------------------------------------------------------------
+
+WRITE_RUN_ENTRY = SCRIPTS / "write_run_entry" / "__main__.py"
+
+
+def _seed_experiment(workdir: Path, name: str, *, target: float = 0.8) -> Path:
+    skill = workdir / ".build-loop" / "skills" / "experimental" / name / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(f"---\nname: {name}\nuser-invocable: false\n---\n", encoding="utf-8")
+    (workdir / ".build-loop" / "config.json").write_text(
+        json.dumps({"autoPromote": True}), encoding="utf-8"
+    )
+    log = workdir / ".build-loop" / "experiments" / f"{name}.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        json.dumps({
+            "event": "created", "artifact": name, "baseline_metric": "run outcome",
+            "baseline_value": 0.5, "target_value": target, "sample_size_target": 8,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    return log
+
+
+def _write_run_entry_cli(
+    workdir: Path, artifact: str, *, run_id: str, outcome: str = "pass"
+) -> None:
+    proc = subprocess.run(
+        [
+            sys.executable, str(WRITE_RUN_ENTRY),
+            "--workdir", str(workdir),
+            "--run-id", run_id,
+            "--goal", "end-to-end metric check",
+            "--outcome", outcome,
+            "--phases-json", '{"assess":{"status":"pass"}}',
+            "--active-experimental-artifacts", artifact,
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_production_writer_rows_survive_the_consumer_metric_filter(tmp_path: Path) -> None:
+    """The whole defect, in one assertion.
+
+    `scripts/learn/runner.py` keeps only applied rows whose `metric_value` is
+    numeric; `scripts/write_run_entry` is the sole production writer of those
+    rows and wrote None, so `len(applied)` was always 0, always below the floor
+    of `max(8, sample_size_target)`, and the sample-sweep promotion never fired
+    from a real run.
+    """
+    _seed_experiment(tmp_path, "e2e")
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "e2e", run_id=f"e2e-run-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    result = _runner().run(tmp_path, run_id=run_id, source="test")
+
+    sweep = result["stages"]["sample_sweep"]
+    assert sweep["eligible"] == 1, sweep
+    assert sweep["metric_missing"] == 0, sweep
+    reviewer = next(o for o in result["work_orders"] if o["role"] == "promotion-reviewer")
+    assert reviewer["pattern_key"] == "e2e"
+    assert reviewer["target_metric"]["observed"] == 1.0
+
+
+def test_unmeasured_rows_are_reported_as_metric_missing_not_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    """An unmeasurable sample and a too-small sample must not look the same.
+
+    Both used to exit the sweep through one `continue`, so a gate that could
+    never fire reported exactly what a young experiment reports.
+    """
+    log = _seed_experiment(tmp_path, "unmeasured")
+    with log.open("a", encoding="utf-8") as handle:
+        for index in range(8):
+            handle.write(json.dumps({
+                "event": "applied", "run_id": f"legacy-{index}",
+                "metric_value": None, "confounded": False,
+            }) + "\n")
+
+    run_id = _write_state(tmp_path, 3)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0
+    assert sweep["metric_missing"] == 8
+    detail = sweep["metric_missing_detail"][0]
+    assert detail["artifact"] == "unmeasured"
+    assert detail["non_confounded_applied"] == 8
+    assert detail["measured"] == 0
+
+
+def test_one_run_contributes_one_sample_however_often_it_is_rewritten(tmp_path: Path) -> None:
+    """A rewrite corrects a run's row; it does not manufacture a second sample.
+
+    The run ledger upserts on run_id while this log appended unconditionally, so
+    eight writes of ONE run cleared an eight-run promotion floor by themselves,
+    and a corrected outcome left its superseded value in the average.
+    """
+    log = _seed_experiment(tmp_path, "rewrite")
+    for _ in range(8):
+        _write_run_entry_cli(tmp_path, "rewrite", run_id="same-run")
+    _write_run_entry_cli(tmp_path, "rewrite", run_id="same-run", outcome="fail")
+
+    applied = [
+        json.loads(line) for line in log.read_text().strip().splitlines()
+        if json.loads(line).get("event") == "applied"
+    ]
+    assert len(applied) == 1
+    assert applied[0]["metric_value"] == 0.0  # the correction, not the superseded pass
+
+    run_id = _write_state(tmp_path, 3)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+    assert sweep["eligible"] == 0
+
+
+def test_an_artifact_name_cannot_escape_the_experiments_directory(tmp_path: Path) -> None:
+    from write_run_entry.iohelpers import append_experiment_rows
+
+    experiments = tmp_path / ".build-loop" / "experiments"
+    experiments.mkdir(parents=True)
+    append_experiment_rows(
+        experiments, "run-x", ["../../../outside/new"], "pass", "2026-09-12T00:00:00Z"
+    )
+    assert not (tmp_path.parent / "outside").exists()
+    assert list(experiments.glob("*.jsonl")) == []
+
+
+def test_outcome_rows_are_not_graded_against_an_incompatible_metric(tmp_path: Path) -> None:
+    """baseline 10 / target 5 seconds cannot be met by a pass/fail score of 1.0."""
+    _seed_experiment(tmp_path, "seconds")
+    log = tmp_path / ".build-loop" / "experiments" / "seconds.jsonl"
+    log.write_text(
+        json.dumps({
+            "event": "created", "artifact": "seconds", "baseline_metric": "seconds to complete",
+            "baseline_value": 10, "target_value": 5, "sample_size_target": 8,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "seconds", run_id=f"sec-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+    assert sweep["eligible"] == 0
+    assert sweep["metric_mismatch"] == 1
+    assert sweep["metric_mismatch_detail"][0]["artifact"] == "seconds"
+
+
+def test_a_created_row_after_the_first_line_still_anchors_the_sweep(tmp_path: Path) -> None:
+    """The writer can now create the log, so `applied` may precede `created`."""
+    _seed_experiment(tmp_path, "late")
+    log = tmp_path / ".build-loop" / "experiments" / "late.jsonl"
+    rows = [{"event": "applied", "run_id": "pre-0", "metric_value": 1.0,
+             "metric_source": "run_outcome", "confounded": False}]
+    rows.append({
+        "event": "created", "artifact": "late", "baseline_metric": "pass rate",
+        "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8,
+    })
+    rows.extend({"event": "ignored", "detail": "x" * 500} for _ in range(1_100))
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    _append_applied_rows(tmp_path, "late", count=8)
+
+    run_id = _write_state(tmp_path, 3)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+    assert sweep["eligible"] == 1, sweep

@@ -86,8 +86,10 @@ For each APPROVED artifact, write to `.build-loop/experiments/<name>.jsonl`:
 The experimental skill's description triggers it on matching runs. Each subsequent run that matches the skill's trigger appends to this file:
 
 ```jsonl
-{"event": "applied", "date": "...", "run_date": "2026-04-20", "triggered": true, "metric_value": 1.0, "outcome": "phase_5_pass"}
+{"event": "applied", "date": "...", "run_id": "...", "triggered": true, "metric_value": 1.0, "outcome": "pass"}
 ```
+
+`metric_value` is the run outcome on a 0..1 scale (`pass` 1.0 / `partial` 0.5 / `fail` 0.0) — see §`metric_value` below for the definition and why a non-numeric value is reported as `metric_missing` rather than filtered away.
 
 After `sample_size_target` applied entries, Phase 6 Learn computes delta and emits a decision recommendation (promote / remove / extend sample).
 
@@ -186,6 +188,16 @@ Append-only log per experimental artifact. Schema:
 ```
 
 `applied` rows with `confounded: true` are preserved for audit but excluded from the effective sample count. The effective sample is `count(rows where confounded == false)`. A sample only passes the floor when effective count >= 8 (or the user's custom `sample_size_target`, whichever is larger).
+
+### `metric_value` — what a production run actually measures
+
+`metric_value` on an `applied` row is the run's Review-G **outcome on a 0..1 scale**: `pass = 1.0`, `partial = 0.5`, `fail = 0.0`. Defined in `scripts/write_run_entry/iohelpers.py:OUTCOME_METRIC_VALUES`, derived by `outcome_metric_value()`, and written by `append_experiment_rows()` on every run that carries active experimental artifacts. A caller holding a better metric passes `metric_value=` explicitly; nothing else has to be remembered, which is the point.
+
+Why the outcome: it is the only numeric signal every production run records, and this schema's own `baseline_metric` examples are rates ("Review-B pass rate on middleware edits") that a 0..1 scale compares against directly. `partial` sits at 0.5 rather than collapsing to 0 or 1 because a partial run is evidence in both directions.
+
+Each row also carries `metric_source` (`run_outcome` or `caller`) and, for outcome-derived rows, `metric_scale: [0.0, 1.0]`. The sweep refuses to grade outcome-derived rows against an experiment whose `baseline_value`/`target_value` sits outside 0..1 — "seconds to complete", baseline 10, target 5 is a different metric, and eight passing runs would otherwise report observed 1.0 and "target met" on evidence never collected; those artifacts are reported as `metric_mismatch`. **One run contributes one row**: the writer upserts on `(event, run_id)`, so re-running the closing writer for a single run corrects its row instead of manufacturing another sample.
+
+An `applied` row whose `metric_value` is not numeric does NOT count toward the sample. Phase 6 Learn reports those as `metric_missing` (with a per-artifact `metric_missing_detail`) on the `sample_sweep` stage of the receipt, so an unmeasurable sample never looks like a young one. **History: this is why every A/B promotion gate was inert.** `append_experiment_rows` hardcoded `metric_value: None` while `scripts/learn/runner.py` kept only numeric rows, so `len(applied)` was always 0, always below the floor, and the sample-sweep promotion never fired from a real run. The tests missed it because they injected `0.9` into row fixtures no writer produced.
 
 ## Promotion decisions (after sample complete)
 

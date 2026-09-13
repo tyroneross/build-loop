@@ -218,10 +218,58 @@ def append_run_entry(state_path: Path, entry: dict, defaulted: set[str] | None =
 
 
 def append_experiment_row(jsonl_path: Path, row: dict) -> None:
+    """Record one experiment row, UPSERTING on (event, run_id).
+
+    The run ledger upserts a run_id but this log used to append unconditionally,
+    so re-running the closing writer for one run -- a correction, a retry, a
+    Stop hook firing after Review-G -- manufactured N measured samples from one
+    run. The sweep counts ROWS, so eight writes of the same run_id could satisfy
+    an eight-run floor on its own, and a corrected outcome left the superseded
+    value in the average. One run contributes one row; a rewrite replaces it.
+
+    A row with no `run_id` cannot be identified, so it appends as before.
+    """
     with LockedFile(jsonl_path):
+        line = json.dumps(row, ensure_ascii=False) + "\n"
+        run_id = row.get("run_id")
+        event = row.get("event")
+        if run_id and jsonl_path.exists():
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            for index, raw in enumerate(lines):
+                try:
+                    prior = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if (
+                    isinstance(prior, dict)
+                    and prior.get("run_id") == run_id
+                    and prior.get("event") == event
+                ):
+                    lines[index] = line
+                    atomic_write_bytes(jsonl_path, "".join(lines).encode("utf-8"))
+                    return
         existing = jsonl_path.read_bytes() if jsonl_path.exists() else b""
-        line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
-        atomic_write_bytes(jsonl_path, existing + line)
+        atomic_write_bytes(jsonl_path, existing + line.encode("utf-8"))
+
+
+def experiment_log_path(experiments_dir: Path, name: str) -> Path | None:
+    """The artifact's log path, or None when the name escapes the directory.
+
+    Artifact names reach here from a CLI flag and were concatenated straight
+    into a path. `--active-experimental-artifacts ../../../outside/new` wrote
+    outside the repo's experiments directory, and the new create-on-first-append
+    branch made that a directory-creating write rather than a no-op.
+    """
+    candidate = experiments_dir / f"{name}.jsonl"
+    try:
+        resolved_dir = experiments_dir.resolve()
+        resolved = candidate.resolve()
+        resolved.relative_to(resolved_dir)
+    except (OSError, ValueError):
+        return None
+    if resolved.parent != resolved_dir:
+        return None
+    return candidate
 
 
 def _co_applied(all_names: list[str], exclude: str) -> list[str]:
@@ -229,27 +277,94 @@ def _co_applied(all_names: list[str], exclude: str) -> list[str]:
     return [n for n in all_names if n != exclude]
 
 
+# The metric a production run actually produces for an APPLIED experimental
+# artifact: the Review-G run outcome, on a 0..1 scale.
+#
+# Every A/B promotion gate was inert before this existed. This writer is the
+# SOLE production writer of `applied` rows and it hardcoded `metric_value: None`;
+# `scripts/learn/runner.py` keeps only rows where `isinstance(metric_value,
+# (int, float))`, so `len(applied)` was always 0, always below the floor of
+# `max(8, sample_size_target)`, and the sample-sweep promotion never fired from
+# a real run. The tests missed it because they injected 0.9 into row fixtures no
+# writer produced.
+#
+# Why the outcome: the run's Review-G outcome is the only numeric signal EVERY
+# production run records, and the experiments schema's own `baseline_metric`
+# examples are rates ("Review-B pass rate on middleware edits") that a 0..1
+# scale compares against directly. `partial` is 0.5 rather than 0 or 1 because
+# a partial run is evidence in both directions and collapsing it either way
+# would bias the sweep. A caller holding a better metric passes it explicitly.
+OUTCOME_METRIC_VALUES: dict[str, float] = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
+
+
+def outcome_metric_value(outcome: object) -> float | None:
+    """The 0..1 metric for a run outcome, or None when the outcome is unknown.
+
+    None is deliberate and is NOT the same as 0.0: a run that recorded no usable
+    outcome produced no measurement, and scoring it as a total failure would
+    invent evidence. The consumer counts those as `metric_missing` instead.
+    """
+    if isinstance(outcome, (int, float)) and not isinstance(outcome, bool):
+        return float(outcome)
+    return OUTCOME_METRIC_VALUES.get(str(outcome).strip().lower())
+
+
 def append_experiment_rows(
-    experiments_dir: Path, run_id: str, active: list[str], outcome: str, date: str
+    experiments_dir: Path,
+    run_id: str,
+    active: list[str],
+    outcome: str,
+    date: str,
+    metric_value: float | None = None,
 ) -> None:
+    """Append one `applied` row per active experimental artifact.
+
+    `metric_value` defaults to the run outcome's numeric value, so the row is
+    measurable without the caller remembering to supply anything; pass a value
+    explicitly to override it with a better metric.
+    """
+    measured = metric_value if metric_value is not None else outcome_metric_value(outcome)
+    source = "caller" if metric_value is not None else "run_outcome"
     for name in active:
-        path = experiments_dir / f"{name}.jsonl"
-        if not path.exists():
+        path = experiment_log_path(experiments_dir, name)
+        if path is None:
             log(
-                f"warn: no baseline for experiment '{name}' at {path}; "
-                "skipping applied row (run a Phase 6 Learn scan first)"
+                f"warn: experiment name {name!r} resolves outside {experiments_dir}; "
+                "refusing to write its log"
             )
             continue
+        if not path.exists():
+            # Create it. Skipping meant most artifacts never got a row at all,
+            # so their evidence was lost rather than deferred. The log is
+            # append-only and the sweep finds the `created` row wherever it
+            # lands in the file, so a baseline written later still pairs with
+            # the rows recorded before it.
+            log(
+                f"note: no baseline row yet for experiment '{name}' at {path}; "
+                "creating the log and recording the applied row (the sweep stays "
+                "inert until a 'created' row supplies baseline/target)"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
         co_applied = _co_applied(active, name)
         row = {
             "event": "applied",
             "date": date,
             "run_id": run_id,
             "triggered": True,
-            "metric_value": None,
+            "metric_value": measured,
+            # What the number MEANS. An outcome-derived 1.0 is only comparable
+            # against a baseline on the same 0..1 scale; recording the source
+            # lets the sweep refuse to grade "seconds to complete" (baseline 10,
+            # target 5) against a pass/fail score instead of declaring the
+            # target met on evidence it never collected.
+            "metric_source": source,
+            "metric_scale": [0.0, 1.0] if source == "run_outcome" else None,
             "outcome": outcome,
             "co_applied_experimental_artifacts": co_applied,
             "confounded": len(co_applied) > 0,
         }
         append_experiment_row(path, row)
-        log(f"appended applied row to {path.name} (confounded={row['confounded']})")
+        log(
+            f"appended applied row to {path.name} "
+            f"(metric_value={measured}, confounded={row['confounded']})"
+        )

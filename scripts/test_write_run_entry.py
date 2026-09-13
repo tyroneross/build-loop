@@ -556,12 +556,64 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("validation error", result.stderr)
 
-    def test_missing_baseline_skips_applied(self) -> None:
-        # No baseline file for 'ghost' — script should warn and not create one
+    def test_missing_baseline_creates_the_log_and_records_the_applied_row(self) -> None:
+        """A missing baseline defers the SWEEP, never the evidence.
+
+        Skipping the append meant most artifacts never got a row at all, so a
+        run's evidence was discarded rather than held. The log is append-only
+        and the sweep finds the `created` row wherever it sits in the file, so a
+        baseline written later still pairs with rows recorded before it.
+        """
         result = run(self._base_args(**{"--active-experimental-artifacts": "ghost"}))
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("no baseline for experiment 'ghost'", result.stderr)
-        self.assertFalse((self.experiments / "ghost.jsonl").exists())
+        self.assertIn("no baseline row yet for experiment 'ghost'", result.stderr)
+        log = self.experiments / "ghost.jsonl"
+        self.assertTrue(log.exists())
+        row = json.loads(log.read_text().strip().splitlines()[-1])
+        self.assertEqual(row["event"], "applied")
+        self.assertIsInstance(row["metric_value"], float)
+
+    def test_applied_row_carries_the_outcome_derived_metric(self) -> None:
+        """The row the PRODUCTION writer emits must survive the consumer's filter.
+
+        `scripts/learn/runner.py` keeps only applied rows whose `metric_value`
+        is numeric. This writer hardcoded None, so `len(applied)` was always 0
+        and no experimental artifact could ever be promoted on evidence.
+        """
+        self.experiments.mkdir(parents=True, exist_ok=True)
+        (self.experiments / "metered.jsonl").write_text(
+            json.dumps({"event": "created", "artifact": "metered", "baseline_metric": "x",
+                        "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8}) + "\n",
+            encoding="utf-8",
+        )
+        result = run(self._base_args(**{
+            "--active-experimental-artifacts": "metered",
+            "--outcome": "pass",
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        row = json.loads(
+            (self.experiments / "metered.jsonl").read_text().strip().splitlines()[-1]
+        )
+        self.assertEqual(row["metric_value"], 1.0)
+        self.assertEqual(row["outcome"], "pass")
+
+    def test_partial_and_fail_outcomes_map_to_distinct_metric_values(self) -> None:
+        for outcome, expected in (("partial", 0.5), ("fail", 0.0)):
+            with self.subTest(outcome=outcome):
+                name = f"scale-{outcome}"
+                self.experiments.mkdir(parents=True, exist_ok=True)
+                (self.experiments / f"{name}.jsonl").write_text(
+                    json.dumps({"event": "created", "artifact": name}) + "\n", encoding="utf-8"
+                )
+                result = run(self._base_args(**{
+                    "--active-experimental-artifacts": name,
+                    "--outcome": outcome,
+                }))
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                row = json.loads(
+                    (self.experiments / f"{name}.jsonl").read_text().strip().splitlines()[-1]
+                )
+                self.assertEqual(row["metric_value"], expected)
 
 
 class ReviewCompletenessGateTests(unittest.TestCase):
