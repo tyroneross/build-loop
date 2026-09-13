@@ -60,6 +60,8 @@ build-loop-install --host all
 
 Surface counts in this release: 55 skills, 29 agents, and two Claude commands.
 
+Groundwork exchange validates `.designdoc/build-request.json` and records verified implementation evidence in `.designdoc/implementation-map.json`.
+
 Rally verifies nothing on its own. Hosts derive agent identity with `scripts/rally_point/actor_identity.py` before `rally enter --tool "$RALLY_TOOL"`.
 
 - [Skill index](https://github.com/tyroneross/build-loop/blob/main/docs/SKILL-INDEX.md)

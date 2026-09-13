@@ -106,6 +106,10 @@ class ReadmeSurfaceClaimsTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(text, self.readme)
 
+    def test_groundwork_exchange_remains_discoverable(self) -> None:
+        self.assertIn("Groundwork exchange", self.readme)
+        self.assertIn(".designdoc/implementation-map.json", self.readme)
+
     def test_every_public_command_is_documented(self) -> None:
         commands = sorted(p.stem for p in (ROOT / "commands").glob("*.md"))
         self.assertTrue(commands, "commands/ is empty")
