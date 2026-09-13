@@ -483,7 +483,10 @@ def _metric_scale_mismatch(created: dict[str, Any], applied: list[dict[str, Any]
     passing runs would otherwise report observed 1.0 and "target met" on
     evidence the experiment never collected.
     """
-    if not applied or not all(row.get("metric_source") == "run_outcome" for row in applied):
+    # ANY, not all. One row without the key -- every row written before the
+    # metric landed, which is all of them -- disabled the guard for the whole
+    # artifact and let outcome scores be graded against a seconds target.
+    if not applied or not any(row.get("metric_source") == "run_outcome" for row in applied):
         return False
     for key in ("baseline_value", "target_value"):
         value = created.get(key)
@@ -491,6 +494,53 @@ def _metric_scale_mismatch(created: dict[str, Any], applied: list[dict[str, Any]
             if value < 0.0 or value > 1.0:
                 return True
     return False
+
+
+# A promotion needs a comparison, and a comparison needs both arms. The floor is
+# the sample floor: a control mean drawn from fewer runs than the treatment is
+# not a comparison, it is a smaller guess.
+CONTROL_FLOOR = 8
+
+
+def _control_mean(
+    runs: list[dict[str, Any]], artifact: str, applied_run_ids: set[str]
+) -> tuple[float | None, int]:
+    """Mean outcome metric over runs that did NOT apply this artifact.
+
+    Without this the promotion compared the treatment's mean against a target a
+    drafting agent typed, with nothing measuring what the same runs would have
+    scored anyway. This repository's ambient outcome mean is ~0.72 across its
+    non-experimental runs, so any target at or below 0.72 was met by the base
+    rate alone -- an artifact looked effective whenever the runs that happened
+    to load it happened to pass. An experimental skill also fires on the run
+    class its own description matches, so its sample is self-selected; a
+    same-window control is the cheapest correction available from data the
+    ledger already holds.
+    """
+    values: list[float] = []
+    for row in runs:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("run_id") or "") in applied_run_ids:
+            continue
+        active = row.get("active_experimental_artifacts")
+        if isinstance(active, list) and artifact in active:
+            continue
+        value = _outcome_metric(row.get("outcome"))
+        if value is not None:
+            values.append(value)
+    if len(values) < CONTROL_FLOOR:
+        return None, len(values)
+    return sum(values) / len(values), len(values)
+
+
+def _outcome_metric(outcome: Any) -> float | None:
+    """The writer's own outcome->metric map, imported so the two cannot drift."""
+    try:
+        from write_run_entry.iohelpers import outcome_metric_value  # noqa: WPS433
+    except Exception:  # noqa: BLE001
+        return None
+    return outcome_metric_value(outcome)
 
 
 def _is_measured(value: Any) -> bool:
@@ -501,9 +551,13 @@ def _is_measured(value: Any) -> bool:
 def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     config = _read_json(workdir / ".build-loop" / "config.json", {})
     enabled = isinstance(config, dict) and config.get("autoPromote") is True
-    result = {"enabled": enabled, "scanned": 0, "eligible": 0, "metric_missing": 0}
+    result = {
+        "enabled": enabled, "scanned": 0, "eligible": 0,
+        "metric_missing": 0, "control_missing": 0,
+    }
     if not enabled:
         return [], result
+    all_runs = procedural_governance.load_runs(workdir)
     orders: list[dict[str, Any]] = []
     experiments = workdir / ".build-loop" / "experiments"
     if not experiments.is_dir():
@@ -567,8 +621,29 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
         if not isinstance(baseline, (int, float)) or not isinstance(target, (int, float)):
             continue
         observed = sum(float(row["metric_value"]) for row in applied) / len(applied)
-        met = observed >= target if target >= baseline else observed <= target
         name = str(created.get("artifact") or path.stem)
+        applied_ids = {str(row.get("run_id") or "") for row in applied}
+        control, control_n = _control_mean(all_runs, name, applied_ids)
+        if control is None:
+            # No control arm means no comparison. Report it instead of promoting
+            # on a level that the ambient base rate may already clear.
+            result["control_missing"] = result.get("control_missing", 0) + 1
+            result.setdefault("control_missing_detail", []).append({
+                "artifact": name,
+                "log": path.name,
+                "control_runs_available": control_n,
+                "control_runs_required": CONTROL_FLOOR,
+                "reason": (
+                    "fewer than the required non-applied runs are available to "
+                    "compare against, so an improvement cannot be attributed to "
+                    "this artifact"
+                ),
+            })
+            continue
+        # Gate on the DELTA the experiment claimed, not the level it reached.
+        delta = observed - control
+        required = target - baseline
+        met = delta >= required if target >= baseline else delta <= required
         artifact = _artifact_path(workdir, name)
         if not met or artifact is None:
             continue
@@ -587,6 +662,10 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                     "baseline": baseline,
                     "target": target,
                     "observed": observed,
+                    "control": control,
+                    "control_runs": control_n,
+                    "delta": delta,
+                    "required_delta": required,
                     "met": True,
                 },
             )

@@ -115,14 +115,50 @@ def auditor_present(judge_decisions: object) -> bool:
     return judge_verdict_present(judge_decisions, AUDITOR_JUDGE_MARKER)
 
 
-def cross_vendor_present(judge_decisions: object) -> bool:
+# Which provider each run `host` belongs to. A cross-vendor verdict has to come
+# from OUTSIDE this set for the run's own host, or the round did not happen.
+HOST_PROVIDERS: dict[str, tuple[str, ...]] = {
+    "claude_code": ("anthropic", "claude"),
+    "codex": ("openai", "codex", "gpt"),
+    "gemini": ("google", "gemini"),
+}
+
+
+def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
     """True when judge_decisions[] carries a rendered SECOND-VENDOR verdict.
 
-    The same-vendor `independent-auditor` marker is a prefix of nothing here: an
-    id must literally contain "cross-vendor" to discharge this debt, so a run
-    cannot satisfy a cross-vendor requirement with the auditor it already ran.
+    Two conditions, and the second is the one that matters. The id must contain
+    "cross-vendor" (the `independent-auditor` marker does not, so a run cannot
+    satisfy a cross-vendor requirement with the auditor it already ran). AND the
+    entry must NAME a vendor that is not the run's own host family.
+
+    The id alone is a label an agent types. The debt exists to force a
+    DIFFERENT vendor, so a same-vendor subagent writing
+    `judge_id: "cross-vendor-audit"` must not discharge it -- and the emitted
+    dispatch text tells an agent to use exactly that id. A missing `vendor`
+    field is therefore not a discharge: the convention already exists in
+    practice (real entries carry `vendor: "openai/codex-cli 0.154.0"`), and
+    treating its absence as a pass is what let the label stand in for the round.
     """
-    return judge_verdict_present(judge_decisions, CROSS_VENDOR_JUDGE_MARKER)
+    if not isinstance(judge_decisions, list):
+        return False
+    banned = HOST_PROVIDERS.get(str(host or "").strip().lower(), ())
+    for item in judge_decisions:
+        if not isinstance(item, dict):
+            continue
+        if CROSS_VENDOR_JUDGE_MARKER not in str(item.get("judge_id", "")):
+            continue
+        verdict = str(item.get("verdict") or "").strip().lower()
+        status = str(item.get("status") or "").strip().lower()
+        if verdict in NON_VERDICT_VALUES or status in NON_VERDICT_STATUSES:
+            continue
+        vendor = str(item.get("vendor") or "").strip().lower()
+        if not vendor:
+            continue
+        if any(token in vendor for token in banned):
+            continue
+        return True
+    return False
 
 
 def review_completeness_error(entry: dict, scope: str) -> str | None:

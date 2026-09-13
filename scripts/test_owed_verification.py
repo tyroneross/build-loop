@@ -280,7 +280,12 @@ HIGH_RISK_FILES = ["src/auth/session.ts", "server/api/route.ts"]
 LOW_RISK_FILES = ["README.md"]
 
 AUDITOR_VERDICT = {"judge_id": "independent-auditor", "verdict": "yay"}
-CROSS_VENDOR_VERDICT = {"judge_id": "cross-vendor-audit", "verdict": "yay"}
+# A real second-vendor entry NAMES its vendor. Without that field the id is
+# just a label an agent typed, which is what the debt exists to prevent.
+CROSS_VENDOR_VERDICT = {
+    "judge_id": "cross-vendor-audit", "verdict": "yay",
+    "vendor": "openai/codex-cli 0.154.0",
+}
 
 
 def _record(**overrides) -> dict:
@@ -763,3 +768,150 @@ class TestCrossVendorRoundRegressions(_Base):
         envelope = run_close_lint.check(self.workdir, run_id="run_cv")
         self.assertEqual(envelope["status"], "review_owed")
         self.assertIn(ov.CROSS_VENDOR_VERIFIER, envelope["remediation"])
+
+
+class TestSecondVendorEvidence(_Base):
+    """A cross-vendor label is not a cross-vendor round."""
+
+    def _enforce(self, record: dict) -> dict | None:
+        return ov.enforce_for_run_record(
+            self.workdir, record, written_by="test", diff_range="A..B"
+        )
+
+    def _armed_record(self, **over) -> dict:
+        record = {
+            "run_id": "run_cv",
+            "host": "claude_code",
+            "filesTouched": list(HIGH_RISK_FILES),
+            "judge_decisions": [dict(AUDITOR_VERDICT)],
+            "auditor_status": "ran:dispatched-agent",
+        }
+        record.update(over)
+        return record
+
+    def test_a_verdict_with_no_named_vendor_does_not_discharge(self) -> None:
+        manifest = self._enforce(self._armed_record(judge_decisions=[
+            dict(AUDITOR_VERDICT), {"judge_id": "cross-vendor-audit", "verdict": "yay"},
+        ]))
+        self.assertIsNotNone(manifest)
+        self.assertIn(ov.CROSS_VENDOR_VERIFIER, manifest["owed"])
+
+    def test_a_same_vendor_verdict_wearing_the_label_does_not_discharge(self) -> None:
+        manifest = self._enforce(self._armed_record(judge_decisions=[
+            dict(AUDITOR_VERDICT),
+            {"judge_id": "cross-vendor-audit", "verdict": "yay",
+             "vendor": "anthropic/claude-opus-5"},
+        ]))
+        self.assertIsNotNone(manifest)
+        self.assertIn(ov.CROSS_VENDOR_VERIFIER, manifest["owed"])
+
+    def test_a_verdict_in_the_judge_decisions_file_discharges_the_debt(self) -> None:
+        """The round runs AFTER the record is written; that is the only sequence."""
+        record = self._armed_record()
+        self._enforce(record)
+        self.assertEqual(ov.check_manifest(self.workdir)["status"], "incomplete")
+
+        (self.workdir / ".build-loop" / "judge-decisions.json").write_text(
+            json.dumps([dict(CROSS_VENDOR_VERDICT)]), encoding="utf-8"
+        )
+        self._enforce(record)
+        self.assertEqual(ov.check_manifest(self.workdir)["status"], "absent")
+
+    def test_the_emitted_dispatch_command_names_a_real_git_range(self) -> None:
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": [], "preBuildSha": "abc1234"}), encoding="utf-8"
+        )
+        manifest = ov.enforce_for_run_record(
+            self.workdir, self._armed_record(), written_by="test"
+        )
+        self.assertEqual(manifest["diff_range"], "abc1234..HEAD")
+        self.assertNotIn("unknown", json.dumps(manifest["dispatch_commands"]))
+
+    def test_a_waiver_is_recorded_against_the_run_that_owed_the_debt(self) -> None:
+        """Ownership decides the waiver exactly as it decides the discharge."""
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": []}), encoding="utf-8"
+        )
+        run_a = self._armed_record(run_id="RUN_A")
+        ov.enforce_for_run_record(self.workdir, run_a, written_by="test", diff_range="A..B")
+        run_b = {
+            "run_id": "RUN_B", "host": "claude_code",
+            "filesTouched": list(LOW_RISK_FILES), "judge_decisions": [],
+            "auditor_status": "not-run:parent-must-dispatch",
+        }
+        ov.enforce_for_run_record(self.workdir, run_b, written_by="test", diff_range="A..B")
+
+        ov.clear_verifiers(
+            self.workdir, verifiers=[ov.CROSS_VENDOR_VERIFIER],
+            reason="no second vendor on this machine",
+        )
+        registry = json.loads(
+            (self.workdir / ".build-loop" / "state.json").read_text()
+        )[ov.CLEARED_STATE_KEY]
+        self.assertIn("RUN_A", registry)
+        self.assertNotIn("RUN_B", registry)
+
+        widened = dict(run_b)
+        widened["filesTouched"] = list(HIGH_RISK_FILES)
+        widened["judge_decisions"] = [dict(AUDITOR_VERDICT)]
+        widened["auditor_status"] = "ran:dispatched-agent"
+        ov.enforce_for_run_record(self.workdir, widened, written_by="test", diff_range="A..B")
+        self.assertIn(ov.CROSS_VENDOR_VERIFIER, ov.check_manifest(self.workdir)["owed"])
+
+
+class TestCloseGateIsScopedByOwner(_Base):
+    """A gate that blocks unrelated runs gets muted, and a muted gate is no gate."""
+
+    def _seed(self, run_ids: list[str]) -> None:
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": [
+                {"run_id": rid, "date": "2026-09-12T12:00:00Z", "goal": "g",
+                 "outcome": "pass", "filesTouched": list(HIGH_RISK_FILES)}
+                for rid in run_ids
+            ]}),
+            encoding="utf-8",
+        )
+
+    def test_the_owing_run_is_blocked_and_an_unrelated_run_is_not(self) -> None:
+        import run_close_lint
+
+        self._seed(["RUN_A", "RUN_B"])
+        ov.write_manifest(
+            self.workdir, run_id="RUN_A", diff_range="A..B",
+            owed=[ov.CROSS_VENDOR_VERIFIER],
+        )
+
+        owing = run_close_lint.check(self.workdir, run_id="RUN_A")
+        self.assertEqual(owing["status"], "review_owed")
+
+        unrelated = run_close_lint.check(self.workdir, run_id="RUN_B")
+        self.assertEqual(unrelated["status"], "review_owed_other_run")
+        self.assertIn("RUN_A", unrelated["reason"])
+
+    def test_the_unrelated_run_exits_0_and_the_owing_run_exits_1(self) -> None:
+        self._seed(["RUN_A", "RUN_B"])
+        ov.write_manifest(
+            self.workdir, run_id="RUN_A", diff_range="A..B",
+            owed=[ov.CROSS_VENDOR_VERIFIER],
+        )
+        lint = Path(__file__).resolve().parent / "run_close_lint.py"
+        for run_id, expected in (("RUN_A", 1), ("RUN_B", 0)):
+            with self.subTest(run_id=run_id):
+                proc = subprocess.run(
+                    [sys.executable, str(lint), "--workdir", str(self.workdir),
+                     "--run-id", run_id, "--json"],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(proc.returncode, expected, proc.stdout)
+
+    def test_the_remediation_leads_with_the_verdict_not_the_waiver(self) -> None:
+        import run_close_lint
+
+        self._seed(["RUN_A"])
+        ov.write_manifest(
+            self.workdir, run_id="RUN_A", diff_range="A..B",
+            owed=[ov.CROSS_VENDOR_VERIFIER],
+        )
+        remediation = run_close_lint.check(self.workdir, run_id="RUN_A")["remediation"]
+        self.assertLess(remediation.index("codex exec"), remediation.index("clear"))
+        self.assertIn("LAST RESORT", remediation)

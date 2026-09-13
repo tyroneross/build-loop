@@ -40,6 +40,35 @@ def _append_applied_rows(
         )
 
 
+def _seed_control_runs(workdir: Path, count: int = 8, outcome: str = "partial") -> None:
+    """Append runs that did NOT apply any experimental artifact.
+
+    The sweep now gates on the DELTA between the treatment arm and a control
+    arm, so a promotion test without a control population tests the
+    control-missing branch, not the promotion. `partial` (0.5) is the default so
+    an all-`pass` treatment arm produces a real, attributable delta.
+    """
+    path = workdir / ".build-loop" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    for index in range(count):
+        state["runs"].append({
+            "run_id": f"control-{index}",
+            "date": "2026-09-12T00:00:00Z",
+            "goal": "control arm",
+            "outcome": outcome,
+            "host": "test",
+            "commit": "pending",
+            "phases": {"execute": {"status": "pass"}},
+            "manualInterventions": [],
+            "diagnosticCommands": [],
+            "filesTouched": [],
+            "judge_decisions": [],
+            "security_findings": [],
+            "active_experimental_artifacts": [],
+        })
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
 def _write_state(workdir: Path, count: int, *, cause: str | None = None) -> str:
     runs = []
     for index in range(count):
@@ -411,6 +440,7 @@ def test_sample_sweep_emits_reviewer_order_only_for_eligible_artifact(tmp_path: 
     # produced and `len(applied)` was always 0 on a real run.
     _append_applied_rows(tmp_path, "steady", count=8)
 
+    _seed_control_runs(tmp_path)
     result = _runner().run(tmp_path, run_id=run_id, source="test")
 
     reviewer = next(order for order in result["work_orders"] if order["role"] == "promotion-reviewer")
@@ -438,6 +468,7 @@ def test_oversized_experiment_preserves_created_row_and_changes_digest_on_append
     log.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     _append_applied_rows(tmp_path, "large", count=8)
 
+    _seed_control_runs(tmp_path)
     first = runner.run(tmp_path, run_id=run_id, source="test")
     reviewer = next(order for order in first["work_orders"] if order["role"] == "promotion-reviewer")
     assert reviewer["pattern_key"] == "large"
@@ -761,6 +792,7 @@ def test_production_writer_rows_survive_the_consumer_metric_filter(tmp_path: Pat
         _write_run_entry_cli(tmp_path, "e2e", run_id=f"e2e-run-{index}")
 
     run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path)
     result = _runner().run(tmp_path, run_id=run_id, source="test")
 
     sweep = result["stages"]["sample_sweep"]
@@ -870,5 +902,65 @@ def test_a_created_row_after_the_first_line_still_anchors_the_sweep(tmp_path: Pa
     _append_applied_rows(tmp_path, "late", count=8)
 
     run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path)
     sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
     assert sweep["eligible"] == 1, sweep
+
+
+def test_a_treatment_arm_that_only_matches_the_base_rate_is_not_promoted(tmp_path: Path) -> None:
+    """Eight applied runs pass; eight non-applied runs in the same window also pass.
+
+    The artifact changed nothing. The level comparison promoted it anyway,
+    because a hand-authored target at or below the ambient outcome mean is met
+    by the base rate alone.
+    """
+    _seed_experiment(tmp_path, "baserate")
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "baserate", run_id=f"br-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path, count=8, outcome="pass")
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0, sweep
+    assert sweep["metric_missing"] == 0, sweep
+
+
+def test_no_control_population_blocks_promotion_and_says_why(tmp_path: Path) -> None:
+    _seed_experiment(tmp_path, "nocontrol")
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "nocontrol", run_id=f"nc-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0
+    assert sweep["control_missing"] == 1
+    detail = sweep["control_missing_detail"][0]
+    assert detail["artifact"] == "nocontrol"
+    assert detail["control_runs_required"] == 8
+
+
+def test_one_legacy_row_cannot_disable_the_metric_scale_guard(tmp_path: Path) -> None:
+    """`all` let a single pre-metric row switch the guard off for the artifact."""
+    _seed_experiment(tmp_path, "mixed")
+    log = tmp_path / ".build-loop" / "experiments" / "mixed.jsonl"
+    log.write_text(
+        json.dumps({
+            "event": "created", "artifact": "mixed", "baseline_metric": "seconds to complete",
+            "baseline_value": 10, "target_value": 5, "sample_size_target": 8,
+        }) + "\n"
+        + json.dumps({
+            "event": "applied", "run_id": "legacy-0", "metric_value": 0.9, "confounded": False,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "mixed", run_id=f"mx-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0, sweep
+    assert sweep["metric_mismatch"] == 1, sweep

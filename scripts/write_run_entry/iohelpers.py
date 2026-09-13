@@ -280,8 +280,9 @@ def _co_applied(all_names: list[str], exclude: str) -> list[str]:
 # The metric a production run actually produces for an APPLIED experimental
 # artifact: the Review-G run outcome, on a 0..1 scale.
 #
-# Every A/B promotion gate was inert before this existed. This writer is the
-# SOLE production writer of `applied` rows and it hardcoded `metric_value: None`;
+# The evidence-based promotion path -- the sample sweep -- was inert before
+# this existed. This writer is the SOLE production writer of `applied` rows and
+# it hardcoded `metric_value: None`;
 # `scripts/learn/runner.py` keeps only rows where `isinstance(metric_value,
 # (int, float))`, so `len(applied)` was always 0, always below the floor of
 # `max(8, sample_size_target)`, and the sample-sweep promotion never fired from

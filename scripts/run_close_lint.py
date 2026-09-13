@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """run_close_lint.py — assert the run-close mutation actually landed.
 
-The problem this closes (2026-07-16, ObsidianVault/.obsidian/plugins/daily-planner):
+The problem this closes (2026-07-16, an editor-plugin workdir inside a personal vault):
 six sequential dispatched ``build-loop:build-orchestrator`` agents each completed
 with a high-quality report and wrote NO durable run record — no ``state.json.runs[]``
 entry, no retrospective, no milestone, no feedback line. The plugin workdir had no
-``.build-loop/`` at all; the only ``runs[]`` rows in the vault came from Stop hooks.
+``.build-loop/`` at all; the only ``runs[]`` rows in that checkout came from Stop hooks.
 Phase 6 Learn saw zero signal from a six-run day.
 
 Why the existing controls could not catch it. ``references/phase-4-review.md`` already
@@ -40,10 +40,13 @@ Statuses (``status`` in the JSON envelope):
     floor_only  exit 1  only a hook-written floor entry, and --require-orchestrator was set
     learn_missing exit 1 run record exists but --require-learn found no complete receipt
     review_owed exit 1  the run record landed, but `.build-loop/owed-verification.json`
-                        still owes a verifier (a missing independent-auditor verdict, or a
-                        cross-vendor round the review profile required). The record exists
-                        and the review does not, so this is checked AFTER the record
-                        statuses and never masks a missing record.
+                        still owes a verifier THIS run owns (a missing independent-auditor
+                        verdict, or a cross-vendor round the review profile required). The
+                        record exists and the review does not, so this is checked AFTER the
+                        record statuses and never masks a missing record.
+    review_owed_other_run exit 0  same, but the debt belongs to a DIFFERENT run. Named and
+                        reported, not blocking: refusing an unrelated run's close only
+                        teaches the operator to waive the debt to get unstuck.
     no_state    exit 1  no .build-loop/state.json in this workdir at all (the loudest case:
                         the run produced no durable footprint whatsoever)
 
@@ -75,7 +78,11 @@ if str(_HERE) not in sys.path:
 STATE_RELPATH = Path(".build-loop") / "state.json"
 
 # Statuses that mean "the run closed its record".
-OK_STATUSES = ("recorded", "skipped")
+# ``review_owed_other_run`` is OK on purpose: the debt is real and named, but it
+# belongs to a DIFFERENT run, and blocking this run's close for it only teaches
+# the operator to reach for the waiver -- which is the path that reopens the
+# defect the debt exists to close. A gate that cries wolf gets muted.
+OK_STATUSES = ("recorded", "skipped", "review_owed_other_run")
 
 # The two FLOOR writers, i.e. everything that records a run WITHOUT the orchestrator
 # having reached Review-G. Both signatures are needed, and neither is guessable from
@@ -231,10 +238,12 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     more fundamental failure and must not be relabelled as an owed review. Only
     an otherwise-passing envelope is downgraded.
 
-    Not scoped to this envelope's run_id. ``state.json.review_incomplete`` is a
-    repo-level flag and an un-discharged debt from an earlier run is still an
-    un-audited diff in this tree, so the manifest's own run_id is NAMED in the
-    reason rather than used to excuse the gap.
+    Scoped by OWNER. A debt this run owes BLOCKS its close (``review_owed``,
+    exit 1). A debt another run owes is reported, named, and does NOT block
+    (``review_owed_other_run``, exit 0) -- the diff is still un-audited and the
+    reason says whose it is, but refusing an unrelated run's close only drives
+    the operator to waive the debt to get unstuck, and the waiver is the path
+    that reopens the escape. Report the gap to the party who can close it.
     """
     if envelope.get("status") not in OK_STATUSES:
         return envelope
@@ -242,6 +251,9 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     if gap is None:
         return envelope
     owed = [str(v) for v in gap.get("owed") or []]
+    owed_run_id = str(gap.get("run_id") or "")
+    this_run_id = str(envelope.get("run_id") or "")
+    owned_by_this_run = not owed_run_id or not this_run_id or owed_run_id == this_run_id
     # Shape-guard, not decoration: a hand-edited or malformed manifest can carry
     # a LIST here, and `.get` on it raises outside this function's caller's
     # handler -- which meant `--advisory` never reached its exit-0 branch and a
@@ -252,17 +264,23 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
         f"{name}: {commands.get(name, 'dispatch ' + name)}" for name in owed
     ) or "resolve .build-loop/owed-verification.json"
     envelope.update(
-        status="review_owed",
+        status="review_owed" if owned_by_this_run else "review_owed_other_run",
         review_incomplete=True,
         owed=owed,
         owed_run_id=gap.get("run_id"),
         reason=(
             f"review is not complete: {', '.join(owed) or 'a verifier'} still owed on "
-            f"run {gap.get('run_id')!r} per {gap.get('manifest_path')}"
+            f"run {owed_run_id or '(unnamed)'!r} per {gap.get('manifest_path')}"
         ),
+        # Run the verifier FIRST. The waiver is last and labelled, because a
+        # remediation that leads with `clear` teaches the operator to waive.
         remediation=(
-            f"{remediation}  # then: python3 scripts/owed_verification.py clear "
-            f"--workdir {shlex.quote(str(workdir))} --verifier <name>"
+            f"{remediation}  "
+            "# record the verdict, then re-run write_run_entry --scope build "
+            "(a verdict in .build-loop/judge-decisions.json discharges the debt "
+            "automatically).  LAST RESORT, only when no second vendor is "
+            f"reachable: python3 scripts/owed_verification.py clear --workdir "
+            f"{shlex.quote(str(workdir))} --verifier <name> --reason \"<why>\""
         ),
     )
     return envelope

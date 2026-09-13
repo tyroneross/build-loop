@@ -512,6 +512,22 @@ def _explicit_cross_vendor_flag(record: dict[str, Any]) -> bool | None:
     return None
 
 
+def _resolve_range(workdir: Path, diff_range: str) -> str:
+    """The run's real git range, so the emitted dispatch command is runnable.
+
+    Both production call sites arm the debt without a range, so every manifest
+    rendered `codex exec "Review the diff unknown ..."` -- a debt that arms
+    correctly and hands the operator an instruction that cannot be run. The
+    range resolves the same way `--files-touched-from-git` does; when even that
+    is unavailable the literal "unknown" is preserved rather than invented.
+    """
+    if diff_range and diff_range != "unknown":
+        return diff_range
+    data = _read_json(workdir / STATE_RELPATH)
+    pre = data.get("preBuildSha") if isinstance(data, dict) else None
+    return f"{pre}..HEAD" if pre else "unknown"
+
+
 def _git_loc_delta(workdir: Path, diff_range: str) -> int | None:
     """Absolute line delta for the run, from git, or None.
 
@@ -633,7 +649,16 @@ def cross_vendor_reason_for_record(
     except Exception:  # noqa: BLE001 — enforcement must never break the write
         return None
 
-    if cross_vendor_present(record.get("judge_decisions")):
+    host = record.get("host")
+    decisions = list(record.get("judge_decisions") or [])
+    if workdir is not None:
+        # Also read the judge-decisions FILE. The debt arms precisely because
+        # the verdict was not available at run-record-write time, so the round
+        # is run afterwards and appended there -- and nothing re-read it, which
+        # left `clear` (the waiver) as the only visible way out of a debt the
+        # operator had actually discharged.
+        decisions.extend(_judge_decisions_file(workdir))
+    if cross_vendor_present(decisions, host):
         return None
 
     explicit = _explicit_cross_vendor_flag(record)
@@ -674,6 +699,18 @@ def owed_verifiers_for_record(
         owed[CROSS_VENDOR_VERIFIER] = cross_vendor
     return owed
 
+
+JUDGE_DECISIONS_RELPATH = Path(".build-loop") / "judge-decisions.json"
+
+
+def _judge_decisions_file(workdir: Path) -> list[dict[str, Any]]:
+    """Verdicts recorded in `.build-loop/judge-decisions.json`, or []."""
+    data = _read_json(workdir / JUDGE_DECISIONS_RELPATH)
+    if isinstance(data, dict):
+        data = data.get("decisions")
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
 
 def _persisted_record(workdir: Path, run_id: str) -> dict[str, Any] | None:
     """The run's row as state.json actually holds it, or None.
@@ -785,6 +822,7 @@ def enforce_for_run_record(
     try:
         run_id = str(record.get("run_id") or "unknown")
         record = _persisted_record(workdir, run_id) or record
+        diff_range = _resolve_range(workdir, diff_range)
         owed = owed_verifiers_for_record(record, workdir, diff_range)
         for name in _cleared_for_run(workdir, run_id):
             owed.pop(name, None)
@@ -918,9 +956,23 @@ def _clear_verifiers_unlocked(
     # debt SHOULD re-arm. A tombstone would permanently exempt the run instead.
     tombstone_persisted: bool | None = None
     if newly_cleared and record_tombstone:
-        tombstone_persisted = _record_cleared(
-            workdir, str(manifest.get("run_id") or ""), newly_cleared, reason
-        )
+        # Keyed on the DEBT'S OWNER, not the manifest's run_id. The manifest's
+        # run_id is only the last writer's, so a waiver granted for run A's
+        # cross-vendor round landed under run B -- and run B was then
+        # permanently exempt from a cross-vendor debt it later genuinely
+        # incurred. That is the filed defect happening again through the escape
+        # hatch its own fix introduced, so ownership decides here exactly as it
+        # decides the discharge.
+        owners = manifest.get("owed_runs")
+        owners = owners if isinstance(owners, dict) else {}
+        fallback = str(manifest.get("run_id") or "")
+        by_owner: dict[str, list[str]] = {}
+        for name in newly_cleared:
+            by_owner.setdefault(str(owners.get(name) or fallback), []).append(name)
+        tombstone_persisted = True
+        for owner, names in by_owner.items():
+            if not _record_cleared(workdir, owner, names, reason):
+                tombstone_persisted = False
         if tombstone_persisted is False:
             # The waiver could not be persisted, so the debt WILL re-arm on the
             # next write. Say so rather than reporting a durable clear that is
@@ -1002,6 +1054,13 @@ def _emit(payload: dict[str, Any], *, as_json: bool, stream=sys.stdout) -> None:
         stream.write(f"cleared: {', '.join(payload['cleared'])}\n")
     if payload.get("remaining"):
         stream.write(f"remaining: {', '.join(payload['remaining'])}\n")
+    if payload.get("tombstone_persisted") is False:
+        # Without this line the operator sees "cleared_complete" and nothing
+        # else, then watches the debt re-arm on the next write with no cause.
+        stream.write(
+            "WARNING: the waiver was NOT persisted; this debt will re-arm on the "
+            "next run-record write (state.json was unwritable or locked)\n"
+        )
 
 
 def _parse_dispatch_overrides(pairs: Iterable[str] | None) -> dict[str, str]:
