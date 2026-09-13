@@ -85,40 +85,89 @@ def validate_entry(entry: dict) -> None:
 # 2026-08-03). Membership here means "not yet judged", never "judged badly" --
 # a `block` or `request_changes` IS a verdict and must count as present.
 NON_VERDICT_VALUES = {"", "pending", "none", "n/a"}
-NON_VERDICT_STATUSES = {"packet_emitted", "pending"}
+# Statuses that say the round has NOT finished. A status is a claim about the
+# round's lifecycle and a verdict is a claim about its result; when the two
+# contradict each other -- {"verdict": "yay", "status": "pending"} -- the
+# lifecycle wins, because a result reported by a round that says it is still
+# running is not a result. Named NON_VERDICT_STATUSES because that is exactly
+# what membership means: "no verdict has been rendered yet".
+#
+# `packet_emitted` is deliberately NOT a member. It predates the verdict
+# allowlist and meant "packet emitted, not yet answered", but
+# `audit_record_verdict.py` fills the verdict IN PLACE and leaves the status as
+# `packet_emitted`, so treating it as non-terminal rejected 103 real rows in
+# this repo's own ledger, including three passing code-touching runs whose
+# auditor verdict would have silently re-armed. An unanswered packet already
+# fails the verdict allowlist, which is the check that actually distinguishes
+# answered from not.
+NON_VERDICT_STATUSES = {
+    "pending",
+    "in_progress",
+    "in-progress",
+    "inprogress",
+    "running",
+    "queued",
+    "dispatched",
+    "awaiting_verdict",
+    "awaiting-verdict",
+    "awaiting_review",
+    "awaiting-review",
+    "requested",
+}
 # Statuses that say the round did not complete. An allowed `verdict` riding a
 # failed `status` -- {"verdict": "yay", "status": "failed"} -- discharged the
 # debt on a record of the review NOT happening.
 FAILED_STATUSES = {"failed", "error", "not-run", "not_run", "aborted", "timeout", "cancelled"}
 
 
+def verdict_rejection(item: object) -> str | None:
+    """Why this entry is not a rendered verdict, in field terms, or None.
+
+    Returns the REASON rather than a bare bool so a caller can tell an operator
+    which field disqualified an entry they believe they recorded correctly. A
+    gate that says only "still owed" about an entry sitting in the ledger sends
+    the operator to the waiver, which is the path that reopens the escape.
+    """
+    if not isinstance(item, dict):
+        return f"entry is {type(item).__name__}, not an object"
+    verdict = str(item.get("verdict") or "").strip().lower()
+    status = str(item.get("status") or "").strip().lower()
+    if verdict in NON_VERDICT_VALUES:
+        return f"verdict={item.get('verdict')!r} records no judgement"
+    if verdict not in ALL_JUDGE_VERDICTS:
+        return (
+            f"verdict={item.get('verdict')!r} is not one of "
+            f"{sorted(ALL_JUDGE_VERDICTS)}"
+        )
+    # Ordered before FAILED_STATUSES only for message quality; the two sets are
+    # disjoint, so the order cannot change any accept/reject outcome.
+    if status in NON_VERDICT_STATUSES:
+        return (
+            f"status={item.get('status')!r} says the round has not finished; a "
+            "verdict on an unfinished round is not a rendered verdict"
+        )
+    if status in FAILED_STATUSES:
+        return f"status={item.get('status')!r} says the round did not complete"
+    return None
+
+
 def rendered_verdict(item: object) -> bool:
     """True when a judge_decisions entry carries a real, completed verdict.
 
-    Three conditions, and all three were learned from a record that satisfied
-    the gate without a review having happened: the verdict must be one this
-    repo's judges actually emit (an allowlist -- `verdict: "not-run"` passed a
-    blacklist), the status must not say the round is still pending, and it must
-    not say the round FAILED (`{"verdict": "yay", "status": "failed"}` is a
-    record of the review not completing).
+    Four conditions, each learned from a record that satisfied the gate without
+    a review having happened: the entry must be an object, the verdict must be
+    one this repo's judges actually emit (an allowlist -- `verdict: "not-run"`
+    passed a blacklist), the status must not say the round is still UNFINISHED
+    (`{"verdict": "yay", "status": "pending"}` claims a result from a round that
+    says it is still running), and it must not say the round FAILED
+    (`{"verdict": "yay", "status": "failed"}` is a record of the review not
+    completing).
+
+    The lifecycle checks are unconditional on the verdict: a non-terminal status
+    disqualifies the row whatever the verdict says, because the contradiction is
+    itself the evidence that the row is not a finished review.
     """
-    if not isinstance(item, dict):
-        return False
-    verdict = str(item.get("verdict") or "").strip().lower()
-    status = str(item.get("status") or "").strip().lower()
-    if verdict in NON_VERDICT_VALUES or verdict not in ALL_JUDGE_VERDICTS:
-        return False
-    # NON_VERDICT_STATUSES is deliberately NOT checked here. It predates the
-    # verdict allowlist and meant "packet emitted, not yet answered" -- but
-    # `audit_record_verdict.py` fills the verdict IN PLACE and leaves the
-    # status as `packet_emitted`, so treating that status as disqualifying
-    # rejected 103 real rows in this repo's own ledger, including three passing
-    # code-touching runs whose auditor verdict would have silently re-armed.
-    # An unanswered packet already fails the allowlist above, which is the
-    # check that actually distinguishes answered from not.
-    if status in FAILED_STATUSES:
-        return False
-    return True
+    return verdict_rejection(item) is None
 
 
 def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
@@ -129,17 +178,76 @@ def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
     function is what guards the independent-auditor debt, and a failed-status
     auditor row discharged it while the identical cross-vendor row was rejected.
     """
+    ok, _ = judge_verdict_rejections(judge_decisions, marker)
+    return ok
+
+
+def judge_verdict_rejections(
+    judge_decisions: object,
+    marker: str,
+    diff_range: object = None,
+    require_range: bool = False,
+) -> tuple[bool, list[dict[str, object]]]:
+    """(present, per-entry rejection reasons) for `marker`'s judge.
+
+    Same shape as `cross_vendor_rejections` so a caller can report WHY an entry
+    the operator believes they recorded was not accepted, rather than only that
+    the debt remains. `diff_range` applies the obsolete-diff rule: a verdict
+    rendered on a DIFFERENT range is a review of a different diff.
+
+    `require_range` splits ARMING from DISCHARGE, which is what makes the
+    historical-compatibility problem tractable.
+
+    With `require_range=False` (arming) an entry carrying NO range is accepted.
+    Measured over this repository's own ledger on 2026-09-13, 139 of 143
+    rendered auditor verdicts carry no range at all; rejecting them would newly
+    ARM the auditor debt on 24 of 64 runs. A debt armed on 38% of history is the
+    failure this module's own docstring names -- a flag that is always on is a
+    flag nobody reads -- and it would push operators toward the waiver, which is
+    the escape the debt exists to close.
+
+    With `require_range=True` (discharging an ALREADY-ARMED debt) an unstamped
+    entry is refused, exactly as the cross-vendor half refuses one. Once a debt
+    exists, its dispatch command spells `run_id` and `diff_range`, so a round
+    run as instructed records both, and an unstamped entry is evidence the
+    instruction was not followed. Without this split an older verdict for the
+    same run discharged a debt armed over code written after it -- reported
+    independently by both review rounds on 2026-09-13.
+    """
+    rejections: list[dict[str, object]] = []
     if not isinstance(judge_decisions, list):
-        return False
+        return False, rejections
+    wanted_range = str(diff_range or "").strip()
     for item in judge_decisions:
         if not isinstance(item, dict):
             continue
         if marker not in str(item.get("judge_id", "")):
             continue
-        if not rendered_verdict(item):
+        why = verdict_rejection(item)
+        entry_range = str(item.get("diff_range") or "").strip()
+        if why is None and wanted_range and wanted_range != "unknown":
+            if entry_range and entry_range != wanted_range:
+                why = (
+                    f"diff_range={entry_range!r} is not the armed range "
+                    f"{wanted_range!r}; a review of a different diff is not a "
+                    "review of this one"
+                )
+            elif not entry_range and require_range:
+                why = (
+                    f"the entry names no diff_range, so it is not evidence about "
+                    f"{wanted_range!r}; an armed debt is discharged only by a "
+                    "verdict stamped with its own range"
+                )
+        if why:
+            rejections.append({
+                "judge_id": item.get("judge_id"),
+                "run_id": item.get("run_id"),
+                "diff_range": item.get("diff_range"),
+                "reason": why,
+            })
             continue
-        return True
-    return False
+        return True, rejections
+    return False, rejections
 
 
 def auditor_present(judge_decisions: object) -> bool:
@@ -216,45 +324,189 @@ def vendor_provider(vendor: object) -> str | None:
     return None
 
 
-def cross_vendor_present(
-    judge_decisions: object, host: object = None, diff_range: object = None
-) -> bool:
-    """True when judge_decisions[] carries a rendered SECOND-VENDOR verdict.
+# Fields a cross-vendor entry may use to POINT AT the round's own output. The
+# `vendor` string is metadata the recorder asserts about itself; these name an
+# artifact the round produced, which a recorder that never ran the round has to
+# fabricate on disk rather than merely type.
+# A session id this process cannot resolve is accepted only when it is long and
+# opaque enough to BE an identifier. 16 chars of [A-Za-z0-9_-] covers a ULID
+# (26), a UUID (36 with dashes), and a Codex thread id, and excludes the
+# two-character placeholder that satisfied the first version of this check.
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,}$")
+# Suffixes that make a value path-SHAPED when there is no root to resolve against.
+_EVIDENCE_SUFFIXES = (".md", ".json", ".txt", ".log", ".jsonl", ".diff", ".patch")
+CROSS_VENDOR_EVIDENCE_FIELDS = (
+    "evidence",
+    "evidence_path",
+    "review_path",
+    "transcript",
+    "transcript_path",
+    "dispatch_transcript",
+    "session_id",
+    "codex_session_id",
+)
 
-    Two conditions, and the second is the one that matters. The id must contain
-    "cross-vendor" (the `independent-auditor` marker does not, so a run cannot
-    satisfy a cross-vendor requirement with the auditor it already ran). AND the
-    entry must NAME a vendor that is not the run's own host family.
 
-    The id alone is a label an agent types. The debt exists to force a
-    DIFFERENT vendor, so a same-vendor subagent writing
-    `judge_id: "cross-vendor-audit"` must not discharge it -- and the emitted
-    dispatch text tells an agent to use exactly that id. A missing `vendor`
-    field is therefore not a discharge: the convention already exists in
-    practice (real entries carry `vendor: "openai/codex-cli 0.154.0"`), and
-    treating its absence as a pass is what let the label stand in for the round.
+def cross_vendor_evidence(item: object) -> tuple[str | None, str | None]:
+    """The (field, value) this entry uses to point at the round's output.
+
+    Returns (None, None) when the entry names no artifact at all.
     """
+    if not isinstance(item, dict):
+        return None, None
+    for field in CROSS_VENDOR_EVIDENCE_FIELDS:
+        value = str(item.get(field) or "").strip()
+        if value:
+            return field, value
+    return None, None
+
+
+def _evidence_rejection(item: dict, evidence_root: object) -> str | None:
+    """Why this entry's evidence reference fails, or None.
+
+    Provider identity is UNAUTHENTICATED metadata: nothing stops an Anthropic-
+    hosted process from typing `vendor: "openai/gpt-5-codex"`, so the vendor
+    string alone cannot carry the discharge. Requiring a pointer to the round's
+    own output does not authenticate the provider either -- that would need a
+    signed transcript -- but it moves the claim from "a string anyone types" to
+    "a string plus an artifact that must exist", and it makes the discharge
+    AUDITABLE: whoever reviews the ledger can open the file and read the round.
+
+    TWO shapes are accepted and every other value is rejected BY NAME:
+
+    1. A path that resolves INSIDE ``evidence_root`` to a non-empty regular
+       file. Containment matters: ``/etc/hostname`` exists on every machine, so
+       an existence check alone was satisfied by a path the recorder did not
+       produce. Emptiness matters: a zero-byte file is a `touch`, not a review.
+    2. A ``*session_id`` value matching ``SESSION_ID_RE``. This process cannot
+       resolve another host's session store, so the id is not verified -- but a
+       16-character opaque token is a specific claim a later audit can chase,
+       which ``"zz"`` is not.
+
+    The first version of this check accepted ANY non-empty string whose value
+    was not path-shaped, which meant ``evidence: "zz"`` discharged the debt.
+    Both review rounds on 2026-09-13 reported that independently: the docstring
+    claimed the requirement moved the discharge from "a string anyone types" to
+    "a string plus an artifact that must exist", and it had not.
+    """
+    field, value = cross_vendor_evidence(item)
+    if field is None:
+        return (
+            "no evidence reference: a cross-vendor discharge must name the "
+            "round's own output in one of "
+            f"{list(CROSS_VENDOR_EVIDENCE_FIELDS)} (a vendor string is "
+            "unauthenticated metadata the recorder asserts about itself)"
+        )
+    if field.endswith("session_id"):
+        if not SESSION_ID_RE.match(value):
+            return (
+                f"{field}={value!r} is not a resolvable session id "
+                f"(expected {SESSION_ID_RE.pattern}); an arbitrary short string "
+                "is not evidence a round ran"
+            )
+        return None
+    from pathlib import Path as _Path  # local: keeps the module import list flat
+
+    if evidence_root is None:
+        # Nothing to resolve against. The value must still LOOK like a path, so
+        # a junk token cannot ride in through the unresolvable branch.
+        if "/" not in value and not value.endswith(_EVIDENCE_SUFFIXES):
+            return (
+                f"{field}={value!r} is neither a path nor a session id; a "
+                "cross-vendor discharge must name a file the round produced"
+            )
+        return None
+    candidate = _Path(value)
+    if not candidate.is_absolute():
+        candidate = _Path(str(evidence_root)) / value
+    root = _Path(str(evidence_root))
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return (
+            f"{field}={value!r} resolves outside the repository ({candidate}); "
+            "evidence must be an artifact this run produced, not any file that "
+            "happens to exist on the machine"
+        )
+    if not resolved.is_file():
+        return (
+            f"{field}={value!r} is not a regular file at {resolved}; the entry "
+            "points at a round output that is not on disk"
+        )
+    try:
+        if resolved.stat().st_size == 0:
+            return (
+                f"{field}={value!r} is an EMPTY file; a zero-byte artifact "
+                "records that a path was created, not that a review happened"
+            )
+    except OSError:
+        return f"{field}={value!r} could not be read at {resolved}"
+    return None
+
+
+def cross_vendor_rejections(
+    judge_decisions: object,
+    host: object = None,
+    diff_range: object = None,
+    evidence_root: object = None,
+) -> tuple[bool, list[dict[str, object]]]:
+    """(discharged, per-entry rejection reasons) for the cross-vendor debt.
+
+    The reasons are the point. An entry that LOOKS right to the operator who
+    wrote it but fails one field was previously indistinguishable from no entry
+    at all, so the only visible exit was the waiver -- the path that reopens the
+    escape this debt exists to close. Only entries carrying the cross-vendor
+    judge_id are reported; everything else is not an attempt at this discharge.
+    """
+    rejections: list[dict[str, object]] = []
     if not isinstance(judge_decisions, list):
-        return False
+        return False, rejections
     own_provider = HOST_PROVIDERS.get(str(host or "").strip().lower())
     wanted_range = str(diff_range or "").strip()
+
+    def _reject(item: dict, reason: str) -> None:
+        rejections.append({
+            "judge_id": item.get("judge_id"),
+            "run_id": item.get("run_id"),
+            "vendor": item.get("vendor"),
+            "diff_range": item.get("diff_range"),
+            "reason": reason,
+        })
+
     for item in judge_decisions:
         if not isinstance(item, dict):
             continue
         if CROSS_VENDOR_JUDGE_MARKER not in str(item.get("judge_id", "")):
             continue
-        if not rendered_verdict(item):
+        why = verdict_rejection(item)
+        if why:
+            _reject(item, why)
             continue
         provider = vendor_provider(item.get("vendor"))
         if provider is None:
             # No recognised provider named: the entry asserts a round happened
             # without saying who ran it.
+            _reject(item, (
+                f"vendor={item.get('vendor')!r} names no recognised provider; "
+                f"expected one of {sorted(KNOWN_VENDOR_PROVIDERS)}"
+            ))
             continue
         if own_provider is None:
             # The run's host is not one we can map to a provider, so "different
             # vendor" is unanswerable. Fail safe: the debt stays armed.
+            _reject(item, (
+                f"the run's host={host!r} maps to no provider, so 'a different "
+                "vendor' is unanswerable; record host as one of "
+                f"{sorted(HOST_PROVIDERS)}"
+            ))
             continue
         if provider == own_provider:
+            _reject(item, (
+                f"vendor={item.get('vendor')!r} resolves to {provider!r}, the "
+                "run's OWN host family; a same-vendor review does not discharge "
+                "a cross-vendor debt"
+            ))
             continue
         if wanted_range and wanted_range != "unknown":
             # A review of an OBSOLETE diff is not a review of this one, and an
@@ -265,9 +517,48 @@ def cross_vendor_present(
             # so a round run as instructed records it.
             entry_range = str(item.get("diff_range") or "").strip()
             if entry_range != wanted_range:
+                _reject(item, (
+                    f"diff_range={entry_range or None!r} is not the armed range "
+                    f"{wanted_range!r}; a review of a different diff is not a "
+                    "review of this one"
+                ))
                 continue
-        return True
-    return False
+        evidence_why = _evidence_rejection(item, evidence_root)
+        if evidence_why:
+            _reject(item, evidence_why)
+            continue
+        return True, rejections
+    return False, rejections
+
+
+def cross_vendor_present(
+    judge_decisions: object,
+    host: object = None,
+    diff_range: object = None,
+    evidence_root: object = None,
+) -> bool:
+    """True when judge_decisions[] carries a rendered SECOND-VENDOR verdict.
+
+    Four conditions. The id must contain "cross-vendor" (the
+    `independent-auditor` marker does not, so a run cannot satisfy a
+    cross-vendor requirement with the auditor it already ran). The entry must
+    NAME a vendor that is not the run's own host family. It must be stamped with
+    the armed diff range. And it must POINT AT the round's own output.
+
+    The id alone is a label an agent types. The debt exists to force a
+    DIFFERENT vendor, so a same-vendor subagent writing
+    `judge_id: "cross-vendor-audit"` must not discharge it -- and the emitted
+    dispatch text tells an agent to use exactly that id. A missing `vendor`
+    field is therefore not a discharge: the convention already exists in
+    practice (real entries carry `vendor: "openai/codex-cli 0.154.0"`), and
+    treating its absence as a pass is what let the label stand in for the round.
+
+    The vendor field is still only an assertion -- see `_evidence_rejection` for
+    why the evidence pointer is required alongside it, and for what that does
+    and does not prove.
+    """
+    ok, _ = cross_vendor_rejections(judge_decisions, host, diff_range, evidence_root)
+    return ok
 
 
 def review_completeness_error(entry: dict, scope: str) -> str | None:

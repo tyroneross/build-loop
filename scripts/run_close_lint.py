@@ -216,19 +216,53 @@ def _learn_complete(workdir: Path, entry: dict[str, Any]) -> tuple[bool, str]:
     return True, "matching complete Learn receipt and runs[].learn summary"
 
 
-def _owed_verification_gap(workdir: Path) -> dict[str, Any] | None:
+def _owed_verification_gap(
+    workdir: Path, reconcile: bool = True
+) -> dict[str, Any] | None:
     """The owed-verification manifest when it still owes a verifier, else None.
 
-    Deferred import + fail-open: this lint runs in hook paths and must never
-    raise. A missing or unreadable manifest module reports no gap, exactly as a
-    missing manifest does.
+    Deferred import: this lint runs in hook paths and must never RAISE. It must
+    also never report CLEAN on a check it could not perform. A bare
+    ``except: return None`` conflated the two: an unimportable module, a locked
+    state file, a hand-edited manifest -- any exception at all -- became "no
+    gap", and a non-advisory close exited 0 with its verification debt
+    unreadable. Absence of evidence was being reported as evidence of absence,
+    inside the one mechanism whose entire job is to refuse that substitution.
+
+    An exception now yields an UNREADABLE gap: `--advisory` callers still exit 0
+    (their own branch in `main`, unchanged, so hook paths stay fail-open), while
+    a real close fails and names what could not be read.
     """
     try:
         import owed_verification  # noqa: WPS433
-        result = owed_verification.check_manifest(workdir)
-    except Exception:  # noqa: BLE001
-        return None
-    return result if isinstance(result, dict) and result.get("status") == "incomplete" else None
+        # `reconcile=False` for an ADVISORY caller. Reconciling writes: it can
+        # unlink the manifest, rewrite state.json, and append to the audit log.
+        # A commit-boundary hook documented as read-only advisory must not be
+        # able to delete a live verification debt as a side effect of reporting
+        # on it -- both review rounds on 2026-09-13 flagged that the parameter
+        # existed with no caller passing it.
+        result = owed_verification.check_manifest(workdir, reconcile=reconcile)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "incomplete",
+            "owed": ["unknown"],
+            "debts": [],
+            "owed_runs": {},
+            "dispatch_commands": {},
+            "unreadable": True,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if not isinstance(result, dict):
+        return {
+            "status": "incomplete",
+            "owed": ["unknown"],
+            "debts": [],
+            "owed_runs": {},
+            "dispatch_commands": {},
+            "unreadable": True,
+            "error": f"check_manifest returned {type(result).__name__}, not a dict",
+        }
+    return result if result.get("status") == "incomplete" else None
 
 
 def _waiver_commands(workdir: Path, debts: list[dict[str, Any]], owed: list[str]) -> str:
@@ -252,7 +286,9 @@ def _waiver_commands(workdir: Path, debts: list[dict[str, Any]], owed: list[str]
     )
 
 
-def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
+def _apply_owed_verification(
+    workdir: Path, envelope: dict[str, Any], reconcile: bool = True
+) -> dict[str, Any]:
     """Refuse a close whose review is still owed.
 
     Ordered AFTER the record statuses on purpose: a missing run record is the
@@ -268,8 +304,29 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     """
     if envelope.get("status") not in OK_STATUSES:
         return envelope
-    gap = _owed_verification_gap(workdir)
+    gap = _owed_verification_gap(workdir, reconcile=reconcile)
     if gap is None:
+        return envelope
+    if gap.get("unreadable"):
+        # Not "another run's debt" and not waivable by run id: nobody knows
+        # whose debt it is, because the check did not run. Blocks this close.
+        envelope.update(
+            status="review_owed",
+            review_incomplete=True,
+            owed=["unknown"],
+            owed_run_id=None,
+            owed_run_ids=[],
+            reason=(
+                "review completeness could not be determined: "
+                f"{gap.get('error')}. An unreadable verification debt is not a "
+                "discharged one."
+            ),
+            remediation=(
+                "repair or inspect .build-loop/owed-verification.json and re-run "
+                "`python3 scripts/owed_verification.py check --workdir . --json`; "
+                "fix the underlying error rather than deleting the manifest"
+            ),
+        )
         return envelope
     owed = [str(v) for v in gap.get("owed") or []]
     this_run_id = str(envelope.get("run_id") or "")
@@ -353,12 +410,17 @@ def check(
     require_orchestrator: bool = False,
     require_learn: bool = False,
     now: datetime | None = None,
+    advisory: bool = False,
 ) -> dict[str, Any]:
     """Assert a run-close record exists AND its review is not still owed.
 
     Thin wrapper: ``_check_record`` answers the record question, then
     ``_apply_owed_verification`` downgrades an otherwise-passing envelope whose
     owed-verification manifest is still incomplete.
+
+    ``advisory`` makes the owed-verification read NON-MUTATING. An advisory
+    caller is a hook reporting on state, and a report must not change what it
+    reports on.
     """
     envelope = _check_record(
         workdir,
@@ -368,7 +430,9 @@ def check(
         require_learn=require_learn,
         now=now,
     )
-    return _apply_owed_verification(Path(workdir).resolve(), envelope)
+    return _apply_owed_verification(
+        Path(workdir).resolve(), envelope, reconcile=not advisory
+    )
 
 
 def _check_record(
@@ -580,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
         recent_minutes=args.expect_recent_minutes,
         require_orchestrator=args.require_orchestrator,
         require_learn=args.require_learn,
+        advisory=bool(args.advisory),
     )
     result["advisory"] = bool(args.advisory)
 

@@ -56,7 +56,14 @@ CLI
 
     owed_verification.py clear  --workdir <repo>
                                 (--verifier <name> ... | --all)
+                                [--run-id <id>] [--i-mean-every-run]
                                 [--reason "<text>"] [--json]
+
+``check`` RECONCILES: every MANAGED debt is re-evaluated against the verdicts on
+disk, discharged when a rendered verdict for that run and pinned range is on
+record, and otherwise reported with the FIELD that disqualified each candidate
+entry.  Recording the verdict is therefore what closes the debt; ``clear``
+without one is a WAIVER and requires ``--reason``.
 
 Exit codes
 ----------
@@ -114,10 +121,19 @@ LOG_RELPATH = Path(".build-loop") / "audit-log.md"
 # so the emitted command is copy-paste runnable by the parent.  A caller can
 # override any command via ``--dispatch-command verifier=<cmd>``.
 KNOWN_VERIFIERS: dict[str, str] = {
+    # `{entry}` is MANDATORY here, not decoration. The independent-auditor
+    # agent's own output schema emits judge_id / scope / diff_sha_range /
+    # verdict and NO run_id, while `_judge_decisions_file` keeps only entries
+    # whose run_id matches the debt -- so the round ran, the verdict landed in
+    # the file, and `check` reported the debt owed with an EMPTY rejection list,
+    # which reads exactly like no entry at all. Third occurrence of the
+    # un-dischargeable-dispatch-command class in this file; both review rounds
+    # on 2026-09-13 found it independently.
     "independent-auditor": (
         'Agent(subagent_type="build-loop:independent-auditor", '
         'prompt="audit {range} at build scope; append the verdict to '
         '.build-loop/judge-decisions.json")'
+        + "{auditor_entry}"
     ),
     "plan-critic": (
         'Agent(subagent_type="build-loop:plan-critic", '
@@ -153,10 +169,21 @@ KNOWN_VERIFIERS: dict[str, str] = {
 # the waiver as the only visible exit. One constant so the default template and
 # the host override cannot drift -- they did, and the override (the codex-host
 # branch, where this debt matters most) kept emitting the un-dischargeable shape.
+AUDITOR_ENTRY_SUFFIX = (
+    '  # the verdict MUST carry run_id and diff_range or `check` will not see it: '
+    '{{"judge_id": "independent-auditor", '
+    '"verdict": "yay|nay|suggest_correction|look_again", '
+    '"run_id": "{run}", "diff_range": "{range}"}}'
+)
+
 DISCHARGING_ENTRY_SUFFIX = (
-    '  # then append to .build-loop/judge-decisions.json: '
+    '  # then SAVE the round output to .build-loop/reviews/<name>.md and append '
+    'to .build-loop/judge-decisions.json: '
     '{{"judge_id": "cross-vendor-audit", "verdict": "yay|nay|suggest_correction|look_again", '
-    '"vendor": "<provider>/<model>", "run_id": "{run}", "diff_range": "{range}"}}'
+    '"vendor": "<provider>/<model>", "run_id": "{run}", "diff_range": "{range}", '
+    '"evidence": ".build-loop/reviews/<name>.md"}}'
+    '  # `evidence` is REQUIRED and must exist on disk: the vendor string alone '
+    'is unauthenticated metadata the recorder asserts about itself.'
 )
 
 
@@ -337,6 +364,8 @@ def _dispatch_commands(
         template = KNOWN_VERIFIERS.get(name)
         if template is not None and "{entry}" in template:
             template = template.replace("{entry}", DISCHARGING_ENTRY_SUFFIX)
+        if template is not None and "{auditor_entry}" in template:
+            template = template.replace("{auditor_entry}", AUDITOR_ENTRY_SUFFIX)
         if template is None:
             out[name] = (
                 f'Agent(subagent_type="build-loop:{name}", '
@@ -389,6 +418,20 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
     unreadable = (
         raw_debts_probe is not None and not isinstance(raw_debts_probe, list)
     ) or (raw_owed is not None and not isinstance(raw_owed, list))
+    # A manifest that names NEITHER view is not an empty manifest -- it is a
+    # file this module cannot read. `{}` and `{"status": "incomplete"}` both
+    # produced zero debts and therefore a COMPLETE review, which is the one
+    # shape that closes an un-reviewed run. The writer always emits both keys,
+    # so their joint absence means truncation or a hand edit, never "nothing
+    # owed". Reported by the cross-vendor round on 2026-09-13.
+    if raw_debts_probe is None and raw_owed is None:
+        unreadable = True
+    # A manifest whose own `status` says incomplete while its debt views are
+    # empty is self-contradictory. Believe the alarm, not the silence.
+    if str(existing.get("status") or "") == "incomplete" and not (
+        raw_debts_probe or raw_owed
+    ):
+        unreadable = True
     # A LIST whose entries this module cannot read is just as unreadable as a
     # non-list: {"debts": [{}]} and {"debts": [7]} were silently filtered to
     # zero debt and reported a complete review. Checking only the outer
@@ -536,6 +579,12 @@ def _write_manifest_unlocked(
     ``state.json.review_incomplete = true`` when anything is owed.
     """
     run_id = str(run_id)
+    # Pin HERE, at the storage boundary, not only in the enforce path's
+    # `_resolve_range`: the CLI `write` passes `--diff-range` straight through,
+    # so pinning only upstream left the one call site an operator types by hand
+    # storing `<sha>..HEAD` -- a range that re-answers itself at every read and
+    # makes the range guard structurally unable to fire.
+    diff_range = _pin_moving_endpoints(workdir, diff_range)
     existing = load_manifest(workdir)
     debts, cleared = _load_debts(existing)
     cleared_keys = {_debt_key(d) for d in cleared}
@@ -543,22 +592,45 @@ def _write_manifest_unlocked(
     overrides = dispatch_overrides or {}
     reasons = reasons or {}
 
+    by_key = {_debt_key(d): d for d in debts}
     for name in _dedupe(owed):
         key = (name, run_id)
-        if key in cleared_keys or key in have:
+        if key in cleared_keys:
+            continue
+        if key in have:
+            # RE-POINT rather than skip. A debt row kept the range it was FIRST
+            # armed at, so a run that grew from `base..A` to `base..B` still
+            # carried `base..A` -- and the reconciling `check` then discharged
+            # it on a review of the narrower diff, unlinked the manifest, and
+            # set review_incomplete=False while the commits added afterwards
+            # shipped unreviewed. Both review rounds on 2026-09-13 reproduced
+            # this; it is a regression the reconcile introduced, because before
+            # it the same state still required an explicit, logged waiver.
+            existing = by_key[key]
+            if str(existing.get("diff_range") or "") != diff_range:
+                existing["diff_range"] = diff_range
+                existing["pinned"] = _is_pinned(diff_range)
+                existing["dispatch_command"] = _dispatch_commands(
+                    [name], diff_range, plan_path, overrides, run_id
+                ).get(name)
+                if reasons.get(name):
+                    existing["reason"] = reasons[name]
             continue
         # Each debt carries ITS OWN range, so a later run's write cannot
         # re-point an earlier run's dispatch command at the wrong diff.
         command = _dispatch_commands(
             [name], diff_range, plan_path, overrides, run_id
         ).get(name)
-        debts.append({
+        row = {
             "verifier": name,
             "run_id": run_id,
             "diff_range": diff_range,
+            "pinned": _is_pinned(diff_range),
             "dispatch_command": command,
             "reason": reasons.get(name),
-        })
+        }
+        debts.append(row)
+        by_key[key] = row
         have.add(key)
 
     payload = _manifest_payload(
@@ -579,13 +651,29 @@ def write_manifest(workdir: Path, **kwargs: Any) -> dict[str, Any]:
 
 
 def clear_verifiers(workdir: Path, **kwargs: Any) -> dict[str, Any]:
-    """Locked entry point for the clear transaction. See the body below."""
+    """Locked entry point for the clear transaction. See the body below.
+
+    The waiver invariants live HERE, inside the transaction, not only in the
+    CLI's argument parsing. An in-process caller reaching `clear_verifiers()`
+    directly bypassed both the multi-owner boundary and the reason requirement,
+    so a guard that exists to make a waiver deliberate was enforceable only
+    against the operator who typed it and not against any code that called it.
+
+    `evidence_discharge=True` marks the one caller that is NOT a waiver -- the
+    evidence-backed discharge in `check_manifest` / `enforce_for_run_record`,
+    which has already evaluated the debt against a rendered verdict.
+    """
     with _manifest_lock(workdir):
         return _clear_verifiers_unlocked(workdir, **kwargs)
 
 
 AUTO_OWED_VERIFIER = "independent-auditor"
 CROSS_VENDOR_VERIFIER = "cross-vendor-audit"
+# The debt a run owes when the enforcement path itself failed. Deliberately NOT
+# a MANAGED verifier: no predicate can discharge it, because the thing that
+# would evaluate one is what broke. An operator repairs the cause and re-runs
+# the closing write, or waives it with a reason.
+ARMING_FAILED_VERIFIER = "owed-verification-arming-failed"
 
 # The verifiers this module ARMS and DISCHARGES on its own from a run record.
 # Every other name in KNOWN_VERIFIERS is armed only by an explicit ``write``
@@ -607,7 +695,35 @@ _NOT_RUN_PREFIXES = ("not-run:",)
 _NOT_RUN_EXACT = {"cross-vendor-deferred"}
 
 
-def owed_reason_for_record(record: dict[str, Any]) -> str | None:
+def _own_run_decisions(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's embedded verdicts that actually CLAIM this run.
+
+    The external judge file has always been filtered by run_id; the embedded
+    list was not, on the assumption that a verdict inside a run's own record is
+    by construction that run's. It is not: the writers UPSERT-MERGE, so a
+    hand-assembled or copy-pasted `judge_decisions[]` carrying an entry stamped
+    with an older run_id lands in the current run's row and discharged its debt
+    on a review of a different diff. An entry that names a run names it: a
+    mismatch is skipped, an ABSENT stamp is kept (the overwhelming majority of
+    historical rows carry none, and they are genuinely the row's own).
+    """
+    run_id = str(record.get("run_id") or "")
+    out: list[dict[str, Any]] = []
+    for item in record.get("judge_decisions") or []:
+        if not isinstance(item, dict):
+            continue
+        stamped = str(item.get("run_id") or "")
+        if stamped and run_id and stamped != run_id:
+            continue
+        out.append(item)
+    return out
+
+
+def owed_reason_for_record(
+    record: dict[str, Any],
+    workdir: Path | None = None,
+    diff_range: str = "unknown",
+) -> str | None:
     """Why this run record owes an independent-auditor verdict, or None.
 
     Three triggers, each one a real run that closed owing nothing on disk
@@ -629,21 +745,37 @@ def owed_reason_for_record(record: dict[str, Any]) -> str | None:
         return f"auditor_status={record.get('auditor_status')!r} names a not-run branch"
 
     try:
-        from write_run_entry.validators import AUDITOR_JUDGE_MARKER, auditor_present
+        from write_run_entry.validators import (
+            AUDITOR_JUDGE_MARKER, judge_verdict_rejections,
+        )
     except Exception:  # noqa: BLE001 — enforcement must never break the write
         return None
 
-    if auditor_present(record.get("judge_decisions")):
+    # Both evidence sources, both scoped to this run. The auditor half read ONLY
+    # the record's embedded list, so the emitted dispatch command -- which tells
+    # the reviewer to append to .build-loop/judge-decisions.json -- produced a
+    # verdict nothing consulted, leaving `clear` (an unverified self-assertion)
+    # as the only exit from a debt the operator had genuinely discharged. Now
+    # symmetric with the cross-vendor half.
+    decisions = _own_run_decisions(record)
+    if workdir is not None:
+        decisions = decisions + _judge_decisions_file(
+            workdir, str(record.get("run_id") or "")
+        )
+    decisions = _range_scoped(workdir, decisions)
+
+    present, rejections = judge_verdict_rejections(
+        decisions, AUDITOR_JUDGE_MARKER, _wanted_range(workdir, diff_range)
+    )
+    if present:
         return None
 
-    decisions = record.get("judge_decisions")
-    if isinstance(decisions, list):
-        for item in decisions:
-            if isinstance(item, dict) and AUDITOR_JUDGE_MARKER in str(item.get("judge_id", "")):
-                return (
-                    "judge_decisions[] names the auditor but carries no rendered "
-                    "verdict (an emitted packet is a request for one)"
-                )
+    if rejections:
+        return (
+            "judge_decisions[] names the auditor but carries no rendered "
+            "verdict for this run and range: "
+            + "; ".join(str(r.get("reason")) for r in rejections[:3])
+        )
 
     if record.get("filesTouched"):
         return "the run touched files and recorded no independent-auditor verdict"
@@ -667,20 +799,103 @@ def _explicit_cross_vendor_flag(record: dict[str, Any]) -> bool | None:
     return None
 
 
+def _rev_parse(workdir: Path, ref: str) -> str | None:
+    """The sha `ref` names right now, or None when git cannot answer."""
+    import subprocess  # noqa: WPS433 (deferred; enforcement is fail-open)
+
+    ref = str(ref or "").strip()
+    if not ref:
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workdir), "rev-parse", ref],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return proc.stdout.strip()
+
+
+# Endpoints whose meaning MOVES. A range holding one of these is not a range,
+# it is a query re-answered at every read.
+_MOVING_REFS = {"head", "@", "orig_head", "orig-head", "fetch_head", "fetch-head"}
+
+
+def _pin_moving_endpoints(workdir: Path, rng: str) -> str:
+    """Replace a moving endpoint (HEAD, @) with the sha it names RIGHT NOW.
+
+    A debt is an obligation about a SPECIFIC diff. Storing `<sha>..HEAD` stores
+    a question instead: every later read re-answers it against whatever HEAD has
+    become, so a review rendered at commit A discharges a debt armed at commit
+    B, and the range guard that exists to catch exactly that comparison finds
+    two strings that always agree. Pinning at ARM time is what makes the guard
+    able to fire. Fails open to the original text: when git cannot resolve the
+    ref the range is preserved rather than invented.
+    """
+    text = str(rng or "").strip()
+    if ".." not in text:
+        return text
+    base, sep, head = text.partition("..")
+    out = []
+    for ref in (base, head):
+        ref = ref.strip()
+        if not ref:
+            return text
+        # Resolve EVERY endpoint, not only the ones spelled `HEAD`. `HEAD~3`,
+        # `HEAD^`, `main`, and a tag are all names whose meaning moves, and the
+        # first version of this function pinned only the literal moving refs --
+        # so `HEAD~3..HEAD` kept a symbolic base that re-resolved at every read.
+        # A sha resolves to itself, so resolving unconditionally costs nothing
+        # and removes the question of which spellings are "moving".
+        pinned = _rev_parse(workdir, ref)
+        if pinned is None:
+            return text
+        out.append(pinned)
+    return f"{out[0]}{sep}{out[1]}"
+
+
+def _is_pinned(rng: str) -> bool:
+    """True when both endpoints are concrete 40-hex shas.
+
+    A range that could not be pinned -- a transient `git rev-parse` failure, a
+    5-second timeout, a repo with no commits -- is stored as written. Both sides
+    then re-resolve at check time and agree BY CONSTRUCTION, which is the exact
+    defect pinning exists to remove, reachable through a failure nothing
+    recorded. Debt rows carry this verdict so discharge can refuse it.
+    """
+    text = str(rng or "").strip()
+    if ".." not in text:
+        return False
+    base, _, head = text.partition("..")
+    return all(
+        len(part.strip()) == 40 and all(c in "0123456789abcdef" for c in part.strip().lower())
+        for part in (base, head)
+    )
+
+
 def _resolve_range(workdir: Path, diff_range: str) -> str:
-    """The run's real git range, so the emitted dispatch command is runnable.
+    """The run's real git range, PINNED, so the debt names one fixed diff.
 
     Both production call sites arm the debt without a range, so every manifest
     rendered `codex exec "Review the diff unknown ..."` -- a debt that arms
     correctly and hands the operator an instruction that cannot be run. The
     range resolves the same way `--files-touched-from-git` does; when even that
     is unavailable the literal "unknown" is preserved rather than invented.
+
+    The resolved range is then pinned: `<preBuildSha>..HEAD` was stored
+    literally and re-resolved at check time, so the armed range and the reviewed
+    range could never disagree no matter which commit the review actually read.
     """
     if diff_range and diff_range != "unknown":
-        return diff_range
+        return _pin_moving_endpoints(workdir, diff_range)
     data = _read_json(workdir / STATE_RELPATH)
     pre = data.get("preBuildSha") if isinstance(data, dict) else None
-    return f"{pre}..HEAD" if pre else "unknown"
+    if not pre:
+        return "unknown"
+    head = _rev_parse(workdir, "HEAD")
+    return f"{pre}..{head}" if head else f"{pre}..HEAD"
 
 
 def _git_loc_delta(workdir: Path, diff_range: str) -> int | None:
@@ -800,37 +1015,30 @@ def cross_vendor_reason_for_record(
     rather than hiding it.
     """
     try:
-        from write_run_entry.validators import cross_vendor_present
+        from write_run_entry.validators import cross_vendor_rejections
     except Exception:  # noqa: BLE001 — enforcement must never break the write
         return None
 
     host = record.get("host")
-    decisions = list(record.get("judge_decisions") or [])
-    # The range guard lives in `cross_vendor_present`; it was added with a
+    # Embedded verdicts, SCOPED to this run (see `_own_run_decisions`), plus the
+    # judge-decisions FILE. The debt arms precisely because the verdict was not
+    # available at run-record-write time, so the round is run afterwards and
+    # appended there -- and nothing re-read it, which left `clear` (the waiver)
+    # as the only visible way out of a debt the operator had actually
+    # discharged.
+    decisions = _own_run_decisions(record)
+    if workdir is not None:
+        decisions = decisions + _judge_decisions_file(
+            workdir, str(record.get("run_id") or "")
+        )
+    # The range guard lives in `cross_vendor_rejections`; it was added with a
     # signature nobody called, so it never fired on a real run -- the anti-
     # pattern this same file names: a property reachable only from a kwarg no
     # production path passes is a test of the implementation, not the tool.
-    wanted_range = diff_range
-    if workdir is not None and diff_range and diff_range != "unknown":
-        wanted_range = _normalise_range(workdir, diff_range)
-        decisions = [
-            ({**d, "diff_range": _normalise_range(workdir, str(d.get("diff_range")))}
-             if isinstance(d, dict) and d.get("diff_range") else d)
-            for d in decisions
-        ]
-    if workdir is not None:
-        # Also read the judge-decisions FILE. The debt arms precisely because
-        # the verdict was not available at run-record-write time, so the round
-        # is run afterwards and appended there -- and nothing re-read it, which
-        # left `clear` (the waiver) as the only visible way out of a debt the
-        # operator had actually discharged.
-        extra = _judge_decisions_file(workdir, str(record.get("run_id") or ""))
-        decisions.extend(
-            {**d, "diff_range": _normalise_range(workdir, str(d.get("diff_range")))}
-            if d.get("diff_range") else d
-            for d in extra
-        )
-    if cross_vendor_present(decisions, host, wanted_range):
+    wanted_range = _wanted_range(workdir, diff_range)
+    decisions = _range_scoped(workdir, decisions)
+    ok, _ = cross_vendor_rejections(decisions, host, wanted_range, workdir)
+    if ok:
         return None
 
     explicit = _explicit_cross_vendor_flag(record)
@@ -863,7 +1071,7 @@ def owed_verifiers_for_record(
     having a mechanism and the cross-vendor round having a paragraph.
     """
     owed: dict[str, str] = {}
-    auditor = owed_reason_for_record(record)
+    auditor = owed_reason_for_record(record, workdir, diff_range)
     if auditor:
         owed[AUTO_OWED_VERIFIER] = auditor
     cross_vendor = cross_vendor_reason_for_record(record, workdir, diff_range)
@@ -907,6 +1115,31 @@ def _normalise_range(workdir: Path, rng: str) -> str:
             return text
         out.append(proc.stdout.strip())
     return f"{out[0]}..{out[1]}"
+
+def _wanted_range(workdir: Path | None, diff_range: str) -> str:
+    """The armed range, resolved to concrete shas when git can resolve it."""
+    if workdir is None or not diff_range or diff_range == "unknown":
+        return diff_range
+    return _normalise_range(workdir, diff_range)
+
+
+def _range_scoped(
+    workdir: Path | None, decisions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Entries with any `diff_range` resolved to concrete shas.
+
+    Normalisation only -- whether a mismatched range disqualifies an entry is
+    the predicate's call, and it reports WHICH range it saw. Doing both here
+    would hide the mismatch from the caller's diagnostics.
+    """
+    if workdir is None:
+        return list(decisions)
+    return [
+        ({**d, "diff_range": _normalise_range(workdir, str(d.get("diff_range")))}
+         if isinstance(d, dict) and d.get("diff_range") else d)
+        for d in decisions
+    ]
+
 
 def _judge_decisions_file(workdir: Path, run_id: str) -> list[dict[str, Any]]:
     """Verdicts in `.build-loop/judge-decisions.json` that belong to THIS run.
@@ -976,8 +1209,23 @@ def _host_dispatch_overrides(
         )
     }
 
-def _cleared_for_run(workdir: Path, run_id: str) -> set[str]:
-    """MANAGED verifiers already discharged for this run_id (see CLEARED_STATE_KEY)."""
+def _cleared_for_run(
+    workdir: Path, run_id: str, diff_range: str = "unknown"
+) -> set[str]:
+    """MANAGED verifiers already discharged for this run_id AND THIS RANGE.
+
+    A waiver used to record only (run_id, verifier), so it exempted the run
+    rather than the diff: a run waived at 40 lines stayed waived after the same
+    run grew to 1,200, and the code added afterwards shipped under a waiver
+    granted before it existed. A waiver now names the range it was granted
+    against, and stops applying when that range changes.
+
+    A waiver carrying NO range (every one written before this change) cannot
+    prove it covers the current diff, so it stops applying the moment a concrete
+    range is known. That resolves toward MORE debt, which is the only direction
+    this file is allowed to be wrong in -- an over-armed debt costs a review, an
+    under-armed one ships an unreviewed diff.
+    """
     data = _read_json(workdir / STATE_RELPATH)
     if not isinstance(data, dict):
         return set()
@@ -987,11 +1235,35 @@ def _cleared_for_run(workdir: Path, run_id: str) -> set[str]:
     entry = registry.get(run_id)
     if not isinstance(entry, dict):
         return set()
-    return {str(name) for name in entry}
+    wanted = _wanted_range(workdir, diff_range)
+    concrete = bool(wanted) and wanted != "unknown"
+    out: set[str] = set()
+    for name, record in entry.items():
+        if not concrete:
+            # No armed range to compare against: the waiver stands, exactly as
+            # it did before. Nothing is loosened by this branch.
+            out.add(str(name))
+            continue
+        waived_range = ""
+        if isinstance(record, dict):
+            waived_range = str(record.get("diff_range") or "").strip()
+        if waived_range and _normalise_range(workdir, waived_range) == wanted:
+            out.add(str(name))
+    return out
 
 
-def _record_cleared(workdir: Path, run_id: str, verifiers: Iterable[str], reason: str | None) -> bool:
-    """Remember a discharged MANAGED verifier so the next write cannot re-arm it."""
+def _record_cleared(
+    workdir: Path,
+    run_id: str,
+    verifiers: Iterable[str],
+    reason: str | None,
+    diff_range: str = "",
+) -> bool:
+    """Remember a discharged MANAGED verifier so the next write cannot re-arm it.
+
+    The range is recorded WITH the waiver: it is what scopes the waiver to the
+    diff it was granted against rather than to the run id forever.
+    """
     names = [v for v in _dedupe(verifiers) if v in MANAGED_VERIFIERS]
     if not names or not run_id:
         return False
@@ -1003,7 +1275,11 @@ def _record_cleared(workdir: Path, run_id: str, verifiers: Iterable[str], reason
         if not isinstance(entry, dict):
             entry = {}
         for name in names:
-            entry[name] = {"at": _utcnow_iso(), "reason": reason or ""}
+            entry[name] = {
+                "at": _utcnow_iso(),
+                "reason": reason or "",
+                "diff_range": str(diff_range or ""),
+            }
         registry[run_id] = entry
         # Bounded: this is a tombstone, not a ledger. Keep the newest N run ids.
         if len(registry) > _CLEARED_RUN_CAP:
@@ -1045,7 +1321,7 @@ def enforce_for_run_record(
         record = _persisted_record(workdir, run_id) or record
         diff_range = _resolve_range(workdir, diff_range)
         owed = owed_verifiers_for_record(record, workdir, diff_range)
-        for name in _cleared_for_run(workdir, run_id):
+        for name in _cleared_for_run(workdir, run_id, diff_range):
             owed.pop(name, None)
 
         # DISCHARGE. A MANAGED verifier that THIS run owes and that the record
@@ -1068,11 +1344,18 @@ def enforce_for_run_record(
             # manifest with it, which is the defect this whole file exists to
             # stop, reached through its own discharge path.
             rows, _ = _load_debts(manifest)
+            # ONE discharge predicate, shared with `check`. Selecting on "the
+            # arming predicate no longer names it" made the two paths disagree:
+            # arming is deliberately lenient about an unstamped auditor verdict
+            # (139 of 143 historical rows carry no range), so an armed debt was
+            # discharged here by evidence `check` would refuse. The weaker path
+            # decided. `evaluate_debt` is now the only thing that says a debt is
+            # satisfied, wherever the question is asked.
             satisfied = _dedupe(
                 str(d.get("verifier")) for d in rows
                 if str(d.get("verifier")) in MANAGED_VERIFIERS
                 and str(d.get("run_id") or "") == run_id
-                and str(d.get("verifier")) not in owed
+                and evaluate_debt(workdir, d, record).get("satisfied")
             )
             if satisfied:
                 clear_verifiers(
@@ -1081,6 +1364,7 @@ def enforce_for_run_record(
                     run_id=run_id,
                     reason=f"verdict recorded on run record ({written_by})",
                     record_tombstone=False,
+                    evidence_discharge=True,
                 )
 
         if not owed:
@@ -1096,19 +1380,169 @@ def enforce_for_run_record(
             dispatch_overrides=_host_dispatch_overrides(record, diff_range, run_id),
         )
     except Exception as exc:  # noqa: BLE001 — never break the run-record write
-        # Fail-open, but never SILENT. A lock timeout here means the debt was
-        # not armed, and an un-armed debt is indistinguishable from "nothing
-        # owed" -- which is precisely the escape GAP-1 exists to close.
+        # Fail-open, but never SILENT and never INVISIBLE. A log line is not a
+        # mechanism: nothing reads the audit log, so an arming failure left no
+        # manifest and `run_close_lint` could not tell it from a clean run --
+        # the escape GAP-1 exists to close, reached through the handler meant to
+        # protect the run record. Measured during this build: a `_range_scoped`
+        # arity mismatch disarmed the gate entirely and 26 green tests said
+        # nothing. The marker is a real debt row, so the close gate refuses.
         _log(workdir, f"enforce FAILED run={record.get('run_id')!r}: {exc!r}")
-        return None
+        try:
+            return write_manifest(
+                workdir,
+                run_id=str(record.get("run_id") or "unknown"),
+                diff_range=str(diff_range or "unknown"),
+                owed=[ARMING_FAILED_VERIFIER],
+                reason=(
+                    "the owed-verification check could not run, so what this "
+                    f"run owes is UNKNOWN: {type(exc).__name__}: {exc}"
+                ),
+                reasons={ARMING_FAILED_VERIFIER: f"{type(exc).__name__}: {exc}"},
+                written_by=f"{written_by} (arming failed)",
+            )
+        except Exception as marker_exc:  # noqa: BLE001 — the run record wins
+            _log(workdir, f"enforce marker FAILED: {marker_exc!r}")
+            return None
 
 
-def check_manifest(workdir: Path) -> dict[str, Any]:
+def evaluate_debt(
+    workdir: Path, debt: dict[str, Any], record: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Is this debt row satisfied by evidence on disk RIGHT NOW, and if not, why.
+
+    ``check`` used to be a pure manifest reader: it reported the rows and never
+    looked at the evidence, so a correctly recorded verdict appended to
+    ``.build-loop/judge-decisions.json`` -- exactly what the manifest's own
+    dispatch command instructs -- left ``check`` still reporting the debt owed.
+    The only thing that discharged it was ``clear``, an unverified self-
+    assertion by the same agent that owed the review. The mechanism built to
+    stop a review being skipped could only be exited by asserting it happened.
+
+    Measured on this repository, 2026-09-13: a cross-vendor verdict naming
+    ``openai/gpt-5-codex`` with the matching run_id and diff_range satisfied
+    ``cross_vendor_present`` when called directly, and ``check`` still returned
+    ``owed=['cross-vendor-audit']``.
+
+    Returns ``{satisfied, verifier, run_id, diff_range, rejected_evidence[]}``.
+    ``rejected_evidence`` is the field-level diagnosis: which entry was seen and
+    which field disqualified it. Without it, "still owed" and "you recorded it
+    wrong" are the same output, and the operator's next move is the waiver.
+    """
+    verifier = str(debt.get("verifier") or "")
+    run_id = str(debt.get("run_id") or "")
+    armed_range = str(debt.get("diff_range") or "unknown")
+    out: dict[str, Any] = {
+        "verifier": verifier,
+        "run_id": run_id,
+        "diff_range": armed_range,
+        "satisfied": False,
+        "rejected_evidence": [],
+        "evidence_seen": 0,
+    }
+    if verifier not in MANAGED_VERIFIERS:
+        # Armed by an explicit `write`, so this module owns no predicate for it
+        # and must not invent one. Discharged by `clear`, as it always was.
+        out["reason"] = (
+            f"{verifier!r} is not a self-discharging verifier; it is cleared "
+            "explicitly by the parent that dispatched it"
+        )
+        return out
+    try:
+        from write_run_entry.validators import (
+            AUDITOR_JUDGE_MARKER, cross_vendor_rejections, judge_verdict_rejections,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Unreadable predicate is UNKNOWN, never satisfied. Fail toward debt.
+        out["reason"] = f"the discharge predicate is unimportable: {exc!r}"
+        return out
+
+    # A debt whose range is not two concrete shas cannot be discharged by
+    # EVIDENCE, only waived. Both the armed side and the entry side normalise
+    # through git at check time, so an unpinned range makes the two agree by
+    # construction -- the defect pinning exists to remove, reached through a
+    # transient rev-parse failure (`pinned: false`) or a state.json with no
+    # preBuildSha (`unknown`). Ambiguity about WHICH diff was reviewed must
+    # resolve toward debt.
+    # The test is MOVEMENT, not sha-shape. A range whose endpoints git cannot
+    # resolve is a literal string on both sides -- stable, and comparing it means
+    # what it says. A range git CAN still re-resolve to something else is a
+    # question, not an answer: both the armed side and the entry side resolve it
+    # at check time, so they agree by construction and the guard cannot fire.
+    # That is reachable whenever pinning failed at arm time (a rev-parse
+    # timeout, a transient git error) with nothing recording that it happened.
+    if armed_range == "unknown":
+        out["reason"] = (
+            "the debt's range is 'unknown', so no verdict can be matched to it; "
+            "re-arm with a concrete range or waive it with `clear --reason`"
+        )
+        out["pinned"] = False
+        return out
+    if not _is_pinned(armed_range) and _pin_moving_endpoints(
+        workdir, armed_range
+    ) != armed_range:
+        out["reason"] = (
+            f"the debt's range {armed_range!r} still resolves to a different "
+            "revision, so it names no fixed diff (pinning failed when the debt "
+            "was armed); re-arm the debt or waive it with `clear --reason`"
+        )
+        out["pinned"] = False
+        return out
+
+    # The CALLER's record wins when it has one. `enforce_for_run_record` holds
+    # the record it is about to persist, and re-reading from disk here saw a row
+    # that did not exist yet -- no `host`, no verdicts -- so every debt failed
+    # to discharge for a reason ("the run record names no host") that was an
+    # artefact of the lookup, not a fact about the run.
+    record = record or _persisted_record(workdir, run_id) or {}
+    decisions = _own_run_decisions({**record, "run_id": run_id})
+    decisions = decisions + _judge_decisions_file(workdir, run_id)
+    decisions = _range_scoped(workdir, decisions)
+    wanted = _wanted_range(workdir, armed_range)
+    out["evidence_seen"] = len(decisions)
+
+    if verifier == CROSS_VENDOR_VERIFIER:
+        ok, rejections = cross_vendor_rejections(
+            decisions, record.get("host"), wanted, workdir
+        )
+        if not ok and not record.get("host"):
+            out["reason"] = (
+                "the run record names no `host`, so 'a different vendor' cannot "
+                "be answered; record host (claude_code | codex | gemini) on the "
+                "run entry, or waive with `clear --reason`"
+            )
+    else:
+        # `require_range=True`: this is the DISCHARGE path for an already-armed
+        # debt, whose dispatch command spells run_id and diff_range. The lenient
+        # rule lives on the ARMING path only (see judge_verdict_rejections).
+        ok, rejections = judge_verdict_rejections(
+            decisions, AUDITOR_JUDGE_MARKER, wanted, require_range=True
+        )
+    out["satisfied"] = bool(ok)
+    out["rejected_evidence"] = rejections
+    if ok:
+        out["reason"] = "a rendered verdict for this run and range is on record"
+    elif not rejections and "reason" not in out:
+        out["reason"] = (
+            f"no {verifier} entry for run {run_id!r} at range {wanted!r} in "
+            "the run record or .build-loop/judge-decisions.json"
+        )
+    return out
+
+
+def check_manifest(workdir: Path, reconcile: bool = True) -> dict[str, Any]:
     """Answer 'is this run's review complete?'.
 
     Returns a dict with ``status`` ∈ {``complete``, ``incomplete``, ``absent``},
     the remaining ``owed`` list, ``cleared`` list, and ``review_incomplete``
     (the boolean a gate keys on).
+
+    With ``reconcile`` (the default) each MANAGED debt is re-evaluated against
+    the evidence on disk and DISCHARGED when a rendered verdict for that run and
+    range is on record -- so recording the verdict is what closes the debt, and
+    the waiver is no longer the only exit. Rows that are NOT satisfied carry
+    ``rejected_evidence``: which entry was seen and which field disqualified it.
+    ``reconcile=False`` gives the old pure read for a caller that must not write.
     """
     manifest = load_manifest(workdir)
     if manifest is None:
@@ -1119,6 +1553,8 @@ def check_manifest(workdir: Path) -> dict[str, Any]:
             "run_id": None,
             "diff_range": None,
             "review_incomplete": False,
+            "evidence": [],
+            "discharged_by_evidence": [],
             "manifest_path": str(workdir / MANIFEST_RELPATH),
         }
     if manifest.get("_malformed"):
@@ -1133,14 +1569,82 @@ def check_manifest(workdir: Path) -> dict[str, Any]:
             "dispatch_commands": {},
             "review_incomplete": True,
             "malformed": True,
+            "evidence": [],
+            "discharged_by_evidence": [],
             "manifest_path": str(workdir / MANIFEST_RELPATH),
         }
     debts, cleared = _load_debts(manifest)
+
+    # RECONCILE. Evidence recorded after the debt was armed discharges it here,
+    # which is the whole point: the manifest's own dispatch command tells the
+    # reviewer to append a verdict, and until now nothing read it back.
+    evaluations: list[dict[str, Any]] = []
+    if reconcile and debts:
+        satisfied_keys: list[dict[str, Any]] = []
+        for debt in debts:
+            verdict = evaluate_debt(workdir, debt)
+            evaluations.append(verdict)
+            if verdict.get("satisfied"):
+                satisfied_keys.append(debt)
+        if satisfied_keys:
+            by_run: dict[str, list[str]] = {}
+            for debt in satisfied_keys:
+                by_run.setdefault(str(debt.get("run_id") or ""), []).append(
+                    str(debt.get("verifier"))
+                )
+            for owner, names in by_run.items():
+                clear_verifiers(
+                    workdir,
+                    verifiers=names,
+                    run_id=owner or None,
+                    reason="rendered verdict on record for this run and range",
+                    # NOT a waiver. A tombstone would outlive the verdict and
+                    # exempt a later, wider range; the verdict itself is the
+                    # discharge and is re-checked on every read.
+                    record_tombstone=False,
+                    evidence_discharge=True,
+                    # The range each row held when it was EVALUATED. A row
+                    # re-armed at a wider range between the evaluation above and
+                    # this removal is no longer the debt the evidence answered.
+                    expected_ranges={
+                        str(d.get("verifier")): str(d.get("diff_range") or "")
+                        for d in satisfied_keys
+                        if str(d.get("run_id") or "") == owner
+                    },
+                )
+            manifest = load_manifest(workdir)
+            if manifest is None:
+                return {
+                    "status": "complete",
+                    "owed": [],
+                    "cleared": _dedupe(str(d.get("verifier")) for d in satisfied_keys),
+                    "debts": [],
+                    "owed_runs": {},
+                    "run_id": None,
+                    "diff_range": None,
+                    "dispatch_commands": {},
+                    "review_incomplete": False,
+                    "malformed": False,
+                    "evidence": evaluations,
+                    "discharged_by_evidence": _dedupe(
+                        str(d.get("verifier")) for d in satisfied_keys
+                    ),
+                    "manifest_path": str(workdir / MANIFEST_RELPATH),
+                }
+            debts, cleared = _load_debts(manifest)
+
     remaining = _dedupe(str(d.get("verifier")) for d in debts)
     incomplete = bool(debts)
     return {
         "status": "incomplete" if incomplete else "complete",
         "owed": remaining,
+        # WHY each outstanding debt was not discharged, field by field. A gate
+        # that says only "still owed" about an entry sitting in the ledger sends
+        # the operator to the waiver, which is the path that reopens the escape.
+        "evidence": evaluations,
+        "discharged_by_evidence": _dedupe(
+            str(e.get("verifier")) for e in evaluations if e.get("satisfied")
+        ),
         "cleared": _dedupe(str(d.get("verifier")) for d in cleared),
         # The per-run rows, so a caller can tell WHOSE debt is outstanding
         # instead of inferring it from the manifest's last-writer run_id.
@@ -1163,6 +1667,8 @@ def _clear_verifiers_unlocked(
     reason: str | None = None,
     record_tombstone: bool = True,
     run_id: str | None = None,
+    expected_ranges: dict[str, str] | None = None,
+    evidence_discharge: bool = False,
 ) -> dict[str, Any]:
     """Mark owed debt(s) as discharged.
 
@@ -1208,9 +1714,41 @@ def _clear_verifiers_unlocked(
     def _selected(debt: dict[str, Any]) -> bool:
         if scope is not None and str(debt.get("run_id") or "") != scope:
             return False
+        # Compare-and-swap on the RANGE. `check_manifest` evaluates outside the
+        # lock and clears inside it, so a concurrent re-arm at a wider range
+        # could land between the two -- and a clear keyed only on
+        # (verifier, run_id) would erase the NEW debt on the strength of
+        # evidence gathered against the OLD range. Naming the range the caller
+        # evaluated makes the removal refuse a row that changed underneath it.
+        if expected_ranges is not None:
+            want = expected_ranges.get(str(debt.get("verifier")))
+            if want is not None and str(debt.get("diff_range") or "") != want:
+                return False
         return clear_all or str(debt.get("verifier")) in wanted
 
     newly = [d for d in debts if _selected(d)]
+
+    # The waiver invariant, enforced HERE — inside the transaction, against the
+    # debts actually selected. It lived only in the CLI's argument parsing, so
+    # any in-process caller reaching `clear_verifiers()` bypassed it entirely: a
+    # guard that makes a waiver deliberate was enforceable against the operator
+    # who typed the command and against nothing else. Scoped to MANAGED debts
+    # that no verdict satisfies, because those are the only ones where clearing
+    # asserts something the evidence does not.
+    if not evidence_discharge:
+        unbacked = sorted({
+            str(d.get("verifier")) for d in newly
+            if str(d.get("verifier")) in MANAGED_VERIFIERS
+            and not evaluate_debt(workdir, d).get("satisfied")
+        })
+        if unbacked and not str(reason or "").strip():
+            raise ValueError(
+                f"no rendered verdict is on record for {', '.join(unbacked)}, so "
+                "this clear is a WAIVER, not a discharge; pass reason=. To "
+                "DISCHARGE, record the verdict (run_id + diff_range, plus vendor "
+                "and evidence for cross-vendor) and let check_manifest() reconcile"
+            )
+
     remaining = [d for d in debts if d not in newly]
     newly_names = _dedupe(str(d.get("verifier")) for d in newly)
 
@@ -1220,14 +1758,19 @@ def _clear_verifiers_unlocked(
     # re-arming, and a waiver would outlive it and exempt a later, wider scope.
     tombstone_persisted: bool | None = None
     if newly and record_tombstone:
-        by_owner: dict[str, list[str]] = {}
+        # Keyed by (owner, range): a waiver is granted against the diff the debt
+        # named, so two debts from one run on different ranges cannot collapse
+        # into one waiver covering both.
+        by_owner: dict[tuple[str, str], list[str]] = {}
         for debt in newly:
-            by_owner.setdefault(str(debt.get("run_id") or ""), []).append(
-                str(debt.get("verifier"))
+            key = (
+                str(debt.get("run_id") or ""),
+                str(debt.get("diff_range") or ""),
             )
+            by_owner.setdefault(key, []).append(str(debt.get("verifier")))
         tombstone_persisted = True
-        for owner, names in by_owner.items():
-            if not _record_cleared(workdir, owner, names, reason):
+        for (owner, waived_range), names in by_owner.items():
+            if not _record_cleared(workdir, owner, names, reason, waived_range):
                 tombstone_persisted = False
         if tombstone_persisted is False:
             _log(
@@ -1314,6 +1857,19 @@ def _emit(payload: dict[str, Any], *, as_json: bool, stream=sys.stdout) -> None:
         stream.write(f"cleared: {', '.join(payload['cleared'])}\n")
     if payload.get("remaining"):
         stream.write(f"remaining: {', '.join(payload['remaining'])}\n")
+    for verdict in payload.get("evidence") or []:
+        if not isinstance(verdict, dict) or verdict.get("satisfied"):
+            continue
+        stream.write(
+            f"  {verdict.get('verifier')} (run {verdict.get('run_id') or '?'}, "
+            f"{verdict.get('diff_range') or '?'}): {verdict.get('reason') or ''}\n"
+        )
+        # The field-level diagnosis. An entry the operator believes they
+        # recorded, rejected with no reason, reads identically to no entry --
+        # and the operator's next keystroke is the waiver.
+        for rejected in verdict.get("rejected_evidence") or []:
+            if isinstance(rejected, dict):
+                stream.write(f"    rejected: {rejected.get('reason')}\n")
     if payload.get("tombstone_persisted") is False:
         # Without this line the operator sees "cleared_complete" and nothing
         # else, then watches the debt re-arm on the next write with no cause.
@@ -1388,6 +1944,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_clear.add_argument("--all", action="store_true", dest="clear_all")
     p_clear.add_argument(
+        "--i-mean-every-run",
+        action="store_true",
+        dest="every_run",
+        help=(
+            "Required with --all when more than one run owes a debt: --all "
+            "deletes EVERY run's obligation and unlinks the manifest, so a "
+            "multi-owner sweep must be stated, not inferred. Requires --reason."
+        ),
+    )
+    p_clear.add_argument(
         "--run-id",
         default=None,
         help=(
@@ -1438,9 +2004,9 @@ def main(argv: list[str] | None = None) -> int:
         # `--all` is an unambiguous statement of intent, so the guard that
         # exists to catch AMBIGUITY must not refuse it -- that left no command
         # at all able to clear a multi-run manifest.
+        manifest = load_manifest(workdir)
+        rows, _ = _load_debts(manifest) if manifest else ([], [])
         if not args.run_id and not args.clear_all:
-            manifest = load_manifest(workdir)
-            rows, _ = _load_debts(manifest) if manifest else ([], [])
             targets = [d for d in rows if str(d.get("verifier")) in set(args.verifier)]
             owners = {str(d.get("run_id") or "") for d in targets}
             if len(owners) > 1:
@@ -1449,13 +2015,50 @@ def main(argv: list[str] | None = None) -> int:
                     f"({', '.join(sorted(owners))}); pass --run-id to name whose "
                     "debt is being waived"
                 )
-        result = clear_verifiers(
-            workdir,
-            verifiers=args.verifier,
-            clear_all=args.clear_all,
-            run_id=args.run_id,
-            reason=args.reason,
-        )
+        # `--all` was the one command with no owner boundary at all: it deleted
+        # every run's debt and unlinked the sole manifest, and the printed
+        # remediation for a multi-owner manifest pushes an unstuck-seeking
+        # operator straight at it. A sweep across OTHER runs' obligations is a
+        # decision, so it must be stated. A single-owner manifest is unambiguous
+        # and keeps working unchanged.
+        if args.clear_all and not args.run_id:
+            owners = {str(d.get("run_id") or "") for d in rows} - {""}
+            if len(owners) > 1 and not args.every_run:
+                p_clear.error(
+                    f"--all would waive {len(rows)} debts across "
+                    f"{len(owners)} runs ({', '.join(sorted(owners))}). Pass "
+                    "--run-id <id> to waive one run's debt, or "
+                    "--i-mean-every-run --reason '<why>' to waive all of them."
+                )
+            if args.every_run and not str(args.reason or "").strip():
+                p_clear.error(
+                    "--i-mean-every-run requires --reason: a sweep across every "
+                    "run's obligation is recorded in the audit log with its cause"
+                )
+            if args.every_run:
+                _log(
+                    workdir,
+                    f"clear --all --i-mean-every-run over {len(rows)} debts "
+                    f"across runs [{', '.join(sorted(owners))}]: {args.reason}",
+                )
+        # The waiver invariant itself lives in `_clear_verifiers_unlocked`, so
+        # the CLI and every in-process caller obey the SAME rule. Here it is
+        # only translated into an argparse error with a copy-paste remedy.
+        try:
+            result = clear_verifiers(
+                workdir,
+                verifiers=args.verifier,
+                clear_all=args.clear_all,
+                run_id=args.run_id,
+                reason=args.reason,
+            )
+        except ValueError as exc:
+            p_clear.error(
+                f"{exc} — pass --reason '<why the round could not run>', or "
+                "append the verdict to .build-loop/judge-decisions.json and "
+                "re-run `check`."
+            )
+            return 2  # pragma: no cover — p_clear.error exits
         _emit(result, as_json=args.json)
         return 0
 

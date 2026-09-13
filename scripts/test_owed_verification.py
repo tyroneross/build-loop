@@ -105,7 +105,8 @@ class TestRoundTrip(_Base):
         self.assertTrue(self._manifest.exists())
 
         # clear last → COMPLETE, manifest removed
-        res = ov.clear_verifiers(self.workdir, verifiers=["independent-auditor"])
+        res = ov.clear_verifiers(
+            self.workdir, verifiers=["independent-auditor"], reason="test waiver")
         self.assertEqual(res["status"], "complete")
         self.assertTrue(res["manifest_removed"])
         self.assertFalse(self._manifest.exists())
@@ -121,7 +122,7 @@ class TestRoundTrip(_Base):
             diff_range="HEAD~1..HEAD",
             owed=["independent-auditor", "security-reviewer", "plan-critic"],
         )
-        res = ov.clear_verifiers(self.workdir, clear_all=True)
+        res = ov.clear_verifiers(self.workdir, clear_all=True, reason="test waiver")
         self.assertEqual(res["status"], "complete")
         self.assertEqual(res["remaining"], [])
         self.assertFalse(self._manifest.exists())
@@ -137,7 +138,8 @@ class TestRoundTrip(_Base):
         self.assertEqual(set(m["owed"]), {"independent-auditor", "security-reviewer"})
 
         # clear the auditor, then a later write must NOT re-add it
-        ov.clear_verifiers(self.workdir, verifiers=["independent-auditor"])
+        ov.clear_verifiers(
+            self.workdir, verifiers=["independent-auditor"], reason="test waiver")
         m2 = ov.write_manifest(
             self.workdir, run_id="r", diff_range="A..B", owed=["independent-auditor"]
         )
@@ -169,7 +171,7 @@ class TestStateFlag(_Base):
         )
         self.assertTrue(self._read_state()["review_incomplete"])
 
-        ov.clear_verifiers(self.workdir, clear_all=True)
+        ov.clear_verifiers(self.workdir, clear_all=True, reason="test waiver")
         self.assertFalse(self._read_state()["review_incomplete"])
         # existing keys preserved
         self.assertEqual(self._read_state()["execution"]["build_loop_id"], "run_z")
@@ -202,7 +204,8 @@ class TestFailSafe(_Base):
         self.assertFalse(chk["review_incomplete"])
 
     def test_clear_absent_is_noop(self) -> None:
-        res = ov.clear_verifiers(self.workdir, verifiers=["independent-auditor"])
+        res = ov.clear_verifiers(
+            self.workdir, verifiers=["independent-auditor"], reason="test waiver")
         self.assertEqual(res["action"], "noop_absent")
 
 
@@ -230,9 +233,12 @@ class TestCLI(_Base):
         self.assertEqual(rc, 1)
         self.assertEqual(payload["status"], "incomplete")
 
-        # clear → exit 0
-        rc, _ = _run_cli(self.workdir, "clear", "--all")
+        # clear → exit 0. `--reason` is now required because no verdict backs
+        # this waiver; without one the CLI refuses and says which verifier.
+        rc, _ = _run_cli(self.workdir, "clear", "--all", "--reason", "test")
         self.assertEqual(rc, 0)
+        rc, _ = _run_cli(self.workdir, "clear", "--all")
+        self.assertEqual(rc, 0, "an absent manifest stays a no-op, not an error")
 
         # check → COMPLETE → exit 0
         rc, payload = _run_cli(self.workdir, "check")
@@ -289,9 +295,14 @@ AUDITOR_VERDICT = {"judge_id": "independent-auditor", "verdict": "yay"}
 # A real second-vendor entry also names the RANGE it reviewed: the file is
 # append-only, so an unstamped verdict would discharge a debt armed by later
 # commits. The default range matches the `diff_range="A..B"` these tests arm.
+# And it POINTS AT the round's own output: the `vendor` string is metadata the
+# recorder asserts about itself, so nothing stops a same-vendor process from
+# typing another provider's name. `codex_session_id` is the opaque form --
+# unresolvable from this process, but a specific claim a later audit can chase.
 CROSS_VENDOR_VERDICT = {
     "judge_id": "cross-vendor-audit", "verdict": "yay",
     "vendor": "openai/codex-cli 0.154.0", "diff_range": "A..B",
+    "codex_session_id": "01JQ8Z3K4M5N6P7Q8R9STVWXYZ",
 }
 
 
@@ -438,8 +449,22 @@ class TestCrossVendorDebt(_Base):
             sorted(manifest["owed"]),
             sorted([ov.AUTO_OWED_VERIFIER, ov.CROSS_VENDOR_VERIFIER]),
         )
+        # An ARMED debt is discharged only by a verdict stamped with its own
+        # range. Arming stays lenient about an unstamped verdict (139 of 143
+        # real auditor rows carry no range), but once the debt exists its
+        # dispatch command spells run_id and diff_range -- so an unstamped entry
+        # is evidence the instruction was not followed, and accepting it let an
+        # older verdict discharge a debt armed over code written after it.
         record["judge_decisions"] = [dict(AUDITOR_VERDICT)]
         record["auditor_status"] = "ran:dispatched-agent"
+        manifest = self._enforce(record)
+        self.assertEqual(
+            sorted(manifest["owed"]),
+            sorted([ov.AUTO_OWED_VERIFIER, ov.CROSS_VENDOR_VERIFIER]),
+            "an unstamped verdict must not discharge an already-armed debt",
+        )
+
+        record["judge_decisions"] = [{**AUDITOR_VERDICT, "diff_range": "A..B"}]
         manifest = self._enforce(record)
         self.assertEqual(manifest["owed"], [ov.CROSS_VENDOR_VERIFIER])
 
@@ -519,7 +544,7 @@ class TestCloseGateRefusesOwedReview(_Base):
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(json.loads(proc.stdout)["status"], "review_owed")
 
-        ov.clear_verifiers(self.workdir, clear_all=True)
+        ov.clear_verifiers(self.workdir, clear_all=True, reason="test waiver")
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(json.loads(proc.stdout)["status"], "recorded")
@@ -1082,7 +1107,8 @@ class TestSecondCrossVendorRoundRegressions(_Base):
         record = self._record("run_cv", judge_decisions=[
             dict(AUDITOR_VERDICT),
             {"judge_id": "cross-vendor-audit", "verdict": "yay",
-             "vendor": "openai via claude-code peer", "diff_range": "A..B"},
+             "vendor": "openai via claude-code peer", "diff_range": "A..B",
+             "codex_session_id": "01JQ8Z3K4M5N6P7Q8R9STVWXYZ"},
         ])
         self.assertIsNone(
             ov.enforce_for_run_record(self.workdir, record, written_by="t", diff_range="A..B")
@@ -1283,13 +1309,35 @@ class TestFourthRoundRegressions(_Base):
         self.assertTrue(ov.check_manifest(self.workdir)["review_incomplete"])
 
     def test_clear_all_is_not_refused_by_the_ambiguity_guard(self) -> None:
-        """`--all` is an unambiguous intent; refusing it left no command at all."""
+        """`--all` is an unambiguous intent; refusing it left no command at all.
+
+        Still true, and still the property under test. What changed on
+        2026-09-13 is WHICH runs one `--all` may sweep: it used to delete every
+        run's obligation and unlink the sole manifest with no owner boundary at
+        all. A single-owner `--all` is unchanged. A multi-owner sweep is a
+        decision about OTHER runs' obligations, so it must be stated -- and the
+        refusal names the flag that states it, rather than leaving the operator
+        with no command, which is the failure this test was written for.
+        """
+        ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        rc, _ = _run_cli(self.workdir, "clear", "--all", "--reason", "no peer host")
+        self.assertEqual(rc, 0, "a single-owner --all must still run")
+        self.assertEqual(ov.check_manifest(self.workdir)["status"], "absent")
+
         ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
                           owed=[ov.CROSS_VENDOR_VERIFIER])
         ov.write_manifest(self.workdir, run_id="RUN_B", diff_range="b0..b1",
                           owed=[ov.CROSS_VENDOR_VERIFIER])
-        rc, _ = _run_cli(self.workdir, "clear", "--all", "--reason", "no peer host")
-        self.assertEqual(rc, 0)
+        rc, payload = _run_cli(self.workdir, "clear", "--all", "--reason", "no peer host")
+        self.assertEqual(rc, 2, "a multi-owner sweep must be stated, not inferred")
+        self.assertEqual(ov.check_manifest(self.workdir)["status"], "incomplete")
+
+        rc, _ = _run_cli(
+            self.workdir, "clear", "--all", "--i-mean-every-run",
+            "--reason", "no peer host reachable for either run",
+        )
+        self.assertEqual(rc, 0, "the stated sweep must run; otherwise no command exists")
         self.assertEqual(ov.check_manifest(self.workdir)["status"], "absent")
 
     def test_a_prior_runs_waiver_does_not_suppress_this_runs_debt(self) -> None:
@@ -1357,6 +1405,7 @@ class TestFourthRoundRegressions(_Base):
         entry = {
             "judge_id": "cross-vendor-audit", "verdict": "yay",
             "vendor": "openai/codex-cli", "diff_range": "old0..old1",
+            "codex_session_id": "01JQ8Z3K4M5N6P7Q8R9STVWXYZ",
         }
         self.assertFalse(cross_vendor_present([entry], "claude_code", "new0..new1"))
         self.assertTrue(cross_vendor_present([entry], "claude_code", "old0..old1"))
@@ -1556,6 +1605,7 @@ class TestVerdictAndVendorEvidence(_Base):
         unstamped = {
             "judge_id": "cross-vendor-audit", "verdict": "nay",
             "vendor": "openai/codex", "run_id": "r",
+            "codex_session_id": "01JQ8Z3K4M5N6P7Q8R9STVWXYZ",
         }
         self.assertFalse(cross_vendor_present([unstamped], "claude_code", "aaa..bbb"))
         self.assertTrue(cross_vendor_present([unstamped], "claude_code", None))

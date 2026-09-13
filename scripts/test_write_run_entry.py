@@ -443,7 +443,20 @@ class WriteRunEntryTests(unittest.TestCase):
 
                 # The WHOLE row, not a named subset. A three-key check cannot see
                 # a regression in source, judge_decisions, or anything unnamed.
-                self.assertEqual(via_writer, via_repair)
+                #
+                # `date` is the one field that CANNOT match: the writer stamps
+                # it with the wall clock on each of the two invocations above,
+                # so the rows differ whenever those straddle a second boundary.
+                # That made this test fail roughly once per minute of suite time
+                # for a reason that says nothing about the merge, and a gate
+                # that fails at random teaches its reader to disregard it. Both
+                # rows must still CARRY a date; only its value is exempt.
+                self.assertTrue(via_writer.get("date"), "writer row lost its date")
+                self.assertTrue(via_repair.get("date"), "repaired row lost its date")
+                self.assertEqual(
+                    {k: v for k, v in via_writer.items() if k != "date"},
+                    {k: v for k, v in via_repair.items() if k != "date"},
+                )
 
     def test_flag_to_field_map_cannot_drift(self) -> None:
         """The map was a positional zip: reordering the field tuple silently
