@@ -1,11 +1,11 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.44.0",
+  "version": "0.45.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
-  "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
+  "description": "A verified build workflow for AI coding agents.",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "bin": {

@@ -105,7 +105,8 @@ CATEGORY_KEYWORDS = [
                       "working copy", "branch echo",
                       # Worktree GC + completed-but-uncommitted state + the
                       # operator-question resolver are single-run lifecycle infra:
-                      "worktree-gc", "worktree gc", "commit_state",
+                      "worktree-gc", "worktree gc", "worktree_inventory",
+                      "worktree inventory", "commit_state",
                       "uncommitted", "operator question",
                       # worktree_inventory reports what a removal would delete —
                       # same single-run worktree lifecycle family as worktree-gc.

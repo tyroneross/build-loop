@@ -48,6 +48,10 @@ def package_version() -> str:
     return json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
 
 
+def package_description() -> str:
+    return json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["description"]
+
+
 class ReadmeSurfaceClaimsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -67,6 +71,13 @@ class ReadmeSurfaceClaimsTests(unittest.TestCase):
             "line, not this test",
         )
 
+    def test_package_description_matches_the_readme_summary(self) -> None:
+        self.assertIn(
+            package_description(),
+            self.readme,
+            "npm and GitHub must present the same concise package summary",
+        )
+
     def test_every_pinned_version_matches_package_json(self) -> None:
         pinned = set(re.findall(r"@tyroneross/build-loop@(\d+\.\d+\.\d+)", self.readme))
         pinned |= set(re.findall(r"--version v(\d+\.\d+\.\d+)", self.readme))
@@ -80,10 +91,24 @@ class ReadmeSurfaceClaimsTests(unittest.TestCase):
     def test_readme_links_the_generated_skill_index(self) -> None:
         self.assertTrue((ROOT / "docs" / "SKILL-INDEX.md").exists())
         self.assertIn(
-            "docs/SKILL-INDEX.md", self.readme,
+            "https://github.com/tyroneross/build-loop/blob/main/docs/SKILL-INDEX.md",
+            self.readme,
             "docs/SKILL-INDEX.md is the routing table for every skill; the README must "
-            "point a reader at it",
+            "point npm readers at its public GitHub copy",
         )
+
+    def test_codex_install_and_use_are_documented(self) -> None:
+        for text in (
+            "codex plugin marketplace add tyroneross/build-loop",
+            "codex plugin add build-loop@build-loop",
+            "$build-loop add billing settings with tests",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, self.readme)
+
+    def test_groundwork_exchange_remains_discoverable(self) -> None:
+        self.assertIn("Groundwork exchange", self.readme)
+        self.assertIn(".designdoc/implementation-map.json", self.readme)
 
     def test_every_public_command_is_documented(self) -> None:
         commands = sorted(p.stem for p in (ROOT / "commands").glob("*.md"))
