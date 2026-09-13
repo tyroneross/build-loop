@@ -139,10 +139,17 @@ KNOWN_VERIFIERS: dict[str, str] = {
     # non-interactively. The framing is defensive ("find defects a same-vendor
     # reviewer would miss"), because Codex refuses an explicitly adversarial
     # audit brief and still exits 0, which reads as a clean round.
+    # The command SPELLS the entry the discharge check requires. Following it
+    # verbatim used to produce an entry that could not discharge the debt --
+    # no `vendor`, no `run_id` -- with no diagnostic saying why, leaving the
+    # waiver as the only visible exit from a round that had actually run.
     "cross-vendor-audit": (
         'codex exec "Review the diff {range} for defects a same-vendor reviewer '
         'would miss: destructive or irreversible paths, silent failure modes, '
         'unowned edge cases. Report file:line evidence per finding." < /dev/null'
+        '  # then append to .build-loop/judge-decisions.json: '
+        '{{"judge_id": "cross-vendor-audit", "verdict": "yay|nay|suggest_correction|look_again", '
+        '"vendor": "<provider>/<model>", "run_id": "{run}", "diff_range": "{range}"}}'
     ),
 }
 
@@ -313,6 +320,7 @@ def _dispatch_commands(
     diff_range: str,
     plan_path: str | None,
     overrides: dict[str, str],
+    run_id: str = "<run_id>",
 ) -> dict[str, str]:
     """Build the copy-paste dispatch command per owed verifier."""
     out: dict[str, str] = {}
@@ -330,6 +338,7 @@ def _dispatch_commands(
         out[name] = template.format(
             range=diff_range,
             plan=plan_path or ".build-loop/plans/<active-plan>.md",
+            run=run_id,
         )
     return out
 
@@ -343,47 +352,77 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
 
     A pre-upgrade manifest keyed debts by VERIFIER NAME alone, which cannot
     represent two runs owing the same verifier: the second write overwrote the
-    first run's obligation and the first diff shipped unreviewed. `owed_runs`
-    patched the read side but the underlying list still had one slot per name.
-    The record is now one row per (verifier, run_id) -- the thing a debt
-    actually is -- and `owed` / `owed_runs` / `dispatch_commands` are derived
-    views kept for every existing reader.
+    first run's obligation and the first diff shipped unreviewed. The record is
+    now one row per (verifier, run_id) -- the thing a debt actually is -- and
+    `owed` / `owed_runs` / `dispatch_commands` are derived views kept for every
+    existing reader.
+
+    Every malformed shape resolves toward MORE debt, never less. A half-written
+    manifest that reported "complete" would be the one shape that closes an
+    un-reviewed run, so `debts` is trusted only when it actually accounts for
+    the legacy `owed` view, and a row missing its owner inherits the manifest's.
     """
     debts: list[dict[str, Any]] = []
     cleared: list[dict[str, Any]] = []
     if not isinstance(existing, dict) or existing.get("_malformed"):
         return debts, cleared
 
+    fallback_run = str(existing.get("run_id") or "")
+    fallback_range = str(existing.get("diff_range") or "unknown")
+
+    raw_owed = existing.get("owed")
+    legacy_owed = (
+        _dedupe(str(v) for v in raw_owed) if isinstance(raw_owed, list) else []
+    )
+    owners = existing.get("owed_runs")
+    owners = owners if isinstance(owners, dict) else {}
+    commands = existing.get("dispatch_commands")
+    commands = commands if isinstance(commands, dict) else {}
+    reasons = existing.get("reasons")
+    reasons = reasons if isinstance(reasons, dict) else {}
+
     raw_debts = existing.get("debts")
-    if isinstance(raw_debts, list):
-        debts = [d for d in raw_debts if isinstance(d, dict) and d.get("verifier")]
-    else:
-        # Upgrade the flat shape.
-        owners = existing.get("owed_runs")
-        owners = owners if isinstance(owners, dict) else {}
-        commands = existing.get("dispatch_commands")
-        commands = commands if isinstance(commands, dict) else {}
-        reasons = existing.get("reasons")
-        reasons = reasons if isinstance(reasons, dict) else {}
-        fallback_run = str(existing.get("run_id") or "")
-        fallback_range = str(existing.get("diff_range") or "unknown")
-        for name in existing.get("owed") or []:
-            name = str(name)
-            debts.append({
-                "verifier": name,
-                "run_id": str(owners.get(name) or fallback_run),
-                "diff_range": fallback_range,
-                "dispatch_command": commands.get(name),
-                "reason": reasons.get(name),
-            })
+    rows = (
+        [d for d in raw_debts if isinstance(d, dict) and d.get("verifier")]
+        if isinstance(raw_debts, list)
+        else []
+    )
+    for row in rows:
+        debt = dict(row)
+        # An owner-less row cannot be scope-cleared or self-discharged, so it
+        # inherits the manifest's run rather than staying unselectable.
+        debt["run_id"] = str(debt.get("run_id") or fallback_run)
+        debt["diff_range"] = str(debt.get("diff_range") or fallback_range)
+        debts.append(debt)
+
+    # Anything the legacy view names and `debts` does not account for is added
+    # back. Covers an absent `debts`, an empty one, and one holding non-dict
+    # junk -- all of which previously read as "nothing owed".
+    have_names = {str(d.get("verifier")) for d in debts}
+    for name in legacy_owed:
+        if name in have_names:
+            continue
+        debts.append({
+            "verifier": name,
+            "run_id": str(owners.get(name) or fallback_run),
+            "diff_range": fallback_range,
+            "dispatch_command": commands.get(name),
+            "reason": reasons.get(name),
+        })
 
     raw_cleared = existing.get("cleared_debts")
     if isinstance(raw_cleared, list):
-        cleared = [d for d in raw_cleared if isinstance(d, dict) and d.get("verifier")]
-    else:
-        fallback_run = str(existing.get("run_id") or "")
-        for name in existing.get("cleared") or []:
-            cleared.append({"verifier": str(name), "run_id": fallback_run})
+        cleared = [
+            dict(d) for d in raw_cleared if isinstance(d, dict) and d.get("verifier")
+        ]
+    raw_cleared_names = existing.get("cleared")
+    if isinstance(raw_cleared_names, list):
+        seen = {_debt_key(d) for d in cleared}
+        for name in raw_cleared_names:
+            entry = {"verifier": str(name), "run_id": fallback_run}
+            if _debt_key(entry) not in seen:
+                seen.add(_debt_key(entry))
+                cleared.append(entry)
     return debts, cleared
 
 
@@ -463,7 +502,9 @@ def _write_manifest_unlocked(
             continue
         # Each debt carries ITS OWN range, so a later run's write cannot
         # re-point an earlier run's dispatch command at the wrong diff.
-        command = _dispatch_commands([name], diff_range, plan_path, overrides).get(name)
+        command = _dispatch_commands(
+            [name], diff_range, plan_path, overrides, run_id
+        ).get(name)
         debts.append({
             "verifier": name,
             "run_id": run_id,
@@ -916,17 +957,25 @@ def enforce_for_run_record(
         # is left alone rather than assumed to be this run's.
         manifest = load_manifest(workdir)
         if isinstance(manifest, dict) and not manifest.get("_malformed"):
-            owners = manifest.get("owed_runs")
-            owners = owners if isinstance(owners, dict) else {}
-            on_manifest = [
-                str(v) for v in (manifest.get("owed") or [])
-                if str(v) in MANAGED_VERIFIERS and str(owners.get(str(v), "")) == run_id
-            ]
-            satisfied = [v for v in on_manifest if v not in owed]
+            # Selected from the DEBT ROWS and cleared WITH the run scope. The
+            # name-keyed `owed_runs` view keeps only the last row per verifier,
+            # so reading it named one owner for two debts -- and clearing
+            # without `run_id` then discharged every run that owed the verifier.
+            # One run's verdict deleted another run's outstanding round and the
+            # manifest with it, which is the defect this whole file exists to
+            # stop, reached through its own discharge path.
+            rows, _ = _load_debts(manifest)
+            satisfied = _dedupe(
+                str(d.get("verifier")) for d in rows
+                if str(d.get("verifier")) in MANAGED_VERIFIERS
+                and str(d.get("run_id") or "") == run_id
+                and str(d.get("verifier")) not in owed
+            )
             if satisfied:
                 clear_verifiers(
                     workdir,
                     verifiers=satisfied,
+                    run_id=run_id,
                     reason=f"verdict recorded on run record ({written_by})",
                     record_tombstone=False,
                 )
@@ -943,7 +992,11 @@ def enforce_for_run_record(
             written_by=written_by,
             dispatch_overrides=_host_dispatch_overrides(record, diff_range),
         )
-    except Exception:  # noqa: BLE001 — never break the run-record write
+    except Exception as exc:  # noqa: BLE001 — never break the run-record write
+        # Fail-open, but never SILENT. A lock timeout here means the debt was
+        # not armed, and an un-armed debt is indistinguishable from "nothing
+        # owed" -- which is precisely the escape GAP-1 exists to close.
+        _log(workdir, f"enforce FAILED run={record.get('run_id')!r}: {exc!r}")
         return None
 
 
@@ -1213,6 +1266,15 @@ def main(argv: list[str] | None = None) -> int:
         help="A verifier to clear (repeatable).",
     )
     p_clear.add_argument("--all", action="store_true", dest="clear_all")
+    p_clear.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "Clear only this run's debt. Required when more than one run owes the "
+            "verifier: an unscoped waiver would discharge a peer run's outstanding "
+            "round on the strength of this run's excuse."
+        ),
+    )
     p_clear.add_argument("--reason", default=None)
     p_clear.add_argument("--json", action="store_true")
 
@@ -1248,10 +1310,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.op == "clear":
         if not args.verifier and not args.clear_all:
             p_clear.error("clear requires --verifier <name> (repeatable) or --all")
+        # The scoped clear had no caller: the CLI exposed no --run-id, so the
+        # documented operator command discharged every run owing the verifier
+        # and tombstoned each owner. A property reachable only from a kwarg no
+        # production path passes is a test of the implementation, not the tool.
+        if not args.run_id:
+            manifest = load_manifest(workdir)
+            rows, _ = _load_debts(manifest) if manifest else ([], [])
+            targets = [
+                d for d in rows
+                if args.clear_all or str(d.get("verifier")) in set(args.verifier)
+            ]
+            owners = {str(d.get("run_id") or "") for d in targets}
+            if len(owners) > 1:
+                p_clear.error(
+                    "more than one run owes this verifier "
+                    f"({', '.join(sorted(owners))}); pass --run-id to name whose "
+                    "debt is being waived"
+                )
         result = clear_verifiers(
             workdir,
             verifiers=args.verifier,
             clear_all=args.clear_all,
+            run_id=args.run_id,
             reason=args.reason,
         )
         _emit(result, as_json=args.json)

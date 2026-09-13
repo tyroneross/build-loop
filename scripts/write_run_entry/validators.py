@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,10 @@ def validate_entry(entry: dict) -> None:
 # a `block` or `request_changes` IS a verdict and must count as present.
 NON_VERDICT_VALUES = {"", "pending", "none", "n/a"}
 NON_VERDICT_STATUSES = {"packet_emitted", "pending"}
+# Statuses that say the round did not complete. An allowed `verdict` riding a
+# failed `status` -- {"verdict": "yay", "status": "failed"} -- discharged the
+# debt on a record of the review NOT happening.
+FAILED_STATUSES = {"failed", "error", "not-run", "not_run", "aborted", "timeout", "cancelled"}
 
 
 def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
@@ -135,6 +140,10 @@ KNOWN_VENDOR_PROVIDERS: dict[str, tuple[str, ...]] = {
     "xai": ("xai", "grok"),
     "qwen": ("qwen",),
     "deepseek": ("deepseek",),
+    # Local routes are real second vendors relative to a hosted model, and the
+    # repo's own model index routes to them.
+    "ollama": ("ollama",),
+    "local": ("llamacpp", "lmstudio", "vllm"),
 }
 
 
@@ -149,7 +158,11 @@ def vendor_provider(vendor: object) -> str | None:
     text = str(vendor or "").strip().lower()
     if not text:
         return None
-    for token in [t for t in text.replace("/", " ").replace("-", " ").split() if t]:
+    # Split on ANY non-alphanumeric run. Two str.replace calls left ':', '_',
+    # '.' and ',' joined to their neighbours, so "openai:gpt-5" and "codex_cli"
+    # resolved to no provider and a legitimate round stayed owed with no reason
+    # given.
+    for token in [tok for tok in re.split(r"[^a-z0-9]+", text) if tok]:
         for provider, aliases in KNOWN_VENDOR_PROVIDERS.items():
             if token in aliases:
                 return provider
@@ -188,7 +201,7 @@ def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
         # through _validate_judge_decision, so this is their only check.
         if verdict not in ALL_JUDGE_VERDICTS:
             continue
-        if status in NON_VERDICT_STATUSES:
+        if status in NON_VERDICT_STATUSES or status in FAILED_STATUSES:
             continue
         provider = vendor_provider(item.get("vendor"))
         if provider is None:

@@ -984,14 +984,29 @@ class TestSecondCrossVendorRoundRegressions(_Base):
         self.assertEqual(by_run["RUN_B"]["diff_range"], "b0..b1")
 
     def test_a_waiver_for_one_run_does_not_suppress_another_runs_debt(self) -> None:
+        """Driven through the CLI, the path an operator actually reaches.
+
+        The property was previously asserted only through the `run_id=` kwarg,
+        which no production caller and no CLI flag reached -- a guard written
+        against the implementation rather than the reachable path, and the
+        unscoped CLI clear discharged BOTH runs.
+        """
         ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
-                          owed=[ov.CROSS_VENDOR_VERIFIER, ov.AUTO_OWED_VERIFIER])
-        ov.clear_verifiers(self.workdir, verifiers=[ov.CROSS_VENDOR_VERIFIER],
-                           run_id="RUN_A", reason="no second vendor")
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
         ov.write_manifest(self.workdir, run_id="RUN_B", diff_range="b0..b1",
                           owed=[ov.CROSS_VENDOR_VERIFIER])
-        owners = ov.check_manifest(self.workdir)["owed_runs"]
-        self.assertEqual(owners[ov.CROSS_VENDOR_VERIFIER], "RUN_B")
+
+        # Unscoped, with two owners: refused rather than waiving both.
+        rc, _ = _run_cli(self.workdir, "clear", "--verifier", ov.CROSS_VENDOR_VERIFIER)
+        self.assertEqual(rc, 2)
+        self.assertEqual(len(ov.check_manifest(self.workdir)["debts"]), 2)
+
+        rc, _ = _run_cli(self.workdir, "clear", "--verifier", ov.CROSS_VENDOR_VERIFIER,
+                         "--run-id", "RUN_A", "--reason", "no second vendor here")
+        self.assertEqual(rc, 0)
+        debts = ov.check_manifest(self.workdir)["debts"]
+        self.assertEqual([(d["verifier"], d["run_id"]) for d in debts],
+                         [(ov.CROSS_VENDOR_VERIFIER, "RUN_B")])
 
     def test_the_close_gate_reads_the_debt_owner_not_the_last_writer(self) -> None:
         import run_close_lint
@@ -1002,14 +1017,19 @@ class TestSecondCrossVendorRoundRegressions(_Base):
              "filesTouched": list(HIGH_RISK_FILES)}
             for rid in ("RUN_A", "RUN_B")
         ])
+        # SAME verifier for both runs -- the motivating shape. Giving them
+        # different verifiers hid the defect: `owed_runs` is name-keyed and the
+        # last row wins, so RUN_A was told the debt was someone else's.
         ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
                           owed=[ov.CROSS_VENDOR_VERIFIER])
         ov.write_manifest(self.workdir, run_id="RUN_B", diff_range="b0..b1",
-                          owed=[ov.AUTO_OWED_VERIFIER])
-        # The manifest's own run_id is RUN_B, but RUN_A still owes.
-        self.assertEqual(
-            run_close_lint.check(self.workdir, run_id="RUN_A")["status"], "review_owed"
-        )
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        envelope = run_close_lint.check(self.workdir, run_id="RUN_A")
+        self.assertEqual(envelope["status"], "review_owed")
+        self.assertIn("RUN_A", envelope["owed_run_ids"])
+        # One dispatch line per debt, each naming its own range.
+        self.assertIn("a0..a1", envelope["remediation"])
+        self.assertIn("b0..b1", envelope["remediation"])
 
     def test_a_verdict_naming_an_older_run_does_not_discharge_this_one(self) -> None:
         record = self._record("run_new")
@@ -1066,3 +1086,145 @@ class TestSecondCrossVendorRoundRegressions(_Base):
         with self.assertRaises(ValueError):
             with ov._manifest_lock(self.workdir):
                 raise ValueError("the caller's real error")
+
+
+class TestThirdRoundRegressions(_Base):
+    """Findings from the third pass (same-vendor auditor + second-vendor round).
+
+    Both reviewers converged: the RECORD was re-keyed per (verifier, run_id) but
+    the LIFECYCLE still ran through the name-keyed derived views.
+    """
+
+    def _armed_pair(self) -> None:
+        """Two runs owing the SAME verifier, armed through the production path."""
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": []}), encoding="utf-8"
+        )
+        for run_id, rng in (("RUN_A", "a0..a1"), ("RUN_B", "b0..b1")):
+            ov.enforce_for_run_record(
+                self.workdir,
+                {
+                    "run_id": run_id, "host": "claude_code",
+                    "filesTouched": list(HIGH_RISK_FILES),
+                    "judge_decisions": [dict(AUDITOR_VERDICT)],
+                    "auditor_status": "ran:dispatched-agent",
+                },
+                written_by="test", diff_range=rng,
+            )
+
+    def test_one_runs_verdict_does_not_discharge_another_runs_debt(self) -> None:
+        """The discharge cleared by verifier NAME across every owner.
+
+        Reproduced end to end by the auditor: run B recording its own verdict
+        deleted run A's debt and the manifest with it, so A's diff shipped with
+        no second-vendor review and no record that one was ever owed.
+        """
+        self._armed_pair()
+        self.assertEqual(len(ov.check_manifest(self.workdir)["debts"]), 2)
+
+        ov.enforce_for_run_record(
+            self.workdir,
+            {
+                "run_id": "RUN_B", "host": "claude_code",
+                "filesTouched": list(HIGH_RISK_FILES),
+                "judge_decisions": [dict(AUDITOR_VERDICT), dict(CROSS_VENDOR_VERDICT)],
+                "auditor_status": "ran:dispatched-agent",
+            },
+            written_by="test", diff_range="b0..b1",
+        )
+        chk = ov.check_manifest(self.workdir)
+        self.assertEqual(chk["status"], "incomplete")
+        self.assertEqual(
+            [(d["verifier"], d["run_id"]) for d in chk["debts"]],
+            [(ov.CROSS_VENDOR_VERIFIER, "RUN_A")],
+        )
+
+    def test_a_failed_status_does_not_discharge_on_an_allowed_verdict(self) -> None:
+        """`{"verdict": "yay", "status": "failed"}` is a record of not reviewing."""
+        for status in ("failed", "error", "not-run", "timeout"):
+            with self.subTest(status=status):
+                from write_run_entry.validators import cross_vendor_present
+
+                self.assertFalse(cross_vendor_present([{
+                    "judge_id": "cross-vendor-audit", "verdict": "yay",
+                    "status": status, "vendor": "openai",
+                }], "claude_code"))
+
+    def test_vendor_separators_other_than_slash_are_recognised(self) -> None:
+        from write_run_entry.validators import vendor_provider
+
+        for value, expected in (
+            ("openai:gpt-5", "openai"),
+            ("codex_cli", "openai"),
+            ("ollama/qwen2.5-coder:32b", "ollama"),
+            ("anthropic.claude-opus-5", "anthropic"),
+            ("unknown", None),
+        ):
+            with self.subTest(vendor=value):
+                self.assertEqual(vendor_provider(value), expected)
+
+    def test_a_half_upgraded_manifest_reads_as_incomplete(self) -> None:
+        """Every malformed shape must resolve toward MORE debt, never less."""
+        for payload in (
+            {"run_id": "A", "owed": ["independent-auditor"], "debts": []},
+            {"run_id": "A", "owed": ["independent-auditor"], "debts": ["not-a-dict"]},
+            {"run_id": "A", "owed": ["independent-auditor"]},
+        ):
+            with self.subTest(payload=sorted(payload)):
+                (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+                    json.dumps(payload), encoding="utf-8"
+                )
+                chk = ov.check_manifest(self.workdir)
+                self.assertEqual(chk["status"], "incomplete")
+                self.assertIn("independent-auditor", chk["owed"])
+
+    def test_a_scalar_owed_field_does_not_wedge_the_check(self) -> None:
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            json.dumps({"run_id": "A", "debts": {}, "owed": 7}), encoding="utf-8"
+        )
+        self.assertIn(ov.check_manifest(self.workdir)["status"], {"complete", "incomplete"})
+
+    def test_a_debt_row_without_an_owner_inherits_the_manifest_run(self) -> None:
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            json.dumps({
+                "run_id": "A", "diff_range": "x..y",
+                "debts": [{"verifier": ov.CROSS_VENDOR_VERIFIER}],
+            }),
+            encoding="utf-8",
+        )
+        debt = ov.check_manifest(self.workdir)["debts"][0]
+        self.assertEqual(debt["run_id"], "A")
+        self.assertEqual(debt["diff_range"], "x..y")
+
+    def test_the_dispatch_command_spells_the_entry_that_discharges_it(self) -> None:
+        """Following the emitted command produced an entry that could not discharge."""
+        manifest = ov.write_manifest(
+            self.workdir, run_id="RUN_A", diff_range="a0..a1",
+            owed=[ov.CROSS_VENDOR_VERIFIER],
+        )
+        command = manifest["dispatch_commands"][ov.CROSS_VENDOR_VERIFIER]
+        for required in ("judge_id", "verdict", "vendor", "run_id", "RUN_A", "a0..a1"):
+            self.assertIn(required, command)
+
+    def test_a_failed_arm_is_logged_rather_than_read_as_nothing_owed(self) -> None:
+        """A swallowed lock timeout looked exactly like a clean run."""
+        import unittest.mock as mock
+
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": []}), encoding="utf-8"
+        )
+        with mock.patch.object(ov, "write_manifest", side_effect=TimeoutError("lock")):
+            result = ov.enforce_for_run_record(
+                self.workdir,
+                {
+                    "run_id": "RUN_A", "host": "claude_code",
+                    "filesTouched": list(HIGH_RISK_FILES),
+                    "judge_decisions": [dict(AUDITOR_VERDICT)],
+                    "auditor_status": "ran:dispatched-agent",
+                },
+                written_by="test", diff_range="a0..a1",
+            )
+        self.assertIsNone(result)
+        log = (self.workdir / ".build-loop" / "audit-log.md").read_text()
+        self.assertIn("enforce FAILED", log)
+        self.assertIn("RUN_A", log)

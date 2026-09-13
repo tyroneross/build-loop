@@ -255,9 +255,17 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     # Ownership comes from the per-debt rows, NOT the manifest's `run_id`. That
     # field is only the last writer's, so keying on it reported "another run's
     # debt" to the run that actually owed it and let it close at exit 0.
-    owners = gap.get("owed_runs")
-    owners = owners if isinstance(owners, dict) else {}
-    owner_ids = {str(v) for v in owners.values() if str(v)}
+    # Ownership comes from the per-debt ROWS. `owed_runs` is a name-keyed view
+    # where the last row wins, so two runs owing one verifier left only the
+    # later named as owner -- and the earlier run was told the debt was someone
+    # else's and closed at exit 0 with its diff un-reviewed.
+    debts = gap.get("debts")
+    debts = [d for d in debts if isinstance(d, dict)] if isinstance(debts, list) else []
+    owner_ids = {str(d.get("run_id") or "") for d in debts} - {""}
+    if not owner_ids:
+        owners = gap.get("owed_runs")
+        owners = owners if isinstance(owners, dict) else {}
+        owner_ids = {str(v) for v in owners.values() if str(v)}
     if not owner_ids:
         owner_ids = {str(gap.get("run_id") or "")} - {""}
     owned_by_this_run = (
@@ -270,14 +278,29 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     # hook caller got a traceback instead of a JSON envelope.
     raw_commands = gap.get("dispatch_commands")
     commands = raw_commands if isinstance(raw_commands, dict) else {}
-    remediation = " ; ".join(
-        f"{name}: {commands.get(name, 'dispatch ' + name)}" for name in owed
-    ) or "resolve .build-loop/owed-verification.json"
+    # One line PER DEBT, each naming its own run and range. Printing the
+    # name-keyed view showed one command for two debts -- always the later
+    # run's range -- so following it audited the wrong diff.
+    if debts:
+        remediation = " ; ".join(
+            f"{d.get('verifier')} (run {d.get('run_id') or '?'}, "
+            f"{d.get('diff_range') or '?'}): "
+            f"{d.get('dispatch_command') or 'dispatch ' + str(d.get('verifier'))}"
+            for d in debts
+        )
+    else:
+        remediation = " ; ".join(
+            f"{name}: {commands.get(name, 'dispatch ' + name)}" for name in owed
+        ) or "resolve .build-loop/owed-verification.json"
     envelope.update(
         status="review_owed" if owned_by_this_run else "review_owed_other_run",
         review_incomplete=True,
         owed=owed,
-        owed_run_id=gap.get("run_id"),
+        # The OWNERS, matching what `reason` says. This field used to report the
+        # manifest's last writer while the prose named someone else, so a JSON
+        # consumer and a human reading the same envelope disagreed.
+        owed_run_id=owed_run_id or gap.get("run_id"),
+        owed_run_ids=sorted(owner_ids),
         reason=(
             f"review is not complete: {', '.join(owed) or 'a verifier'} still owed on "
             f"run {owed_run_id or '(unnamed)'!r} per {gap.get('manifest_path')}"

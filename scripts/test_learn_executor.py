@@ -1031,8 +1031,13 @@ def test_a_caller_supplied_metric_is_not_differenced_against_run_outcomes(
     assert reviewer["target_metric"]["observed"] == 5.0
 
 
-def test_the_head_scan_will_not_read_an_unbounded_line(tmp_path: Path) -> None:
-    """One enormous early row allocated past the reader's own byte limits."""
+def test_the_head_scan_skips_an_oversized_row_without_reading_it(tmp_path: Path) -> None:
+    """Bounded AND complete: cap the read, but keep scanning past the long row.
+
+    One enormous early row used to allocate past the reader's own byte limits.
+    Capping it then abandoned the scan, which silently skipped an experiment
+    whose valid `created` row merely sat after that row. Both are wrong.
+    """
     _seed_experiment(tmp_path, "huge")
     log = tmp_path / ".build-loop" / "experiments" / "huge.jsonl"
     log.write_text(
@@ -1044,4 +1049,107 @@ def test_the_head_scan_will_not_read_an_unbounded_line(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     runner = _runner()
-    assert runner._head_created_row(log) is None
+    found = runner._head_created_row(log)
+    assert found is not None and found["artifact"] == "huge"
+
+    # The oversized row itself is never parsed: a file holding only that row
+    # yields nothing rather than decoding 400 KB.
+    only_huge = tmp_path / ".build-loop" / "experiments" / "onlyhuge.jsonl"
+    only_huge.write_text(
+        json.dumps({"event": "created", "artifact": "x", "blob": "y" * 400_000}) + "\n",
+        encoding="utf-8",
+    )
+    assert runner._head_created_row(only_huge) is None
+
+
+def test_one_row_missing_metric_source_does_not_skip_the_control_arm(tmp_path: Path) -> None:
+    """The same `all`/`any` defect, reintroduced 170 lines from where it was fixed.
+
+    One row missing metric_source downgraded the artifact to the level
+    comparison, skipped the control arm, and labelled outcome-derived rows
+    "caller-supplied" -- a receipt claiming a comparison it did not perform.
+    """
+    _seed_experiment(tmp_path, "mixedsrc", target=0.7)
+    log = tmp_path / ".build-loop" / "experiments" / "mixedsrc.jsonl"
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "mixedsrc", run_id=f"ms-{index}")
+    rows = log.read_text().strip().splitlines()
+    parsed = [json.loads(r) for r in rows]
+    for row in parsed:
+        if row.get("event") == "applied":
+            row.pop("metric_source", None)
+            break
+    log.write_text("".join(json.dumps(r) + "\n" for r in parsed), encoding="utf-8")
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path, count=12, outcome="pass")
+    result = _runner().run(tmp_path, run_id=run_id, source="test")
+    sweep = result["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0, sweep
+    orders = [o for o in result["work_orders"] if o["role"] == "promotion-reviewer"]
+    assert orders == [], orders
+
+
+def test_a_mixed_scale_sample_is_reported_not_averaged(tmp_path: Path) -> None:
+    """Averaging caller metrics with outcome scores produces a mean on no scale."""
+    from write_run_entry.iohelpers import append_experiment_rows
+
+    _seed_experiment(tmp_path, "mixedscale")
+    experiments = tmp_path / ".build-loop" / "experiments"
+    for index in range(6):
+        _write_run_entry_cli(tmp_path, "mixedscale", run_id=f"mx2-{index}")
+    for index in range(2):
+        append_experiment_rows(
+            experiments, f"caller-{index}", ["mixedscale"], "pass",
+            "2026-09-12T00:00:00Z", metric_value=7.0,
+        )
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path)
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0, sweep
+    assert sweep["metric_mismatch"] == 1, sweep
+
+
+def test_an_out_of_window_treatment_arm_does_not_promote(tmp_path: Path) -> None:
+    """The 90-day bound applied only to controls, so 2020 rows could promote."""
+    _seed_experiment(tmp_path, "oldtreat")
+    log = tmp_path / ".build-loop" / "experiments" / "oldtreat.jsonl"
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "oldtreat", run_id=f"ot-{index}")
+    parsed = [json.loads(r) for r in log.read_text().strip().splitlines()]
+    for row in parsed:
+        if row.get("event") == "applied":
+            row["date"] = "2020-01-01T00:00:00Z"
+    log.write_text("".join(json.dumps(r) + "\n" for r in parsed), encoding="utf-8")
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path, count=12, outcome="partial")
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 0, sweep
+    assert sweep["treatment_out_of_window"] == 8, sweep
+
+
+def test_a_future_dated_control_run_does_not_count_as_recent(tmp_path: Path) -> None:
+    _seed_experiment(tmp_path, "future")
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "future", run_id=f"fu-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    path = tmp_path / ".build-loop" / "state.json"
+    state = json.loads(path.read_text())
+    for index in range(12):
+        state["runs"].append({
+            "run_id": f"future-{index}", "date": "2099-01-01T00:00:00Z",
+            "goal": "c", "outcome": "partial", "host": "test", "commit": "pending",
+            "phases": {}, "manualInterventions": [], "diagnosticCommands": [],
+            "filesTouched": [], "judge_decisions": [], "security_findings": [],
+            "active_experimental_artifacts": [],
+        })
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+    assert sweep["control_missing"] == 1, sweep

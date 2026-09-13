@@ -469,7 +469,12 @@ def _head_created_row(path: Path, max_lines: int = 500) -> dict[str, Any] | None
                 if not raw:
                     return None
                 if len(raw) > MAX_JSONL_FIRST_LINE_BYTES:
-                    return None
+                    # SKIP it, do not abandon the scan: a valid `created` row
+                    # sitting after one long row was being dropped, silently
+                    # skipping the experiment instead of reporting it.
+                    while raw and not raw.endswith(b"\n"):
+                        raw = handle.readline(MAX_JSONL_FIRST_LINE_BYTES + 1)
+                    continue
                 try:
                     row = json.loads(raw.decode("utf-8", errors="replace"))
                 except (ValueError, TypeError):
@@ -554,9 +559,12 @@ def _control_mean(
         if since is not None:
             # Same window, or it is not a control. Eight failed runs from years
             # ago are not a comparison for eight recent applied runs; they are a
-            # different era of the repository wearing the control's name.
+            # different era of the repository wearing the control's name. The
+            # bound is two-sided: a future-dated row is not "within the last 90
+            # days" either, and a clock-skewed or hand-edited date would
+            # otherwise be counted.
             when = _run_date(row)
-            if when is None or when < since:
+            if when is None or when < since or when > _sweep_now():
                 continue
         active = row.get("active_experimental_artifacts")
         if isinstance(active, list) and artifact in active:
@@ -620,6 +628,20 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
             if row.get("event") == "applied" and row.get("confounded") is False
         ]
         applied = [row for row in eligible_rows if _is_measured(row.get("metric_value"))]
+        # The TREATMENT arm is bounded by the same window as the control. It was
+        # unbounded, so eight applied rows from 2020 could be compared against a
+        # recent control mean and promote across repository eras.
+        window_start = _sweep_now() - timedelta(days=CONTROL_WINDOW_DAYS)
+        in_window = [
+            row for row in applied
+            if (when := _run_date(row)) is not None
+            and window_start <= when <= _sweep_now()
+        ]
+        if applied and len(in_window) < len(applied):
+            result["treatment_out_of_window"] = (
+                result.get("treatment_out_of_window", 0) + (len(applied) - len(in_window))
+            )
+        applied = in_window
         unmeasured = len(eligible_rows) - len(applied)
         if unmeasured:
             result["metric_missing"] += unmeasured
@@ -663,9 +685,29 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
         # metric ("seconds to complete") shares no scale with it -- differencing
         # the two both blocks real improvements and passes flat ones -- so those
         # experiments keep the level comparison and say which rule was applied.
-        outcome_measured = all(
-            row.get("metric_source") == "run_outcome" for row in applied
-        )
+        # ANY, matching _metric_scale_mismatch 170 lines above. `all` meant one
+        # row missing metric_source -- every row written before that field
+        # landed -- downgraded the artifact to the level comparison, skipped the
+        # control arm, and labelled outcome-derived rows "caller-supplied": a
+        # receipt claiming a comparison it did not perform. This is the same
+        # quantifier defect, reintroduced in a second place.
+        sources = {row.get("metric_source") for row in applied}
+        outcome_measured = "run_outcome" in sources
+        mixed_sources = outcome_measured and sources != {"run_outcome"}
+        if mixed_sources:
+            # Averaging caller metrics with outcome scores produces a mean on no
+            # scale at all, so the sample is reported rather than graded.
+            result["metric_mismatch"] = result.get("metric_mismatch", 0) + 1
+            result.setdefault("metric_mismatch_detail", []).append({
+                "artifact": name,
+                "log": path.name,
+                "metric_sources": sorted(str(s) for s in sources),
+                "reason": (
+                    "the sample mixes outcome-derived and caller-supplied "
+                    "metric_value rows, which share no scale"
+                ),
+            })
+            continue
         if not outcome_measured:
             control, control_n = None, 0
             delta = None
