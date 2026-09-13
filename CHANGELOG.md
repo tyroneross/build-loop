@@ -16,6 +16,26 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.45.1](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.0...build-loop-v0.45.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **handoff:** withhold intent.md when it marks itself stale ([5ce58e4](https://github.com/tyroneross/build-loop/commit/5ce58e42ffc8cc14ddf5292ede4af86b7588bb39))
+* **learn:** count distinct runs, not rows, on both promotion arms ([be96661](https://github.com/tyroneross/build-loop/commit/be96661284367b9b34f5e796b830484668c86e94))
+* **learn:** give applied experiment rows a real metric so the A/B gate can fire ([eb57c9f](https://github.com/tyroneross/build-loop/commit/eb57c9fb3a9cb790abc2686086d7af43295bce7b))
+* **memory:** over-fetch every backend, then truncate once after ranking ([29392f0](https://github.com/tyroneross/build-loop/commit/29392f00858d92b511421a53331e784069b7e7f4))
+* **memory:** thread project through runs, decisions and lessons readers ([2c88c26](https://github.com/tyroneross/build-loop/commit/2c88c26d6aecdadb18914e8b6b33629012ba1222))
+* **review:** carry the debts[] contract into the instruction layer and the base gate ([365731c](https://github.com/tyroneross/build-loop/commit/365731c55dc5708663863d1a9d8b0b4ee1a4d8e7))
+* **review:** close the discharge half and the validity half the auditor found ([ec15160](https://github.com/tyroneross/build-loop/commit/ec15160b474fd3507c06e7ea38b14431f23fb706))
+* **review:** key owed debts by (verifier, run) so a second run cannot drop the first's ([7ab3bcc](https://github.com/tyroneross/build-loop/commit/7ab3bccced7335274f731e96589beeb3e2d46e59))
+* **review:** make a recorded verdict discharge the debt, and a claim prove itself ([e9a2a62](https://github.com/tyroneross/build-loop/commit/e9a2a6270967c6a6bfbea4f51896df883c38bf02))
+* **review:** owe the cross-vendor round back instead of leaving it advisory ([15be6ea](https://github.com/tyroneross/build-loop/commit/15be6eae58bb597baff7f583dab3a782c117dbce))
+* **review:** run the debt LIFECYCLE off the debt rows, not the name-keyed views ([699ac85](https://github.com/tyroneross/build-loop/commit/699ac850a548b3149b7e10dbbc01217a346b8f65))
+* **review:** stop the verdict allowlist re-arming 103 already-audited rows ([815285a](https://github.com/tyroneross/build-loop/commit/815285ab99b51fb5a63590d474abab8ddd980682))
+* **scripts:** track convert.py so the regenerated diagram is reproducible ([8f67016](https://github.com/tyroneross/build-loop/commit/8f670166992333912ea0ddc17873838f1b211c08))
+* **tests,registry:** unwedge the self-mod gate on two real failures ([7bbe31d](https://github.com/tyroneross/build-loop/commit/7bbe31d775823d34184b6b165b762be0b2899677))
+
 ## [0.45.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.44.0...build-loop-v0.45.0) (2026-09-13)
 
 
