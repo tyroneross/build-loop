@@ -772,3 +772,47 @@ def test_scoped_recall_excludes_another_projects_decision(workdir: Path) -> None
     assert "dec-unscoped-001" in ids, (
         f"globally-routed decisions stay visible under a scope; got {ids}"
     )
+
+
+def test_top_result_is_identical_at_limit_3_and_limit_5(workdir: Path) -> None:
+    """`recall` must be monotonic in `limit`: a smaller limit may return
+    fewer rows, never a WORSE top row.
+
+    Regression for BUIL-MEMORY-m2ebc3gb1d4xz9t39st4w: `_fan_out` capped every
+    backend at `limit` BEFORE `_order` re-ranked the union, so a strong match
+    sitting deep inside one backend's own ordering was truncated away before
+    the ranker could see it. Measured 2026-09-13: limit=5 returned the right
+    entry at rank 1 and limit=3 did not return it at all.
+
+    Fixture shape: the decisions backend sorts its own output by recency, so
+    the strongest match is given the OLDEST date and six newer weak matches
+    are stacked above it inside that single backend.
+    """
+    _pin_scoped_project(workdir, "scoped-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    dec_dir = memory_root / "projects" / "scoped-project" / "decisions"
+
+    for i in range(6):
+        _write_decision(
+            dec_dir, f"dec-weak-{i}", f"cadence weekly sync note {i}",
+            "Routine cadence note, one shared term only.", f"2026-08-1{i}",
+        )
+    _write_decision(
+        dec_dir, "dec-strong",
+        "riemann cadence rollout decision",
+        "The riemann cadence rollout: riemann cadence is the subject here.",
+        "2026-07-01",
+    )
+
+    top3 = mf.recall(query="riemann cadence", workdir=workdir, limit=3)["merged"]
+    top5 = mf.recall(query="riemann cadence", workdir=workdir, limit=5)["merged"]
+
+    assert top3 and top5, "fixture produced no results at all"
+    assert top5[0]["id"] == "dec-strong", (
+        f"fixture is not exercising the defect; limit=5 top was {top5[0]}"
+    )
+    assert top3[0]["id"] == top5[0]["id"], (
+        f"top result changed with limit: limit=3 -> {top3[0]['id']}, "
+        f"limit=5 -> {top5[0]['id']}"
+    )
+    assert len(top3) <= 3

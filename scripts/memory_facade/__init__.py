@@ -16,8 +16,10 @@ function:
 
 `kind` filters by store name: "runs" | "decisions" | "lessons" | "backlog" |
 "semantic" | "debugger" (or None for all). `project` filters project stores
-label. `limit` is per-store cap (the merged result returns up to
-`len(KINDS) * limit`).
+label. `limit` caps `merged` at `limit` rows and each `results_by_kind`
+bucket at `limit` rows; every backend is over-fetched first and the cap is
+applied after ranking, so results are monotonic in `limit` -- the top result
+at limit=3 is the top result at limit=30.
 
 Each backend degrades gracefully:
   - state.json runs   → returns [] silently if file missing.
@@ -83,6 +85,15 @@ from .backlog import read_backlog  # noqa: E402
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_LIMIT = 10
+# Per-backend over-fetch floor. Each backend used to be capped at `limit`
+# BEFORE `_order` re-ranked the union, so the global best result could be
+# truncated away inside its own backend and never reach the ranker: measured
+# 2026-09-13, `recall('guided decisions', project='ross-labs-astro')` returned
+# the right entry at rank 1 with limit=5 and not at all with limit=3. Results
+# have to be monotonic in `limit` -- asking for fewer must never lose the best
+# one -- so every backend is asked for `max(limit * 3, MIN_FETCH)` candidates
+# and the truncation happens once, after ranking.
+MIN_BACKEND_FETCH = 15
 KINDS = ("runs", "decisions", "lessons", "backlog", "semantic", "debugger", "content")
 KIND_ALIASES = {
     "decision": "decisions",
@@ -288,7 +299,12 @@ def _fan_out(
     project: Optional[str],
     skip_postgres: bool,
 ) -> tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
-    """Invoke each backend if its kind is requested; collect results + reasons."""
+    """Invoke each backend if its kind is requested; collect results + reasons.
+
+    `limit` here is the OVER-FETCH budget (`_fetch_limit`), not the caller's
+    `limit`. Backends cap themselves, so anything they drop is invisible to
+    the ranker; the caller's cap is applied once, after `_order`.
+    """
     _backends = {
         # `project` reaches EVERY backend. runs/decisions/lessons used to be
         # called without it while the newer four were scoped, so a scoped
@@ -334,26 +350,44 @@ def recall(
     if kind is not None and kind not in KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {KINDS}")
     workdir = (workdir or Path.cwd()).resolve()
-    results, reasons = _fan_out(workdir, query, limit, kind, project, skip_postgres)
+    fetch_limit = max(limit * 3, MIN_BACKEND_FETCH)
+    results, reasons = _fan_out(workdir, query, fetch_limit, kind, project,
+                                skip_postgres)
 
-    merged: List[Dict[str, Any]] = []
+    candidates: List[Dict[str, Any]] = []
+    bucket_of: Dict[int, str] = {}
     for k in KINDS:
-        merged.extend(results[k])
-    merged = _order(merged, query)
+        for row in results[k]:
+            bucket_of[id(row)] = k
+            candidates.append(row)
+    ranked = _order(candidates, query)
 
+    # Truncate ONCE, after ranking, and do it in rank order so the cap keeps
+    # the best candidates rather than whichever ones a backend happened to
+    # return first. `results_by_kind` keeps its documented per-store cap of
+    # `limit`; `merged` is what the caller asked for.
+    capped: Dict[str, List[Dict[str, Any]]] = {k: [] for k in KINDS}
+    merged: List[Dict[str, Any]] = []
+    for row in ranked:
+        k = bucket_of.get(id(row))
+        if k is None:  # defensive: a row no bucket claimed
+            merged.append(row)
+            continue
+        if len(capped[k]) < limit:
+            capped[k].append(row)
+            merged.append(row)
+
+    merged = merged[:limit]
     return {
         "query": query,
         "kind_filter": kind,
         "project": project,
-        "results_by_kind": results,
-        # NOT truncated in practice, and deliberately kept: each backend already
-        # caps its own return at `limit` and there are len(KINDS) backends, so
-        # this bound always equals the maximum possible length. Verified at
-        # limits 5/10/30 -> totals 14/24/64 against caps 35/70/210. It reads
-        # like a second safety limit and is a no-op; it stays only as the
-        # backstop for a future backend that ignores `limit`.
-        "merged": merged[: limit * len(KINDS)],
+        "results_by_kind": capped,
+        "merged": merged,
         "reasons": reasons,
+        # Telemetry records what was SHOWN. Emitting the untruncated candidate
+        # pool made `shown_count` and the rank positions describe a list the
+        # caller never saw.
         "telemetry_correlation_id": _emit_telemetry(merged, query, project, workdir, phase),
     }
 
