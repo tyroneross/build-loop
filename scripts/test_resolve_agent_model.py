@@ -146,15 +146,22 @@ class OpenAIAgentApprovals(unittest.TestCase):
     }
 
     def test_openai_host_role_resolution(self):
-        for agent, expected in self.EXPECT.items():
-            with self.subTest(agent=agent):
-                env = ram.resolve(
-                    agent=agent,
-                    workdir=HERE.parent,
-                    host_providers={"openai"},
-                )
-                self.assertEqual(env["model"], expected, env)
-                self.assertEqual(env["source"], "role-preferred")
+        # Resolve against an ISOLATED workdir, not the repo root. `.build-loop/` is
+        # gitignored, so a developer's local `modelOverrides.agents` block resolves
+        # with source "config" and silently decides this assertion — four roles went
+        # red that way on 2026-09-13 against a clean tree. This class asserts the
+        # taxonomy's role-preferred mapping; config precedence is AgentPreferences'.
+        with tempfile.TemporaryDirectory() as td:
+            for agent, expected in self.EXPECT.items():
+                with self.subTest(agent=agent):
+                    env = ram.resolve(
+                        agent=agent,
+                        workdir=Path(td),
+                        agents_dir=REPO_AGENTS,
+                        host_providers={"openai"},
+                    )
+                    self.assertEqual(env["model"], expected, env)
+                    self.assertEqual(env["source"], "role-preferred")
 
 
 class InheritAgent(unittest.TestCase):

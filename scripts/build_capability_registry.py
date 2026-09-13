@@ -107,6 +107,10 @@ CATEGORY_KEYWORDS = [
                       # operator-question resolver are single-run lifecycle infra:
                       "worktree-gc", "worktree gc", "commit_state",
                       "uncommitted", "operator question",
+                      # worktree_inventory reports what a removal would delete —
+                      # same single-run worktree lifecycle family as worktree-gc.
+                      "worktree_inventory", "worktree inventory",
+                      "worktree removal",
                       # Session-start lifecycle hooks (plugin self-heal,
                       # post-push memory-closeout baton drain) and the host
                       # capability resolver (which wakeup/resume primitives a
@@ -232,7 +236,13 @@ CATEGORY_KEYWORDS = [
                       # dialog. The single-flight behaviour is the mechanism; the
                       # surface is still "run a command against the host".
                       "os-facing", "os facing", "system access", "system_access",
-                      "single-flight")),
+                      "single-flight",
+                      # convert.py is the same shape as the wrappers above: a
+                      # tool the agent RUNS instead of computing inline (epoch,
+                      # bytes, duration). The surface is the invocation, not the
+                      # arithmetic, which is what keeps it out of `meta`.
+                      "unit/time conversion", "unit/time conversions",
+                      "conversions. never", "in your head")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log",
                        "cost-ledger", "cost ledger", "cost_rca",
                        # macOS background-item surfaces. Auditing how launchd
