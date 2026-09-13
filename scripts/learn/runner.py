@@ -460,7 +460,9 @@ def _head_created_row(path: Path, max_lines: int = 500) -> dict[str, Any] | None
     """
     try:
         with path.open("rb") as handle:
-            for index in range(max_lines):
+            budget = max_lines
+            while budget > 0:
+                budget -= 1
                 # readline WITH a byte cap. Text iteration reads a whole
                 # physical line before any line-count check, so one enormous
                 # early row allocated unboundedly -- past the very byte limits
@@ -472,7 +474,11 @@ def _head_created_row(path: Path, max_lines: int = 500) -> dict[str, Any] | None
                     # SKIP it, do not abandon the scan: a valid `created` row
                     # sitting after one long row was being dropped, silently
                     # skipping the experiment instead of reporting it.
-                    while raw and not raw.endswith(b"\n"):
+                    # The drain consumes the SAME budget. An unbounded drain
+                    # turned a documented head-bounded scan into a full-file
+                    # read on the one input shape the bound was added for.
+                    while raw and not raw.endswith(b"\n") and budget > 0:
+                        budget -= 1
                         raw = handle.readline(MAX_JSONL_FIRST_LINE_BYTES + 1)
                     continue
                 try:
@@ -594,9 +600,12 @@ def _is_measured(value: Any) -> bool:
 def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     config = _read_json(workdir / ".build-loop" / "config.json", {})
     enabled = isinstance(config, dict) and config.get("autoPromote") is True
+    # Every counter initialised, so an absent key and a zero can never be read
+    # as the same thing by a receipt consumer.
     result = {
         "enabled": enabled, "scanned": 0, "eligible": 0,
         "metric_missing": 0, "control_missing": 0,
+        "metric_mismatch": 0, "treatment_out_of_window": 0,
     }
     if not enabled:
         return [], result
@@ -627,22 +636,26 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
             row for row in rows
             if row.get("event") == "applied" and row.get("confounded") is False
         ]
-        applied = [row for row in eligible_rows if _is_measured(row.get("metric_value"))]
+        measured = [row for row in eligible_rows if _is_measured(row.get("metric_value"))]
+        # Accounted BEFORE the window filter. Computing it after meant every
+        # measured-but-old row was counted a second time as metric_missing,
+        # under a reason ("carry no numeric metric_value") that is false about
+        # rows which carry a perfectly good metric and are merely out of window.
+        unmeasured = len(eligible_rows) - len(measured)
         # The TREATMENT arm is bounded by the same window as the control. It was
         # unbounded, so eight applied rows from 2020 could be compared against a
         # recent control mean and promote across repository eras.
         window_start = _sweep_now() - timedelta(days=CONTROL_WINDOW_DAYS)
         in_window = [
-            row for row in applied
+            row for row in measured
             if (when := _run_date(row)) is not None
             and window_start <= when <= _sweep_now()
         ]
-        if applied and len(in_window) < len(applied):
+        if measured and len(in_window) < len(measured):
             result["treatment_out_of_window"] = (
-                result.get("treatment_out_of_window", 0) + (len(applied) - len(in_window))
+                result.get("treatment_out_of_window", 0) + (len(measured) - len(in_window))
             )
         applied = in_window
-        unmeasured = len(eligible_rows) - len(applied)
         if unmeasured:
             result["metric_missing"] += unmeasured
             result.setdefault("metric_missing_detail", []).append({
@@ -691,7 +704,14 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
         # control arm, and labelled outcome-derived rows "caller-supplied": a
         # receipt claiming a comparison it did not perform. This is the same
         # quantifier defect, reintroduced in a second place.
-        sources = {row.get("metric_source") for row in applied}
+        # An UNLABELLED row is outcome-derived, not a second scale. The writer
+        # has always derived metric_value from the run outcome and only started
+        # LABELLING it recently, so treating a missing label as evidence of a
+        # different metric made every experiment holding a pre-label row inert,
+        # under a diagnostic that was false about those rows.
+        sources = {
+            (row.get("metric_source") or "run_outcome") for row in applied
+        }
         outcome_measured = "run_outcome" in sources
         mixed_sources = outcome_measured and sources != {"run_outcome"}
         if mixed_sources:

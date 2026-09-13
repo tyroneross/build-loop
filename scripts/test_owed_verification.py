@@ -1228,3 +1228,158 @@ class TestThirdRoundRegressions(_Base):
         log = (self.workdir / ".build-loop" / "audit-log.md").read_text()
         self.assertIn("enforce FAILED", log)
         self.assertIn("RUN_A", log)
+
+
+class TestFourthRoundRegressions(_Base):
+    """Findings from the fourth pass. Two reviewers converged on all three Highs."""
+
+    def test_a_codex_host_command_spells_the_entry_that_discharges_it(self) -> None:
+        """The f5 fix landed on the default template and not on the override.
+
+        The override is the ONLY command a codex-hosted run ever sees, which is
+        exactly the run class where a cross-vendor debt matters most, and its
+        text named no vendor and no run_id -- rejected by both checks.
+        """
+        manifest = ov.enforce_for_run_record(
+            self.workdir,
+            {
+                "run_id": "RUN_CODEX", "host": "codex",
+                "filesTouched": list(HIGH_RISK_FILES),
+                "judge_decisions": [dict(AUDITOR_VERDICT)],
+                "auditor_status": "ran:dispatched-agent",
+            },
+            written_by="test", diff_range="a0..a1",
+        )
+        command = manifest["dispatch_commands"][ov.CROSS_VENDOR_VERIFIER]
+        self.assertNotIn("codex exec", command)
+        for required in ("vendor", "run_id", "RUN_CODEX", "a0..a1"):
+            self.assertIn(required, command)
+
+    def test_a_clear_refuses_a_manifest_it_cannot_parse(self) -> None:
+        """The escape hatch was deleting itself.
+
+        A malformed manifest yields no debt rows, so the "nothing left" branch
+        unlinked the file and reported the review complete -- and `check`
+        reports owed=['unknown'] on that shape, making `clear --verifier
+        unknown` the operator's natural next keystroke.
+        """
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            "{ not json at all", encoding="utf-8"
+        )
+        self.assertTrue(ov.check_manifest(self.workdir)["review_incomplete"])
+        result = ov.clear_verifiers(self.workdir, verifiers=["unknown"])
+        self.assertEqual(result["action"], "refused_malformed")
+        self.assertTrue((self.workdir / ".build-loop" / "owed-verification.json").exists())
+        self.assertTrue(ov.check_manifest(self.workdir)["review_incomplete"])
+
+    def test_clear_all_is_not_refused_by_the_ambiguity_guard(self) -> None:
+        """`--all` is an unambiguous intent; refusing it left no command at all."""
+        ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        ov.write_manifest(self.workdir, run_id="RUN_B", diff_range="b0..b1",
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        rc, _ = _run_cli(self.workdir, "clear", "--all", "--reason", "no peer host")
+        self.assertEqual(rc, 0)
+        self.assertEqual(ov.check_manifest(self.workdir)["status"], "absent")
+
+    def test_a_prior_runs_waiver_does_not_suppress_this_runs_debt(self) -> None:
+        """The cleared NAME list carries no owner; backfilling it invented one."""
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            json.dumps({
+                "run_id": "RUN_C",
+                "diff_range": "c0..c1",
+                "debts": [{"verifier": ov.AUTO_OWED_VERIFIER, "run_id": "RUN_C"}],
+                "cleared_debts": [
+                    {"verifier": ov.CROSS_VENDOR_VERIFIER, "run_id": "RUN_A"}
+                ],
+                "cleared": [ov.CROSS_VENDOR_VERIFIER],
+            }),
+            encoding="utf-8",
+        )
+        manifest = ov.write_manifest(
+            self.workdir, run_id="RUN_C", diff_range="c0..c1",
+            owed=[ov.CROSS_VENDOR_VERIFIER],
+        )
+        self.assertIn(
+            (ov.CROSS_VENDOR_VERIFIER, "RUN_C"),
+            [(d["verifier"], d["run_id"]) for d in manifest["debts"]],
+        )
+
+    def test_an_unreadable_manifest_shape_fails_closed(self) -> None:
+        """{"debts": {}, "owed": 7} read as a complete review."""
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            json.dumps({"run_id": "A", "status": "incomplete", "debts": {}, "owed": 7}),
+            encoding="utf-8",
+        )
+        chk = ov.check_manifest(self.workdir)
+        self.assertEqual(chk["status"], "incomplete")
+        self.assertTrue(chk["review_incomplete"])
+
+    def test_a_debts_row_and_a_legacy_owner_are_both_kept(self) -> None:
+        """Name-keyed reconciliation dropped the legacy view's owner."""
+        (self.workdir / ".build-loop" / "owed-verification.json").write_text(
+            json.dumps({
+                "run_id": "RUN_A", "diff_range": "a0..a1",
+                "debts": [{"verifier": ov.CROSS_VENDOR_VERIFIER, "run_id": "RUN_A"}],
+                "owed": [ov.CROSS_VENDOR_VERIFIER],
+                "owed_runs": {ov.CROSS_VENDOR_VERIFIER: "RUN_B"},
+            }),
+            encoding="utf-8",
+        )
+        owners = {d["run_id"] for d in ov.check_manifest(self.workdir)["debts"]}
+        self.assertEqual(owners, {"RUN_A", "RUN_B"})
+
+    def test_a_failed_auditor_row_does_not_discharge_the_auditor_debt(self) -> None:
+        """The verdict checks were only in the cross-vendor caller, not the base."""
+        from write_run_entry.validators import auditor_present
+
+        for entry in (
+            {"judge_id": "independent-auditor", "verdict": "yay", "status": "failed"},
+            {"judge_id": "independent-auditor", "verdict": "not-run"},
+            {"judge_id": "independent-auditor", "verdict": "yay", "status": "timeout"},
+        ):
+            with self.subTest(entry=entry):
+                self.assertFalse(auditor_present([entry]))
+
+    def test_a_verdict_for_an_obsolete_range_does_not_discharge(self) -> None:
+        from write_run_entry.validators import cross_vendor_present
+
+        entry = {
+            "judge_id": "cross-vendor-audit", "verdict": "yay",
+            "vendor": "openai/codex-cli", "diff_range": "old0..old1",
+        }
+        self.assertFalse(cross_vendor_present([entry], "claude_code", "new0..new1"))
+        self.assertTrue(cross_vendor_present([entry], "claude_code", "old0..old1"))
+
+    def test_the_emitted_waiver_command_is_runnable(self) -> None:
+        """The printed last-resort command exited 2 in the multi-run case."""
+        import run_close_lint
+        import shlex
+
+        (self.workdir / ".build-loop" / "state.json").write_text(
+            json.dumps({"runs": [{
+                "run_id": "RUN_A", "date": "2026-09-13T12:00:00Z", "goal": "g",
+                "outcome": "pass", "filesTouched": list(HIGH_RISK_FILES),
+            }]}),
+            encoding="utf-8",
+        )
+        ov.write_manifest(self.workdir, run_id="RUN_A", diff_range="a0..a1",
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        ov.write_manifest(self.workdir, run_id="RUN_B", diff_range="b0..b1",
+                          owed=[ov.CROSS_VENDOR_VERIFIER])
+        remediation = run_close_lint.check(self.workdir, run_id="RUN_A")["remediation"]
+        import re
+
+        waiver = re.search(
+            r"python3 scripts/owed_verification\.py clear [^;]+", remediation
+        ).group(0).strip()
+        argv = shlex.split(waiver)[1:]  # drop "python3"
+        proc = subprocess.run([sys.executable, *argv], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Exit 0 alone is not evidence: `clear --verifier <name>` on a verifier
+        # nobody owes also exits 0 while doing nothing. The command must have
+        # cleared THIS run's debt and left the other run's standing.
+        self.assertEqual(
+            [(d["verifier"], d["run_id"]) for d in ov.check_manifest(self.workdir)["debts"]],
+            [(ov.CROSS_VENDOR_VERIFIER, "RUN_B")],
+        )

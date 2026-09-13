@@ -231,6 +231,27 @@ def _owed_verification_gap(workdir: Path) -> dict[str, Any] | None:
     return result if isinstance(result, dict) and result.get("status") == "incomplete" else None
 
 
+def _waiver_commands(workdir: Path, debts: list[dict[str, Any]], owed: list[str]) -> str:
+    """The last-resort waiver, SCOPED so the printed command actually runs.
+
+    An unscoped `clear --verifier <name>` is refused whenever two runs owe that
+    verifier -- which is the case this whole mechanism exists for -- so the
+    remediation was emitting a command that exits 2. Same defect class as an
+    un-dischargeable dispatch command, in the sibling file.
+    """
+    if debts:
+        return " ; ".join(
+            f"python3 scripts/owed_verification.py clear --workdir {shlex.quote(str(workdir))} "
+            f"--verifier {shlex.quote(str(d.get('verifier')))} "
+            f"--run-id {shlex.quote(str(d.get('run_id') or ''))} --reason \"<why>\""
+            for d in debts
+        )
+    return (
+        f"python3 scripts/owed_verification.py clear --workdir {shlex.quote(str(workdir))} "
+        f"--verifier {shlex.quote(owed[0]) if owed else '<name>'} --reason \"<why>\""
+    )
+
+
 def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
     """Refuse a close whose review is still owed.
 
@@ -258,7 +279,8 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     # Ownership comes from the per-debt ROWS. `owed_runs` is a name-keyed view
     # where the last row wins, so two runs owing one verifier left only the
     # later named as owner -- and the earlier run was told the debt was someone
-    # else's and closed at exit 0 with its diff un-reviewed.
+    # else's and closed at exit 0 with its diff un-reviewed. The name-keyed
+    # views remain only as a fallback for a pre-upgrade manifest.
     debts = gap.get("debts")
     debts = [d for d in debts if isinstance(d, dict)] if isinstance(debts, list) else []
     owner_ids = {str(d.get("run_id") or "") for d in debts} - {""}
@@ -299,7 +321,13 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
         # The OWNERS, matching what `reason` says. This field used to report the
         # manifest's last writer while the prose named someone else, so a JSON
         # consumer and a human reading the same envelope disagreed.
-        owed_run_id=owed_run_id or gap.get("run_id"),
+        # Single-valued, as it has always been; the full set is owed_run_ids.
+        # Joining every owner into this field silently broke any consumer
+        # comparing it to a run id.
+        owed_run_id=(
+            this_run_id if this_run_id in owner_ids
+            else (sorted(owner_ids)[0] if owner_ids else gap.get("run_id"))
+        ),
         owed_run_ids=sorted(owner_ids),
         reason=(
             f"review is not complete: {', '.join(owed) or 'a verifier'} still owed on "
@@ -312,8 +340,7 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
             "# record the verdict, then re-run write_run_entry --scope build "
             "(a verdict in .build-loop/judge-decisions.json discharges the debt "
             "automatically).  LAST RESORT, only when no second vendor is "
-            f"reachable: python3 scripts/owed_verification.py clear --workdir "
-            f"{shlex.quote(str(workdir))} --verifier <name> --reason \"<why>\""
+            f"reachable: {_waiver_commands(workdir, debts, owed)}"
         ),
     )
     return envelope

@@ -1062,12 +1062,14 @@ def test_the_head_scan_skips_an_oversized_row_without_reading_it(tmp_path: Path)
     assert runner._head_created_row(only_huge) is None
 
 
-def test_one_row_missing_metric_source_does_not_skip_the_control_arm(tmp_path: Path) -> None:
-    """The same `all`/`any` defect, reintroduced 170 lines from where it was fixed.
+def test_one_row_missing_metric_source_still_runs_the_control_arm(tmp_path: Path) -> None:
+    """An unlabelled legacy row is outcome-derived, not a second scale.
 
-    One row missing metric_source downgraded the artifact to the level
-    comparison, skipped the control arm, and labelled outcome-derived rows
-    "caller-supplied" -- a receipt claiming a comparison it did not perform.
+    Two defects lived here in sequence. `all()` downgraded the artifact to the
+    level comparison and labelled outcome rows "caller-supplied". The first fix
+    then classified the same sample as mixed-scale and refused to grade it --
+    also wrong, and with a diagnostic that is false about a row the writer
+    derived from the run outcome. The control arm must actually RUN.
     """
     _seed_experiment(tmp_path, "mixedsrc", target=0.7)
     log = tmp_path / ".build-loop" / "experiments" / "mixedsrc.jsonl"
@@ -1086,7 +1088,11 @@ def test_one_row_missing_metric_source_does_not_skip_the_control_arm(tmp_path: P
     result = _runner().run(tmp_path, run_id=run_id, source="test")
     sweep = result["stages"]["sample_sweep"]
 
+    # Not promoted -- the delta against an all-pass control is 0, below the
+    # required 0.2 -- but graded by the CONTROL rule, not refused.
     assert sweep["eligible"] == 0, sweep
+    assert sweep["metric_mismatch"] == 0, sweep
+    assert sweep["control_missing"] == 0, sweep
     orders = [o for o in result["work_orders"] if o["role"] == "promotion-reviewer"]
     assert orders == [], orders
 
@@ -1153,3 +1159,48 @@ def test_a_future_dated_control_run_does_not_count_as_recent(tmp_path: Path) -> 
 
     sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
     assert sweep["control_missing"] == 1, sweep
+
+
+def test_an_out_of_window_row_is_not_also_counted_as_missing_a_metric(tmp_path: Path) -> None:
+    """`metric_missing` said those rows carry no numeric metric. They do.
+
+    Computing `unmeasured` after the window filter counted every measured-but-old
+    row a second time, under a reason that is false about it.
+    """
+    _seed_experiment(tmp_path, "double")
+    log = tmp_path / ".build-loop" / "experiments" / "double.jsonl"
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "double", run_id=f"db-{index}")
+    parsed = [json.loads(r) for r in log.read_text().strip().splitlines()]
+    for row in parsed:
+        if row.get("event") == "applied":
+            row["date"] = "2020-01-01T00:00:00Z"
+    log.write_text("".join(json.dumps(r) + "\n" for r in parsed), encoding="utf-8")
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path, count=12, outcome="partial")
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+
+    assert sweep["treatment_out_of_window"] == 8, sweep
+    assert sweep["metric_missing"] == 0, sweep
+
+
+def test_the_head_scan_drain_consumes_the_line_budget(tmp_path: Path) -> None:
+    """An unbounded drain turned a head-bounded scan into a full-file read."""
+    _seed_experiment(tmp_path, "drain")
+    log = tmp_path / ".build-loop" / "experiments" / "drain.jsonl"
+    log.write_text(
+        json.dumps({"event": "noise", "blob": "x" * 400_000}) + "\n"
+        + json.dumps({
+            "event": "created", "artifact": "drain", "baseline_metric": "pass rate",
+            "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    runner = _runner()
+    # A budget of 2 is spent by the oversized row's own chunks, so the created
+    # row beyond it is not reached -- the scan stays bounded rather than
+    # reading on until EOF.
+    assert runner._head_created_row(log, max_lines=2) is None
+    # With a real budget the same file resolves.
+    assert runner._head_created_row(log, max_lines=500)["artifact"] == "drain"

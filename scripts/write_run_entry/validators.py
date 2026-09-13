@@ -88,12 +88,34 @@ NON_VERDICT_STATUSES = {"packet_emitted", "pending"}
 FAILED_STATUSES = {"failed", "error", "not-run", "not_run", "aborted", "timeout", "cancelled"}
 
 
+def rendered_verdict(item: object) -> bool:
+    """True when a judge_decisions entry carries a real, completed verdict.
+
+    Three conditions, and all three were learned from a record that satisfied
+    the gate without a review having happened: the verdict must be one this
+    repo's judges actually emit (an allowlist -- `verdict: "not-run"` passed a
+    blacklist), the status must not say the round is still pending, and it must
+    not say the round FAILED (`{"verdict": "yay", "status": "failed"}` is a
+    record of the review not completing).
+    """
+    if not isinstance(item, dict):
+        return False
+    verdict = str(item.get("verdict") or "").strip().lower()
+    status = str(item.get("status") or "").strip().lower()
+    if verdict in NON_VERDICT_VALUES or verdict not in ALL_JUDGE_VERDICTS:
+        return False
+    if status in NON_VERDICT_STATUSES or status in FAILED_STATUSES:
+        return False
+    return True
+
+
 def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
     """True when judge_decisions[] carries a rendered VERDICT from `marker`'s judge.
 
-    A matching judge_id is necessary and NOT sufficient: the entry must also carry
-    a rendered verdict. Matching on the id alone let an emitted-but-never-answered
-    audit packet satisfy every caller of this function.
+    A matching judge_id is necessary and NOT sufficient. The verdict checks live
+    HERE, in the base predicate, not only in the cross-vendor caller: this
+    function is what guards the independent-auditor debt, and a failed-status
+    auditor row discharged it while the identical cross-vendor row was rejected.
     """
     if not isinstance(judge_decisions, list):
         return False
@@ -102,9 +124,7 @@ def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
             continue
         if marker not in str(item.get("judge_id", "")):
             continue
-        verdict = str(item.get("verdict") or "").strip().lower()
-        status = str(item.get("status") or "").strip().lower()
-        if verdict in NON_VERDICT_VALUES or status in NON_VERDICT_STATUSES:
+        if not rendered_verdict(item):
             continue
         return True
     return False
@@ -143,7 +163,10 @@ KNOWN_VENDOR_PROVIDERS: dict[str, tuple[str, ...]] = {
     # Local routes are real second vendors relative to a hosted model, and the
     # repo's own model index routes to them.
     "ollama": ("ollama",),
-    "local": ("llamacpp", "lmstudio", "vllm"),
+    # Written in POST-SPLIT token form: the splitter turns "llama.cpp" into
+    # ['llama','cpp'] and "lm-studio" into ['lm','studio'], so aliases spelled
+    # as the joined word matched nothing and a real round stayed owed.
+    "local": ("local", "vllm", "lmstudio", "llamacpp", "mlx"),
 }
 
 
@@ -162,14 +185,20 @@ def vendor_provider(vendor: object) -> str | None:
     # '.' and ',' joined to their neighbours, so "openai:gpt-5" and "codex_cli"
     # resolved to no provider and a legitimate round stayed owed with no reason
     # given.
-    for token in [tok for tok in re.split(r"[^a-z0-9]+", text) if tok]:
+    tokens = [tok for tok in re.split(r"[^a-z0-9]+", text) if tok]
+    # Joined pairs first: "llama.cpp" must resolve to the local runtime, not to
+    # meta via its bare "llama" token.
+    joined = ["".join(pair) for pair in zip(tokens, tokens[1:])]
+    for candidate in [*joined, *tokens]:
         for provider, aliases in KNOWN_VENDOR_PROVIDERS.items():
-            if token in aliases:
+            if candidate in aliases:
                 return provider
     return None
 
 
-def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
+def cross_vendor_present(
+    judge_decisions: object, host: object = None, diff_range: object = None
+) -> bool:
     """True when judge_decisions[] carries a rendered SECOND-VENDOR verdict.
 
     Two conditions, and the second is the one that matters. The id must contain
@@ -188,20 +217,13 @@ def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
     if not isinstance(judge_decisions, list):
         return False
     own_provider = HOST_PROVIDERS.get(str(host or "").strip().lower())
+    wanted_range = str(diff_range or "").strip()
     for item in judge_decisions:
         if not isinstance(item, dict):
             continue
         if CROSS_VENDOR_JUDGE_MARKER not in str(item.get("judge_id", "")):
             continue
-        verdict = str(item.get("verdict") or "").strip().lower()
-        status = str(item.get("status") or "").strip().lower()
-        # ALLOWLIST. The blacklist let `verdict: "not-run"` / `status: "failed"`
-        # discharge the debt: a record of the round NOT happening read as the
-        # round happening. Entries from the judge-decisions FILE never pass
-        # through _validate_judge_decision, so this is their only check.
-        if verdict not in ALL_JUDGE_VERDICTS:
-            continue
-        if status in NON_VERDICT_STATUSES or status in FAILED_STATUSES:
+        if not rendered_verdict(item):
             continue
         provider = vendor_provider(item.get("vendor"))
         if provider is None:
@@ -214,6 +236,13 @@ def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
             continue
         if provider == own_provider:
             continue
+        if wanted_range and wanted_range != "unknown":
+            # A review of an OBSOLETE diff is not a review of this one. The file
+            # is append-only, so a verdict on the same run's earlier range would
+            # otherwise discharge a debt armed by later commits.
+            entry_range = str(item.get("diff_range") or "").strip()
+            if entry_range and entry_range != wanted_range:
+                continue
         return True
     return False
 

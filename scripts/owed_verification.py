@@ -139,19 +139,25 @@ KNOWN_VERIFIERS: dict[str, str] = {
     # non-interactively. The framing is defensive ("find defects a same-vendor
     # reviewer would miss"), because Codex refuses an explicitly adversarial
     # audit brief and still exits 0, which reads as a clean round.
-    # The command SPELLS the entry the discharge check requires. Following it
-    # verbatim used to produce an entry that could not discharge the debt --
-    # no `vendor`, no `run_id` -- with no diagnostic saying why, leaving the
-    # waiver as the only visible exit from a round that had actually run.
     "cross-vendor-audit": (
         'codex exec "Review the diff {range} for defects a same-vendor reviewer '
         'would miss: destructive or irreversible paths, silent failure modes, '
         'unowned edge cases. Report file:line evidence per finding." < /dev/null'
-        '  # then append to .build-loop/judge-decisions.json: '
-        '{{"judge_id": "cross-vendor-audit", "verdict": "yay|nay|suggest_correction|look_again", '
-        '"vendor": "<provider>/<model>", "run_id": "{run}", "diff_range": "{range}"}}'
+        + "{entry}"
     ),
 }
+
+# The entry a cross-vendor round must record, spelled into EVERY emitted
+# command. A command that produces an entry which cannot discharge the debt is
+# a round that ran and still reads as un-run, with no diagnostic saying why and
+# the waiver as the only visible exit. One constant so the default template and
+# the host override cannot drift -- they did, and the override (the codex-host
+# branch, where this debt matters most) kept emitting the un-dischargeable shape.
+DISCHARGING_ENTRY_SUFFIX = (
+    '  # then append to .build-loop/judge-decisions.json: '
+    '{{"judge_id": "cross-vendor-audit", "verdict": "yay|nay|suggest_correction|look_again", '
+    '"vendor": "<provider>/<model>", "run_id": "{run}", "diff_range": "{range}"}}'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +335,8 @@ def _dispatch_commands(
             out[name] = overrides[name]
             continue
         template = KNOWN_VERIFIERS.get(name)
+        if template is not None and "{entry}" in template:
+            template = template.replace("{entry}", DISCHARGING_ENTRY_SUFFIX)
         if template is None:
             out[name] = (
                 f'Agent(subagent_type="build-loop:{name}", '
@@ -374,12 +382,44 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
     legacy_owed = (
         _dedupe(str(v) for v in raw_owed) if isinstance(raw_owed, list) else []
     )
+    # A shape this module cannot read is UNKNOWN debt, not zero debt. A
+    # non-list `debts` next to a non-list `owed` -- {"debts": {}, "owed": 7} --
+    # produced ([], []) and a "complete" review on a manifest nobody can parse.
+    unreadable = (
+        existing.get("debts") is not None and not isinstance(existing.get("debts"), list)
+    ) or (raw_owed is not None and not isinstance(raw_owed, list))
+    if unreadable and not legacy_owed:
+        return ([{
+            "verifier": "unknown",
+            "run_id": fallback_run,
+            "diff_range": fallback_range,
+            "reason": "manifest shape is unreadable; the owed set cannot be determined",
+        }], [])
     owners = existing.get("owed_runs")
     owners = owners if isinstance(owners, dict) else {}
     commands = existing.get("dispatch_commands")
     commands = commands if isinstance(commands, dict) else {}
     reasons = existing.get("reasons")
     reasons = reasons if isinstance(reasons, dict) else {}
+
+    raw_cleared = existing.get("cleared_debts")
+    if isinstance(raw_cleared, list):
+        cleared = [
+            dict(d) for d in raw_cleared if isinstance(d, dict) and d.get("verifier")
+        ]
+    raw_cleared_names = existing.get("cleared")
+    if isinstance(raw_cleared_names, list):
+        # ONLY for a verifier `cleared_debts` does not already account for. The
+        # name list carries no owner, so backfilling it against the manifest's
+        # latest writer FABRICATED a clearance for that run: run A's waiver,
+        # read back while run C was the last writer, suppressed C's own genuine
+        # debt for the same verifier.
+        accounted = {str(d.get("verifier")) for d in cleared}
+        for name in raw_cleared_names:
+            if str(name) in accounted:
+                continue
+            cleared.append({"verifier": str(name), "run_id": fallback_run})
+            accounted.add(str(name))
 
     raw_debts = existing.get("debts")
     rows = (
@@ -398,9 +438,19 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
     # Anything the legacy view names and `debts` does not account for is added
     # back. Covers an absent `debts`, an empty one, and one holding non-dict
     # junk -- all of which previously read as "nothing owed".
-    have_names = {str(d.get("verifier")) for d in debts}
+    # Keyed on (verifier, run), not name: a manifest whose debts[] holds
+    # (v, RUN_A) while owed_runs maps v -> RUN_B was dropping RUN_B's
+    # obligation, because "accounted for" was checked by name and the only run
+    # information the legacy view carries was never consulted.
+    have_keys = {_debt_key(d) for d in debts}
+    cleared_keys_early = {
+        (str(d.get("verifier")), str(d.get("run_id") or ""))
+        for d in cleared
+        if isinstance(d, dict)
+    }
     for name in legacy_owed:
-        if name in have_names:
+        legacy_key = (name, str(owners.get(name) or fallback_run))
+        if legacy_key in have_keys or legacy_key in cleared_keys_early:
             continue
         debts.append({
             "verifier": name,
@@ -410,19 +460,6 @@ def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any
             "reason": reasons.get(name),
         })
 
-    raw_cleared = existing.get("cleared_debts")
-    if isinstance(raw_cleared, list):
-        cleared = [
-            dict(d) for d in raw_cleared if isinstance(d, dict) and d.get("verifier")
-        ]
-    raw_cleared_names = existing.get("cleared")
-    if isinstance(raw_cleared_names, list):
-        seen = {_debt_key(d) for d in cleared}
-        for name in raw_cleared_names:
-            entry = {"verifier": str(name), "run_id": fallback_run}
-            if _debt_key(entry) not in seen:
-                seen.add(_debt_key(entry))
-                cleared.append(entry)
     return debts, cleared
 
 
@@ -853,7 +890,9 @@ def _persisted_record(workdir: Path, run_id: str) -> dict[str, Any] | None:
             return row
     return None
 
-def _host_dispatch_overrides(record: dict[str, Any], diff_range: str) -> dict[str, str]:
+def _host_dispatch_overrides(
+    record: dict[str, Any], diff_range: str, run_id: str = "<run_id>"
+) -> dict[str, str]:
     """Keep the emitted cross-vendor command off the run's OWN vendor.
 
     The default template is `codex exec`, which on a run whose `host` is already
@@ -868,8 +907,12 @@ def _host_dispatch_overrides(record: dict[str, Any], diff_range: str) -> dict[st
             f"# this run's host IS codex -- dispatch the round on a DIFFERENT vendor.\n"
             f'# Claude Code: Agent(subagent_type="build-loop:independent-auditor", '
             f'prompt="second-vendor review of {diff_range}; write the verdict to '
-            f'.build-loop/judge-decisions.json with judge_id cross-vendor-audit")\n'
+            f'.build-loop/judge-decisions.json")\n'
             f"# or hand the range to a peer session over the rally channel."
+            # The SAME discharging entry the default template spells. This branch
+            # is the only command a codex-hosted run ever sees, and it emitted a
+            # shape with no vendor and no run_id -- rejected by both checks.
+            + DISCHARGING_ENTRY_SUFFIX.format(run=run_id, range=diff_range)
         )
     }
 
@@ -990,7 +1033,7 @@ def enforce_for_run_record(
             reason="; ".join(f"{name}: {why}" for name, why in owed.items()),
             reasons=dict(owed),
             written_by=written_by,
-            dispatch_overrides=_host_dispatch_overrides(record, diff_range),
+            dispatch_overrides=_host_dispatch_overrides(record, diff_range, run_id),
         )
     except Exception as exc:  # noqa: BLE001 — never break the run-record write
         # Fail-open, but never SILENT. A lock timeout here means the debt was
@@ -1070,6 +1113,24 @@ def _clear_verifiers_unlocked(
     Idempotent: clearing an unknown or already-cleared debt is a no-op.
     """
     manifest = load_manifest(workdir)
+    if isinstance(manifest, dict) and manifest.get("_malformed"):
+        # REFUSE. A malformed manifest yields no debt rows, so `remaining` came
+        # back empty and the "nothing left" branch unlinked the file and
+        # reported the review complete -- any clear, even of a verifier nobody
+        # owed, destroyed the only record that an audit was owed. `check`
+        # reports owed=['unknown'] on this shape, so `clear --verifier unknown`
+        # is the operator's natural next keystroke. Carried unfiled through
+        # four review passes.
+        _log(workdir, "clear REFUSED: manifest is unparseable; repair or remove it deliberately")
+        return {
+            "action": "refused_malformed",
+            "cleared": [],
+            "remaining": ["unknown"],
+            "status": "incomplete",
+            "state_updated": False,
+            "manifest_removed": False,
+            "tombstone_persisted": None,
+        }
     if manifest is None:
         return {
             "action": "noop_absent",
@@ -1314,13 +1375,13 @@ def main(argv: list[str] | None = None) -> int:
         # documented operator command discharged every run owing the verifier
         # and tombstoned each owner. A property reachable only from a kwarg no
         # production path passes is a test of the implementation, not the tool.
-        if not args.run_id:
+        # `--all` is an unambiguous statement of intent, so the guard that
+        # exists to catch AMBIGUITY must not refuse it -- that left no command
+        # at all able to clear a multi-run manifest.
+        if not args.run_id and not args.clear_all:
             manifest = load_manifest(workdir)
             rows, _ = _load_debts(manifest) if manifest else ([], [])
-            targets = [
-                d for d in rows
-                if args.clear_all or str(d.get("verifier")) in set(args.verifier)
-            ]
+            targets = [d for d in rows if str(d.get("verifier")) in set(args.verifier)]
             owners = {str(d.get("run_id") or "") for d in targets}
             if len(owners) > 1:
                 p_clear.error(
