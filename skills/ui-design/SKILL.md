@@ -27,6 +27,10 @@ Use this skill when `uiTarget != null` and the work is not copy-only:
 9. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
 10. When the work updates, compares, or audits a renderable UI design, invoke headless IBR as the primary visual verifier when installed. Follow `../../references/ibr-ui-verification-policy.md`; record the platform fallback when IBR is unavailable.
 
+## Share Presentation
+
+When the build has recipient-facing links, artifacts or native share actions, load `../build-loop/references/share-presentation.md` and link `.build-loop/share-presentation.json` in the design contract. Design topic/outcome title, concise text and relevant imagery together, with separate browser, link-preview and app/share-sheet identities. Build Loop owns implementation and validation; personas provide optional critique.
+
 ## Design Layers
 
 Think in layers, not competing design systems:

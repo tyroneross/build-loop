@@ -25,6 +25,10 @@ Every UI plan must include a `## UI Input/Output Contract` section before implem
 | Validation/security | Presentation, application, and domain validation; sanitization; auth/authz display behavior |
 | Traceability | Data schema, API endpoint/method, design-system component, and rationale |
 
+## Recipient Outputs
+
+For links, exports, generated artifacts and native share actions, link the record defined in `share-presentation.md`. Include recipient-facing title, text, imagery, identity, payload, privacy and fallback in the output inventory. The shared contract owns applicability and verification.
+
 ## Data Taxonomy
 
 Classify each input and output before choosing UI controls:
