@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "6d41b3ed9d3d9180c120c46dfbf7045491258d1d1c18628533bf5823522ba29c"
+    "content_sha256": "4993c115dc091ea77b59907ff497ea066ffe763ee4f49660535b3d3737e2dcc8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1633,6 +1633,7 @@
       "scripts/context_bootstrap.py": "Build a Phase 1 context packet from all memory surfaces.",
       "scripts/context_snapshot.py": "Write non-blocking Build Loop context snapshots.",
       "scripts/contextual_prepend.py": "Contextual Retrieval prepend for write-time context (Phase D).",
+      "scripts/convert.py": "Unit/time conversions. Never do these in your head or inline.",
       "scripts/coordination_bootstrap.py": "Bootstrap a new per-run coordination file from the canonical template.",
       "scripts/coordination_rally.py": "Publish a lightweight Rally Point rally point without creating a coord file.",
       "scripts/coordination_status.py": "Summarize Build Loop coordination state without spending LLM tokens.",
