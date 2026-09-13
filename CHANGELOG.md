@@ -16,6 +16,43 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.45.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.44.0...build-loop-v0.45.0) (2026-09-13)
+
+
+### Features
+
+* add deterministic run status observer ([af554f2](https://github.com/tyroneross/build-loop/commit/af554f2ac0624605f61dc416a68a23fa4d40b64a))
+* **airlock:** gate foreign-repo instruction files as untrusted data ([f977967](https://github.com/tyroneross/build-loop/commit/f977967833a81e28c5f2bfd4f6a4187966a51798))
+* **models:** register gpt-6-astra (alias astra) in the routing index ([677377a](https://github.com/tyroneross/build-loop/commit/677377a033b64067605a7099036aad3e77713590))
+* **research:** add opt-in matched architecture pilot ([f69b72b](https://github.com/tyroneross/build-loop/commit/f69b72b96595f1e51a92cfd57c43ffd00fa99531))
+
+
+### Bug Fixes
+
+* **airlock:** follow CLAUDE.md [@imports](https://github.com/imports), which hid the payload one hop away ([a85a142](https://github.com/tyroneross/build-loop/commit/a85a14216ea2f44fe8c324b8cc3a1fab7c757368))
+* **ci:** isolate dashboard service reads and keep orchestration compact ([61d932c](https://github.com/tyroneross/build-loop/commit/61d932cbcccd7d832a065c9ac34c4534ae44b356))
+* **dashboard:** read a terminal execution phase as closed, not mid-Review ([7628e55](https://github.com/tyroneross/build-loop/commit/7628e55dec1fbf1657627db334f84ba0a3cd8ef7))
+* **docs:** make 8 retrospective citations repo-relative so the portability guard passes ([25f8630](https://github.com/tyroneross/build-loop/commit/25f863040b387e7f065895462f5642cd35d13098))
+* **docs:** repair mojibake pushed in fd15506f and restore two deleted paragraphs ([a7095b6](https://github.com/tyroneross/build-loop/commit/a7095b687b7254e15108fd36c2d086a2415af5ac))
+* **memory:** share scoring snapshots and attribute bootstrap reads ([2d19bea](https://github.com/tyroneross/build-loop/commit/2d19bea489933e6b4d2b3f3696d0394c69b7e7fc))
+* resolve stale builds autonomously ([a5bf9eb](https://github.com/tyroneross/build-loop/commit/a5bf9ebfe2c4f30a81765f81b5d0179ec86cb48b))
+* **run-ledger,worktree-lifecycle:** close five findings from the closure audit ([34d18b7](https://github.com/tyroneross/build-loop/commit/34d18b7dd4229da233cae033c33b833cd5ac5388))
+* **run-ledger,worktree-lifecycle:** close four findings from the round-4 audit ([52699fd](https://github.com/tyroneross/build-loop/commit/52699fdb9cc09dee2e807a2d76db29e1ec411285))
+* **run-ledger,worktree-lifecycle:** close four re-audit findings ([0fd7eba](https://github.com/tyroneross/build-loop/commit/0fd7ebaa0674240769bcf7cab4d51a9eae258234))
+* **run-ledger,worktree-lifecycle:** close the auditor's two HIGH findings ([d1e0287](https://github.com/tyroneross/build-loop/commit/d1e02870a6f7fa36910b8cbd983e49c4d15d4d69))
+* **run-ledger,worktree-lifecycle:** close the five low findings from the yay verdict ([79b3c2b](https://github.com/tyroneross/build-loop/commit/79b3c2bf4338dc7d2c5b760ceaac9ebf4ff715fc))
+* **run-ledger:** drop the floor writer's source label on a Review-G merge ([3666dad](https://github.com/tyroneross/build-loop/commit/3666dad28a4e2c1e661b879489daee4d839f211e))
+* **run-ledger:** log the write action the writer actually took ([03efd34](https://github.com/tyroneross/build-loop/commit/03efd34b80a204b2a1c3c87ede9a6b45f4d8e17a))
+* **run-ledger:** upsert runs[] on run_id instead of appending a second row ([f1b3b95](https://github.com/tyroneross/build-loop/commit/f1b3b9547af780946dbf093b45bc76183ae3fb2d))
+* **self-mod-gate:** close eight revert paths a cross-vendor audit found still live ([2798c0b](https://github.com/tyroneross/build-loop/commit/2798c0b3be8e666a87d58078cc59bf86a4cb0faf))
+* **self-mod-gate:** make the destructive auto-revert inexpressible ([50c505d](https://github.com/tyroneross/build-loop/commit/50c505d567da7ecd691f1f7441e1e1c8e57ef6ad))
+* **supply-chain:** close four findings from the cooldown commit audit ([1e51887](https://github.com/tyroneross/build-loop/commit/1e518873a711125b0192365e0190e29119cc55d4))
+* **supply-chain:** version-gate pnpm cooldown and seed the packages field ([bd9ec11](https://github.com/tyroneross/build-loop/commit/bd9ec1119f845d4c5813b5ca4133be31ea667aec))
+* **worktree-lifecycle,run-ledger:** close two Review-D gaps in the prior commits ([4ccc5c5](https://github.com/tyroneross/build-loop/commit/4ccc5c5e9182e9ceef682a54ce0629f310063ebf))
+* **worktree-lifecycle:** inventory ignored files before a worktree removal ([c60d66e](https://github.com/tyroneross/build-loop/commit/c60d66ed69295431d0ed1e556da5bbb4c74712b7))
+* **worktree-lifecycle:** stop discarding git's own incomplete-listing warning ([dbed2aa](https://github.com/tyroneross/build-loop/commit/dbed2aa75ef81b30e0886ae0effaf9c7575c116e))
+* **worktree-lifecycle:** treat a symlinked subdirectory as uninspected ([963cca7](https://github.com/tyroneross/build-loop/commit/963cca75e3587330d32647b4b3c8ea2150513fb0))
+
 ## [0.44.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.43.0...build-loop-v0.44.0) (2026-09-07)
 
 
