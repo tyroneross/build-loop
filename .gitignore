@@ -46,6 +46,7 @@ Thumbs.db
 node_modules/
 
 # Plan artifacts (local only)
+docs/handoff/
 docs/superpowers/
 
 # Python cache

@@ -105,7 +105,8 @@ CATEGORY_KEYWORDS = [
                       "working copy", "branch echo",
                       # Worktree GC + completed-but-uncommitted state + the
                       # operator-question resolver are single-run lifecycle infra:
-                      "worktree-gc", "worktree gc", "commit_state",
+                      "worktree-gc", "worktree gc", "worktree_inventory",
+                      "worktree inventory", "commit_state",
                       "uncommitted", "operator question",
                       # Session-start lifecycle hooks (plugin self-heal,
                       # post-push memory-closeout baton drain) and the host
