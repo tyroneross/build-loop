@@ -39,6 +39,11 @@ Statuses (``status`` in the JSON envelope):
     missing     exit 1  state.json is present but runs[] has no qualifying entry
     floor_only  exit 1  only a hook-written floor entry, and --require-orchestrator was set
     learn_missing exit 1 run record exists but --require-learn found no complete receipt
+    review_owed exit 1  the run record landed, but `.build-loop/owed-verification.json`
+                        still owes a verifier (a missing independent-auditor verdict, or a
+                        cross-vendor round the review profile required). The record exists
+                        and the review does not, so this is checked AFTER the record
+                        statuses and never masks a missing record.
     no_state    exit 1  no .build-loop/state.json in this workdir at all (the loudest case:
                         the run produced no durable footprint whatsoever)
 
@@ -62,6 +67,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
 STATE_RELPATH = Path(".build-loop") / "state.json"
 
@@ -200,7 +209,91 @@ def _learn_complete(workdir: Path, entry: dict[str, Any]) -> tuple[bool, str]:
     return True, "matching complete Learn receipt and runs[].learn summary"
 
 
+def _owed_verification_gap(workdir: Path) -> dict[str, Any] | None:
+    """The owed-verification manifest when it still owes a verifier, else None.
+
+    Deferred import + fail-open: this lint runs in hook paths and must never
+    raise. A missing or unreadable manifest module reports no gap, exactly as a
+    missing manifest does.
+    """
+    try:
+        import owed_verification  # noqa: WPS433
+        result = owed_verification.check_manifest(workdir)
+    except Exception:  # noqa: BLE001
+        return None
+    return result if isinstance(result, dict) and result.get("status") == "incomplete" else None
+
+
+def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a close whose review is still owed.
+
+    Ordered AFTER the record statuses on purpose: a missing run record is the
+    more fundamental failure and must not be relabelled as an owed review. Only
+    an otherwise-passing envelope is downgraded.
+
+    Not scoped to this envelope's run_id. ``state.json.review_incomplete`` is a
+    repo-level flag and an un-discharged debt from an earlier run is still an
+    un-audited diff in this tree, so the manifest's own run_id is NAMED in the
+    reason rather than used to excuse the gap.
+    """
+    if envelope.get("status") not in OK_STATUSES:
+        return envelope
+    gap = _owed_verification_gap(workdir)
+    if gap is None:
+        return envelope
+    owed = [str(v) for v in gap.get("owed") or []]
+    # Shape-guard, not decoration: a hand-edited or malformed manifest can carry
+    # a LIST here, and `.get` on it raises outside this function's caller's
+    # handler -- which meant `--advisory` never reached its exit-0 branch and a
+    # hook caller got a traceback instead of a JSON envelope.
+    raw_commands = gap.get("dispatch_commands")
+    commands = raw_commands if isinstance(raw_commands, dict) else {}
+    remediation = " ; ".join(
+        f"{name}: {commands.get(name, 'dispatch ' + name)}" for name in owed
+    ) or "resolve .build-loop/owed-verification.json"
+    envelope.update(
+        status="review_owed",
+        review_incomplete=True,
+        owed=owed,
+        owed_run_id=gap.get("run_id"),
+        reason=(
+            f"review is not complete: {', '.join(owed) or 'a verifier'} still owed on "
+            f"run {gap.get('run_id')!r} per {gap.get('manifest_path')}"
+        ),
+        remediation=(
+            f"{remediation}  # then: python3 scripts/owed_verification.py clear "
+            f"--workdir {shlex.quote(str(workdir))} --verifier <name>"
+        ),
+    )
+    return envelope
+
+
 def check(
+    workdir: Path,
+    run_id: str | None = None,
+    recent_minutes: int | None = None,
+    require_orchestrator: bool = False,
+    require_learn: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Assert a run-close record exists AND its review is not still owed.
+
+    Thin wrapper: ``_check_record`` answers the record question, then
+    ``_apply_owed_verification`` downgrades an otherwise-passing envelope whose
+    owed-verification manifest is still incomplete.
+    """
+    envelope = _check_record(
+        workdir,
+        run_id=run_id,
+        recent_minutes=recent_minutes,
+        require_orchestrator=require_orchestrator,
+        require_learn=require_learn,
+        now=now,
+    )
+    return _apply_owed_verification(Path(workdir).resolve(), envelope)
+
+
+def _check_record(
     workdir: Path,
     run_id: str | None = None,
     recent_minutes: int | None = None,

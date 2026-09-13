@@ -33,6 +33,15 @@ ALL_JUDGE_VERDICTS = VALID_JUDGE_VERDICTS | VALID_AUDITOR_VERDICTS
 # judge_id substring that identifies the independent commit auditor (covers both the
 # dispatched "independent-auditor" agent and the "independent-auditor-hook" record).
 AUDITOR_JUDGE_MARKER = "independent-auditor"
+# judge_id substring that identifies a SECOND-VENDOR (cross-tool) review round — the
+# round `scripts/review_trigger.py` demands via `cross_vendor_required`. Canonical
+# judge_id is "cross-vendor-audit"; any id containing "cross-vendor" matches, so a
+# host-qualified id like "cross-vendor-audit:codex" still counts. Deliberately NOT
+# AUDITOR_JUDGE_MARKER: a same-vendor auditor verdict must never discharge the
+# cross-vendor debt, which is the whole point of running a second vendor (measured
+# on bl-20260912T180923Z-claude_code-selfmodrevert: the skipped cross-vendor round
+# later returned 11 findings, 6 Critical, DISJOINT from the same-vendor auditor's).
+CROSS_VENDOR_JUDGE_MARKER = "cross-vendor"
 VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned", "unverifiable"}
 VALID_BUDGET_MODES = {"default", "long", "custom"}
 # Advisory oracle-completeness note on a verify verdict: how much of the checked
@@ -74,23 +83,19 @@ NON_VERDICT_VALUES = {"", "pending", "none", "n/a"}
 NON_VERDICT_STATUSES = {"packet_emitted", "pending"}
 
 
-def auditor_present(judge_decisions: object) -> bool:
-    """True when judge_decisions[] carries a real independent-auditor VERDICT.
+def judge_verdict_present(judge_decisions: object, marker: str) -> bool:
+    """True when judge_decisions[] carries a rendered VERDICT from `marker`'s judge.
 
-    Matches both the dispatched `independent-auditor` agent and the
-    `independent-auditor-hook` record. An empty list, None, or a list of only
-    other judges (an inline self-audit substituting for a real dispatch) is False.
-
-    A matching judge_id is necessary and NOT sufficient: the entry must also
-    carry a rendered verdict. Matching on the id alone let an emitted-but-never-
-    answered audit packet satisfy every caller of this function.
+    A matching judge_id is necessary and NOT sufficient: the entry must also carry
+    a rendered verdict. Matching on the id alone let an emitted-but-never-answered
+    audit packet satisfy every caller of this function.
     """
     if not isinstance(judge_decisions, list):
         return False
     for item in judge_decisions:
         if not isinstance(item, dict):
             continue
-        if AUDITOR_JUDGE_MARKER not in str(item.get("judge_id", "")):
+        if marker not in str(item.get("judge_id", "")):
             continue
         verdict = str(item.get("verdict") or "").strip().lower()
         status = str(item.get("status") or "").strip().lower()
@@ -98,6 +103,26 @@ def auditor_present(judge_decisions: object) -> bool:
             continue
         return True
     return False
+
+
+def auditor_present(judge_decisions: object) -> bool:
+    """True when judge_decisions[] carries a real independent-auditor VERDICT.
+
+    Matches both the dispatched `independent-auditor` agent and the
+    `independent-auditor-hook` record. An empty list, None, or a list of only
+    other judges (an inline self-audit substituting for a real dispatch) is False.
+    """
+    return judge_verdict_present(judge_decisions, AUDITOR_JUDGE_MARKER)
+
+
+def cross_vendor_present(judge_decisions: object) -> bool:
+    """True when judge_decisions[] carries a rendered SECOND-VENDOR verdict.
+
+    The same-vendor `independent-auditor` marker is a prefix of nothing here: an
+    id must literally contain "cross-vendor" to discharge this debt, so a run
+    cannot satisfy a cross-vendor requirement with the auditor it already ran.
+    """
+    return judge_verdict_present(judge_decisions, CROSS_VENDOR_JUDGE_MARKER)
 
 
 def review_completeness_error(entry: dict, scope: str) -> str | None:
