@@ -38,8 +38,13 @@ from .common import (
 _GLOBAL_SCOPES = frozenset({"_unscoped", "global"})
 
 
-def _resolve_decision_dirs(workdir: Path) -> List[Path]:
+def _resolve_decision_dirs(
+    workdir: Path, project: Optional[str] = None
+) -> List[Path]:
     """Return active decision directories for this project.
+
+    ``project`` names the project lane to read; None resolves it from
+    ``workdir``, the previous unscoped behaviour.
 
     Normal reads use ``build-loop-memory/projects/<project>/decisions``.
     Legacy ``.episodic`` and pre-cutover ``decisions/<project>`` paths are
@@ -63,7 +68,7 @@ def _resolve_decision_dirs(workdir: Path) -> List[Path]:
         from _paths import decisions_root, project_decisions_dir  # type: ignore  # noqa: PLC0415
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
 
-        proj = resolve_project(workdir)
+        proj = project or resolve_project(workdir)
         if proj:
             canonical_dir = project_decisions_dir(proj)
             if canonical_dir.is_dir():
@@ -182,7 +187,7 @@ def _content_row_to_decision(
 
 
 def _indexed_decisions(
-    workdir: Path, query: str, limit: int
+    workdir: Path, query: str, limit: int, project: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Read decision-typed docs (`doc_type='decision'`) from the content-FTS
     body index instead of the retired `INDEX.jsonl` leg (see module docstring
@@ -205,11 +210,14 @@ def _indexed_decisions(
     except Exception:  # noqa: BLE001
         return [], []
 
-    try:
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
-        project: Optional[str] = resolve_project(workdir)
-    except Exception:  # noqa: BLE001
-        project = None
+    if not project:
+        # Unscoped call: fall back to the project that owns `workdir`, which is
+        # what every caller got before `project` was threaded through.
+        try:
+            from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+            project = resolve_project(workdir)
+        except Exception:  # noqa: BLE001
+            project = None
 
     # Push the project scope into the SQL WHERE, never into a Python pass over
     # the result. `content_index.query` applies `LIMIT` inside the database, so
@@ -350,13 +358,22 @@ def _scan_decision_files(
 
 
 def read_decisions(
-    workdir: Path, query: str, limit: int
+    workdir: Path, query: str, limit: int, project: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read decisions for *project*, or for the project owning *workdir*.
+
+    ``project`` is the scope the caller asked `recall()` for. Both legs --
+    the content-FTS index and the on-disk file scan -- honour it, so a
+    scoped recall cannot return a DIFFERENT named project's decisions.
+    Globally-routed lanes (``_unscoped`` / ``global``) stay visible, which
+    is the documented routing rule, not a leak. ``project=None`` keeps the
+    previous behaviour byte-for-byte.
+    """
     reasons: List[str] = []
-    indexed, index_reasons = _indexed_decisions(workdir, query, limit)
+    indexed, index_reasons = _indexed_decisions(workdir, query, limit, project)
     reasons.extend(index_reasons)
 
-    dec_dirs = _resolve_decision_dirs(workdir)
+    dec_dirs = _resolve_decision_dirs(workdir, project)
     if not dec_dirs:
         return indexed, reasons
 

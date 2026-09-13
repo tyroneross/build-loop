@@ -6,12 +6,33 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .common import _parse_iso, _q_match
 
 
-def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _workdir_project(workdir: Path) -> Optional[str]:
+    """Resolve the project slug that owns ``workdir``, or None when unknown."""
+    try:
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+
+        return resolve_project(workdir)
+    except Exception:  # noqa: BLE001 — best-effort, never break the read path
+        return None
+
+
+def read_runs(
+    workdir: Path, query: str, limit: int, project: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read ``.build-loop/state.json`` runs[] for *workdir*.
+
+    ``project`` scopes the read. state.json is per-repository, so every run it
+    holds belongs to the project that owns ``workdir`` unless the run record
+    names its own. A scoped recall for a DIFFERENT project must therefore
+    return nothing here rather than the local repo's runs -- the defect that
+    put build-loop runs at rank 1 of a ``project='ross-labs-astro'`` recall.
+    ``project=None`` keeps the previous unscoped behaviour exactly.
+    """
     state_path = workdir / ".build-loop" / "state.json"
     reasons: List[str] = []
     if not state_path.is_file():
@@ -22,8 +43,17 @@ def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any
         reasons.append(f"runs_read_error: {e}")
         return [], reasons
     runs = state.get("runs") or []
+    # Resolved once, not per run: only needed when the caller scoped the read.
+    local_project = _workdir_project(workdir) if project else None
     out: List[Dict[str, Any]] = []
     for r in runs:
+        if project:
+            run_project = r.get("project") or local_project
+            # An unresolvable project (no project_resolver, unregistered repo)
+            # degrades to "cannot prove it is foreign" and stays visible; a
+            # KNOWN, different project is filtered out.
+            if run_project and run_project != project:
+                continue
         text = " ".join([
             str(r.get("goal", "")),
             str(r.get("outcome", "")),

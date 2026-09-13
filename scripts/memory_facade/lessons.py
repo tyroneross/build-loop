@@ -17,11 +17,22 @@ from typing import Any, Dict, List, Optional, Tuple
 from .common import _LESSON_FRONTMATTER_RE, _q_match
 
 
-def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
+def _resolve_memory_dirs(
+    workdir: Path, project: Optional[str] = None
+) -> List[Tuple[Path, str]]:
     """Return ``[(dir, scope), ...]`` for canonical lesson memory.
 
     Order: top-level lessons first, project lessons second, so project
     entries override global entries with the same filename.
+
+    ``project`` names the project lane to read. When None the lane is
+    resolved from ``workdir`` (the previous, unscoped behaviour). A caller
+    that scopes a recall to another project must NOT get the working
+    repository's lessons back: before this argument existed,
+    ``recall(project='ross-labs-astro')`` run from build-loop read
+    build-loop's own lesson lane. The global lanes stay in either case --
+    they are globally visible by design, same rule the decisions backend
+    applies to ``_unscoped``/``global`` scopes.
     """
     out: List[Tuple[Path, str]] = []
     try:
@@ -40,7 +51,7 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
         if global_dir.is_dir():
             out.append((global_dir, "global"))
 
-    proj = resolve_project(workdir)
+    proj = project or resolve_project(workdir)
     if proj and proj != "_unscoped":
         try:
             project_dir = project_lessons_dir(proj)
@@ -79,15 +90,18 @@ _SKIP_NAMES = {"MEMORY.md", "constitution.md", "README.md"}
 
 
 def read_lessons(
-    workdir: Path, query: str, limit: int
+    workdir: Path, query: str, limit: int, project: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Read free-form lessons across global + project tiers.
 
     Dedup rule: same filename across tiers — later-listed tier wins
     (project > global).  Result carries ``_scope`` ("global" | "project").
+
+    ``project`` selects the project lane; None resolves it from ``workdir``
+    exactly as before.
     """
     reasons: List[str] = []
-    dirs = _resolve_memory_dirs(workdir)
+    dirs = _resolve_memory_dirs(workdir, project)
     if not dirs:
         return [], reasons
 

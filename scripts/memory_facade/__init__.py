@@ -290,9 +290,13 @@ def _fan_out(
 ) -> tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
     """Invoke each backend if its kind is requested; collect results + reasons."""
     _backends = {
-        "runs":      lambda: read_runs(workdir, query, limit),
-        "decisions": lambda: read_decisions(workdir, query, limit),
-        "lessons":   lambda: read_lessons(workdir, query, limit),
+        # `project` reaches EVERY backend. runs/decisions/lessons used to be
+        # called without it while the newer four were scoped, so a scoped
+        # recall returned the working repository's own runs, decisions and
+        # lessons at rank 1 no matter which project was asked for.
+        "runs":      lambda: read_runs(workdir, query, limit, project),
+        "decisions": lambda: read_decisions(workdir, query, limit, project),
+        "lessons":   lambda: read_lessons(workdir, query, limit, project),
         "backlog":   lambda: read_backlog(workdir, query, limit, project),
         "semantic":  lambda: read_semantic(workdir, query, limit, project, skip_postgres=skip_postgres),
         "debugger":  lambda: read_debugger(workdir, query, limit, project),

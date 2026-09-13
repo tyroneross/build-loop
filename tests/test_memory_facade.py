@@ -720,3 +720,55 @@ def test_empty_query_browse_still_excludes_other_named_projects(workdir: Path) -
     out, _ = decisions_backend._indexed_decisions(workdir, "", 10)
 
     assert "dec-browse-foreign" not in [d["canonical_id"] for d in out]
+
+
+def test_scoped_recall_excludes_another_projects_decision(workdir: Path) -> None:
+    """`recall(project=X)` must not return project Y's decisions.
+
+    Regression for BUIL-MEMORY-m2eb8ea49nt6t279ce75z: `_fan_out` passed
+    `project` to the backlog/semantic/debugger/content backends but called
+    `read_runs`, `read_decisions` and `read_lessons` without it, so those
+    three scoped themselves to whatever project owned `workdir`. A recall
+    asking for `ross-labs-astro` from the build-loop checkout returned
+    build-loop's own decisions at rank 1.
+
+    The pinned project here is `home-project`; the caller asks for
+    `asked-project`. A leak of `home-project`'s decision is exactly the
+    observed defect, and the `_unscoped` decision must still come through
+    because global routing survives scoping by design.
+    """
+    _pin_scoped_project(workdir, "home-project")
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+
+    _write_decision(
+        memory_root / "projects" / "asked-project" / "decisions",
+        "dec-asked-001", "asked-project scope probe target",
+        "Scope probe body for the project the caller asked for.", "2026-09-13",
+    )
+    _write_decision(
+        memory_root / "projects" / "home-project" / "decisions",
+        "dec-home-001", "home-project scope probe target",
+        "Scope probe body for the checkout's own project.", "2026-09-13",
+    )
+    _write_decision(
+        memory_root / "projects" / "_unscoped" / "decisions",
+        "dec-unscoped-001", "global scope probe target",
+        "Scope probe body routed global.", "2026-09-13",
+    )
+    _rebuild_content_index(memory_root)
+
+    env = mf.recall(query="scope probe", project="asked-project",
+                    workdir=workdir, limit=10)
+    ids = [d.get("canonical_id") or d.get("id")
+           for d in env["results_by_kind"]["decisions"]]
+
+    assert "dec-asked-001" in ids, (
+        f"the asked-for project's own decision must be returned; got {ids} "
+        f"(reasons={env['reasons']})"
+    )
+    assert "dec-home-001" not in ids, (
+        f"a scoped recall leaked the checkout project's decision; got {ids}"
+    )
+    assert "dec-unscoped-001" in ids, (
+        f"globally-routed decisions stay visible under a scope; got {ids}"
+    )
