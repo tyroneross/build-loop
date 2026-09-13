@@ -187,12 +187,16 @@ def _manifest_lock(workdir: Path):
     try:
         from atomic_io import LockedFile  # noqa: WPS433
     except Exception:  # noqa: BLE001
+        # No lock module reachable means no peer writer is honouring one either.
         yield
         return
-    try:
-        with LockedFile(path):
-            yield
-    except Exception:  # noqa: BLE001 — a lock timeout must not wedge the run
+    # ACQUIRE outside the body. Wrapping the yield in the same `try` meant an
+    # exception raised INSIDE the protected mutation was caught by the lock's
+    # own handler, which then yielded a second time -- `RuntimeError: generator
+    # didn't stop after throw()`, a crash replacing the caller's real error.
+    # A lock timeout also must not silently degrade to the unlocked read-modify-
+    # write this wrapper exists to prevent, so it is raised, not swallowed.
+    with LockedFile(path):
         yield
 
 
@@ -330,6 +334,99 @@ def _dispatch_commands(
     return out
 
 
+def _debt_key(debt: dict[str, Any]) -> tuple[str, str]:
+    return (str(debt.get("verifier") or ""), str(debt.get("run_id") or ""))
+
+
+def _load_debts(existing: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Read `debts` / `cleared_debts` from a manifest, upgrading the old shape.
+
+    A pre-upgrade manifest keyed debts by VERIFIER NAME alone, which cannot
+    represent two runs owing the same verifier: the second write overwrote the
+    first run's obligation and the first diff shipped unreviewed. `owed_runs`
+    patched the read side but the underlying list still had one slot per name.
+    The record is now one row per (verifier, run_id) -- the thing a debt
+    actually is -- and `owed` / `owed_runs` / `dispatch_commands` are derived
+    views kept for every existing reader.
+    """
+    debts: list[dict[str, Any]] = []
+    cleared: list[dict[str, Any]] = []
+    if not isinstance(existing, dict) or existing.get("_malformed"):
+        return debts, cleared
+
+    raw_debts = existing.get("debts")
+    if isinstance(raw_debts, list):
+        debts = [d for d in raw_debts if isinstance(d, dict) and d.get("verifier")]
+    else:
+        # Upgrade the flat shape.
+        owners = existing.get("owed_runs")
+        owners = owners if isinstance(owners, dict) else {}
+        commands = existing.get("dispatch_commands")
+        commands = commands if isinstance(commands, dict) else {}
+        reasons = existing.get("reasons")
+        reasons = reasons if isinstance(reasons, dict) else {}
+        fallback_run = str(existing.get("run_id") or "")
+        fallback_range = str(existing.get("diff_range") or "unknown")
+        for name in existing.get("owed") or []:
+            name = str(name)
+            debts.append({
+                "verifier": name,
+                "run_id": str(owners.get(name) or fallback_run),
+                "diff_range": fallback_range,
+                "dispatch_command": commands.get(name),
+                "reason": reasons.get(name),
+            })
+
+    raw_cleared = existing.get("cleared_debts")
+    if isinstance(raw_cleared, list):
+        cleared = [d for d in raw_cleared if isinstance(d, dict) and d.get("verifier")]
+    else:
+        fallback_run = str(existing.get("run_id") or "")
+        for name in existing.get("cleared") or []:
+            cleared.append({"verifier": str(name), "run_id": fallback_run})
+    return debts, cleared
+
+
+def _manifest_payload(
+    debts: list[dict[str, Any]],
+    cleared: list[dict[str, Any]],
+    *,
+    run_id: str,
+    diff_range: str,
+    chunk_id: str | None,
+    reason: str | None,
+    written_by: str,
+) -> dict[str, Any]:
+    """Assemble the manifest, including the derived views older readers use."""
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "chunk_id": chunk_id,
+        "diff_range": diff_range,
+        "debts": debts,
+        "cleared_debts": cleared,
+        # Derived views. `owed` is the de-duplicated verifier list; a verifier
+        # owed by two runs appears once here and twice in `debts`.
+        "owed": _dedupe(str(d.get("verifier")) for d in debts),
+        "cleared": _dedupe(str(d.get("verifier")) for d in cleared),
+        "owed_runs": {str(d["verifier"]): str(d.get("run_id") or "") for d in debts},
+        "dispatch_commands": {
+            str(d["verifier"]): d.get("dispatch_command")
+            for d in debts if d.get("dispatch_command")
+        },
+        "reasons": {
+            str(d["verifier"]): d.get("reason") for d in debts if d.get("reason")
+        },
+        "written_by": written_by,
+        "written_at": _utcnow_iso(),
+        "status": "incomplete" if debts else "complete",
+    }
+    if reason:
+        payload["reason"] = reason
+    if not payload["reasons"]:
+        payload.pop("reasons")
+    return payload
+
+
 def _write_manifest_unlocked(
     workdir: Path,
     *,
@@ -345,74 +442,44 @@ def _write_manifest_unlocked(
 ) -> dict[str, Any]:
     """Create/refresh the owed-verification manifest.
 
-    Merges with any existing manifest so a second ``write`` in the same run
-    (e.g. a later chunk owing another verifier) accumulates rather than
-    clobbers, and never re-adds an already-cleared verifier.  Flips
+    Accumulates rather than clobbers, so a second ``write`` in the same run
+    adds a debt instead of replacing one -- and a write from a DIFFERENT run
+    adds its own row rather than taking over an existing verifier's slot. A
+    (verifier, run_id) pair already cleared is never silently re-added; a
+    waiver for one run does not suppress another run's obligation. Flips
     ``state.json.review_incomplete = true`` when anything is owed.
-
-    Returns the written manifest dict (plus a ``_state_updated`` key).
     """
-    owed_list = _dedupe(owed)
-    incoming = set(owed_list)
+    run_id = str(run_id)
     existing = load_manifest(workdir)
-    cleared: list[str] = []
-    owed_runs: dict[str, str] = {}
-    prior_run_id = ""
-    if isinstance(existing, dict) and not existing.get("_malformed"):
-        prior_run_id = str(existing.get("run_id") or "")
-        prior_owed = existing.get("owed")
-        if isinstance(prior_owed, list):
-            owed_list = _dedupe([*prior_owed, *owed_list])
-        prior_owner_map = existing.get("owed_runs")
-        if isinstance(prior_owner_map, dict):
-            owed_runs = {str(k): str(v) for k, v in prior_owner_map.items()}
-        # A debt inherited from an EARLIER manifest keeps that manifest's
-        # run_id as its owner. Without this the merge below reassigns the whole
-        # manifest to the newest run, and a low-risk run's own verdict then
-        # discharges an unrelated run's outstanding audit -- the earlier diff
-        # ships unreviewed. Ownership is what makes "whose debt is this?"
-        # answerable after the merge.
-        for name in prior_owed if isinstance(prior_owed, list) else []:
-            owed_runs.setdefault(str(name), prior_run_id or str(run_id))
-        prior_cleared = existing.get("cleared")
-        if isinstance(prior_cleared, list):
-            cleared = _dedupe(prior_cleared)
-    for name in incoming:
-        owed_runs[name] = str(run_id)
-
-    # A verifier already cleared must not silently re-appear as owed.
-    remaining = [v for v in owed_list if v not in cleared]
-
+    debts, cleared = _load_debts(existing)
+    cleared_keys = {_debt_key(d) for d in cleared}
+    have = {_debt_key(d) for d in debts}
     overrides = dispatch_overrides or {}
-    payload: dict[str, Any] = {
-        "run_id": run_id,
-        "chunk_id": chunk_id,
-        "diff_range": diff_range,
-        "owed": remaining,
-        "cleared": cleared,
-        "dispatch_commands": _dispatch_commands(remaining, diff_range, plan_path, overrides),
-        "owed_runs": {k: v for k, v in owed_runs.items() if k in remaining},
-        "written_by": written_by,
-        "written_at": _utcnow_iso(),
-        "status": "incomplete" if remaining else "complete",
-    }
-    if reason:
-        payload["reason"] = reason
-    # Per-verifier reasons. A manifest can now owe MORE THAN ONE debt with
-    # different causes (a missing auditor verdict and a missing second-vendor
-    # round are different failures), and one joined `reason` string cannot say
-    # which verifier each clause belongs to.
-    merged_reasons: dict[str, str] = {}
-    if isinstance(existing, dict) and isinstance(existing.get("reasons"), dict):
-        merged_reasons.update({str(k): str(v) for k, v in existing["reasons"].items()})
-    merged_reasons.update({str(k): str(v) for k, v in (reasons or {}).items()})
-    merged_reasons = {k: v for k, v in merged_reasons.items() if k in remaining}
-    if merged_reasons:
-        payload["reasons"] = merged_reasons
+    reasons = reasons or {}
 
+    for name in _dedupe(owed):
+        key = (name, run_id)
+        if key in cleared_keys or key in have:
+            continue
+        # Each debt carries ITS OWN range, so a later run's write cannot
+        # re-point an earlier run's dispatch command at the wrong diff.
+        command = _dispatch_commands([name], diff_range, plan_path, overrides).get(name)
+        debts.append({
+            "verifier": name,
+            "run_id": run_id,
+            "diff_range": diff_range,
+            "dispatch_command": command,
+            "reason": reasons.get(name),
+        })
+        have.add(key)
+
+    payload = _manifest_payload(
+        debts, cleared, run_id=run_id, diff_range=diff_range,
+        chunk_id=chunk_id, reason=reason, written_by=written_by,
+    )
     _atomic_write_json(workdir / MANIFEST_RELPATH, payload)
-    state_updated = _set_state_flag(workdir, bool(remaining))
-    _log(workdir, f"write run={run_id} owed={','.join(remaining) or 'none'}")
+    state_updated = _set_state_flag(workdir, bool(debts))
+    _log(workdir, f"write run={run_id} owed={','.join(payload['owed']) or 'none'}")
     payload["_state_updated"] = state_updated
     return payload
 
@@ -657,7 +724,7 @@ def cross_vendor_reason_for_record(
         # is run afterwards and appended there -- and nothing re-read it, which
         # left `clear` (the waiver) as the only visible way out of a debt the
         # operator had actually discharged.
-        decisions.extend(_judge_decisions_file(workdir))
+        decisions.extend(_judge_decisions_file(workdir, str(record.get("run_id") or "")))
     if cross_vendor_present(decisions, host):
         return None
 
@@ -703,14 +770,24 @@ def owed_verifiers_for_record(
 JUDGE_DECISIONS_RELPATH = Path(".build-loop") / "judge-decisions.json"
 
 
-def _judge_decisions_file(workdir: Path) -> list[dict[str, Any]]:
-    """Verdicts recorded in `.build-loop/judge-decisions.json`, or []."""
+def _judge_decisions_file(workdir: Path, run_id: str) -> list[dict[str, Any]]:
+    """Verdicts in `.build-loop/judge-decisions.json` that belong to THIS run.
+
+    The file is append-only and outlives every run in the repository, so an
+    unscoped read let a verdict explicitly stamped with an older run_id -- or
+    one dropped from a widened run record because its file set had changed --
+    discharge a new run's debt. An entry claims a run or it is not this run's
+    evidence: a missing or mismatched `run_id` is skipped, not assumed current.
+    """
     data = _read_json(workdir / JUDGE_DECISIONS_RELPATH)
     if isinstance(data, dict):
         data = data.get("decisions")
-    if not isinstance(data, list):
+    if not isinstance(data, list) or not run_id or run_id == "unknown":
         return []
-    return [item for item in data if isinstance(item, dict)]
+    return [
+        item for item in data
+        if isinstance(item, dict) and str(item.get("run_id") or "") == run_id
+    ]
 
 def _persisted_record(workdir: Path, run_id: str) -> dict[str, Any] | None:
     """The run's row as state.json actually holds it, or None.
@@ -888,19 +965,36 @@ def check_manifest(workdir: Path) -> dict[str, Any]:
             "review_incomplete": False,
             "manifest_path": str(workdir / MANIFEST_RELPATH),
         }
-    owed = manifest.get("owed") if isinstance(manifest.get("owed"), list) else []
-    cleared = manifest.get("cleared") if isinstance(manifest.get("cleared"), list) else []
-    remaining = [str(v) for v in owed]
-    incomplete = bool(remaining)
+    if manifest.get("_malformed"):
+        return {
+            "status": "incomplete",
+            "owed": [str(v) for v in manifest.get("owed") or []],
+            "cleared": [],
+            "debts": [],
+            "owed_runs": {},
+            "run_id": None,
+            "diff_range": None,
+            "dispatch_commands": {},
+            "review_incomplete": True,
+            "malformed": True,
+            "manifest_path": str(workdir / MANIFEST_RELPATH),
+        }
+    debts, cleared = _load_debts(manifest)
+    remaining = _dedupe(str(d.get("verifier")) for d in debts)
+    incomplete = bool(debts)
     return {
         "status": "incomplete" if incomplete else "complete",
         "owed": remaining,
-        "cleared": [str(v) for v in cleared],
+        "cleared": _dedupe(str(d.get("verifier")) for d in cleared),
+        # The per-run rows, so a caller can tell WHOSE debt is outstanding
+        # instead of inferring it from the manifest's last-writer run_id.
+        "debts": debts,
+        "owed_runs": {str(d["verifier"]): str(d.get("run_id") or "") for d in debts},
         "run_id": manifest.get("run_id"),
         "diff_range": manifest.get("diff_range"),
         "dispatch_commands": manifest.get("dispatch_commands", {}),
         "review_incomplete": incomplete,
-        "malformed": bool(manifest.get("_malformed")),
+        "malformed": False,
         "manifest_path": str(workdir / MANIFEST_RELPATH),
     }
 
@@ -912,15 +1006,15 @@ def _clear_verifiers_unlocked(
     clear_all: bool = False,
     reason: str | None = None,
     record_tombstone: bool = True,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Mark owed verifier(s) as dispatched-and-cleared by the parent.
+    """Mark owed debt(s) as discharged.
 
-    When the last owed verifier is cleared the manifest is REMOVED and
-    ``state.json.review_incomplete`` flips to ``false``.  Idempotent: clearing
-    an already-cleared or unknown verifier is a no-op for that name.
-
-    Returns ``{"action", "cleared", "remaining", "status", "state_updated",
-    "manifest_removed"}``.
+    Scoped by (verifier, run_id). Clearing a verifier without naming a run
+    clears it for every run that owes it, which is the historical behaviour;
+    naming ``run_id`` clears only that run's debt. When the last debt clears
+    the manifest is REMOVED and ``state.json.review_incomplete`` flips false.
+    Idempotent: clearing an unknown or already-cleared debt is a no-op.
     """
     manifest = load_manifest(workdir)
     if manifest is None:
@@ -933,59 +1027,58 @@ def _clear_verifiers_unlocked(
             "manifest_removed": False,
         }
 
-    owed = list(manifest.get("owed") or []) if isinstance(manifest.get("owed"), list) else []
-    already_cleared = (
-        list(manifest.get("cleared") or []) if isinstance(manifest.get("cleared"), list) else []
-    )
+    debts, already_cleared = _load_debts(manifest)
+    wanted = set(_dedupe(verifiers or []))
+    scope = str(run_id) if run_id else None
 
-    to_clear = list(owed) if clear_all else _dedupe(verifiers or [])
-    newly_cleared = [v for v in to_clear if v in owed]
-    remaining = [v for v in owed if v not in newly_cleared]
-    cleared_total = _dedupe([*already_cleared, *newly_cleared])
+    def _selected(debt: dict[str, Any]) -> bool:
+        if scope is not None and str(debt.get("run_id") or "") != scope:
+            return False
+        return clear_all or str(debt.get("verifier")) in wanted
 
-    # Remember the discharge BEFORE the manifest is touched, but ONLY for a
-    # MANUAL clear. A manual clear is a waiver -- "no peer host could run this
-    # round" -- and must survive the manifest deletion that a full clear
-    # performs, or the next run-record write re-arms it and a machine with no
-    # second vendor can never close a run.
-    #
-    # A VERDICT-based discharge must NOT leave one. The verdict already
-    # suppresses re-arming on its own, and a tombstone outlives the verdict:
-    # when a later correction expands the run's file set, `upsert_merge` drops
-    # the now-stale verdict (it was rendered against different files) and the
-    # debt SHOULD re-arm. A tombstone would permanently exempt the run instead.
+    newly = [d for d in debts if _selected(d)]
+    remaining = [d for d in debts if d not in newly]
+    newly_names = _dedupe(str(d.get("verifier")) for d in newly)
+
+    # A waiver is recorded ONLY for a manual clear, and against the run that
+    # OWED the debt -- the manifest's own run_id is just the last writer's. A
+    # verdict-based discharge records none: the verdict already suppresses
+    # re-arming, and a waiver would outlive it and exempt a later, wider scope.
     tombstone_persisted: bool | None = None
-    if newly_cleared and record_tombstone:
-        # Keyed on the DEBT'S OWNER, not the manifest's run_id. The manifest's
-        # run_id is only the last writer's, so a waiver granted for run A's
-        # cross-vendor round landed under run B -- and run B was then
-        # permanently exempt from a cross-vendor debt it later genuinely
-        # incurred. That is the filed defect happening again through the escape
-        # hatch its own fix introduced, so ownership decides here exactly as it
-        # decides the discharge.
-        owners = manifest.get("owed_runs")
-        owners = owners if isinstance(owners, dict) else {}
-        fallback = str(manifest.get("run_id") or "")
+    if newly and record_tombstone:
         by_owner: dict[str, list[str]] = {}
-        for name in newly_cleared:
-            by_owner.setdefault(str(owners.get(name) or fallback), []).append(name)
+        for debt in newly:
+            by_owner.setdefault(str(debt.get("run_id") or ""), []).append(
+                str(debt.get("verifier"))
+            )
         tombstone_persisted = True
         for owner, names in by_owner.items():
             if not _record_cleared(workdir, owner, names, reason):
                 tombstone_persisted = False
         if tombstone_persisted is False:
-            # The waiver could not be persisted, so the debt WILL re-arm on the
-            # next write. Say so rather than reporting a durable clear that is
-            # not durable.
             _log(
                 workdir,
                 "clear WARNING tombstone not persisted for "
-                f"{','.join(newly_cleared)}; the debt will re-arm on the next run-record write",
+                f"{','.join(newly_names)}; the debt will re-arm on the next run-record write",
             )
+
+    # The cleared record is per (verifier, run_id) too: a waiver granted to one
+    # run must not suppress another run's obligation for the same verifier.
+    cleared_total = list(already_cleared)
+    seen = {_debt_key(d) for d in cleared_total}
+    for debt in newly:
+        key = _debt_key(debt)
+        if key not in seen:
+            seen.add(key)
+            cleared_total.append({
+                "verifier": debt.get("verifier"),
+                "run_id": debt.get("run_id"),
+                "at": _utcnow_iso(),
+                "reason": reason or "",
+            })
 
     manifest_path = workdir / MANIFEST_RELPATH
     if not remaining:
-        # Review complete — remove the manifest, flip the state flag.
         removed = False
         try:
             if manifest_path.exists():
@@ -994,10 +1087,10 @@ def _clear_verifiers_unlocked(
         except OSError:
             removed = False
         state_updated = _set_state_flag(workdir, False)
-        _log(workdir, f"clear complete cleared={','.join(newly_cleared) or 'none'} ({reason or 'no reason'})")
+        _log(workdir, f"clear complete cleared={','.join(newly_names) or 'none'} ({reason or 'no reason'})")
         return {
             "action": "cleared_complete",
-            "cleared": newly_cleared,
+            "cleared": newly_names,
             "remaining": [],
             "status": "complete",
             "state_updated": state_updated,
@@ -1005,30 +1098,23 @@ def _clear_verifiers_unlocked(
             "tombstone_persisted": tombstone_persisted,
         }
 
-    # Verifiers still owed — persist the reduced manifest.
-    payload = dict(manifest)
-    payload.pop("_malformed", None)
-    payload["owed"] = remaining
-    payload["cleared"] = cleared_total
-    payload["status"] = "incomplete"
-    commands = manifest.get("dispatch_commands")
-    payload["dispatch_commands"] = {
-        k: v for k, v in (commands if isinstance(commands, dict) else {}).items()
-        if k in remaining
-    }
-    owners = manifest.get("owed_runs")
-    payload["owed_runs"] = {
-        k: v for k, v in (owners if isinstance(owners, dict) else {}).items()
-        if k in remaining
-    }
+    payload = _manifest_payload(
+        remaining, cleared_total,
+        run_id=str(manifest.get("run_id") or ""),
+        diff_range=str(manifest.get("diff_range") or "unknown"),
+        chunk_id=manifest.get("chunk_id"),
+        reason=manifest.get("reason"),
+        written_by=str(manifest.get("written_by") or "nested-orchestrator"),
+    )
     payload["updated_at"] = _utcnow_iso()
     _atomic_write_json(manifest_path, payload)
     state_updated = _set_state_flag(workdir, True)
-    _log(workdir, f"clear partial cleared={','.join(newly_cleared) or 'none'} remaining={','.join(remaining)}")
+    remaining_names = _dedupe(str(d.get("verifier")) for d in remaining)
+    _log(workdir, f"clear partial cleared={','.join(newly_names) or 'none'} remaining={','.join(remaining_names)}")
     return {
         "action": "cleared_partial",
-        "cleared": newly_cleared,
-        "remaining": remaining,
+        "cleared": newly_names,
+        "remaining": remaining_names,
         "status": "incomplete",
         "state_updated": state_updated,
         "manifest_removed": False,

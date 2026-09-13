@@ -8,7 +8,7 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -459,12 +459,19 @@ def _head_created_row(path: Path, max_lines: int = 500) -> dict[str, Any] | None
     baseline is there.
     """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for index, line in enumerate(handle):
-                if index >= max_lines:
+        with path.open("rb") as handle:
+            for index in range(max_lines):
+                # readline WITH a byte cap. Text iteration reads a whole
+                # physical line before any line-count check, so one enormous
+                # early row allocated unboundedly -- past the very byte limits
+                # the primary reader enforces.
+                raw = handle.readline(MAX_JSONL_FIRST_LINE_BYTES + 1)
+                if not raw:
+                    return None
+                if len(raw) > MAX_JSONL_FIRST_LINE_BYTES:
                     return None
                 try:
-                    row = json.loads(line)
+                    row = json.loads(raw.decode("utf-8", errors="replace"))
                 except (ValueError, TypeError):
                     continue
                 if isinstance(row, dict) and row.get("event") == "created":
@@ -502,8 +509,29 @@ def _metric_scale_mismatch(created: dict[str, Any], applied: list[dict[str, Any]
 CONTROL_FLOOR = 8
 
 
+CONTROL_WINDOW_DAYS = 90
+
+
+def _sweep_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _run_date(row: dict[str, Any]) -> datetime | None:
+    raw = str(row.get("date") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _control_mean(
-    runs: list[dict[str, Any]], artifact: str, applied_run_ids: set[str]
+    runs: list[dict[str, Any]],
+    artifact: str,
+    applied_run_ids: set[str],
+    since: datetime | None = None,
 ) -> tuple[float | None, int]:
     """Mean outcome metric over runs that did NOT apply this artifact.
 
@@ -523,6 +551,13 @@ def _control_mean(
             continue
         if str(row.get("run_id") or "") in applied_run_ids:
             continue
+        if since is not None:
+            # Same window, or it is not a control. Eight failed runs from years
+            # ago are not a comparison for eight recent applied runs; they are a
+            # different era of the repository wearing the control's name.
+            when = _run_date(row)
+            if when is None or when < since:
+                continue
         active = row.get("active_experimental_artifacts")
         if isinstance(active, list) and artifact in active:
             continue
@@ -623,8 +658,25 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
         observed = sum(float(row["metric_value"]) for row in applied) / len(applied)
         name = str(created.get("artifact") or path.stem)
         applied_ids = {str(row.get("run_id") or "") for row in applied}
-        control, control_n = _control_mean(all_runs, name, applied_ids)
-        if control is None:
+        # The control arm is built from run OUTCOMES, so it can only be compared
+        # against a treatment arm measured the same way. A caller-supplied
+        # metric ("seconds to complete") shares no scale with it -- differencing
+        # the two both blocks real improvements and passes flat ones -- so those
+        # experiments keep the level comparison and say which rule was applied.
+        outcome_measured = all(
+            row.get("metric_source") == "run_outcome" for row in applied
+        )
+        if not outcome_measured:
+            control, control_n = None, 0
+            delta = None
+            required = None
+            met = observed >= target if target >= baseline else observed <= target
+            comparison = "level (caller-supplied metric; control arm not comparable)"
+        else:
+            window_start = _sweep_now() - timedelta(days=CONTROL_WINDOW_DAYS)
+            control, control_n = _control_mean(all_runs, name, applied_ids, window_start)
+            comparison = "delta vs control"
+        if outcome_measured and control is None:
             # No control arm means no comparison. Report it instead of promoting
             # on a level that the ambient base rate may already clear.
             result["control_missing"] = result.get("control_missing", 0) + 1
@@ -640,10 +692,11 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                 ),
             })
             continue
-        # Gate on the DELTA the experiment claimed, not the level it reached.
-        delta = observed - control
-        required = target - baseline
-        met = delta >= required if target >= baseline else delta <= required
+        if outcome_measured:
+            # Gate on the DELTA the experiment claimed, not the level it reached.
+            delta = observed - control
+            required = target - baseline
+            met = delta >= required if target >= baseline else delta <= required
         artifact = _artifact_path(workdir, name)
         if not met or artifact is None:
             continue
@@ -664,8 +717,10 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                     "observed": observed,
                     "control": control,
                     "control_runs": control_n,
+                    "control_window_days": CONTROL_WINDOW_DAYS,
                     "delta": delta,
                     "required_delta": required,
+                    "comparison": comparison,
                     "met": True,
                 },
             )

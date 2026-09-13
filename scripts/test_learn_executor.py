@@ -964,3 +964,84 @@ def test_one_legacy_row_cannot_disable_the_metric_scale_guard(tmp_path: Path) ->
 
     assert sweep["eligible"] == 0, sweep
     assert sweep["metric_mismatch"] == 1, sweep
+
+
+def test_an_out_of_window_control_population_does_not_count(tmp_path: Path) -> None:
+    """Eight runs from years ago are a different era, not a control arm."""
+    _seed_experiment(tmp_path, "stale")
+    for index in range(8):
+        _write_run_entry_cli(tmp_path, "stale", run_id=f"st-{index}")
+
+    run_id = _write_state(tmp_path, 3)
+    path = tmp_path / ".build-loop" / "state.json"
+    state = json.loads(path.read_text())
+    for row in state["runs"]:
+        row["date"] = "2020-01-01T00:00:00Z"
+    for index in range(8):
+        state["runs"].append({
+            "run_id": f"ancient-{index}", "date": "2020-01-01T00:00:00Z",
+            "goal": "old", "outcome": "fail", "host": "test", "commit": "pending",
+            "phases": {}, "manualInterventions": [], "diagnosticCommands": [],
+            "filesTouched": [], "judge_decisions": [], "security_findings": [],
+            "active_experimental_artifacts": [],
+        })
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    sweep = _runner().run(tmp_path, run_id=run_id, source="test")["stages"]["sample_sweep"]
+    assert sweep["eligible"] == 0, sweep
+    assert sweep["control_missing"] == 1, sweep
+
+
+def test_a_caller_supplied_metric_is_not_differenced_against_run_outcomes(
+    tmp_path: Path,
+) -> None:
+    """"seconds to complete" shares no scale with a pass/fail control mean.
+
+    Differencing them both blocked real improvements (5s against a control of
+    1.0) and passed flat ones (10 - 1 >= 1). Those experiments keep the level
+    comparison and the receipt says which rule ran.
+    """
+    from write_run_entry.iohelpers import append_experiment_rows
+
+    _seed_experiment(tmp_path, "seconds2")
+    log = tmp_path / ".build-loop" / "experiments" / "seconds2.jsonl"
+    log.write_text(
+        json.dumps({
+            "event": "created", "artifact": "seconds2",
+            "baseline_metric": "seconds to complete",
+            "baseline_value": 10, "target_value": 5, "sample_size_target": 8,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    experiments = tmp_path / ".build-loop" / "experiments"
+    for index in range(8):
+        append_experiment_rows(
+            experiments, f"sec2-{index}", ["seconds2"], "pass",
+            "2026-09-12T00:00:00Z", metric_value=5.0,
+        )
+
+    run_id = _write_state(tmp_path, 3)
+    _seed_control_runs(tmp_path, count=8, outcome="pass")
+    result = _runner().run(tmp_path, run_id=run_id, source="test")
+    sweep = result["stages"]["sample_sweep"]
+
+    assert sweep["eligible"] == 1, sweep
+    reviewer = next(o for o in result["work_orders"] if o["role"] == "promotion-reviewer")
+    assert "level" in reviewer["target_metric"]["comparison"]
+    assert reviewer["target_metric"]["observed"] == 5.0
+
+
+def test_the_head_scan_will_not_read_an_unbounded_line(tmp_path: Path) -> None:
+    """One enormous early row allocated past the reader's own byte limits."""
+    _seed_experiment(tmp_path, "huge")
+    log = tmp_path / ".build-loop" / "experiments" / "huge.jsonl"
+    log.write_text(
+        json.dumps({"event": "noise", "blob": "x" * 400_000}) + "\n"
+        + json.dumps({
+            "event": "created", "artifact": "huge", "baseline_metric": "pass rate",
+            "baseline_value": 0.5, "target_value": 0.8, "sample_size_target": 8,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    runner = _runner()
+    assert runner._head_created_row(log) is None

@@ -115,13 +115,45 @@ def auditor_present(judge_decisions: object) -> bool:
     return judge_verdict_present(judge_decisions, AUDITOR_JUDGE_MARKER)
 
 
-# Which provider each run `host` belongs to. A cross-vendor verdict has to come
-# from OUTSIDE this set for the run's own host, or the round did not happen.
-HOST_PROVIDERS: dict[str, tuple[str, ...]] = {
-    "claude_code": ("anthropic", "claude"),
-    "codex": ("openai", "codex", "gpt"),
-    "gemini": ("google", "gemini"),
+# Which provider each run `host` belongs to. A cross-vendor verdict has to name
+# a provider OUTSIDE this set for the run's own host, or the round did not happen.
+HOST_PROVIDERS: dict[str, str] = {
+    "claude_code": "anthropic",
+    "codex": "openai",
+    "gemini": "google",
 }
+# The providers a `vendor` field may name. An allowlist, not a blacklist: a free
+# string like "unknown" is not evidence that a different vendor reviewed the
+# diff, and treating any non-empty value as proof is the same substitution the
+# `judge_id` label already made.
+KNOWN_VENDOR_PROVIDERS: dict[str, tuple[str, ...]] = {
+    "anthropic": ("anthropic", "claude"),
+    "openai": ("openai", "codex", "gpt"),
+    "google": ("google", "gemini"),
+    "meta": ("meta", "llama"),
+    "mistral": ("mistral",),
+    "xai": ("xai", "grok"),
+    "qwen": ("qwen",),
+    "deepseek": ("deepseek",),
+}
+
+
+def vendor_provider(vendor: object) -> str | None:
+    """The provider a `vendor` string names, or None when it names none.
+
+    Reads the FIRST recognised token rather than matching anywhere in the
+    string, because a vendor field records the reviewing provider and may carry
+    harness detail after it -- "openai via claude-code peer" is an OpenAI
+    review, and substring matching over the whole value called it Anthropic.
+    """
+    text = str(vendor or "").strip().lower()
+    if not text:
+        return None
+    for token in [t for t in text.replace("/", " ").replace("-", " ").split() if t]:
+        for provider, aliases in KNOWN_VENDOR_PROVIDERS.items():
+            if token in aliases:
+                return provider
+    return None
 
 
 def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
@@ -142,7 +174,7 @@ def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
     """
     if not isinstance(judge_decisions, list):
         return False
-    banned = HOST_PROVIDERS.get(str(host or "").strip().lower(), ())
+    own_provider = HOST_PROVIDERS.get(str(host or "").strip().lower())
     for item in judge_decisions:
         if not isinstance(item, dict):
             continue
@@ -150,12 +182,24 @@ def cross_vendor_present(judge_decisions: object, host: object = None) -> bool:
             continue
         verdict = str(item.get("verdict") or "").strip().lower()
         status = str(item.get("status") or "").strip().lower()
-        if verdict in NON_VERDICT_VALUES or status in NON_VERDICT_STATUSES:
+        # ALLOWLIST. The blacklist let `verdict: "not-run"` / `status: "failed"`
+        # discharge the debt: a record of the round NOT happening read as the
+        # round happening. Entries from the judge-decisions FILE never pass
+        # through _validate_judge_decision, so this is their only check.
+        if verdict not in ALL_JUDGE_VERDICTS:
             continue
-        vendor = str(item.get("vendor") or "").strip().lower()
-        if not vendor:
+        if status in NON_VERDICT_STATUSES:
             continue
-        if any(token in vendor for token in banned):
+        provider = vendor_provider(item.get("vendor"))
+        if provider is None:
+            # No recognised provider named: the entry asserts a round happened
+            # without saying who ran it.
+            continue
+        if own_provider is None:
+            # The run's host is not one we can map to a provider, so "different
+            # vendor" is unanswerable. Fail safe: the debt stays armed.
+            continue
+        if provider == own_provider:
             continue
         return True
     return False

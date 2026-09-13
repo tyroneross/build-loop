@@ -251,9 +251,19 @@ def _apply_owed_verification(workdir: Path, envelope: dict[str, Any]) -> dict[st
     if gap is None:
         return envelope
     owed = [str(v) for v in gap.get("owed") or []]
-    owed_run_id = str(gap.get("run_id") or "")
     this_run_id = str(envelope.get("run_id") or "")
-    owned_by_this_run = not owed_run_id or not this_run_id or owed_run_id == this_run_id
+    # Ownership comes from the per-debt rows, NOT the manifest's `run_id`. That
+    # field is only the last writer's, so keying on it reported "another run's
+    # debt" to the run that actually owed it and let it close at exit 0.
+    owners = gap.get("owed_runs")
+    owners = owners if isinstance(owners, dict) else {}
+    owner_ids = {str(v) for v in owners.values() if str(v)}
+    if not owner_ids:
+        owner_ids = {str(gap.get("run_id") or "")} - {""}
+    owned_by_this_run = (
+        not owner_ids or not this_run_id or this_run_id in owner_ids
+    )
+    owed_run_id = ", ".join(sorted(owner_ids)) if owner_ids else ""
     # Shape-guard, not decoration: a hand-edited or malformed manifest can carry
     # a LIST here, and `.get` on it raises outside this function's caller's
     # handler -- which meant `--advisory` never reached its exit-0 branch and a
