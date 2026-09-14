@@ -16,6 +16,13 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.46.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.1...build-loop-v0.46.0) (2026-09-14)
+
+
+### Features
+
+* select risk-targeted acceptance lanes ([9887fb0](https://github.com/tyroneross/build-loop/commit/9887fb07a7cb483fc77fb7e08a128f820c1008ab))
+
 ## [0.45.1](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.0...build-loop-v0.45.1) (2026-09-13)
 
 
