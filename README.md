@@ -51,7 +51,7 @@ Use npm only for an exact pin or a host without plugin marketplace support:
 
 <!-- x-release-please-start-version -->
 ```bash
-npm install -g @tyroneross/build-loop@0.45.0
+npm install -g @tyroneross/build-loop@0.45.1
 build-loop-install --host all
 ```
 <!-- x-release-please-end -->
