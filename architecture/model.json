@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "5f87350559ae9570c1582b4838e45598586f7041ef792fb6bbad8d19e1e8d38b"
+    "content_sha256": "be4de48325859adcb12cd8d92cee54b62fcb87ede4d64241459c339efd0d78aa"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1020,7 +1020,7 @@
         "file": "agents/recurring-pattern-detector.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-09-12"
         }
       },
       "retrospective-synthesizer": {
