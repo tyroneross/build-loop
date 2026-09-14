@@ -49,18 +49,72 @@ from pathlib import Path
 from typing import Any
 
 try:  # pragma: no cover - import shim for direct + packaged execution
+    import host_model_map
     import model_overrides
     import model_resolver
     import model_taxonomy
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import host_model_map  # type: ignore[no-redefine]
     import model_overrides  # type: ignore[no-redefine]
     import model_resolver  # type: ignore[no-redefine]
     import model_taxonomy  # type: ignore[no-redefine]
 
+
 INHERIT = "inherit"
 # agents/ sits one level up from scripts/.
 _DEFAULT_AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
+
+
+def _host_family(host_providers: set[str] | frozenset[str] | None) -> str | None:
+    """The coding-host family this resolve is targeting, or None.
+
+    Slug-map only when the *provider filter in force* is Cursor's full set.
+    Ambient ``detect_host()==cursor`` must not rewrite ``opus``→Task slug when
+    tests or ``BUILD_LOOP_HOST_PROVIDERS=anthropic`` narrowed the filter.
+    """
+    if host_providers is model_resolver.HOST_FILTER_DISABLED:
+        return None
+    providers = host_providers
+    if providers is None:
+        providers = model_resolver.detect_host_providers()
+    if providers is None:
+        return None
+    if host_model_map.is_host_provider_set(providers, "cursor"):
+        return "cursor"
+    return None
+
+
+def _annotate_dispatch(
+    result: dict[str, Any],
+    *,
+    workdir: Path,
+    host_providers: set[str] | frozenset[str] | None,
+) -> dict[str, Any]:
+    """Attach canonical + host-dispatch tokens. Cursor Task needs fused slugs."""
+    out = dict(result)
+    canonical = out.get("model")
+    family = _host_family(host_providers)
+    out["host_family"] = family
+    out["canonical_model"] = canonical
+    dispatch = canonical
+    if (
+        family == "cursor"
+        and canonical
+        and canonical != INHERIT
+        and out.get("resolved", bool(canonical))
+    ):
+        dispatch = host_model_map.dispatch_id(
+            canonical,
+            effort=out.get("preferred_effort"),
+            host_family="cursor",
+            workdir=workdir,
+        ) or canonical
+        # Keep ``model`` as the taxonomy id so host-neutral consumers and
+        # agreement tests stay stable. Cursor Task dispatch reads
+        # ``dispatch_model``.
+    out["dispatch_model"] = dispatch
+    return out
 
 
 def default_agents_dir() -> Path:
@@ -115,7 +169,33 @@ def read_agent_frontmatter(agent: str, agents_dir: Path) -> dict[str, str]:
     return _parse_frontmatter(path.read_text(encoding="utf-8"))
 
 
+
 def resolve(
+    *,
+    agent: str,
+    workdir: Path,
+    agents_dir: Path | None = None,
+    extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Resolve ``agent``'s frontmatter role to a dispatch model.
+
+    ``model`` / ``canonical_model`` stay the taxonomy id. Cursor Task slugs
+    land on ``dispatch_model`` (equal to ``model`` on every other host).
+    """
+    result = _resolve_inner(
+        agent=agent,
+        workdir=workdir,
+        agents_dir=agents_dir,
+        extra_unavailable=extra_unavailable,
+        host_providers=host_providers,
+    )
+    return _annotate_dispatch(
+        result, workdir=workdir, host_providers=host_providers
+    )
+
+
+def _resolve_inner(
     *,
     agent: str,
     workdir: Path,
@@ -309,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return 1
     if args.plain and not args.json:
-        print(result.get("model") or "")
+        print(result.get("dispatch_model") or result.get("model") or "")
     else:
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0

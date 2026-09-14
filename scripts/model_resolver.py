@@ -177,12 +177,27 @@ def detect_host_providers() -> set[str] | None:
     """Best-effort: the provider set the CURRENT host can dispatch, or None.
 
     `BUILD_LOOP_HOST_PROVIDERS` (comma-separated, e.g. "anthropic" or
-    "anthropic,openai") is the explicit override and wins. Otherwise detect from
-    host env signals. Returns None when no host is identifiable — host-neutral,
-    no filtering, so a non-Claude/unknown host is never wrongly constrained."""
+    "cursor") is the explicit override and wins — host family tokens expand
+    via ``host_model_map`` so ``cursor`` becomes every provider that host
+    can dispatch. Otherwise detect the coding host (Cursor is multi-provider)
+    and fall back to single-vendor env keys for API-only runners. Returns
+    None when no host is identifiable — host-neutral, no filtering."""
     override = os.environ.get("BUILD_LOOP_HOST_PROVIDERS")
     if override and override.strip():
-        return {p.strip().lower() for p in override.split(",") if p.strip()}
+        try:
+            import host_model_map as _host_map
+            return _host_map.expand_host_tokens(override)
+        except ImportError:  # pragma: no cover
+            return {p.strip().lower() for p in override.split(",") if p.strip()}
+    try:
+        import host_capabilities as _hc
+        import host_model_map as _host_map
+        host = _hc.detect_host(None)
+        providers = _host_map.providers_for_host(host)
+        if providers:
+            return providers
+    except ImportError:  # pragma: no cover
+        pass
     for env_keys, provider in _HOST_PROVIDER_SIGNALS:
         if any(os.environ.get(k) for k in env_keys):
             return {provider}
@@ -590,13 +605,18 @@ def _parse_host_providers_arg(raw: str | None) -> set[str] | frozenset[str] | No
 
     None / "" -> None (default: config → detected host).
     "any"     -> HOST_FILTER_DISABLED sentinel (no filter, host-neutral).
-    "a,b"     -> {"a","b"}.
+    "cursor"  -> the Cursor host-family provider set (not provider cursor).
+    "a,b"     -> {"a","b"} after host-family expansion.
     """
     if not raw or not raw.strip():
         return None
     if raw.strip().lower() == "any":
         return HOST_FILTER_DISABLED
-    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+    try:
+        import host_model_map as _host_map
+        return _host_map.expand_host_tokens(raw)
+    except ImportError:  # pragma: no cover
+        return {p.strip().lower() for p in raw.split(",") if p.strip()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -630,9 +650,10 @@ def main(argv: list[str] | None = None) -> int:
         "--host-providers",
         default=None,
         help="Comma-separated providers the current host can dispatch (e.g. "
-        "'anthropic'). Overrides config + host detection. Default: detect the "
-        "current host (Claude Code -> anthropic) so a model the host cannot run "
-        "is never offered. Pass 'any' to disable the filter (host-neutral).",
+        "'anthropic' or 'cursor'). Host family tokens expand to the providers "
+        "that host can dispatch (Cursor is multi-provider). Overrides config + "
+        "host detection. Default: detect the current host so a model the host "
+        "cannot run is never offered. Pass 'any' to disable the filter.",
     )
     p.add_argument("--plain", action="store_true", help="Print only the model id.")
     p.add_argument("--json", action="store_true", help="Print the full envelope.")

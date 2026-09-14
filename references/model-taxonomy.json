@@ -253,6 +253,62 @@
       "telemetry": "Capture requested and actual model, effort, token usage, timing, verifier verdict, escaped defects, and rework before changing this policy."
     }
   },
+  "hosts": {
+    "_comment": "Coding-host families and the providers each can dispatch. A host is NOT a provider: Cursor dispatches several vendors in one session. --host <family> expands to providers[]; unknown tokens pass through as provider names. Adding a host is a data edit here, not a new resolver branch.",
+    "claude_code": {
+      "providers": [
+        "anthropic"
+      ],
+      "aliases": [
+        "claude",
+        "anthropic",
+        "claude-code",
+        "claudecode",
+        "cc"
+      ]
+    },
+    "codex": {
+      "providers": [
+        "openai"
+      ],
+      "aliases": [
+        "openai",
+        "chatgpt"
+      ]
+    },
+    "gemini": {
+      "providers": [
+        "google"
+      ],
+      "aliases": [
+        "google",
+        "gemini_cli",
+        "gemini-cli"
+      ]
+    },
+    "cursor": {
+      "providers": [
+        "anthropic",
+        "openai",
+        "xai",
+        "cursor",
+        "google"
+      ],
+      "aliases": [
+        "cursor-agent"
+      ]
+    },
+    "local": {
+      "providers": [
+        "local"
+      ],
+      "aliases": [
+        "ollama",
+        "lmstudio",
+        "mlx"
+      ]
+    }
+  },
   "preferred": {
     "_comment": "Ordered preferred-model list per (segment, tier). Order = capability rank, honoring Accuracy>Speed>Cost. The resolver picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked broken by release recency (newer wins). Users reorder via .build-loop/config.json. ALL 7 segments carry at least one cell so the data shape is uniform; dormant cells are data only — no resolver walks them yet.",
     "generative_reasoning": {
@@ -407,6 +463,8 @@
       "aliases": [
         "claude-opus-5",
         "claude-opus-5[1m]",
+        "claude-opus-5-thinking-high",
+        "claude-opus-5-thinking-high-fast",
         "claude-opus-4-8",
         "claude-opus-4-8-20251101",
         "claude-opus-4-8[1m]"
@@ -443,7 +501,13 @@
       ],
       "released": "2026-07-09",
       "status": "verified",
-      "aliases": []
+      "aliases": [
+        "gpt-5.6-sol-medium",
+        "gpt-5.6-sol-high",
+        "gpt-5.6-sol-high-fast",
+        "gpt-5.6-sol-xhigh",
+        "gpt-5.6-sol-xhigh-fast"
+      ]
     },
     "gpt-6-astra": {
       "provider": "openai",
@@ -483,7 +547,10 @@
       ],
       "released": "2026-07-09",
       "status": "verified",
-      "aliases": []
+      "aliases": [
+        "gpt-5.6-terra-medium",
+        "gpt-5.6-terra-high"
+      ]
     },
     "gpt-5.6-luna": {
       "provider": "openai",
@@ -499,7 +566,10 @@
       ],
       "released": "2026-07-09",
       "status": "verified",
-      "aliases": []
+      "aliases": [
+        "gpt-5.6-luna-high",
+        "gpt-5.6-luna-medium"
+      ]
     },
     "sonnet": {
       "provider": "anthropic",
@@ -515,7 +585,9 @@
       "released": "2026-06-01",
       "status": "default",
       "aliases": [
-        "claude-sonnet-5"
+        "claude-sonnet-5",
+        "claude-sonnet-5-thinking-high",
+        "claude-sonnet-5-thinking-xhigh"
       ]
     },
     "gpt-5.4": {
@@ -768,10 +840,32 @@
       "released": "2026-07-01",
       "status": "candidate-unverified",
       "aliases": [
-        "grok-4.6-latest"
+        "grok-4.6-latest",
+        "cursor-grok-4.6-high-fast",
+        "cursor-grok-4.6-high",
+        "cursor-grok-4.6"
       ],
       "evidence": "Demoted from T2 2026-08-17: no SWE-bench Verified number found, so the Thinking contract is unevidenced. Terminal-Bench 2.1 88.4 independent, but v3.0 26% trailing GPT-5.6 Sol by ~8.6pt — same model, incomparable versions. Turn efficiency (~53 vs Opus ~103) is a real orchestration property but is not the contract.",
       "evidence_tier": "T3 leaderboard + T1 vendor"
+    },
+    "composer-2.5": {
+      "provider": "cursor",
+      "label": "Composer 2.5",
+      "segment": "agentic_execution",
+      "tier": "T3",
+      "tags": [
+        "coding",
+        "agentic",
+        "host-native"
+      ],
+      "released": "2026-01-01",
+      "status": "candidate-unverified",
+      "aliases": [
+        "composer-2.5-fast",
+        "composer-2.5[fast=false]"
+      ],
+      "evidence": "Cursor first-party coding model. Task inline dispatch exposes composer-2.5-fast as the picker-default variant; the non-fast slug is frontmatter-only unless the picker is set to standard. Not placed in a preferred chain: Cursor already reaches sonnet/terra when those providers are in the host set; Composer is the Code-tier fallback when the session Task allowlist has no Sonnet/Terra slug.",
+      "evidence_tier": "T2 host Task slug list"
     },
     "gemini-3.7-flash": {
       "provider": "google",
@@ -786,7 +880,9 @@
       ],
       "released": "2026-08-13",
       "status": "candidate-unverified",
-      "aliases": [],
+      "aliases": [
+        "gemini-3.7-flash-high"
+      ],
       "evidence": "Terminal-Bench 2.1 85.8, vendor and independent AGREEING — the strongest evidence in the candidate set, at $0.75/$3.75 (intro; doubles 2027-01-01). NOT placed in a preferred chain: resolution breaks ties by release recency across the whole cell, so a 2026-08-13 model would outrank sonnet (2026-06-01) from any position and take over host-neutral routing. Promoting it is a routing decision that needs a bakeoff, not a metadata refresh.",
       "evidence_tier": "T1 vendor + T3 independent, agreeing"
     },

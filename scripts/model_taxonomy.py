@@ -192,6 +192,17 @@ def model_meta(model_id: str | None) -> dict[str, Any] | None:
         for alias in meta.get("aliases", []) or []:
             if str(alias).lower() == low:
                 return dict(meta)
+    # Fused host slugs (cursor-grok-4.6-high-fast, gpt-5.6-sol-medium) inherit
+    # from the peeled stem before the vendor+family walker, so a new effort
+    # variant of a known id does not look unknown.
+    try:
+        import host_model_map as _host_map
+    except ImportError:  # pragma: no cover
+        _host_map = None
+    if _host_map is not None:
+        inherited_slug = _host_map.inherit_from_slug(key, models)
+        if inherited_slug is not None:
+            return inherited_slug
     return _inherit_family_meta(key, models)
 
 

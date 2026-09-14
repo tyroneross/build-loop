@@ -64,6 +64,7 @@ TAXONOMY_PATH = REPO_ROOT / "references" / "model-taxonomy.json"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import host_model_map  # noqa: E402
 import model_overrides  # noqa: E402
 import model_resolver  # noqa: E402
 import model_taxonomy  # noqa: E402
@@ -76,28 +77,9 @@ EXIT_ERROR = 2
 ENV_PREFIX = "BUILDLOOP_MODEL_"
 FINGERPRINT_ALGORITHM = "sha256(json.dumps(taxonomy,sort_keys,compact,utf-8))[:16]"
 
-# Host token -> dispatchable provider. Accepts the provider name itself, the
-# coding-host name a non-Claude consumer would naturally type, or "any".
-_HOST_ALIASES = {
-    "anthropic": "anthropic",
-    "claude": "anthropic",
-    "claude_code": "anthropic",
-    "claude-code": "anthropic",
-    "openai": "openai",
-    "codex": "openai",
-    "chatgpt": "openai",
-    "google": "google",
-    "gemini": "google",
-    "gemini_cli": "google",
-    "gemini-cli": "google",
-    # The taxonomy's provider token for locally-run models is "local"; accept the
-    # runner name a consumer would type and fold it to that, so `--host ollama`
-    # actually matches llama3.2-3b / qwen2.5-coder-32b instead of nothing.
-    "local": "local",
-    "ollama": "local",
-    "lmstudio": "local",
-    "mlx": "local",
-}
+# Host family aliases live in references/model-taxonomy.json hosts.
+# parse_host expands them through host_model_map so Cursor stays
+# multi-provider instead of collapsing to a fake provider named "cursor".
 
 
 class IndexError_(Exception):
@@ -175,13 +157,7 @@ def parse_host(raw: str | None) -> Any:
         return None
     if raw.strip().lower() == "any":
         return model_resolver.HOST_FILTER_DISABLED
-    out: set[str] = set()
-    for token in raw.split(","):
-        token = token.strip().lower()
-        if not token:
-            continue
-        out.add(_HOST_ALIASES.get(token, token))
-    return out or None
+    return host_model_map.expand_host_tokens(raw) or None
 
 
 def _effective_host_providers(host: Any, workdir: Path) -> set[str] | None:

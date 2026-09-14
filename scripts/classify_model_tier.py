@@ -146,6 +146,19 @@ def lookup(model_id: str, workdir: Path, refresh: bool = False) -> dict[str, Any
         entry["source"] = "cache"
         entry["status"] = "classified"
         return entry
+    meta = model_taxonomy.model_meta(model_id)
+    if meta:
+        inherited = meta.get("status") == "inherited"
+        return {
+            "model": model_id,
+            "status": "classified",
+            "source": "inherited-family" if inherited else "taxonomy",
+            "tier": meta.get("tier"),
+            "segment": meta.get("segment"),
+            "provider": meta.get("provider"),
+            "inherited_from": meta.get("inherited_from"),
+            "provenance": "unverified" if inherited else "verified",
+        }
     return {
         "model": model_id,
         "status": "needs_classification",
@@ -217,6 +230,11 @@ def main(argv: list[str] | None = None) -> int:
     lk.add_argument("model_id")
     lk.add_argument("--refresh", action="store_true", help="Ignore cache; re-classify.")
 
+    sub.add_parser(
+        "detect",
+        help="Classify slugs from BUILD_LOOP_HOST_MODELS or .build-loop/host-models.json.",
+    )
+
     rc = sub.add_parser("record", help="Cache a classification verdict.")
     rc.add_argument("model_id")
     rc.add_argument("--tier", required=True, choices=sorted(VALID_TIERS))
@@ -240,6 +258,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "lookup":
         result = lookup(args.model_id, workdir, refresh=args.refresh)
+    elif args.cmd == "detect":
+        import host_model_map
+        result = host_model_map.detect_host_models(workdir)
+        # Fill classify packets for unknown slugs so the host LLM has one envelope.
+        packets = []
+        for slug in result.get("needs_classification") or []:
+            packets.append(lookup(slug, workdir))
+        result["classify_packets"] = packets
     else:
         result = record(
             args.model_id,

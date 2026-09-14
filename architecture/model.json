@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ee7c01b4b7c96df3291522342e527bd821681ec74c75825c5e0118be0d0ad2c0"
+    "content_sha256": "9a7ba59a0d960af7a715ba7bf1290489817f72698cc375fe9a0c2340483c41e7"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1318,7 +1318,7 @@
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-25"
+          "date": "2026-09-14"
         }
       },
       "ibr-bridge": {
@@ -1690,6 +1690,7 @@
       "scripts/hooks/unbounded_load_gate.py": "Reject ad-hoc unbounded CPU probes and route callers to the owned supervisor.\"\"\"",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
+      "scripts/host_model_map.py": "Host dispatch map — a host is not a provider.",
       "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",
