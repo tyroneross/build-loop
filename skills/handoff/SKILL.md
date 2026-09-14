@@ -137,6 +137,50 @@ head-40 would have emitted 40 `.bookmark/` cache paths and cut every source edit
 
 `--full-git` restores the raw per-file listing when it is genuinely wanted.
 
+## Merge and integration handoffs: every path gets a default action
+
+Measured 2026-09-14 (rosslabs site-sync merge): the receiving agent merged correctly, then
+stopped with three questions the author could have answered: which of five prototype versions
+to publish, which version was canonical, and whether dated planning docs belonged on main.
+The handoff had written "ask the owner" and "default bring over" in the same table, and quoted
+"21 extra commits" where the receiver measured 65. It named the gaps itself: no per-path
+disposition, no canonical-version line, no production URLs, no single question with a
+default, no re-measure command, no working preview links.
+
+When the handoff's job is to merge, cherry-pick, or deploy, add a **Disposition** section.
+Each rule is checkable against the document:
+
+1. **If** a path group is not already on the target branch, **then** its row carries exactly
+   one action, `include`, `exclude`, or `follow-up`, plus the command that performs it.
+   "Ask <owner>" is not an action. Write the default, and move the owner's choice to rule 4.
+2. **If** several versions of one artifact exist, **then** state the canonical one in one
+   sentence: "v7 is current; v3 to v6 are historical and excluded."
+3. **If** an included path ships to users (`public/`, routed pages), **then** list the
+   production URL it creates.
+4. **If** an owner decision remains, **then** ask exactly one question, state what happens
+   if it goes unanswered, and place it at the step where the receiver needs it.
+5. **If** the handoff quotes a count (commits ahead, rows, files), **then** give the total,
+   the two refs, the commit it was measured at, and the command that re-measures it, e.g.
+   `git rev-list --count origin/main..main`. The receiver trusts the command, not the number.
+6. **If** an artifact is meant to be viewed, **then** give a URL you loaded with its assets
+   returning 200, or a screenshot path. A page served from the wrong root renders unstyled.
+7. **If** you claim work is or is not merged, **then** compare file contents at the branch
+   tips. `git cherry` reports content that arrived through a conflict-resolved merge as
+   unmerged.
+
+Row shape:
+
+| Path group | Action | Why | Command or URL |
+|---|---|---|---|
+| `.designdoc/home/decisions.json` | include | only committed decision record | `git checkout decisions/home -- .designdoc/home/decisions.json` |
+| `public/stories/v3`..`v6` | exclude | historical; v7 is canonical and already live | n/a |
+
+Wrong, because the receiver has no default and must stop:
+
+| Path group | Action |
+|---|---|
+| `public/stories/v3`..`v6` | ask the owner before adding; public/ ships |
+
 ## Delivery is not the same as writing it
 
 A handoff that exists only on disk has not been handed off. Two things are required
@@ -154,10 +198,16 @@ frequently is not a person. Print the full path:
 picked up by a peer agent, which is the case it most exists for.
 
 ```bash
-rally say fact --tool "<your-tool-id>" \
+ls "<absolute path>"   # the path must exist NOW: a worktree path until the branch is merged
+rally say handoff --tool "<your-tool-id>" --target "<receiver tool id>" \
   --subject "handoff: <one line, what state the work is in>" \
   --evidence "file:<absolute path>" --json
 ```
+
+`fact` is not a valid kind (`rally say --help` lists them); a `fact` post fails and the
+handoff is never delivered. If the receiver's tool id is unknown, post `artifact` with the
+same evidence instead, and tell the receiver its acknowledgement path:
+`rally say receipt --ref <event id>`, then `rally say handoff --handoff-state accepted --ref <event id>`.
 
 The same applies to a retrospective. Those land in the memory store rather than the repo,
 so they are unfindable from the working directory unless the path is stated.
