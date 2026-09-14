@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "be4de48325859adcb12cd8d92cee54b62fcb87ede4d64241459c339efd0d78aa"
+    "content_sha256": "320a58918d19e3e5966c0203f35109c42bf3a680d7a669d44aaed7a032205fc2"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1543,6 +1543,7 @@
       "scripts/_paths.py": "Global path/schema resolver for the build-loop memory framework.",
       "scripts/_test_helpers.py": "Shared test helpers for Phase C isolation.",
       "scripts/acceptance_probe.py": "acceptance_probe.py — the acceptance-probe contract (gate #1).",
+      "scripts/acceptance_selector.py": "Select a risk-targeted acceptance set without executing manifest commands.",
       "scripts/agent_ledger.py": "agent_ledger.py — the build-loop agent-activity ledger (the instrument).",
       "scripts/agent_rally.py": "Host-neutral Rally Point CLI (G4 — cross-tool parity).",
       "scripts/agent_rally_watcher/__init__.py": "Embedded agent-rally-watcher namespace.\"\"\"",

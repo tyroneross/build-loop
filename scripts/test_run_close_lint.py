@@ -19,6 +19,7 @@ Three classes, one file (fewer nodes, same coverage):
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_close_lint  # noqa: E402
+from acceptance_selector import _change_digest  # noqa: E402
 from learn import runner as learn_runner  # noqa: E402
 
 # scripts/ -> repo root
@@ -151,6 +153,129 @@ class RunCloseLintTest(unittest.TestCase):
         self.assertEqual(result["status"], "recorded")
         self.assertTrue(result["orchestrator_grade"])
         self.assertEqual(result["mode"], "run-id")
+
+    def _write_acceptance_selection(self) -> Path:
+        source = self.workdir / "src" / "a.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("pass\n", encoding="utf-8")
+        run_dir = self.workdir / ".build-loop" / "runs" / "bl-1"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = run_dir / "acceptance-lanes.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema": "build-loop.acceptance-lanes.v1",
+                    "lanes": [
+                        {
+                            "id": "unit",
+                            "command": ["pytest", "test_a.py"],
+                            "covers": {"paths": ["src/**"], "criteria": ["C1"]},
+                            "cost": {"seconds": 1, "tokens": 0, "dollars": 0}
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        goal = run_dir / "plan.md"
+        goal.write_text(
+            "```acceptance_context\n"
+            + json.dumps({"boundary": "local", "risks": [], "force_full": False})
+            + "\n```\n\n```acceptance_probe\n"
+            + json.dumps(
+                [{"id": "C1", "acceptance_probe": "echo ok", "baseline": "bad", "boundary": "console"}]
+            )
+            + "\n```\n",
+            encoding="utf-8",
+        )
+        path = self.workdir / ".build-loop" / "acceptance-selection.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "build-loop.acceptance-selection.v1",
+                    "run_id": "bl-1",
+                    "verdict": "complete",
+                    "manifest": {"path": ".build-loop/runs/bl-1/acceptance-lanes.json", "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()},
+                    "goal": {"path": ".build-loop/runs/bl-1/plan.md", "sha256": hashlib.sha256(goal.read_bytes()).hexdigest()},
+                    "changed_files": ["src/a.py"],
+                    "change_sha256": _change_digest(self.workdir, ["src/a.py"]),
+                    "criteria": ["C1"],
+                    "risks": [],
+                    "force_full": False,
+                    "boundary": "local",
+                    "selected": [{"id": "unit", "command": ["pytest", "test_a.py"], "full_suite": False}],
+                    "full_suite_selected": False,
+                    "full_suite_reason": [],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_targeted_selection_without_results_blocks_close(self) -> None:
+        self._write_state({"runs": [_orchestrator_run("bl-1")]})
+        self._write_acceptance_selection()
+        result = run_close_lint.check(self.workdir, run_id="bl-1", now=NOW)
+        self.assertEqual(result["status"], "acceptance_incomplete")
+        self.assertFalse(result["acceptance_complete"])
+
+    def test_code_touching_run_without_selection_blocks_close(self) -> None:
+        run = _orchestrator_run("bl-1")
+        run["filesTouched"] = ["src/a.py"]
+        self._write_state({"runs": [run]})
+        result = run_close_lint.check(self.workdir, run_id="bl-1", now=NOW)
+        self.assertEqual(result["status"], "acceptance_incomplete")
+        self.assertIn("no acceptance selection", result["acceptance_errors"][0])
+
+    def test_matching_passing_acceptance_receipts_allow_close(self) -> None:
+        self._write_state({"runs": [_orchestrator_run("bl-1")]})
+        selection = self._write_acceptance_selection()
+        evidence = self.workdir / ".build-loop" / "evidence" / "unit.log"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text("1 passed\n", encoding="utf-8")
+        results = self.workdir / ".build-loop" / "acceptance-results.json"
+        results.write_text(
+            json.dumps(
+                {
+                    "schema": "build-loop.acceptance-results.v1",
+                    "run_id": "bl-1",
+                    "selection_sha256": hashlib.sha256(selection.read_bytes()).hexdigest(),
+                    "lanes": [
+                        {"id": "unit", "status": "passed", "exit_code": 0, "command": ["pytest", "test_a.py"], "evidence": str(evidence), "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = run_close_lint.check(self.workdir, run_id="bl-1", now=NOW)
+        self.assertEqual(result["status"], "recorded")
+        self.assertTrue(result["acceptance_complete"])
+
+    def test_acceptance_receipt_bound_to_older_selection_blocks_close(self) -> None:
+        self._write_state({"runs": [_orchestrator_run("bl-1")]})
+        selection = self._write_acceptance_selection()
+        evidence = self.workdir / ".build-loop" / "evidence" / "unit.log"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text("1 passed\n", encoding="utf-8")
+        old_digest = hashlib.sha256(selection.read_bytes()).hexdigest()
+        selection.write_text(selection.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        (self.workdir / ".build-loop" / "acceptance-results.json").write_text(
+            json.dumps(
+                {
+                    "schema": "build-loop.acceptance-results.v1",
+                    "run_id": "bl-1",
+                    "selection_sha256": old_digest,
+                    "lanes": [
+                        {"id": "unit", "status": "passed", "exit_code": 0, "command": ["pytest", "test_a.py"], "evidence": str(evidence), "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = run_close_lint.check(self.workdir, run_id="bl-1", now=NOW)
+        self.assertEqual(result["status"], "acceptance_incomplete")
+        self.assertIn("selection_sha256", " ".join(result["acceptance_errors"]))
 
     def test_require_learn_rejects_prose_only_run_close(self) -> None:
         run = _orchestrator_run("bl-1")

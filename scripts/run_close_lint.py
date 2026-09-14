@@ -47,6 +47,8 @@ Statuses (``status`` in the JSON envelope):
     review_owed_other_run exit 0  same, but the debt belongs to a DIFFERENT run. Named and
                         reported, not blocking: refusing an unrelated run's close only
                         teaches the operator to waive the debt to get unstuck.
+    acceptance_incomplete exit 1  targeted selection exists, but its exact selected lanes
+                        do not have bound, passing, evidence-backed result receipts.
     no_state    exit 1  no .build-loop/state.json in this workdir at all (the loudest case:
                         the run produced no durable footprint whatsoever)
 
@@ -403,6 +405,64 @@ def _apply_owed_verification(
     return envelope
 
 
+def _apply_acceptance_results(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
+    """Require execution receipts when this run activated targeted selection."""
+    if envelope.get("status") not in OK_STATUSES:
+        return envelope
+    selection_path = workdir / ".build-loop" / "acceptance-selection.json"
+    files_touched = [
+        str(item) for item in envelope.get("files_touched", []) if isinstance(item, str)
+    ]
+    if not selection_path.exists():
+        non_code_suffixes = {".md", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf"}
+        code_touched = [
+            path for path in files_touched
+            if not path.startswith("docs/") and Path(path).suffix.lower() not in non_code_suffixes
+        ]
+        if not code_touched:
+            return envelope
+        envelope.update(
+            status="acceptance_incomplete",
+            acceptance_complete=False,
+            acceptance_errors=["code-touching run has no acceptance selection"],
+            reason="code changed without a risk-targeted acceptance selection",
+            remediation=(
+                "run scripts/acceptance_selector.py with the closing run id and exact "
+                "filesTouched set, then execute and receipt the selected lanes"
+            ),
+        )
+        return envelope
+    try:
+        import acceptance_selector  # noqa: WPS433
+        verdict = acceptance_selector.verify_results(
+            workdir,
+            expected_run_id=str(envelope.get("run_id") or "") or None,
+            expected_changed_files=files_touched or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        verdict = {"verdict": "fail", "errors": [f"{type(exc).__name__}: {exc}"]}
+    if verdict.get("verdict") == "pass":
+        envelope["acceptance_complete"] = True
+        envelope["acceptance_selected_ids"] = verdict.get("selected_ids", [])
+        return envelope
+    envelope.update(
+        status="acceptance_incomplete",
+        acceptance_complete=False,
+        acceptance_errors=verdict.get("errors", ["acceptance result verification failed"]),
+        reason=(
+            "targeted acceptance selection exists without matching passing execution "
+            "receipts; a selection plan is not test evidence"
+        ),
+        remediation=(
+            "execute every lane in .build-loop/acceptance-selection.json, write "
+            ".build-loop/acceptance-results.json per references/targeted-acceptance.md, "
+            "then run `python3 scripts/acceptance_selector.py --workdir . "
+            "--verify-results --compact`"
+        ),
+    )
+    return envelope
+
+
 def check(
     workdir: Path,
     run_id: str | None = None,
@@ -430,9 +490,9 @@ def check(
         require_learn=require_learn,
         now=now,
     )
-    return _apply_owed_verification(
-        Path(workdir).resolve(), envelope, reconcile=not advisory
-    )
+    resolved_workdir = Path(workdir).resolve()
+    envelope = _apply_acceptance_results(resolved_workdir, envelope)
+    return _apply_owed_verification(resolved_workdir, envelope, reconcile=not advisory)
 
 
 def _check_record(
@@ -543,6 +603,7 @@ def _check_record(
             status="recorded",
             reason=f"run_id {resolved_id!r} present in state.json.runs[]",
             orchestrator_grade=any(is_orchestrator_grade(r) for r in matches),
+            files_touched=matches[-1].get("filesTouched", []),
         )
         return envelope
 
@@ -588,6 +649,7 @@ def _check_record(
                 f"within {recent_minutes}m; newest run_id={fresh[-1].get('run_id')!r}"
             ),
             orchestrator_grade=any(is_orchestrator_grade(r) for r in fresh),
+            files_touched=fresh[-1].get("filesTouched", []),
         )
         return envelope
 

@@ -164,7 +164,9 @@ If any infrastructure step fails (server won't start, curl errors, can't parse h
 - Use `verification-before-completion` for evidence-based claims
 - No criterion marked "pass" without proof
 
-**Acceptance-probe re-run gate (deterministic gate #1 — runs first, before any criterion can be marked passed)**: re-execute every `acceptance_probe` captured in Phase 1 Assess against the post-fix tree:
+**Risk-targeted acceptance selection (runs before acceptance commands):** Re-run `scripts/acceptance_selector.py` from `references/targeted-acceptance.md` with the actual changed files, criteria, risks, run-local plan path, run ID, and current boundary. Execute only `selected[]` argv lanes and retain `.build-loop/acceptance-selection.json` with their reasons and costs. Missing manifest/context, substitute run paths, exit 2, or `verdict: incomplete` routes to Iterate; none may fall through to ad hoc acceptance commands. After execution, write the digest-bound `.build-loop/acceptance-results.json` receipt and require `acceptance_selector.py --run-id "<run_id>" --verify-results` to pass. `run_close_lint.py` independently blocks close with `acceptance_incomplete` when a selection exists without exact passing receipts. Do not run an unselected full suite after a targeted pass; a newly surfaced dependency or risk first updates the inputs and reruns selection. Release, explicit governing policy, or uncovered targets may select the full suite. Merge stays targeted unless the manifest declares a `required_on: ["merge"]` lane. When deterministic boundary oracles cover every criterion and no qualitative judgment remains, record the LLM-as-judge step as `not_applicable: deterministic_oracles_complete`; this removes redundant model spend without weakening the independent Review-A audit.
+
+**Acceptance-probe re-run gate (deterministic gate #1 — first selected behavioral oracle, before any criterion can be marked passed)**: re-execute every `acceptance_probe` captured in Phase 1 Assess against the post-fix tree:
 ```
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/acceptance_probe.py rerun --goal .build-loop/goal.md --workdir "$PWD" --json
 ```
