@@ -512,3 +512,31 @@ _Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000
 **Recommendation.** require the acceptance test that closes an independent-auditor finding to include an assertion derived from the auditor's own reproduction steps (an adversarial-oracle requirement), enforced once as a Review-A/Iterate gate rather than as 11 separate backlog items
 
 **Why.** self-authored tests structurally cannot see the case their author didn't imagine; only a test seeded from the adversary's reproduction closes that blind spot
+
+## 2026-09-13 — Re-verify a subagent's or nested validator's findings against current state before acting on them
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop-memory/projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md`_
+
+**What happened.** What happened: this session was burned once by treating a stale validator report as current (§1) and only caught it by re-checking (§5)
+
+**When.** 2026-09-13
+
+**Impact.** without this as a standing step, a future session would relay a stale finding as open work instead of catching the staleness
+
+**Recommendation.** treat a relayed finding as provisional until checked against the commit/state it should reflect, especially when the report predates a commit that followed it
+
+**Why.** this session had to learn the check was necessary by being burned once; making it standing removes the dependency on noticing
+
+## 2026-09-13 — `git fetch` immediately before comparing local `HEAD` to a remote-tracking ref as push evidence
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop-memory/projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md`_
+
+**What happened.** What happened: this session compared HEAD to a cached `origin/main` ref once without re-fetching, right after a DNS blip (§4)
+
+**When.** 2026-09-13
+
+**Impact.** a stale ref reads identically to a successful push, so the comparison alone cannot distinguish them
+
+**Recommendation.** always `git fetch` immediately before using the remote-tracking ref as push proof
+
+**Why.** the remote-tracking ref only reflects the last successful fetch/push, and nothing in this session's push-verification step re-fetched before comparing
