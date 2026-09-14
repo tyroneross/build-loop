@@ -1204,3 +1204,42 @@ def test_the_head_scan_drain_consumes_the_line_budget(tmp_path: Path) -> None:
     assert runner._head_created_row(log, max_lines=2) is None
     # With a real budget the same file resolves.
     assert runner._head_created_row(log, max_lines=500)["artifact"] == "drain"
+
+
+def test_retro_skip_counters_reach_the_learn_envelope(tmp_path: Path) -> None:
+    """A drop nobody reports looks identical to an empty queue.
+
+    `enforce_retro_signals.scan` silently drops two classes of candidate —
+    already dispositioned, and naming no gate. Both counts are now carried into
+    the Learn details block, so Phase 6 can say how many candidates it declined
+    to count rather than implying the queue was empty.
+    """
+    run_id = _write_state(tmp_path, 3)
+    runner = _runner()
+    d = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    d.mkdir(parents=True)
+
+    def _candidate(text: str, *, disposed: bool = False) -> str:
+        box = "- [x] Adopt" if disposed else "- [ ] Adopt"
+        return f"# Enforce candidate\n\n## Candidate\n\n{text}\n\n## Disposition\n\n{box}\n"
+
+    # Two run-ids naming a judge (no gate), one already dispositioned.
+    (d / "run-aaa-01.md").write_text(
+        _candidate("Enforce gate: inline-self-verification (failed this run)"), encoding="utf-8")
+    (d / "run-bbb-01.md").write_text(
+        _candidate("Enforce gate: inline-self-verification (failed this run)"), encoding="utf-8")
+    (d / "run-ccc-01.md").write_text(
+        _candidate("Enforce gate: review-g (failed this run)", disposed=True), encoding="utf-8")
+
+    patterns, count, skipped = runner._retro_patterns(tmp_path)
+
+    assert patterns == [] and count == 0
+    assert skipped == {
+        "retro_dispositioned_skipped": 1,
+        "retro_placeholder_skipped": 2,
+    }
+
+    result = runner.run(tmp_path, run_id=run_id, source="test")
+    details = result["stages"]["collect"]
+    assert details["retro_placeholder_skipped"] == 2
+    assert details["retro_dispositioned_skipped"] == 1

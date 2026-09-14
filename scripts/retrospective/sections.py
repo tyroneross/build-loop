@@ -793,17 +793,45 @@ def _enforce_signals(
 
     Two sources:
       - Any prompted-≥2× cluster → "enforce: <normalized>" candidate.
-      - Any ``judge_decisions`` with verdict 'nay'/'block' on a recurring
-        rule → "enforce: <rule>" candidate.
+      - Any ``judge_decisions`` with an actionable verdict AND a named
+        ``checkpoint_id`` → "Enforce gate: <checkpoint> (failed this run)".
+
+    A judge decision that names no checkpoint produces NO candidate. Until
+    2026-09-12 this fell back to the literal word ``rule``, so a decision that
+    named nothing still wrote ``Enforce gate: rule (failed this run)`` into
+    ``.build-loop/proposals/enforce-from-retro/``. Observed in ross-labs-astro
+    on 2026-09-12: two run-ids emitted the byte-identical placeholder, which is
+    exactly the ≥2-distinct-run threshold ``enforce_retro_signals.scan`` uses,
+    so Phase 6 Learn raised work order ``learn-4290d6ae4098`` against a
+    candidate that specified no gate to enforce. ``judge_id`` is the auditor's
+    identity rather than a gate name, so it is not a stand-in for the missing
+    checkpoint — the real records that triggered this carried
+    ``judge: independent-auditor`` and no checkpoint at all.
+
+    KNOWN CONSEQUENCE, stated so nobody reads this as live code: **no producer
+    currently writes ``checkpoint_id`` on an actionable verdict**, so this branch
+    emits nothing today. Measured 2026-09-12 across build-loop's own 58 runs and
+    ~315 judge decisions: exactly 6 carry a checkpoint (``review-g`` ×4,
+    ``build``, ``integration-final``) and all 6 are ``approve``. The branch
+    stays because the fix belongs at the producer of `judge_decisions` — a judge
+    that fails a named gate should record that gate — not here. Until one does,
+    every actionable decision still reaches the reader through §1 (lessons) and
+    §9 (issues) via ``_judge_context``; only the promoted candidate is withheld.
+    Backlog: ``BUIL-RETROSPECTIVE-m2b6y0c909hzfmq8vz2az``.
     """
     out: list[str] = []
     for c in clusters:
         excerpt = c["examples"][0][:120]
         out.append(f"Make this an enforced default instead of user-prompted: _{excerpt}_")
     for j in _iter_judge_decisions(_runs_for_run_id(state_json, run_id)):
-        if (j.get("verdict") or "").lower() in _ACTIONABLE_VERDICTS and _judge_signal_summaries(j):
-            rule = j.get("checkpoint_id") or j.get("judge_id") or "rule"
-            out.append(f"Enforce gate: {rule} (failed this run)")
+        if (j.get("verdict") or "").lower() not in _ACTIONABLE_VERDICTS:
+            continue
+        if not _judge_signal_summaries(j):
+            continue
+        gate = str(j.get("checkpoint_id") or "").strip()
+        if not gate:
+            continue
+        out.append(f"Enforce gate: {gate} (failed this run)")
     return out
 
 

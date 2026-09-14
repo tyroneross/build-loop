@@ -304,14 +304,25 @@ def _recurring_run_patterns(runs: list[dict[str, Any]]) -> tuple[list[dict[str, 
     )
 
 
-def _retro_patterns(workdir: Path) -> tuple[list[dict[str, Any]], int]:
+def _retro_patterns(workdir: Path) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    """Convert the enforce-candidate scan into Learn patterns.
+
+    Also returns the scan's skip counters. The scan drops two classes of
+    candidate — already dispositioned, and naming no gate — and a drop nobody
+    reports is indistinguishable from an empty queue, which is the shape of
+    error that let a gate-less candidate raise a work order in the first place.
+    """
     retro = enforce_retro_signals.scan(workdir)
     patterns: list[dict[str, Any]] = []
     for item in retro.get("patterns", []):
         skeleton = item.get("proposal", {}).get("skillSkeleton", {})
         key = str(skeleton.get("name") or procedural_governance.slug(str(item.get("signature") or "pattern")))
         patterns.append({"key": key, "source": "retro", "role": "self-improvement-architect", "payload": item})
-    return patterns, len(retro.get("patterns", []))
+    skipped = {
+        "retro_dispositioned_skipped": int(retro.get("dispositionedSkipped") or 0),
+        "retro_placeholder_skipped": int(retro.get("placeholderSkipped") or 0),
+    }
+    return patterns, len(retro.get("patterns", [])), skipped
 
 
 def _learning_object_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -411,7 +422,7 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
     recurring, manual_count, security_count = _recurring_run_patterns(
         procedural_governance.load_runs(workdir)
     )
-    retro, retro_count = _retro_patterns(workdir)
+    retro, retro_count, retro_skipped = _retro_patterns(workdir)
     learning, converted = _learning_object_patterns(workdir)
     traces, trace_count = _tool_trace_patterns(workdir, truncated_inputs)
     patterns.extend([*recurring, *retro, *learning, *traces])
@@ -427,6 +438,7 @@ def _collect_patterns(workdir: Path) -> tuple[list[dict[str, Any]], dict[str, An
     details = {
         "procedural_candidates": len(procedural),
         "retro_patterns": retro_count,
+        **retro_skipped,
         "learning_proposals": len(converted.get("proposals", [])),
         "enforcement_specs": len(converted.get("enforcement_specs", [])),
         "manual_patterns": manual_count,

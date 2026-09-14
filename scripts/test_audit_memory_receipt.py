@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import audit_before_commit as audit  # type: ignore  # noqa: E402
@@ -54,11 +56,39 @@ def test_blast_radius_alone_does_not_require_a_receipt() -> None:
     assert receipt["required"] is False
 
 
-def test_receipt_is_unsatisfied_when_no_read_or_write_is_recorded() -> None:
-    receipt = audit._memory_receipt(Path("."), ["agents/x.md"], {"level": "low"})
+def test_receipt_is_unsatisfied_when_no_read_or_write_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermetic by construction, because the live-state version self-inverted.
+
+    This asserted `satisfied is False` while passing the REAL repo root, so its
+    verdict depended on whatever the session had done beforehand:
+    `_telemetry_since` reads the global `TELEMETRY.jsonl`, and the read half also
+    accepts a `.build-loop/context-bootstrap.json` newer than HEAD. Consult
+    memory and record a lesson — exactly what this repo's memory discipline
+    asks — and the test went red on correct behavior. Observed 2026-09-12 after a
+    `memory_locator` + `memory_writer` pair in the same session.
+    """
+    monkeypatch.setattr(audit, "_telemetry_since", lambda kind, since: (False, "no telemetry file"))
+    receipt = audit._memory_receipt(tmp_path, ["agents/x.md"], {"level": "low"})
     assert receipt["required"] is True
     assert receipt["satisfied"] is False
     assert "MISSING" in audit._memory_receipt_section(receipt)
+
+
+def test_receipt_is_satisfied_when_both_read_and_write_are_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation guard for the hermetic rewrite above.
+
+    Without this, stubbing `_telemetry_since` to a constant `False` would make
+    the unsatisfied assertion unfalsifiable.
+    """
+    monkeypatch.setattr(audit, "_telemetry_since", lambda kind, since: (True, f"{kind} recorded"))
+    receipt = audit._memory_receipt(tmp_path, ["agents/x.md"], {"level": "low"})
+    assert receipt["required"] is True
+    assert receipt["satisfied"] is True
+    assert "MISSING" not in audit._memory_receipt_section(receipt)
 
 
 def test_enforcement_is_off_by_default(tmp_path: Path) -> None:

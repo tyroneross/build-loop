@@ -214,6 +214,11 @@ CATEGORY_KEYWORDS = [
                       "security_common", "staged_content_gate",
                       "stamp_skill_frontmatter", "surface_policy",
                       "verify_worktree_target", "waivers",
+                      # worktree_inventory renders a verdict on a "caches only"
+                      # claim before an operator approves a destructive
+                      # `git worktree remove --force`. Same lane as
+                      # verify_worktree_target: it guards a worktree decision.
+                      "worktree_inventory",
                       # doc_boundary grades a repo's tracked docs against
                       # references/public-repository-documentation-boundary.md
                       # and fails the run on high-confidence `blocked`

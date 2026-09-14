@@ -246,8 +246,46 @@ class BuildSectionsTests(unittest.TestCase):
         }]}
         sec = build(None, state, None, None, "run-x")
         self.assertIn("API contract broken", sec["issues_with_causal_tree"])
-        # also surfaces as enforce candidate
-        self.assertTrue(any("Enforce gate" in e for e in sec["enforce_candidates"]))
+        # also surfaces as enforce candidate, naming the checkpoint
+        self.assertIn("Enforce gate: build (failed this run)", sec["enforce_candidates"])
+
+    def test_judge_without_checkpoint_emits_no_enforce_candidate(self) -> None:
+        """Regression, ross-labs-astro 2026-09-12.
+
+        This is the real record shape that caused the defect: `judge` rather
+        than `judge_id`, verdict `suggest_correction`, and no `checkpoint_id`
+        at all. The old fallback chain resolved to the literal word "rule" and
+        wrote `Enforce gate: rule (failed this run)` into the proposal queue;
+        two run-ids doing that hit the recurrence threshold and raised Phase 6
+        work order learn-4290d6ae4098 on a candidate naming no gate.
+        """
+        state = {"runs": [{
+            "judge_decisions": [{
+                "judge": "independent-auditor",
+                "verdict": "suggest_correction",
+                "findings": ["F1 high: same-path serialization asserted"],
+                "resolution": "all corrected in 8f9b74b; tests 19/19",
+                "variances": [],
+            }],
+        }]}
+        sec = build(None, state, None, None, "run-x")
+        self.assertEqual(sec["enforce_candidates"], [])
+        self.assertNotIn("rule (failed this run)", sec["what_should_be_enforced"])
+        # The decision itself is NOT silenced — it still reaches the reader.
+        self.assertIn("suggest_correction", sec["issues_with_causal_tree"])
+
+    def test_empty_checkpoint_string_emits_no_enforce_candidate(self) -> None:
+        """An empty-string `checkpoint_id` is unresolved, not a gate name."""
+        state = {"runs": [{
+            "judge_decisions": [{
+                "judge_id": "independent-auditor-hook",
+                "checkpoint_id": "   ",
+                "verdict": "suggest",
+                "variances": [{"why_it_matters": "something drifted"}],
+            }],
+        }]}
+        sec = build(None, state, None, None, "run-x")
+        self.assertEqual(sec["enforce_candidates"], [])
 
     def test_intent_restated_line_surfaces_in_takeaways(self) -> None:
         intent = "# Build Intent\n\n## Restated intent\nDo the thing well.\n\nmore..."
