@@ -723,6 +723,56 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
     return True, cp.stdout.strip()
 
 
+def next_sequence(dirs: "list[Path]") -> int:
+    """Next MADR sequence number, counting REAL ids only.
+
+    A filename like `2026-09-02-source-pruning-policy.md` is dated, not
+    numbered. The old scan matched any leading four digits, so it read 2026 as
+    an id and every later capture took 2027 — 1,836 atomize-ai records shared
+    one id and 2,446 rally records shared another. Require the four digits to
+    be followed by a non-digit AND to be below 1900 so a year cannot pass.
+    """
+    used: set[int] = set()
+    for d in dirs:
+        if not d or not d.exists():
+            continue
+        for f in d.iterdir():
+            m = re.match(r"^(\d{4})-(?!\d)", f.name)
+            if m and int(m.group(1)) < 1900:
+                used.add(int(m.group(1)))
+    return (max(used) + 1) if used else 1
+
+
+def is_duplicate_capture(review_dir: Path, project_slug: str, slug: str) -> bool:
+    """True when this exact decision is already queued for review.
+
+    The end-of-session sweep re-derives the same conclusion across sessions, so
+    the queue accumulated exact repeats (`merge-pr` x9). A repeat adds no
+    information and costs a reviewer another item to read.
+    """
+    if not slug or not review_dir.exists():
+        return False
+    prefix = f"decision-project-{project_slug}-{slug}-"
+    return any(f.name.startswith(prefix) for f in review_dir.iterdir())
+
+
+def _index_on_write(path: Path) -> None:
+    """Make a new capture searchable immediately. Best-effort, never fatal.
+
+    Without this the record is invisible to search until someone happens to
+    rebuild an index: measured 2026-09-16, only 1,054 of atomize-ai's 1,836
+    captures were indexed, so whether a past decision surfaced was luck. A
+    capture that cannot be found is the same as a capture that was never
+    written, so indexing belongs at the write, not on a schedule.
+    """
+    try:
+        import content_index  # type: ignore  # noqa: PLC0415
+
+        content_index.index_paths([path])
+    except Exception as exc:  # noqa: BLE001
+        log(f"scan: index-on-write skipped ({type(exc).__name__}: {exc})")
+
+
 def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     """Write a tier-3 (inferred / assumed) capture into _review/ for user promotion.
 
@@ -744,18 +794,14 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     review_dir = decisions_dir / "_review"
     history_dir = decisions_dir / "_history"
     review_dir.mkdir(parents=True, exist_ok=True)
-    used: set[int] = set()
-    for d in (decisions_dir, history_dir, review_dir):
-        if d.exists():
-            for f in d.iterdir():
-                m = re.match(r"^(\d{4})-", f.name)
-                if m:
-                    used.add(int(m.group(1)))
-    next_n = (max(used) + 1) if used else 1
+    next_n = next_sequence([decisions_dir, history_dir, review_dir])
     new_id = f"{next_n:04d}"
 
     title = (item.get("decision") or "(untitled)").strip()
     slug = slugify(title)
+    if is_duplicate_capture(review_dir, slugify(project_tag), slug):
+        log(f"scan: skipped duplicate review entry for slug {slug!r}")
+        return False, "duplicate"
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     compact = date.replace("-", "")
     canonical_id = f"decision-project-{slugify(project_tag)}-{slug}-{compact}-{int(new_id):03d}"
@@ -789,7 +835,12 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         os.environ.get("EMBED_MODEL") or "mxbai-embed-large-v1"
     )
     fm: dict[str, Any] = {
-        "id": new_id,
+        # ADDRESSABLE ID. `new_id` is a short per-lane sequence and collides
+        # across concurrent sessions; `canonical_id` (slug + date + sequence)
+        # is unique and is what the database keys on, so a result can be cited
+        # and reopened. `short_id` keeps the old value for display.
+        "id": canonical_id,
+        "short_id": new_id,
         "canonical_id": canonical_id,
         "canonical": True,
         "slug": slug,
@@ -833,9 +884,11 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         "notes": "Auto-captured tier-3 entry. Promote by moving out of `_review/`, or revoke with `revoke_decision.py --id <id>`.",
     }
     text = render_madr(fm, body)
-    atomic_write_bytes(review_dir / filename, text.encode("utf-8"))
-    log(f"scan: queued review entry {new_id} → {review_dir / filename}")
-    return True, new_id
+    written_path = review_dir / filename
+    atomic_write_bytes(written_path, text.encode("utf-8"))
+    _index_on_write(written_path)
+    log(f"scan: queued review entry {canonical_id} → {written_path}")
+    return True, canonical_id
 
 
 # ---------- main ----------
