@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f52b2653ac2e27d0f482fba5282db068c319af33056fa84c1484314409a774fe"
+    "content_sha256": "a6c6a2a538c7cafc445395c73c05630b4130ed2914665d496f092f97d7de08ce"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1425,6 +1425,7 @@
       "scripts/memory_facade/lessons.py": "Backend 2.5: lessons reader for memory_facade.",
       "scripts/memory_facade/runs.py": "Backend 1: state.json runs[] reader for memory_facade.\"\"\"",
       "scripts/memory_facade/semantic.py": "Backend 3: local SQLite semantic index, with optional Postgres fallback.\"\"\"",
+      "scripts/memory_find.py": "Hybrid retrieval over build-loop-memory: keyword + vector, fused, tier-labelled.",
       "scripts/memory_graph/__init__.py": "Portable graph adapter for build-loop-memory.",
       "scripts/memory_health.py": "Report the memory telemetry loop honestly, separating trustworthy rows from legacy.",
       "scripts/memory_index.py": "Append-only log of build-loop-memory writes for cross-session discovery.",

@@ -10,6 +10,7 @@
 Primary surfaces:
   blm context --workdir "$PWD" --query "<goal>" --mode fast --json
   blm context --workdir "$PWD" --query "<goal>" --mode expand --json
+  blm find --query "<question>" --project <slug>      # ONE search path: hybrid, trust-labelled
   blm open --id <memory-id-or-artifact-id>
   blm status --workdir "$PWD" --json
   blm serve --host 127.0.0.1 --port 8777
@@ -113,6 +114,22 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_find(args: argparse.Namespace) -> int:
+    from memory_find import find, render  # type: ignore  # noqa: PLC0415
+
+    envelope = find(
+        query=args.query,
+        project=args.project,
+        limit=args.limit,
+        tier=args.tier,
+    )
+    if args.json:
+        _emit_json(envelope)
+        return 0
+    print(render(envelope), end="")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -126,6 +143,22 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--json", action="store_true", help="Print JSON envelope.")
     context.add_argument("--no-write", action="store_true", help="Do not persist CURRENT files.")
     context.set_defaults(func=_cmd_context)
+
+    find_cmd = sub.add_parser(
+        "find",
+        help="Search memory (hybrid keyword+vector, trust-labelled). The one retrieval path.",
+    )
+    find_cmd.add_argument("--query", required=True)
+    find_cmd.add_argument("--project", default=None, help="Project slug; omit to search every project.")
+    find_cmd.add_argument("--limit", type=int, default=5)
+    find_cmd.add_argument(
+        "--tier",
+        choices=("all", "curated", "quarantined"),
+        default="all",
+        help="all (default) labels each hit; curated returns only confirmed decisions.",
+    )
+    find_cmd.add_argument("--json", action="store_true", help="Print JSON envelope.")
+    find_cmd.set_defaults(func=_cmd_find)
 
     open_cmd = sub.add_parser("open", help="Read a memory evidence item by id or safe memory-store path.")
     open_cmd.add_argument("--id", required=True)
