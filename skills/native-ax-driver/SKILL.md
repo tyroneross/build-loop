@@ -60,10 +60,12 @@ skills/native-ax-driver/
 │  └─ test_native_driver.py                 (pure-helper tests; run with pytest)
 └─ swift/bl-ax-driver/
    ├─ Package.swift                         (Swift 5.9, macOS 13+)
-   └─ Sources/main.swift                    (~535 LOC, AX implementation)
+   ├─ Sources/main.swift                    (~535 LOC, AX implementation)
+   ├─ Sources/Permission.swift              (ask-at-most-once Accessibility gate)
+   └─ Tests/PermissionTests.swift           (XCTest; `swift test`)
 ```
 
-The Swift binary compiles on first use to the **consumer project's** `.build-loop/bin/bl-ax-driver` — never inside the plugin tree. Subsequent runs reuse the cached binary; rebuild fires only if `Sources/main.swift` or `Package.swift` is newer than the cached binary.
+The Swift binary compiles on first use to the **consumer project's** `.build-loop/bin/bl-ax-driver` — never inside the plugin tree. Subsequent runs reuse the cached binary; rebuild fires only if `Package.swift` or any `Sources/*.swift` is newer than the cached binary.
 
 ## Prerequisites
 
@@ -71,7 +73,7 @@ The Swift binary compiles on first use to the **consumer project's** `.build-loo
 |---|---|---|
 | `swift` on PATH | `command -v swift` | `RuntimeError: \`swift\` not found on PATH` from `ensure_binary()` |
 | Xcode CLT installed | `xcode-select -p` | First `swift build` fails with missing-SDK error |
-| AX permission for parent process | `python3 native_driver.py preflight` | All AX calls return `kAXErrorAPIDisabled`; binary exits with the canonical "Accessibility permission required" message |
+| AX permission for parent process | `python3 native_driver.py preflight` | Binary exits `77` with the canonical "Accessibility permission required" message; no prompt is shown (see `request-permission`) |
 | Target app running | `python3 native_driver.py apps` | `findMainWindow` returns nil; binary exits with "No windows found for pid …" |
 
 The parent process needing AX permission is whichever process invoked Claude Code (Terminal, iTerm, VS Code, etc.). The driver binary itself does not need to be in the AX list — permission inherits from the parent.
@@ -87,6 +89,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/native-ax-driver/scripts/native_driver.py p
 Exit codes: `0` AX granted · `2` AX missing · `1` osascript missing.
 
 If `2`, surface to Iterate as a blocker rather than retrying — the user has to grant permission once in System Settings; build-loop cannot do that itself.
+
+The driver never opens the macOS Accessibility prompt on its own. When AX is not granted, `scan` and `action` exit `77` with a stderr line naming System Settings → Privacy & Security → Accessibility; surface that line and stop, do not re-run. To show the macOS prompt, the user runs `native_driver.py request-permission` (binary flag `--request-permission`). It prompts only if `~/.build-loop/permissions.json` has no `accessibility.askedAt` record and writes that record, so the prompt appears at most once per user across all projects. To re-request, delete that file and run the command again.
 
 ### Single-instance PID-scoped verification mode
 

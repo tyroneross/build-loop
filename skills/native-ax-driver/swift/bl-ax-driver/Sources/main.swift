@@ -380,6 +380,7 @@ var outputMode: String = "auto"
 var actionName: String? = nil
 var elementPathStr: String? = nil
 var actionValue: String? = nil
+var requestPermission: Bool = false
 
 var i = 1
 while i < args.count {
@@ -405,6 +406,8 @@ while i < args.count {
     case "--element-path":
         i += 1
         if i < args.count { elementPathStr = args[i] }  // comma-separated: "0,2,1"
+    case "--request-permission":
+        requestPermission = true
     case "--value":
         i += 1
         if i < args.count { actionValue = args[i] }
@@ -435,11 +438,15 @@ if let appName = resolveApp {
     exit(1)
 }
 
-// Check accessibility permission
-let checkOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-guard AXIsProcessTrustedWithOptions(checkOpts) else {
-    fputs("Error: Accessibility permission required. Grant access in System Settings > Privacy & Security > Accessibility\n", stderr)
-    exit(1)
+// Check accessibility permission. Never prompts unless --request-permission is
+// passed and no prompt was ever recorded (see Permission.swift). Untrusted runs
+// exit with accessibilityUntrustedExitCode (77).
+requireAccessibilityTrust(promptRequested: requestPermission)
+
+// --- Mode: Explicit permission request (--request-permission) ---
+if requestPermission {
+    print("{\"trusted\":true}")
+    exit(0)
 }
 
 let encoder = JSONEncoder()

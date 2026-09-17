@@ -31,6 +31,11 @@ Usage (from a build-loop run, project cwd):
     # Pre-flight permission check (returns 0 if AX granted, 2 if not)
     python3 native_driver.py preflight
 
+    # Show the macOS Accessibility prompt -- at most once per user (recorded in
+    # ~/.build-loop/permissions.json). scan/action never prompt; when AX is not
+    # granted they exit 77 with the System Settings path on stderr.
+    python3 native_driver.py request-permission
+
     # List running regular GUI apps (no AX permission needed)
     python3 native_driver.py apps
 
@@ -92,12 +97,13 @@ def cached_binary_path() -> Path:
 
 
 def _is_fresh(binary: Path) -> bool:
-    """Binary is fresh iff it's newer than both Swift sources."""
+    """Binary is fresh iff it's newer than Package.swift and every Sources/*.swift."""
     if not binary.exists():
         return False
     try:
         bin_mtime = binary.stat().st_mtime
-        src_mtime = max(SWIFT_MAIN.stat().st_mtime, SWIFT_PACKAGE.stat().st_mtime)
+        sources = [SWIFT_MAIN, SWIFT_PACKAGE, *SWIFT_MAIN.parent.glob("*.swift")]
+        src_mtime = max(p.stat().st_mtime for p in sources)
         return bin_mtime >= src_mtime
     except FileNotFoundError:
         return False
@@ -184,6 +190,23 @@ def cmd_preflight(_args: argparse.Namespace) -> int:
     except subprocess.TimeoutExpired:
         print(json.dumps({"granted": False, "error": "AX preflight timed out"}))
         return 2
+
+
+# Exit code bl-ax-driver uses when Accessibility is not granted (EX_NOPERM).
+# Mirrors accessibilityUntrustedExitCode in swift/bl-ax-driver/Sources/Permission.swift.
+AX_UNTRUSTED_EXIT_CODE = 77
+
+
+def cmd_request_permission(_args: argparse.Namespace) -> int:
+    """Explicitly request AX permission. The binary shows the macOS prompt only if
+    ~/.build-loop/permissions.json has no prior record, then records it. One run, no retry."""
+    binary = ensure_binary()
+    proc = subprocess.run(
+        [str(binary), "--request-permission"], capture_output=True, text=True, timeout=30
+    )
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    return proc.returncode
 
 
 def _query_gui_processes() -> list[dict]:
@@ -660,6 +683,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("preflight", help="Check AX permission")
+    sub.add_parser(
+        "request-permission",
+        help="Show the macOS Accessibility prompt (at most once per user)",
+    )
     sub.add_parser("apps", help="List running regular GUI apps")
 
     p_resolve = sub.add_parser("resolve", help="Resolve an app name to its pid")
@@ -732,6 +759,7 @@ def main(argv: list[str] | None = None) -> int:
 
     handlers = {
         "preflight": cmd_preflight,
+        "request-permission": cmd_request_permission,
         "apps": cmd_apps,
         "resolve": cmd_resolve,
         "launch": cmd_launch,

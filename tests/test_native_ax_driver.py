@@ -90,11 +90,13 @@ def test_launcher_help_runs():
     proc = _run_launcher(["--help"])
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    for sub in ("preflight", "apps", "resolve", "scan", "analyze-layout", "action"):
+    for sub in ("preflight", "request-permission", "apps", "resolve", "scan", "analyze-layout", "action"):
         assert sub in out, f"--help missing subcommand {sub!r}"
 
 
-@pytest.mark.parametrize("sub", ["preflight", "apps", "resolve", "scan", "analyze-layout", "action"])
+@pytest.mark.parametrize(
+    "sub", ["preflight", "request-permission", "apps", "resolve", "scan", "analyze-layout", "action"]
+)
 def test_launcher_subcommand_help(sub):
     proc = _run_launcher([sub, "--help"])
     assert proc.returncode == 0, f"{sub} --help failed: {proc.stderr}"
@@ -218,3 +220,54 @@ def test_preflight_returns_known_exit_code():
     payload = json.loads(proc.stdout)
     assert "granted" in payload
     assert isinstance(payload["granted"], bool)
+
+
+# ─── Accessibility prompt: at most once per user ────────────────────────────
+
+SWIFT_PERMISSION = SWIFT_PKG / "Sources" / "Permission.swift"
+_PROMPT_TRUE = re.compile(r"kAXTrustedCheckOptionPrompt[^\n]*:\s*true")
+
+
+def test_prompt_true_only_inside_once_only_gate():
+    """Only Permission.swift may pass prompt=true, and only once (the gated branch).
+    A second prompt=true call site would reintroduce the repeated System Settings dialog."""
+    offenders = [
+        p.name
+        for p in (SWIFT_PKG / "Sources").glob("*.swift")
+        if p != SWIFT_PERMISSION and _PROMPT_TRUE.search(p.read_text())
+    ]
+    assert offenders == []
+    assert len(_PROMPT_TRUE.findall(SWIFT_PERMISSION.read_text())) == 1
+
+
+def test_permission_gate_uses_user_level_record_and_exit_77():
+    src = SWIFT_PERMISSION.read_text()
+    assert '".build-loop"' in src and '"permissions.json"' in src
+    assert "accessibilityUntrustedExitCode: Int32 = 77" in src
+    launcher = LAUNCHER.read_text()
+    assert "AX_UNTRUSTED_EXIT_CODE = 77" in launcher
+    assert '"--request-permission"' in launcher
+
+
+def test_is_fresh_tracks_every_swift_source(tmp_path, monkeypatch):
+    sys.path.insert(0, str(LAUNCHER.parent))
+    import native_driver
+
+    fake_pkg = tmp_path / "pkg"
+    (fake_pkg / "Sources").mkdir(parents=True)
+    main = fake_pkg / "Sources" / "main.swift"
+    package = fake_pkg / "Package.swift"
+    extra = fake_pkg / "Sources" / "Permission.swift"
+    binary = tmp_path / "bl-ax-driver"
+    for f in (main, package, binary, extra):
+        f.write_text("x")
+    os.utime(main, (100, 100))
+    os.utime(package, (100, 100))
+    os.utime(binary, (200, 200))
+    os.utime(extra, (300, 300))  # newer than the binary
+
+    monkeypatch.setattr(native_driver, "SWIFT_MAIN", main)
+    monkeypatch.setattr(native_driver, "SWIFT_PACKAGE", package)
+    assert native_driver._is_fresh(binary) is False
+    os.utime(extra, (150, 150))
+    assert native_driver._is_fresh(binary) is True
