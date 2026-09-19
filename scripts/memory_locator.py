@@ -69,6 +69,9 @@ SKIP_NAMES = {"INDEX.md", "MEMORY.md", "README.md", "TELEMETRY.jsonl"}
 # _activity the triaged action log. None of them is vetted guidance.
 SKIP_DIRS = {"archive", "indexes", "raw", "raw-originals", "_review", "_history", "_archive", "_activity"}
 STOPWORDS = {
+    # Short function words matched paths like "do-not-touch" and outranked real answers.
+    "a", "an", "and", "as", "at", "be", "by", "do", "i", "if", "in", "is", "it", "me",
+    "my", "no", "not", "of", "on", "or", "so", "to", "up", "we", "you",
     "about", "after", "again", "also", "and", "been", "being", "build", "could",
     "can", "does", "fix", "for", "from", "get", "have", "how", "into", "make",
     "memory", "need", "new", "other", "run", "should", "that", "the", "their",
@@ -154,6 +157,8 @@ def _score_fields(row: dict[str, Any], terms: list[str], body: str = "") -> tupl
         ("path", str(row.get("canonical_path") or row.get("path") or "").lower(), 9),
         ("title", str(row.get("title") or "").lower(), 7),
         ("tags", " ".join(str(v) for v in (row.get("tags") or [])).lower(), 6),
+        # One-line gist (frontmatter description or first paragraph) from the index builder.
+        ("summary", str(row.get("summary") or "").lower(), 5),
         ("id", str(row.get("id") or "").lower(), 4),
         ("project", str(row.get("project") or "").lower(), 3),
         ("type", str(row.get("type") or "").lower(), 2),
@@ -217,12 +222,13 @@ def _rank_index(
             continue
         if not _project_allowed(row_project, project):
             continue
-        if _safe_index_path(root, str(row.get("canonical_path") or row.get("path") or "")) is None:
-            continue
         score, coverage, matched = _score_fields(row, terms)
         matched_count = round(coverage * len(terms))
         required_matches = min(3, max(1, (len(terms) + 2) // 4))
         if matched_count < required_matches or score < 8:
+            continue
+        # Path safety resolves the filesystem; run it only for rows that scored.
+        if _safe_index_path(root, str(row.get("canonical_path") or row.get("path") or "")) is None:
             continue
         ranked.append(_result(row, root, score, coverage, matched))
     ranked.sort(key=lambda item: (-item["score"], -item["coverage"], item["path"]))

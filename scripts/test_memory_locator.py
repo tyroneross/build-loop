@@ -372,3 +372,19 @@ def test_unvetted_and_inactive_folders_are_never_returned(tmp_path: Path) -> Non
     receipt = locator.locate("sqlite wal checkpoint decision", project="demo", memory_root=tmp_path, emit_telemetry=False)
 
     assert [r["path"] for r in receipt["results"]] == [str(vetted.relative_to(tmp_path))]
+
+
+def test_summary_field_ranks_and_function_words_are_ignored(tmp_path: Path) -> None:
+    lessons = tmp_path / "projects" / "demo" / "lessons"
+    lessons.mkdir(parents=True)
+    (lessons / "procedure.md").write_text("x", encoding="utf-8")
+    (lessons / "do-not-touch.md").write_text("y", encoding="utf-8")
+    procedure = _row(tmp_path, "projects/demo/lessons/procedure.md", title="procedure", project="demo", tags=[])
+    procedure["summary"] = "Install and verify the Mac app build"
+    noise = _row(tmp_path, "projects/demo/lessons/do-not-touch.md", title="Do not touch it", project="demo", tags=[])
+    _write_index(tmp_path, [procedure, noise])
+
+    receipt = locator.locate("how do I install the Mac app build and verify it", project="demo", memory_root=tmp_path, emit_telemetry=False)
+
+    assert "do" not in locator.query_terms("do it")
+    assert [r["path"] for r in receipt["results"]] == ["projects/demo/lessons/procedure.md"]
