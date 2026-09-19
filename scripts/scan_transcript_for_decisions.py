@@ -419,12 +419,13 @@ def build_prompt_c(transcript_text: str, prior_decisions: str, allowed_tags: lis
             + ". If none fit, choose the closest match.\n"
         )
     return (
-        "Scan the conversation transcript. Identify decisions the user made "
-        "or strongly implied. Output ONLY a JSON array (no prose, no code "
-        "fences, no commentary).\n\n"
+        "Scan the conversation transcript. Identify (a) decisions that were SETTLED "
+        "and (b) decisions that are still OPEN and awaiting the user's call. "
+        "Output ONLY a JSON array (no prose, no code fences, no commentary).\n\n"
         "Each item shape:\n"
         "  {\n"
-        '    "decision": "<one-sentence decision>",\n'
+        '    "decision": "<one-sentence decision, or the open question when state=needed>",\n'
+        '    "state": "made | needed",\n'
         '    "evidence": "<exact quote OR turn description>",\n'
         '    "confidence": "explicit | confirmed | inferred | assumed",\n'
         '    "primary_tag": "<single primary tag>",\n'
@@ -436,6 +437,20 @@ def build_prompt_c(transcript_text: str, prior_decisions: str, allowed_tags: lis
         "  }\n\n"
         "Rules:\n"
         "- Only capture if there is textual signal. No speculation without evidence.\n"
+        "- state = made  -> the choice is SETTLED. Requires ONE of:\n"
+        "    * a USER: line stating it (\"use X\", \"go with Y\", \"approved\")\n"
+        "    * a STEERING ANSWER: line (the user answered a posed question)\n"
+        "    * the assistant already DID it and said so (\"I added X\", \"X now passes\",\n"
+        "      \"landed in commit abc\") -- an enacted implementation choice\n"
+        "- state = needed -> the choice is OPEN. Use this when the assistant only\n"
+        "    RECOMMENDS, OFFERS or ASKS and no USER line accepts it:\n"
+        "    \"I would revert X\", \"we should push\", \"want me to start Y?\",\n"
+        "    \"say the word\", \"your call\", \"needs your approval\".\n"
+        "- HARD RULE: if the ONLY speaker for an item is the assistant AND the text is a\n"
+        "  proposal rather than a report of something already done, state MUST be\n"
+        "  \"needed\". An assistant recommendation is NEVER a made decision.\n"
+        "- When state=needed, write `decision` as the OPEN QUESTION, not as a choice.\n"
+        "  Write \"Whether to revert commit abc\", NOT \"Revert commit abc\".\n"
         "- explicit = ANY of these patterns count as explicit:\n"
         "    * Direct verbal marker (user): \"let's go with X\", \"use Y\", \"ship it\"\n"
         "    * Implementation declarative (agent): \"I'll use X for Y\", \"going with X over Y\",\n"
@@ -462,7 +477,18 @@ def build_prompt_c(transcript_text: str, prior_decisions: str, allowed_tags: lis
         ' confidence:\"explicit\", primary_tag:\"tooling\"}\n'
         '  - \"default to nomic-embed-text-v1.5 unless EMBED_MODEL is set\" → '
         '{decision:\"Default embedding model is nomic-embed-text-v1.5; env var override available\",'
-        ' confidence:\"confirmed\", primary_tag:\"data\"}\n\n'
+        ' state:\"made\", confidence:\"confirmed\", primary_tag:\"data\"}\n\n'
+        "state=needed examples (assistant proposed, user never answered):\n"
+        '  - ASSISTANT: \"I would revert 7dcc39f. Say the word.\" → '
+        '{decision:\"Whether to revert commit 7dcc39f\", state:\"needed\",'
+        ' confidence:\"explicit\", primary_tag:\"process\"}\n'
+        '  - ASSISTANT: \"Want me to start C2 now?\" → '
+        '{decision:\"Whether to start C2 (Mac approvals toggle)\", state:\"needed\",'
+        ' confidence:\"explicit\", primary_tag:\"process\"}\n'
+        "WRONG (do not do this):\n"
+        '  - ASSISTANT: \"I would revert 7dcc39f\" → '
+        '{decision:\"Revert commit 7dcc39f\", state:\"made\"}  <-- WRONG: the user'
+        ' never agreed; state is \"needed\" and the title is a question.\n\n'
         f"Existing decisions (do not duplicate):\n{prior_decisions or '(none)'}\n\n"
         "Transcript:\n"
         f"{transcript_text}\n"
@@ -704,6 +730,12 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     """
     # Tier-3 review captures land in the canonical project decisions lane
     # alongside trusted decisions.
+    # An item whose state the model did not set is treated as OPEN, not settled.
+    # Defaulting the other way is how an assistant's recommendation becomes a
+    # record that later reads as the user's decision.
+    state = (item.get("state") or "needed").strip().lower()
+    if state not in {"made", "needed"}:
+        state = "needed"
     from _paths import project_decisions_dir as _pdd  # noqa: PLC0415
     from project_resolver import resolve_project as _rp  # noqa: PLC0415
     project_tag = _rp(workdir)
@@ -761,13 +793,14 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         "canonical": True,
         "slug": slug,
         "title": title,
-        "type": "decision",
-        "status": "proposed",
+        "type": "decision" if state == "made" else "decision_needed",
+        "status": "proposed" if state == "made" else "needs_decision",
+        "decision_state": state,
         "confidence": confidence,
         "date": date,
         "created": date,
         "updated": date,
-        "tags": tags,
+        "tags": (tags if state == "made" else sorted(set(tags) | {"decision-needed"})),
         "primary_tag": primary_tag,
         "entity": entity,
         "project": project,
