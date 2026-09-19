@@ -816,3 +816,15 @@ def test_top_result_is_identical_at_limit_3_and_limit_5(workdir: Path) -> None:
         f"limit=5 -> {top5[0]['id']}"
     )
     assert len(top3) <= 3
+
+
+def test_runs_backend_tolerates_non_list_files_touched(tmp_path: Path) -> None:
+    # A real run recorded filesTouched as a count (30); it must not break recall.
+    state = tmp_path / ".build-loop" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"runs": [
+        {"id": "run_count", "date": "2026-09-01T00:00:00Z", "goal": "count row", "filesTouched": 30},
+        {"id": "run_list", "date": "2026-09-02T00:00:00Z", "goal": "list row", "filesTouched": ["a.py"]},
+    ]}), encoding="utf-8")
+    out, _ = mf.read_runs(tmp_path, query="", limit=10)
+    assert len(out) == 2

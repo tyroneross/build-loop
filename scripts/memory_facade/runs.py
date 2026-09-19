@@ -21,6 +21,17 @@ def _workdir_project(workdir: Path) -> Optional[str]:
         return None
 
 
+
+def _files_text(value: object) -> str:
+    """Searchable text for a run's filesTouched, whatever shape an older run wrote.
+
+    Most runs record a list of paths; some wrote a count (for example 30). One
+    malformed row must not make the whole runs backend unreadable.
+    """
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value)
+    return "" if value is None else str(value)
+
 def read_runs(
     workdir: Path, query: str, limit: int, project: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -57,7 +68,7 @@ def read_runs(
         text = " ".join([
             str(r.get("goal", "")),
             str(r.get("outcome", "")),
-            " ".join(r.get("filesTouched", []) or []),
+            _files_text(r.get("filesTouched")),
         ])
         if not _q_match(text, query):
             continue

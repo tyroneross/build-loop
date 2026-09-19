@@ -845,16 +845,21 @@ def canonical_memory_context(
                 merged.extend(kind_results)
                 continue
             stderr_buf = io.StringIO()
-            with contextlib.redirect_stderr(stderr_buf):
-                envelope = recall_memory(
-                    query=query,
-                    kind=kind,
-                    project=project if project != "_unscoped" else None,
-                    limit=limit,
-                    workdir=workdir,
-                    skip_postgres=not include_postgres,
-                    phase="1-assess",
-                )
+            try:
+                with contextlib.redirect_stderr(stderr_buf):
+                    envelope = recall_memory(
+                        query=query,
+                        kind=kind,
+                        project=project if project != "_unscoped" else None,
+                        limit=limit,
+                        workdir=workdir,
+                        skip_postgres=not include_postgres,
+                        phase="1-assess",
+                    )
+            except Exception as exc:  # noqa: BLE001 - one backend must not blank the others
+                reasons.append(f"canonical_memory_error: {kind}: {exc}")
+                results_by_kind[kind] = []
+                continue
             for line in stderr_buf.getvalue().splitlines():
                 stripped = line.strip()
                 if not stripped:

@@ -1027,6 +1027,28 @@ class DeterministicLocatorIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result["results_by_kind"]["lessons"][0]["id"], "facade-lesson")
 
+    def test_one_failing_memory_kind_does_not_blank_the_others(self):
+        def recall(*, kind, **_kwargs):
+            if kind == "runs":
+                raise TypeError("can only join an iterable")
+            row = {"id": f"{kind}-row", "path": f"/memory/{kind}.md", "_recency_ts": 1}
+            return {"results_by_kind": {kind: [row]}, "reasons": [], "telemetry_correlation_id": None}
+
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(cb, "recall_memory", side_effect=recall), \
+                mock.patch.object(cb, "ensure_root_constitution", return_value=[]), \
+                mock.patch.object(cb, "canonical_memory_files", return_value=([], [])), \
+                mock.patch.object(cb, "memory_store_root", return_value=Path(td)):
+            result = cb.canonical_memory_context(
+                workdir=Path(td) / "repo", query="x", project="repo", terms=["x"], limit=5,
+                include_postgres=False, include_debugger=False, max_chars=1000,
+                locator={"results": [], "reasons": []}, use_locator_lessons=False,
+            )
+
+        self.assertEqual(result["results_by_kind"]["decisions"][0]["id"], "decisions-row")
+        self.assertEqual(result["results_by_kind"]["runs"], [])
+        self.assertTrue(any(r.startswith("canonical_memory_error: runs:") for r in result["reasons"]))
+
     def test_sqlite_lessons_retrieval_is_explicit_opt_in(self):
         locator_receipt = {
             "query": "repo",
