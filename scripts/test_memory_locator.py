@@ -337,3 +337,38 @@ def test_retrospectives_and_architecture_are_searchable_lanes() -> None:
     """These lanes hold real content; omitting them made it unreachable."""
     for lane in ("retrospectives", "architecture", "prompts"):
         assert lane in locator.CANONICAL_LANES
+
+
+def test_stale_index_ranks_index_rows_plus_only_changed_files(tmp_path: Path) -> None:
+    old = tmp_path / "projects" / "demo" / "lessons" / "sqlite-wal.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("# SQLite WAL checkpoint budget", encoding="utf-8")
+    index = _write_index(tmp_path, [_row(tmp_path, str(old.relative_to(tmp_path)), title="SQLite WAL checkpoint budget", project="demo", tags=["sqlite", "wal"])])
+    os.utime(index, ns=(10, 10))
+    os.utime(old, ns=(5, 5))
+    new = old.parent / "sqlite-wal-growth.md"
+    new.write_text("# SQLite WAL growth under load\nWAL checkpoint starvation.", encoding="utf-8")
+    ledger = tmp_path / "indexes" / "updates.jsonl"
+    ledger.write_text("{}\n", encoding="utf-8")
+
+    receipt = locator.locate("sqlite wal checkpoint", project="demo", memory_root=tmp_path, emit_telemetry=False)
+
+    assert receipt["engine"] == "index+delta"
+    paths = {r["path"] for r in receipt["results"]}
+    assert str(old.relative_to(tmp_path)) in paths
+    assert str(new.relative_to(tmp_path)) in paths
+    assert "index_delta_files: 1" in receipt["reasons"]
+
+
+def test_unvetted_and_inactive_folders_are_never_returned(tmp_path: Path) -> None:
+    decisions = tmp_path / "projects" / "demo" / "decisions"
+    for folder in ("_review", "_history", "_activity"):
+        path = decisions / folder / f"{folder}-sqlite.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# SQLite WAL checkpoint decision", encoding="utf-8")
+    vetted = decisions / "sqlite-wal.md"
+    vetted.write_text("# SQLite WAL checkpoint decision", encoding="utf-8")
+
+    receipt = locator.locate("sqlite wal checkpoint decision", project="demo", memory_root=tmp_path, emit_telemetry=False)
+
+    assert [r["path"] for r in receipt["results"]] == [str(vetted.relative_to(tmp_path))]

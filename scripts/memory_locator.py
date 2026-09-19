@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -64,7 +65,9 @@ CANONICAL_LANES = (
     "ui",
 )
 SKIP_NAMES = {"INDEX.md", "MEMORY.md", "README.md", "TELEMETRY.jsonl"}
-SKIP_DIRS = {"archive", "indexes", "raw", "raw-originals"}
+# _review holds unvetted auto-captures; _history superseded or revoked records;
+# _activity the triaged action log. None of them is vetted guidance.
+SKIP_DIRS = {"archive", "indexes", "raw", "raw-originals", "_review", "_history", "_archive", "_activity"}
 STOPWORDS = {
     "about", "after", "again", "also", "and", "been", "being", "build", "could",
     "can", "does", "fix", "for", "from", "get", "have", "how", "into", "make",
@@ -282,7 +285,9 @@ def _rg_candidates(root: Path, project: str | None, terms: list[str]) -> tuple[l
         command = [
             rg, "--files-with-matches", "--ignore-case", "--max-count", "1",
             "--glob", "*.md", "--glob", "!**/archive/**", "--glob", "!**/indexes/**",
-            "--glob", "!**/raw/**", "--glob", "!**/raw-originals/**", "-e", pattern,
+            "--glob", "!**/raw/**", "--glob", "!**/raw-originals/**",
+            "--glob", "!**/_review/**", "--glob", "!**/_history/**", "--glob", "!**/_archive/**",
+            "--glob", "!**/_activity/**", "-e", pattern,
             *[str(path) for path in search_roots],
         ]
         try:
@@ -319,6 +324,33 @@ def _rg_candidates(root: Path, project: str | None, terms: list[str]) -> tuple[l
         )
     )
     return candidates[:MAX_FALLBACK_CANDIDATES], "python-scan", [rg_reason]
+
+
+def _changed_since(root: Path, project: str | None, since_ns: int) -> list[Path]:
+    """Markdown files in the searched lanes modified after the index was built.
+
+    Walks directories (stat only, no reads) and prunes skipped folders, so a stale
+    index costs a small delta scan instead of a full-store read.
+    """
+    changed: list[Path] = []
+    for search_root in _search_roots(root, project):
+        for dirpath, dirnames, filenames in os.walk(search_root):
+            dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+            for name in filenames:
+                if not name.endswith(".md") or name in SKIP_NAMES:
+                    continue
+                path = Path(dirpath) / name
+                try:
+                    if path.stat().st_mtime_ns > since_ns:
+                        changed.append(path)
+                except OSError:
+                    continue
+    return changed
+
+
+def _verified_index_results(results: list[dict[str, Any]], rows_by_path: dict[str, dict[str, Any]], root: Path) -> list[dict[str, Any]]:
+    """Keep only index results whose file still exists with the indexed checksum."""
+    return [result for result in results if _result_files_match_index([result], rows_by_path, root)]
 
 
 def _fallback_row(path: Path, root: Path) -> tuple[dict[str, Any], str]:
@@ -402,15 +434,31 @@ def locate(
             str(row.get("canonical_path") or row.get("path") or ""): row
             for row in rows
         }
-        if results and not _result_files_match_index(results, rows_by_path, root):
-            results = []
+        verified = _verified_index_results(results, rows_by_path, root)
+        if len(verified) != len(results):
             index_fresh = False
             reasons.append("ranked_index_file_missing_or_checksum_changed")
+        results = verified
+
+    elif terms and rows and index_path.is_file():
+        # Stale index: rank what it holds, then read only files changed since it was
+        # built. Writers touch a few files; a full-store scan reads thousands.
+        since = index_path.stat().st_mtime_ns
+        delta = _changed_since(root, project, since)
+        delta_paths = {str(path.relative_to(root)) for path in delta}
+        rows_by_path = {str(row.get("canonical_path") or row.get("path") or ""): row for row in rows}
+        unchanged = [row for path, row in rows_by_path.items() if path not in delta_paths]
+        indexed = _verified_index_results(
+            _rank_index(unchanged, root=root, terms=terms, project=project, limit=limit * 2), rows_by_path, root)
+        fresh = _rank_fallback(delta, root=root, terms=terms, project=project, limit=limit)
+        results = sorted(indexed + fresh, key=lambda item: (-item["score"], -item["coverage"], item["path"]))[:limit]
+        engine = "index+delta"
+        reasons.append(f"index_delta_files: {len(delta)}")
 
     if not terms:
         engine = "none"
         reasons.append("query_has_no_terms")
-    elif not results:
+    elif not results and engine != "index+delta":
         candidates, engine, fallback_reasons = _rg_candidates(root, project, terms)
         reasons.extend(fallback_reasons)
         results = _rank_fallback(candidates, root=root, terms=terms, project=project, limit=limit)
