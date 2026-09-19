@@ -61,6 +61,7 @@ sys.path.insert(0, str(HERE))
 # Lazy imports from write_decision so test fixtures share the same primitives.
 # Note: write_decision.log is intentionally NOT imported — we define a
 # module-local log() below that tees to a log file as well as stderr.
+import transcript_capture  # type: ignore  # noqa: E402
 from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     LockedFile,
@@ -840,6 +841,89 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
 # ---------- main ----------
 
 
+def write_activity(workdir: Path, item: dict) -> tuple[bool, str]:
+    """Record a capture that is not guidance in `decisions/_activity/`.
+
+    Kept, never searched: the owner can audit what the capture saw and rejected.
+    """
+    from _paths import project_decisions_dir as _pdd  # noqa: PLC0415
+    from project_resolver import resolve_project as _rp  # noqa: PLC0415
+
+    project_tag = _rp(workdir)
+    activity_dir = _pdd(project_tag) / "_activity"
+    activity_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    slug = re.sub(r"[^a-z0-9]+", "-", (item.get("decision") or "item").lower()).strip("-")[:60] or "item"
+    path = activity_dir / f"activity-{project_tag}-{slug}-{stamp}.md"
+    body = (
+        "---\n"
+        f"title: {json.dumps(item.get('decision') or '')}\n"
+        "type: activity\n"
+        "status: recorded\n"
+        f"project: {project_tag}\n"
+        f"date: '{datetime.now(timezone.utc).date().isoformat()}'\n"
+        "source: auto-inferred\n"
+        "confidence: inferred\n"
+        "triage_class: activity\n"
+        f"triage_by: capture-{item.get('source_segment', 'unknown')}\n"
+        "---\n\n"
+        f"# {item.get('decision') or ''}\n\n## Context\n\n{item.get('rationale') or ''}\n"
+    )
+    try:
+        path.write_text(body, encoding="utf-8")
+    except OSError as exc:
+        return False, str(exc)
+    return True, str(path)
+
+
+def write_lesson(workdir: Path, item: dict) -> tuple[bool, str]:
+    """Write an observed lesson to the project lessons lane through the canonical writer."""
+    text = (item.get("decision") or "").strip()
+    if not text:
+        return False, "empty lesson"
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "lesson"
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+        handle.write(f"{text}\n\nObserved in a session on {datetime.now(timezone.utc).date().isoformat()}. "
+                     f"Evidence: {(item.get('evidence') or '').strip()[:400]}\n")
+        body_file = handle.name
+    args = [
+        sys.executable, str(HERE / "memory_writer.py"), "--scope", "project",
+        "write", "--name", f"{datetime.now(timezone.utc).date().isoformat()}-{slug}",
+        "--description", text[:200], "--type", "lesson",
+        "--run-id", f"capture-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
+        "--workdir", str(workdir), "--host", "claude_code", "--body-file", body_file,
+    ]
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    finally:
+        Path(body_file).unlink(missing_ok=True)
+    return (completed.returncode == 0), (completed.stdout or completed.stderr or "").strip()[:200]
+
+
+def _write_capture_items(workdir: Path, items: list[dict], args: argparse.Namespace) -> int:
+    """Route segment-capture items to their lanes. Never raises: this runs in a hook."""
+    counts = {"decision": 0, "lesson": 0, "open_question": 0, "activity": 0, "failed": 0}
+    for item in items:
+        kind = item.get("capture_class")
+        try:
+            if kind == "lesson":
+                ok, _ = write_lesson(workdir, item)
+            elif kind == "activity":
+                ok, _ = write_activity(workdir, item)
+            else:
+                ok, _ = write_trusted(workdir, item, db=args.db)
+                if not ok:
+                    ok, _ = write_review(workdir, item)
+        except Exception as exc:  # noqa: BLE001 - hook safety
+            log(f"scan: capture write failed ({kind}): {exc}")
+            ok = False
+        counts[kind if ok and kind in counts else "failed"] += 1
+    log("scan: done — " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Stop-hook end-of-session decision sweep.")
     p.add_argument(
@@ -851,6 +935,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--transcript",
         default=os.environ.get("CLAUDE_TRANSCRIPT_PATH", ""),
         help="Path to Claude Code session transcript (.jsonl). Defaults to $CLAUDE_TRANSCRIPT_PATH.",
+    )
+    p.add_argument(
+        "--capture-pipeline",
+        choices=("segments", "prompt-c"),
+        default=os.environ.get("CAPTURE_PIPELINE", "segments"),
+        help="segments: split the transcript by who said what, then ask one narrow question per part "
+             "(default). prompt-c: the legacy single prompt over the whole transcript.",
     )
     p.add_argument("--llm-model", default=DEFAULT_LLM_MODEL)
     p.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL)
@@ -943,6 +1034,20 @@ def main(argv: list[str] | None = None) -> int:
     if not transcript_text and not args.mock_llm_output:
         log("scan: empty/missing transcript and no --mock-llm-output; nothing to do")
         return 0
+
+    if args.capture_pipeline == "segments" and not args.mock_llm_output and transcript_path is not None:
+        if budget_exceeded():
+            log(f"scan: budget exceeded ({_BUDGET_S}s); bailing before LLM call")
+            return 0
+        # The Stop hook runs this detached (nohup &), so the 25s interactive budget
+        # does not apply; the capture bounds its own model work instead.
+        items = transcript_capture.capture(transcript_path, args.llm_model,
+                                           deadline_s=float(os.environ.get("CAPTURE_DEADLINE_S", "240")))
+        if not items:
+            log("scan: segment capture found nothing to record")
+            return 0
+        log(f"scan: segment capture returned {len(items)} candidate(s)")
+        return _write_capture_items(workdir, items, args)
 
     # Get LLM output: mock file or live ollama
     raw: str | None
