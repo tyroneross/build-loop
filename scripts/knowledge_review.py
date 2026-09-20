@@ -42,8 +42,27 @@ def _has_db_config() -> bool:
 # ---------- review queue ----------
 
 
+def review_dir_for(workdir: Path) -> Path:
+    """The canonical review queue for this repo's project lane.
+
+    Captures moved to build-loop-memory `projects/<slug>/decisions/_review/` long ago;
+    the legacy repo-local `.episodic/` path is still read when it exists so an old
+    checkout keeps working.
+    """
+    legacy = workdir / ".episodic" / "decisions" / "_review"
+    if legacy.exists():
+        return legacy
+    try:
+        from _paths import project_decisions_dir  # noqa: PLC0415
+        from project_resolver import resolve_project  # noqa: PLC0415
+
+        return project_decisions_dir(resolve_project(workdir)) / "_review"
+    except Exception:  # noqa: BLE001 - read-only surface must not fail the command
+        return legacy
+
+
 def review_queue_items(workdir: Path) -> list[dict]:
-    review_dir = workdir / ".episodic" / "decisions" / "_review"
+    review_dir = review_dir_for(workdir)
     if not review_dir.exists():
         return []
     out: list[dict] = []
