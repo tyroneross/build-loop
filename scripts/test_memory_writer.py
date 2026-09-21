@@ -170,7 +170,7 @@ class WriteTelemetryPathTests(unittest.TestCase):
 
     def _write(self, memory_dir: Path) -> None:
         mw.write(
-            memory_dir, "lesson.md", body="canonical telemetry regression",
+            memory_dir, "lesson.md", body="canonical telemetry regression.",
             name="telemetry", description="writer audit receipt", type_="lesson",
             run_id="run-telemetry", workdir=str(self.tmp), host="codex",
         )
@@ -224,7 +224,7 @@ class WriteTests(unittest.TestCase):
 
     def test_write_appends_to_index(self):
         mw.write(
-            self.tmp, "lesson.md", body="x",
+            self.tmp, "lesson.md", body="x.",
             name="l", description="d", type_="pattern",
             run_id="r", workdir=str(self.tmp), host="codex",
         )
@@ -237,7 +237,7 @@ class WriteTests(unittest.TestCase):
 
     def test_write_appends_to_global_update_ledger(self):
         mw.write(
-            self.tmp, "lesson.md", body="x",
+            self.tmp, "lesson.md", body="x.",
             name="l", description="d", type_="pattern",
             run_id="r", workdir=str(self.tmp), host="codex",
         )
@@ -253,7 +253,7 @@ class WriteTests(unittest.TestCase):
     def test_write_update_preserves_created_at_and_applied(self):
         # Initial write.
         fm1 = mw.write(
-            self.tmp, "x.md", body="v1",
+            self.tmp, "x.md", body="v1.",
             name="x", description="d", type_="pattern",
             run_id="r1", workdir=str(self.tmp), host="claude_code",
         )
@@ -266,7 +266,7 @@ class WriteTests(unittest.TestCase):
         )
         # Update (re-write).
         fm2 = mw.write(
-            self.tmp, "x.md", body="v2",
+            self.tmp, "x.md", body="v2.",
             name="x", description="d", type_="pattern",
             run_id="r3", workdir=str(self.tmp), host="claude_code",
         )
@@ -282,7 +282,7 @@ class WriteTests(unittest.TestCase):
 
     def test_patch_frontmatter_noop_preserves_file(self):
         mw.write(
-            self.tmp, "same.md", body="stable body\n",
+            self.tmp, "same.md", body="stable body.\n",
             name="same", description="d", type_="pattern",
             run_id="r1", workdir=str(self.tmp), host="codex",
         )
@@ -297,7 +297,7 @@ class WriteTests(unittest.TestCase):
     def test_write_rejects_invalid_host(self):
         with self.assertRaises(ValueError):
             mw.write(
-                self.tmp, "x.md", body="x",
+                self.tmp, "x.md", body="x.",
                 name="x", description="d", type_="pattern",
                 run_id="r", workdir=str(self.tmp), host="ghost",
             )
@@ -305,7 +305,7 @@ class WriteTests(unittest.TestCase):
     def test_write_rejects_invalid_type(self):
         with self.assertRaises(ValueError):
             mw.write(
-                self.tmp, "x.md", body="x",
+                self.tmp, "x.md", body="x.",
                 name="x", description="d", type_="not-a-real-type",
                 run_id="r", workdir=str(self.tmp), host="codex",
             )
@@ -378,7 +378,7 @@ class AutoCommitTests(unittest.TestCase):
         os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "0"
         before = self._commit_count(repo)
         mw.write(
-            repo, "lesson.md", body="body",
+            repo, "lesson.md", body="body.",
             name="l", description="d", type_="gotcha",
             run_id="r", workdir=str(repo), host="claude_code",
         )
@@ -391,7 +391,7 @@ class AutoCommitTests(unittest.TestCase):
         repo = self._init_repo()
         os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "false"
         mw.write(
-            repo, "lesson.md", body="body",
+            repo, "lesson.md", body="body.",
             name="l", description="d", type_="gotcha",
             run_id="r", workdir=str(repo), host="claude_code",
         )
@@ -402,7 +402,7 @@ class AutoCommitTests(unittest.TestCase):
         non_git = Path(tempfile.mkdtemp())  # not a git repo
         # Must not raise; file must be written.
         fm = mw.write(
-            non_git, "lesson.md", body="body",
+            non_git, "lesson.md", body="body.",
             name="l", description="d", type_="gotcha",
             run_id="r", workdir=str(non_git), host="claude_code",
         )
@@ -415,7 +415,7 @@ class AutoCommitTests(unittest.TestCase):
         non_git = Path(tempfile.mkdtemp())
         os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "0"
         fm = mw.write(
-            non_git, "task.md", body="body",
+            non_git, "task.md", body="body.",
             name="t", description="d", type_="gotcha",
             run_id="r", workdir=str(non_git), host="claude_code",
             extra_frontmatter={"status": "completed"},
@@ -429,7 +429,7 @@ class MarkAppliedTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         mw.write(
-            self.tmp, "x.md", body="body",
+            self.tmp, "x.md", body="body.",
             name="x", description="d", type_="pattern",
             run_id="r1", workdir=str(self.tmp), host="claude_code",
         )
@@ -544,7 +544,7 @@ class MigrateTests(unittest.TestCase):
     def test_migrate_skips_already_migrated_file(self):
         # File that already has all provenance fields.
         mw.write(
-            self.tmp, "fresh.md", body="x",
+            self.tmp, "fresh.md", body="x.",
             name="fresh", description="d", type_="pattern",
             run_id="r1", workdir=str(self.tmp), host="codex",
         )
@@ -618,7 +618,7 @@ class CLITests(unittest.TestCase):
             "write", "--file", "l.md", "--name", "l",
             "--description", "desc", "--type", "pattern",
             "--run-id", "r1", "--workdir", str(self.tmp),
-            "--host", "claude_code", "--body", "body content",
+            "--host", "claude_code", "--body", "body content.",
             "--json",
         )
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -680,7 +680,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="projects/demoproj/issues/regression.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="gotcha",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="project", project="demoproj",
@@ -698,7 +698,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="projects/demoproj/lessons/foo.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="lesson",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="project", project="demoproj",
@@ -713,7 +713,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="issues/just-sublane.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="gotcha",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="project", project="demoproj",
@@ -726,7 +726,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="bare.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="lesson",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="project", project="demoproj",
@@ -740,7 +740,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="projects/demoproj/issues/legacy.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="gotcha",
             run_id="r", workdir=str(self.tmp), host="claude_code",
         )
@@ -758,7 +758,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="projects/demoproj/debugging/crash-log.md",
-            body="crash details",
+            body="crash details.",
             name="crash-log", description="crash log", type_="debug-incident",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             # No scope= kwarg — tests the unconditional guard path.
@@ -773,7 +773,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="issues/projects/demoproj/issues/double-prefix.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="gotcha",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="project", project="demoproj",
@@ -789,7 +789,7 @@ class P2WriterGuardTests(unittest.TestCase):
         mw.write(
             self._paths.top_level_lessons_dir(),
             file_rel="debugging/sigil.md",
-            body="body",
+            body="body.",
             name="x", description="x", type_="debug-incident",
             run_id="r", workdir=str(self.tmp), host="claude_code",
             scope="top-level",
@@ -802,7 +802,7 @@ class P2WriterGuardTests(unittest.TestCase):
             mw.write(
                 self._paths.project_lessons_dir("demoproj"),
                 file_rel="/etc/passwd",
-                body="b", name="x", description="x", type_="gotcha",
+                body="b.", name="x", description="x", type_="gotcha",
                 run_id="r", workdir=str(self.tmp), host="claude_code",
                 scope="project", project="demoproj",
             )
@@ -812,7 +812,7 @@ class P2WriterGuardTests(unittest.TestCase):
             mw.write(
                 self._paths.project_lessons_dir("demoproj"),
                 file_rel="../escape.md",
-                body="b", name="x", description="x", type_="gotcha",
+                body="b.", name="x", description="x", type_="gotcha",
                 run_id="r", workdir=str(self.tmp), host="claude_code",
                 scope="project", project="demoproj",
             )
@@ -855,6 +855,171 @@ class CanonicalFilenameTests(unittest.TestCase):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         fn = mw.canonical_filename(type_="lesson", name="x")
         self.assertTrue(fn.startswith(today), fn)
+
+
+class DuplicateAndTruncationGuardTests(unittest.TestCase):
+    """P3 regression: beda06e0..b32e9f9 wrote the same lesson body twice (once
+    under ``projects/_unscoped``, once under the real project, differing only
+    in provenance frontmatter) and several bodies landed cut off mid-sentence.
+    Isolates BUILD_LOOP_MEMORY_STORE_ROOT to a tmp dir — never touches the
+    real build-loop-memory checkout.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._prev_env = os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
+        os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = str(self.tmp)
+        import importlib
+        import _paths as _p
+        importlib.reload(_p)
+        importlib.reload(mw)
+        self._paths = _p
+
+    def tearDown(self):
+        if self._prev_env is None:
+            os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+        else:
+            os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = self._prev_env
+        import importlib
+        import _paths as _p
+        importlib.reload(_p)
+        importlib.reload(mw)
+
+    # -- duplicate guard: same project -----------------------------------
+
+    def test_duplicate_same_project_skipped(self):
+        body = "The same lesson observed twice in one project.\n"
+        lessons_dir = self._paths.project_lessons_dir("demoproj")
+        mw.write(
+            lessons_dir, "first.md", body=body,
+            name="first", description="d", type_="lesson",
+            run_id="r1", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        fm = mw.write(
+            lessons_dir, "second.md", body=body,
+            name="second", description="d", type_="lesson",
+            run_id="r2", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = sorted(p.name for p in lessons_dir.glob("*.md"))
+        self.assertEqual(landed, ["first.md"], "duplicate must not create a second file")
+        # The skip returns the ALREADY-EXISTING file's frontmatter, not a new one.
+        self.assertEqual(fm["name"], "first")
+
+    def test_non_duplicate_bodies_both_land(self):
+        lessons_dir = self._paths.project_lessons_dir("demoproj")
+        mw.write(
+            lessons_dir, "first.md", body="Lesson one, observed and verified.\n",
+            name="first", description="d", type_="lesson",
+            run_id="r1", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        mw.write(
+            lessons_dir, "second.md", body="Lesson two, a different observation.\n",
+            name="second", description="d", type_="lesson",
+            run_id="r2", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = sorted(p.name for p in lessons_dir.glob("*.md"))
+        self.assertEqual(landed, ["first.md", "second.md"])
+
+    # -- duplicate guard: _unscoped promotion ------------------------------
+
+    def test_unscoped_copy_promoted_to_project(self):
+        body = "Ambient now profiles hangs and suggests fixes.\n"
+        unscoped_dir = self._paths.project_lessons_dir("_unscoped")
+        fm1 = mw.write(
+            unscoped_dir, "ambient.md", body=body,
+            name="ambient", description="d", type_="lesson",
+            run_id="r1", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="_unscoped",
+        )
+        project_dir = self._paths.project_lessons_dir("rosslabs-ambient-agent")
+        fm2 = mw.write(
+            project_dir, "ambient.md", body=body,
+            name="ambient", description="d", type_="lesson",
+            run_id="r2", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="rosslabs-ambient-agent",
+        )
+        # The _unscoped copy is gone (moved, not duplicated).
+        self.assertFalse((unscoped_dir / "ambient.md").exists())
+        self.assertEqual(
+            sorted(p.name for p in unscoped_dir.glob("*.md")), [],
+            "the promoted file must not remain in _unscoped",
+        )
+        moved = project_dir / "ambient.md"
+        self.assertTrue(moved.exists())
+        # created_at is preserved from the original (moved) file, per the
+        # normal write() update-merge semantics.
+        self.assertEqual(fm2["created_at"], fm1["created_at"])
+        self.assertEqual(fm2["source_run_id"], "r2")
+
+    # -- truncation guard --------------------------------------------------
+
+    def test_truncated_body_rejected(self):
+        lessons_dir = self._paths.project_lessons_dir("demoproj")
+        with self.assertRaises(ValueError):
+            mw.write(
+                lessons_dir, "cut-off.md",
+                body="This lesson was captured and then the capture just stops",
+                name="cut-off", description="d", type_="lesson",
+                run_id="r", workdir=str(self.tmp), host="claude_code",
+                scope="project", project="demoproj",
+            )
+        self.assertFalse((lessons_dir / "cut-off.md").exists())
+
+    def test_truncated_body_allow_override_accepted(self):
+        lessons_dir = self._paths.project_lessons_dir("demoproj")
+        fm = mw.write(
+            lessons_dir, "cut-off.md",
+            body="This lesson was captured and then the capture just stops",
+            name="cut-off", description="d", type_="lesson",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+            allow_truncated=True,
+        )
+        self.assertEqual(fm["name"], "cut-off")
+        self.assertTrue((lessons_dir / "cut-off.md").exists())
+
+    def test_truncated_body_cli_rejected_then_override_accepted(self):
+        env = dict(os.environ)
+        cli = [
+            sys.executable, str(HERE / "memory_writer.py"),
+            "--memory-dir", str(self.tmp / "cli-lane"),
+            "write", "--file", "l.md", "--name", "l",
+            "--description", "desc", "--type", "lesson",
+            "--run-id", "r1", "--workdir", str(self.tmp),
+            "--host", "claude_code",
+            "--body", "A body with no ending mark at all",
+        ]
+        r = subprocess.run(cli, capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("truncated", r.stderr.lower())
+        self.assertFalse((self.tmp / "cli-lane" / "l.md").exists())
+
+        r2 = subprocess.run(cli + ["--allow-truncated"], capture_output=True, text=True, env=env)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertTrue((self.tmp / "cli-lane" / "l.md").exists())
+
+    def test_terminal_marker_acceptance(self):
+        """List items, table rows, and closing code fences all count as clean
+        endings — only a body that stops mid-clause is truncated."""
+        lessons_dir = self._paths.project_lessons_dir("demoproj")
+        ok_bodies = [
+            "Findings:\n- one item\n- another item",
+            "| col a | col b |\n| --- | --- |\n| 1 | 2 |",
+            "```\ncode block\n```",
+            "A sentence that ends properly.",
+        ]
+        for i, body in enumerate(ok_bodies):
+            fm = mw.write(
+                lessons_dir, f"ok-{i}.md", body=body,
+                name=f"ok-{i}", description="d", type_="lesson",
+                run_id="r", workdir=str(self.tmp), host="claude_code",
+                scope="project", project="demoproj",
+            )
+            self.assertEqual(fm["name"], f"ok-{i}")
 
 
 if __name__ == "__main__":

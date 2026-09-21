@@ -59,6 +59,7 @@ Stdlib only. Python 3.11+.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -500,6 +501,89 @@ def _normalize_file_rel(
 
 
 # ---------------------------------------------------------------------------
+# Duplicate + truncation guards (P3: 31 lesson files / ~15 distinct
+# observations in beda06e0..b32e9f9 — the same lesson written once under
+# ``projects/_unscoped`` and again under its real project, differing only in
+# provenance frontmatter, plus several bodies cut off mid-sentence)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_body_for_hash(body: str) -> str:
+    """Strip a leading frontmatter block (defensive — ``body`` here is
+    normally frontmatter-free already) and collapse whitespace runs, so a
+    trailing blank line or stray space never masks a real duplicate or
+    manufactures a false one."""
+    if body.startswith("---\n"):
+        _, body = _split_frontmatter(body)
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _body_hash(body: str) -> str:
+    return hashlib.sha256(_normalize_body_for_hash(body).encode("utf-8")).hexdigest()
+
+
+def _find_body_duplicate(dir_: Path, target_hash: str, *, exclude: Path | None) -> Path | None:
+    """Return the first ``*.md`` file in ``dir_`` whose normalized body hash
+    matches ``target_hash`` (skipping ``exclude`` and unparseable files)."""
+    if not dir_.exists():
+        return None
+    for candidate in sorted(dir_.glob("*.md")):
+        if candidate.name == "MEMORY.md":
+            continue
+        if exclude is not None and candidate.resolve() == exclude.resolve():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _, existing_body = _split_frontmatter(text)
+        if _body_hash(existing_body) == target_hash:
+            return candidate
+    return None
+
+
+def _unscoped_sibling_dir(memory_dir: Path, project: str | None) -> Path | None:
+    """Return the ``_unscoped`` lane dir mirroring ``memory_dir``'s sublane
+    under ``project`` (e.g. ``lessons``), or None when ``project`` is unset,
+    already ``_unscoped``, or ``memory_dir`` isn't a project-lane path."""
+    if not project or project == "_unscoped":
+        return None
+    from _paths import project_root  # type: ignore  # noqa: PLC0415
+    try:
+        proj_root = project_root(project).resolve()
+        rel = memory_dir.resolve().relative_to(proj_root)
+    except (ValueError, OSError):
+        return None
+    return project_root("_unscoped") / rel
+
+
+# Last-non-blank-line endings that mean the body closes cleanly.
+_TERMINAL_CHARS = frozenset({".", "!", "?", ")", "`", "]"})
+_LIST_ITEM_RE = re.compile(r"^\s*([-*+]|\d+[.)])\s+\S")
+_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+_CODE_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def _is_body_truncated(body: str) -> bool:
+    """True when the body reads as cut off mid-sentence.
+
+    Heuristic: the last non-blank line must end in terminal punctuation
+    (``. ! ? ) `` `` ]``) or look like a closing code fence, list item, or
+    table row. Anything else — the body stops mid-word or mid-clause — is
+    treated as truncated. An empty body is a separate concern, not this one.
+    """
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    last = lines[-1].rstrip()
+    if last and last[-1] in _TERMINAL_CHARS:
+        return False
+    if _CODE_FENCE_RE.match(last) or _LIST_ITEM_RE.match(last) or _TABLE_ROW_RE.match(last):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Core API
 # ---------------------------------------------------------------------------
 
@@ -518,11 +602,24 @@ def write(
     extra_frontmatter: dict | None = None,
     scope: str | None = None,
     project: str | None = None,
+    allow_truncated: bool = False,
 ) -> dict:
     """Create or update a memory file with provenance frontmatter.
 
     On update, preserves `created_at`, `applied_in_repos`, and any non-
     provenance frontmatter keys. Refreshes `last_updated_at`.
+
+    Before writing a NEW file (``path`` doesn't already exist), two guards
+    run:
+
+      * **Duplicate guard** — if a file in the target lane already carries
+        the same normalized body, the write is skipped (no new file). If the
+        match instead lives in the project's ``_unscoped`` sibling lane, that
+        file is moved to the target path and the write proceeds as an update
+        of the moved file (preserving its `created_at`).
+      * **Truncation guard** — a body whose last non-blank line doesn't end
+        in terminal punctuation / a closing marker is rejected with
+        `ValueError` unless `allow_truncated=True`.
 
     Returns the final frontmatter as a dict.
     """
@@ -530,6 +627,13 @@ def write(
         raise ValueError(f"host must be one of {sorted(VALID_HOSTS)}; got {host!r}")
     if type_ not in VALID_TYPES:
         raise ValueError(f"type must be one of {sorted(VALID_TYPES)}; got {type_!r}")
+    if not allow_truncated and _is_body_truncated(body):
+        raise ValueError(
+            "body appears truncated: last non-blank line has no terminal "
+            "punctuation (. ! ? ) ` ]) and doesn't close a code fence, list "
+            "item, or table row. Pass allow_truncated=True (CLI: "
+            "--allow-truncated) to write it anyway."
+        )
 
     # P2 guard: unconditionally normalise the path so a lane-prefixed
     # --file argument never double-nests under memory_dir regardless of
@@ -545,6 +649,34 @@ def write(
     workdir_abs = str(Path(workdir).resolve())
 
     existed_before = path.exists()
+
+    # Duplicate guard — only relevant for a brand-new file. Updating the file
+    # at `path` itself is a normal revision, not a duplicate.
+    if not existed_before:
+        new_hash = _body_hash(body)
+        same_lane_dup = _find_body_duplicate(memory_dir, new_hash, exclude=path)
+        if same_lane_dup is not None:
+            print(
+                f"DUPLICATE SKIPPED: body already present at {same_lane_dup}; "
+                f"not creating {path}",
+                file=sys.stderr,
+            )
+            dup_fm, _ = _split_frontmatter(same_lane_dup.read_text(encoding="utf-8"))
+            return dup_fm
+
+        unscoped_dir = _unscoped_sibling_dir(memory_dir, project)
+        if unscoped_dir is not None and unscoped_dir.resolve() != memory_dir.resolve():
+            unscoped_dup = _find_body_duplicate(unscoped_dir, new_hash, exclude=None)
+            if unscoped_dup is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                unscoped_dup.rename(path)
+                print(
+                    f"PROMOTED: moved duplicate {unscoped_dup} -> {path} "
+                    f"(was in _unscoped, now scoped to project)",
+                    file=sys.stderr,
+                )
+                existed_before = True  # fall through: update the moved file
+
     existing_fm: dict[str, Any] = {}
     if existed_before:
         existing_fm, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
@@ -967,6 +1099,7 @@ def _cli_write(args: argparse.Namespace) -> int:
             host=args.host,
             scope=args.scope,
             project=_cli_resolved_project(args),
+            allow_truncated=args.allow_truncated,
         )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1049,6 +1182,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     bodygrp.add_argument("--body-file", default=None, help="Read body from this file")
     w.add_argument("--on-busy", choices=("queue", "skip"), default="queue",
                    help="Peer-held store behavior: queue (default) or skip.")
+    w.add_argument("--allow-truncated", action="store_true",
+                   help="Skip the truncated-body guard (last line lacks a terminal marker).")
     w.add_argument("--json", action="store_true")
 
     a = sub.add_parser("mark-applied", help="Record cross-repo application")
