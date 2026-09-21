@@ -177,3 +177,14 @@ Current build-loop callers route through the bridge:
 ## Why a separate doc
 
 `coordination-rules.md` is the binding *constitution* — operating rule, verdict gating, MECE field list, closeout sequence. This file is the *integration map* — where build-loop sits in the three-layer architecture, what it posts, what it reads, where the path-hardcoding lives, and what the discovery migration looks like. Conceptually distinct audiences: the rules file is for any participant; this file is for build-loop's orchestrator and anyone modifying how build-loop talks to rally-point.
+
+## Joining a team
+
+Source of truth: the "Joining a team" section of `/Users/tyroneross/dev/git-folder/easy-terminal/.claude/worktrees/agent-a2b229e3b665ca487/AGENTS.md` (contract evidence: `docs/verification/team-muse-coordination-2026-09-20.md` in easy-terminal). Summary only; follow the source on conflict.
+
+When launch instructions name a shared team memory directory:
+1. Read `team-memory.json` first. Missing file, digest mismatch vs your instructions, or a listed file missing (stale/missing memory) -> write an `abstain` receipt and do not start work. Never guess to fill gaps.
+2. Else load `CHARTER.md` (if listed) and `project.md`, then write your own receipt JSON to the exact `receipts/<token>.json` path given (one-time token), with the capability ids from the instructions.
+3. Clear each rally obligation addressed to you with your own `rally say receipt --tool <you> --ref <event>`.
+4. Report status up as a NEW handoff: `rally say handoff --to <coordinator> --evidence directive:<event>` (not `--ref`); blockers via `rally say blocker --to <coordinator> --severity high`.
+5. Lead: claim rally lead before issuing any directive.

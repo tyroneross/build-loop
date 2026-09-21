@@ -209,3 +209,14 @@ When extracting to the standalone plugin, copy the namespaced substrate,
 skill, command, hooks, tests, and docs named in `plugin_boundary.json`.
 Build-loop should then keep only the thin adapters that call the standalone
 package.
+
+## Joining a team
+
+Source of truth: the "Joining a team" section of `/Users/tyroneross/dev/git-folder/easy-terminal/.claude/worktrees/agent-a2b229e3b665ca487/AGENTS.md` (contract evidence: `docs/verification/team-muse-coordination-2026-09-20.md` in easy-terminal). Summary only; follow the source on conflict.
+
+When launch instructions name a shared team memory directory:
+1. Read `team-memory.json` first. Missing file, digest mismatch vs your instructions, or a listed file missing (stale/missing memory) -> write an `abstain` receipt and do not start work. Never guess to fill gaps.
+2. Else load `CHARTER.md` (if listed) and `project.md`, then write your own receipt JSON to the exact `receipts/<token>.json` path given (one-time token), with the capability ids from the instructions.
+3. Clear each rally obligation addressed to you with your own `rally say receipt --tool <you> --ref <event>`.
+4. Report status up as a NEW handoff: `rally say handoff --to <coordinator> --evidence directive:<event>` (not `--ref`); blockers via `rally say blocker --to <coordinator> --severity high`.
+5. Lead: claim rally lead before issuing any directive.
