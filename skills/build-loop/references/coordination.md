@@ -180,7 +180,7 @@ Current build-loop callers route through the bridge:
 
 ## Joining a team
 
-Source of truth: the "Joining a team" section of `/Users/tyroneross/dev/git-folder/easy-terminal/.claude/worktrees/agent-a2b229e3b665ca487/AGENTS.md` (contract evidence: `docs/verification/team-muse-coordination-2026-09-20.md` in easy-terminal). Summary only; follow the source on conflict.
+Source of truth: the "Joining a team" section of `/Users/tyroneross/dev/git-folder/easy-terminal/AGENTS.md` (contract evidence: `docs/verification/team-muse-coordination-2026-09-20.md` in easy-terminal). Summary only; follow the source on conflict.
 
 When launch instructions name a shared team memory directory:
 1. Read `team-memory.json` first. Missing file, digest mismatch vs your instructions, or a listed file missing (stale/missing memory) -> write an `abstain` receipt and do not start work. Never guess to fill gaps.

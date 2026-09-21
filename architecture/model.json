@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d23997ae3f87899bcf3f2fe4c2e3105f71863e6b1fdca469b89ef4fc49bfa497"
+    "content_sha256": "41c1d26aaad59d08488cf501a766d4e9a9127f1cf10dd60ba09ce89676f072a1"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1102,7 +1102,7 @@
         "file": "skills/agent-rally-point/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-22"
+          "date": "2026-09-20"
         }
       },
       "agent-rally-watcher": {
