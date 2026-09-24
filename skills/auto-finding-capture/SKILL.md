@@ -11,7 +11,8 @@ namespace: >-
   .build-loop/backlog/  (review-queue overflow: .build-loop/proposals/)
 companion_scripts:
   - scripts/scan_findings/__main__.py — Stop-hook deterministic findings sweep
-  - scripts/scan_findings/detect.py — detector (severity-label + structured-JSON extraction)
+  - scripts/scan_findings/detect.py — detector (severity-label + structured-JSON extraction) + noise gates
+  - scripts/scan_findings/cleanup.py — one-time cleanup of already-filed sweep noise (dry-run default)
   - scripts/backlog.py — the single writer (new/sync/list); mirrors to build-loop-memory on sync
   - scripts/review_finding_gate.py — canonical severity taxonomy (SEVERITY_MAP), reused for normalization
 ---
@@ -79,6 +80,25 @@ Findings are written through `backlog.py new` (the single, host-agnostic writer
   the originating agent where detectable (e.g. `auto-finding-sweep:security-reviewer`)
 - `--provenance-ref finding-hash:<hash>` — the cross-session dedup key
 
+### Noise gates
+
+Two precision gates run in `detect._candidates_from_block` before a candidate
+is ever routed — a rejected candidate is not emitted at all (neither backlog
+nor review):
+
+- **Enum/rubric template** — a title that IS a severity rubric fragment
+  rather than a stated finding: opens with a severity token followed by an
+  enum separator (`high, medium, or low`, `high|medium|low). See ...`), starts
+  with `to <severity>` (`to Critical`), or has 2+ distinct severity tokens
+  joined by `|`/`/` anywhere (`/ High / Medium / Low`).
+- **Too short** — fewer than `MIN_TITLE_WORDS` (4) whitespace-separated words
+  (`coordination:ack`, `role:lead`).
+
+A **critical** severity additionally requires a concrete locator (inline code
+or a file path with an extension) in the title or evidence to keep its P0
+priority; without one it is downgraded to P1 — an unlocatable "critical"
+claim is exactly the shape of rubric noise, not a pinpointed defect.
+
 ### Dedup (idempotent)
 
 Each finding carries a stable `finding-hash` = sha1 of its severity-stripped
@@ -111,6 +131,23 @@ PYTHONPATH=scripts python3 -m scan_findings \
 `--print-json` reports `{candidates, backlog, review, skipped_dup}`. After a
 sweep, `python3 scripts/backlog.py sync --repo .` refreshes the INDEX and mirrors
 the new items into `build-loop-memory/projects/<slug>/backlog/`.
+
+## One-time cleanup
+
+The noise gates above only stop NEW junk; `scan_findings/cleanup.py` closes
+junk already filed by an earlier sweep (rubric fragments, near-duplicate
+restatements) — open items whose `provenance.source` starts with
+`auto-finding-sweep` only. Default is a dry run; nothing is written without
+`--apply`. Closed items get `status: dropped` + a `## Waived` body section, then
+one `backlog.py sync` per repo archives them.
+
+```bash
+# Report what would close, for one or more repos.
+PYTHONPATH=scripts python3 -m scan_findings.cleanup --repo . --json
+
+# Actually close junk + superseded duplicates.
+PYTHONPATH=scripts python3 -m scan_findings.cleanup --repo . --apply
+```
 
 ## Deferred (NOT built)
 

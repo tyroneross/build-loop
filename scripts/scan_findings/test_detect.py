@@ -13,7 +13,9 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from scan_findings.detect import (  # noqa: E402
     SEVERITY_PRIORITY,
+    FindingCandidate,
     detect_findings,
+    junk_title_reason,
     normalize_severity,
 )
 
@@ -55,9 +57,17 @@ def test_priority_map_covers_all_severities():
 
 
 def test_each_severity_maps_to_expected_priority():
-    cases = [("CRITICAL", "P0"), ("HIGH", "P1"), ("MEDIUM", "P2"), ("LOW", "P3")]
-    for label, prio in cases:
-        cands = detect_findings(text_blocks=[f"{label}: a concrete defect statement here"])
+    # CHANGED: P0 now requires a locator (P0-requires-evidence gate), so the
+    # CRITICAL case's clause carries a file path (`config.py`) the others don't
+    # need — this is the new gate, not a fixture bug.
+    cases = [
+        ("CRITICAL", "a concrete defect statement in config.py", "P0"),
+        ("HIGH", "a concrete defect statement here", "P1"),
+        ("MEDIUM", "a concrete defect statement here", "P2"),
+        ("LOW", "a concrete defect statement here", "P3"),
+    ]
+    for label, clause, prio in cases:
+        cands = detect_findings(text_blocks=[f"{label}: {clause}"])
         assert len(cands) == 1, label
         assert cands[0].priority == prio, label
 
@@ -117,9 +127,11 @@ def test_severity_labeled_with_defect_signal_stays_backlog():
 # --- structured JSON findings ------------------------------------------------
 
 def test_structured_json_findings_split_by_severity():
+    # CHANGED: "Unknown-severity item" was 2 words -> now filtered by the
+    # too-short junk gate (MIN_TITLE_WORDS=4); reworded to a real-length title.
     payload = json.dumps({"findings": [
         {"severity": "high", "title": "Token logged in plaintext", "evidence": "auth.py:42"},
-        {"severity": "banana", "title": "Unknown-severity item"},
+        {"severity": "banana", "title": "This item has an unknown severity value"},
     ]})
     cands = detect_findings(text_blocks=[f"Audit returned: {payload}"])
     routes = _by_route(cands)
@@ -132,8 +144,12 @@ def test_structured_json_findings_split_by_severity():
 
 def test_review_finding_gate_shaped_list_is_parsed():
     # A bare top-level list of severity-bearing dicts (gate output shape).
+    # CHANGED: evidence needs >=4 words (too-short gate) and a locator
+    # (P0-requires-evidence gate) to keep its P0. Avoids "injection" (a bare
+    # _FINDING_KEYWORDS term) so the raw JSON line itself isn't ALSO picked up
+    # by the prose keyword scanner as a second (review-route) candidate.
     payload = json.dumps([
-        {"id": "f1", "severity": "critical", "evidence": "SQLi in /search"},
+        {"id": "f1", "severity": "critical", "evidence": "leaked API tokens found in search/query.py"},
     ])
     cands = detect_findings(text_blocks=[payload])
     assert len(cands) == 1
@@ -152,9 +168,11 @@ def test_same_finding_deduped_within_a_sweep():
 
 
 def test_same_finding_different_severity_dedups_and_keeps_more_urgent():
+    # CHANGED: clause carries a file path (cache.py) so the CRITICAL restatement
+    # keeps its P0 under the new P0-requires-evidence gate.
     cands = detect_findings(text_blocks=[
-        "MEDIUM: the cache key collides across tenants here",
-        "CRITICAL: the cache key collides across tenants here",
+        "MEDIUM: the cache key in cache.py collides across tenants here",
+        "CRITICAL: the cache key in cache.py collides across tenants here",
     ])
     assert len(cands) == 1
     # most-urgent kept
@@ -263,3 +281,105 @@ def test_parallel_agent_results_keep_their_own_attribution(tmp_path: Path):
     ]), encoding="utf-8")
     review = [c for c in detect_findings(transcript_path=transcript) if c.route == "review"]
     assert sorted(c.agent for c in review) == ["independent-auditor", "security-reviewer"]
+
+
+# --- junk-title gate: seeded rubric noise -----------------------------------
+# Real junk observed in the build-loop backlog, all filed P0 from severity
+# critical: an agent's severity RUBRIC line gets mis-parsed as a "finding".
+
+def test_seeded_rubric_lines_produce_zero_candidates():
+    blocks = [
+        "severity: critical|high, medium, or low",
+        "severity: critical|high|medium|low). See agents/independent-auditor.md for the full schema",
+        "HIGH: / High / Medium / Low",
+        json.dumps({"severity": "critical", "title": "coordination:ack"}),
+    ]
+    assert detect_findings(text_blocks=blocks) == []
+
+
+def test_real_finding_still_passes_with_new_gates():
+    cands = detect_findings(text_blocks=[
+        "HIGH: verify-install.yml interpolates dispatch input into shell — command injection"
+    ])
+    assert len(cands) == 1
+    assert cands[0].route == "backlog"
+    assert cands[0].priority == "P1"
+
+
+# --- P0 gating: critical requires a concrete locator -------------------------
+
+def test_p0_without_locator_downgrades_to_p1():
+    cand = FindingCandidate(
+        severity="critical",
+        title="CRITICAL: session tokens are written to the shared log in plaintext",
+        evidence="",
+        route="backlog",
+        source_kind="assistant_text",
+        agent="session",
+    )
+    assert cand.priority == "P1"
+
+
+def test_p0_with_inline_code_locator_stays_p0():
+    cand = FindingCandidate(
+        severity="critical",
+        title="CRITICAL: `auth.py` writes session tokens to the shared log",
+        evidence="",
+        route="backlog",
+        source_kind="assistant_text",
+        agent="session",
+    )
+    assert cand.priority == "P0"
+
+
+def test_p0_locator_may_come_from_evidence_instead_of_title():
+    cand = FindingCandidate(
+        severity="critical",
+        title="session tokens are written to the shared log in plaintext",
+        evidence="see auth.py:42 for the write site",
+        route="backlog",
+        source_kind="assistant_text",
+        agent="session",
+    )
+    assert cand.priority == "P0"
+
+
+# --- junk_title_reason unit cases --------------------------------------------
+
+def test_junk_title_reason_severity_enum_comma_separated():
+    assert junk_title_reason("high, medium, or low") == "severity-enum-template"
+
+
+def test_junk_title_reason_severity_enum_pipe_separated():
+    assert junk_title_reason(
+        "high|medium|low). See agents/independent-auditor.md for the full schema"
+    ) == "severity-enum-template"
+
+
+def test_junk_title_reason_severity_enum_slash_separated_anywhere():
+    assert junk_title_reason("/ High / Medium / Low") == "severity-enum-template"
+
+
+def test_junk_title_reason_to_severity_prefix():
+    assert junk_title_reason("to Critical") == "severity-enum-template"
+
+
+def test_junk_title_reason_too_short():
+    assert junk_title_reason("coordination:ack") == "too-short"
+    assert junk_title_reason("role:lead") == "too-short"
+
+
+def test_junk_title_reason_none_for_empty():
+    assert junk_title_reason("") == "too-short"
+
+
+def test_junk_title_reason_legitimate_severity_word_used_normally():
+    # Only enum SEPARATORS trigger the template rule — an ordinary sentence
+    # that happens to start with a severity-like word is a real finding title.
+    assert junk_title_reason("High CPU usage in worker pool loop") is None
+
+
+def test_junk_title_reason_real_finding_is_none():
+    assert junk_title_reason(
+        "verify-install.yml interpolates dispatch input into shell — command injection"
+    ) is None

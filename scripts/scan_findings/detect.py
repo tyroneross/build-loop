@@ -131,6 +131,16 @@ _FINDING_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# A concrete locator: inline code, or a file path with a recognized extension.
+# Shared between _DEFECT_SIGNAL (finding-signal detection) and the P0-priority
+# evidence gate below — the extension list lives here ONCE.
+_INLINE_CODE_SRC = r"`[^`]+`"
+_FILE_PATH_SRC = (
+    r"\b[\w./-]+\.(?:py|js|ts|tsx|jsx|mjs|cjs|yml|yaml|json|sh|bash|go|rs|java|rb|"
+    r"php|c|cpp|h|swift|kt|sql|toml|ini|cfg|conf|env|lock|md|xml|html|css)\b"
+)
+_LOCATOR_RE = re.compile(r"(?:" + _INLINE_CODE_SRC + r"|" + _FILE_PATH_SRC + r")")
+
 # A defect/technical signal in a clause. The bare UPPERCASE-severity-label route
 # requires one of these to keep its severity (-> backlog); a severity label with
 # NO defect signal (e.g. "CRITICAL: ship by Friday") is a planning line, not a
@@ -138,9 +148,8 @@ _FINDING_KEYWORDS = re.compile(
 # a false P0 backlog item is worse than a human-triaged review proposal.
 _DEFECT_SIGNAL = re.compile(
     r"("
-    r"`[^`]+`"                                          # inline code
-    r"|\b[\w./-]+\.(?:py|js|ts|tsx|jsx|mjs|cjs|yml|yaml|json|sh|bash|go|rs|java|rb|"
-    r"php|c|cpp|h|swift|kt|sql|toml|ini|cfg|conf|env|lock|md|xml|html|css)\b"  # file path
+    r"" + _INLINE_CODE_SRC + r""                         # inline code
+    r"|" + _FILE_PATH_SRC + r""                           # file path
     r"|\b\w+\([^)]*\)"                                   # function call foo(...)
     r"|\b(?:error|errors|fail(?:s|ed|ure|ing)?|crash(?:es|ed|ing)?|break(?:s|ing)?|broke|broken|"
     r"leak(?:s|ed|ing)?|null|undefined|nan|exception|traceback|regress(?:ion|es|ed)?|"
@@ -152,6 +161,70 @@ _DEFECT_SIGNAL = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# Junk-title gate — rubric/template noise the transcript sweep must never file.
+# ---------------------------------------------------------------------------
+#
+# Two observed junk shapes from real backlog pollution (auto-finding-sweep):
+#   1. An agent's severity RUBRIC line ("severity: critical|high, medium, or
+#      low") gets mis-parsed by _SEV_FIELD_RE — the "|" is consumed as a
+#      separator and the enum tail becomes the "clause" -> title.
+#   2. A structured-JSON title/one-liner too short to mean anything on its own
+#      ("coordination:ack", "role:lead").
+MIN_TITLE_WORDS = 4
+
+# Case A: title (after stripping leading non-word chars) opens with a severity
+# token immediately followed by an enum separator: , | / or " or/and/to ".
+_SEV_ENUM_LEAD_RE = re.compile(
+    r"^\W*(?:" + _SEV_ALT + r")\s*(?:[,|/]|\s+(?:or|and|to)\s+)",
+    re.IGNORECASE,
+)
+# Case B: title opens with "to " directly followed by a severity token (e.g.
+# a severity escalated "to Critical").
+_SEV_ENUM_TO_RE = re.compile(
+    r"^\W*to\s+(?:" + _SEV_ALT + r")\b",
+    re.IGNORECASE,
+)
+# Case C: 2+ severity tokens joined by | or / anywhere in the title (e.g.
+# "/ High / Medium / Low"). Matched pairwise; distinctness is checked in code
+# so "high|high" (same token twice) does not count.
+_SEV_ENUM_PAIR_RE = re.compile(
+    r"(?P<a>" + _SEV_ALT + r")\s*[|/]\s*(?P<b>" + _SEV_ALT + r")",
+    re.IGNORECASE,
+)
+
+
+def _has_distinct_severity_pair(title: str) -> bool:
+    for m in _SEV_ENUM_PAIR_RE.finditer(title):
+        a = normalize_severity(m.group("a"))
+        b = normalize_severity(m.group("b"))
+        if a and b and a != b:
+            return True
+    return False
+
+
+def junk_title_reason(title: str) -> str | None:
+    """Return a short reason string if ``title`` is sweep noise, else None.
+
+    ``"severity-enum-template"`` — the title is a severity-rubric/enum fragment
+    (e.g. "high, medium, or low", "high|medium|low). See ... schema",
+    "/ High / Medium / Low", "to Critical") rather than a stated finding.
+    ``"too-short"`` — fewer than ``MIN_TITLE_WORDS`` whitespace-separated words
+    (e.g. "coordination:ack", "role:lead").
+    """
+    t = (title or "").strip()
+    if not t:
+        return "too-short"
+    if (
+        _SEV_ENUM_LEAD_RE.match(t)
+        or _SEV_ENUM_TO_RE.match(t)
+        or _has_distinct_severity_pair(t)
+    ):
+        return "severity-enum-template"
+    if len(t.split()) < MIN_TITLE_WORDS:
+        return "too-short"
+    return None
 
 # Explicit "Bug:/Issue:/Finding:/Defect:" prose prefixes (no severity) — a clear
 # finding signal that still routes to review (no severity asserted).
@@ -238,8 +311,20 @@ class FindingCandidate:
 
     @property
     def priority(self) -> str:
-        """Backlog priority from severity (P2 fallback for the review route)."""
-        return SEVERITY_PRIORITY.get(self.severity or "", "P2")
+        """Backlog priority from severity (P2 fallback for the review route).
+
+        P0 requires evidence: a "critical" severity with no concrete locator
+        (inline code or a file-path-with-extension, see ``_LOCATOR_RE``) in
+        either ``title`` or ``evidence`` is downgraded to P1 — an unlocatable
+        "critical" claim is exactly the shape of the rubric/template noise this
+        module otherwise files as a false P0.
+        """
+        prio = SEVERITY_PRIORITY.get(self.severity or "", "P2")
+        if prio == "P0" and not (
+            _LOCATOR_RE.search(self.title or "") or _LOCATOR_RE.search(self.evidence or "")
+        ):
+            return "P1"
+        return prio
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -518,9 +603,12 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
         for sev, title, evidence in _findings_from_json_value(value):
             if sev is None and unattributed_tool_output:
                 continue
+            clean = _clean_title(title)
+            if junk_title_reason(clean) is not None:
+                continue
             out.append(FindingCandidate(
                 severity=sev,
-                title=_clean_title(title),
+                title=clean,
                 evidence=evidence,
                 route="backlog" if sev else "review",
                 source_kind="structured_json",
@@ -530,6 +618,8 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
     # Prose findings.
     for sev, title, evidence in _prose_findings_from_text(text):
         if sev is None and unattributed_tool_output:
+            continue
+        if junk_title_reason(title) is not None:
             continue
         out.append(FindingCandidate(
             severity=sev,

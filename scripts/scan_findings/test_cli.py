@@ -146,6 +146,44 @@ def test_no_findings_in_transcript_is_clean(tmp_path, capsys):
     assert out["candidates"] == [] and out["backlog"] == []
 
 
+def test_same_title_different_wording_writes_only_one_backlog_item(tmp_path, capsys):
+    """Two structured findings can share a title (JSON title/evidence fields are
+    independent) while their evidence text differs enough to carry a different
+    finding_hash. The per-repo title dedup in `_run_sweep` (`seen_titles`) must
+    still collapse them to one backlog item within a single sweep."""
+    same_title = "Unescaped shell interpolation in verify-install.yml"
+    blocks = [
+        json.dumps({
+            "severity": "high", "title": same_title,
+            "evidence": "the workflow passes dispatch input straight into a shell command without escaping",
+        }),
+        json.dumps({
+            "severity": "high", "title": same_title,
+            "evidence": "a follow-up scan found the same unescaped interpolation through a different code path",
+        }),
+    ]
+    blocks_file = tmp_path / "blocks.json"
+    blocks_file.write_text(json.dumps(blocks), encoding="utf-8")
+
+    rc = cli.main([
+        "--workdir", str(tmp_path),
+        "--text-blocks-file", str(blocks_file),
+        "--today", "2026-06-27",
+        "--print-json",
+        "--lock-file", str(tmp_path / ".findings.lock"),
+    ])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    # detect_findings dedups by finding_hash only, so both distinct-evidence
+    # candidates survive detection...
+    assert len(out["candidates"]) == 2
+    assert out["candidates"][0]["finding_hash"] != out["candidates"][1]["finding_hash"]
+    # ...but the sweep's title dedup collapses them to a single backlog write.
+    assert len(out["backlog"]) == 1
+    assert out["skipped_dup"] == 1
+    assert len(_items(tmp_path)) == 1
+
+
 def test_hook_invocation_via_subprocess_with_pythonpath(tmp_path):
     """Reproduce the literal Stop-hook command form: `python3 -m scan_findings`
     with PYTHONPATH=scripts. Guards against the built-not-wired failure mode."""
