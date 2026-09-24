@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Hybrid retrieval entry point for repo-local episodic memory.
 
-Embeds the query via `embed_backend.embed` (MLX `mxbai-embed-large-v1`
-default, Ollama `bge-m3` fallback after Phase A — both 1024-dim but in
-DIFFERENT vector spaces) and runs a hybrid search against
+Embeds the query via `embed_backend.embed` (Ollama `bge-m3`, 1024-dim,
+the same space stored rows are embedded in) and runs a hybrid search against
 `agent_memory.<schema>.semantic_facts` and `episode_events`.
 
 Phase A pipeline (--mode hybrid, default):

@@ -3,17 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Embedding backend abstraction for repo-local episodic memory.
 
-Default: MLX (`mlx-community/mxbai-embed-large-v1`, 1024-dim). Faster
-per-call once warm (~10ms) and dramatically faster on batches (~2ms
-amortized at batch=10) compared to Ollama HTTP (~15ms warm).
-
-Fallback: Ollama (`bge-m3`, 1024-dim). Hybrid recall Phase A migrated
-the Ollama default from `mxbai-embed-large` to BGE-M3 — same dimension,
-better hybrid retrieval performance, ColBERT-mode-ready for Phase E
-late-interaction. The MLX default stays at mxbai-embed-large-v1 because
-no `mlx-community/bge-m3` weights are cached locally; cross-backend
-vectors are NOT comparable, so callers writing rows must record
-`embedding_model_version` and recall must re-embed when querying rows
+Default: Ollama (`bge-m3`, 1024-dim), the same model stored memory is
+embedded with (scripts/migrate_reembed_to_bgem3.py DEFAULT_TARGET). The
+former MLX default, `mlx-community/mxbai-embed-large-v1`, lives in an
+unrelated vector space (-0.049 cosine on identical text), so it was
+removed. Ollama returns only bge-m3's dense vector; its sparse/ColBERT
+outputs are not available on this path. Callers writing rows must record
+`embedding_model_version`; recall must re-embed when querying rows
 written by a different model. See research entry
 `build-loop-search-architecture` for rationale.
 
