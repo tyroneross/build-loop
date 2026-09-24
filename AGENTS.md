@@ -728,3 +728,22 @@ build a second store.
 
 Reference register, 20 rows with the user's 14 real rulings:
 the consuming project's `.build-loop/decisions/<date>-<slug>/`.
+
+## Memory retrieval — one path for every agent
+
+Before investigating anything the team may already have decided, ask memory:
+
+```bash
+python3 scripts/blm.py find --query "<question in plain words>" --project <slug>
+```
+
+Hybrid keyword + vector, ranked, ~500 tokens, ~0.3s. Results are trust-labelled:
+`✓` confirmed decision (cite it) and `?` unreviewed auto-capture (a lead —
+verify against code/git/the user before relying on it, never present as
+settled). `--tier curated` narrows to confirmed. Open only the evidence files
+the results name; a search is ~500 tokens against ~27,000 for a decisions
+folder. With no database configured it falls back to the local index and says
+so — it never returns a silent empty result.
+
+Do not improvise a retrieval path. `rg` is for exhaustive literal sweeps only.
+Contract: `skills/build-loop/references/memory-retrieval-contract.md`.
