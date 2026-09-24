@@ -513,6 +513,384 @@ _Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000
 
 **Why.** self-authored tests structurally cannot see the case their author didn't imagine; only a test seeded from the adversary's reproduction closes that blind spot
 
+## 2026-09-13 — Automate recurring ritual (×8): Agent(general-purpose) → Bash → Bash — draft a script/hook
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×8): Agent(general-purpose) → Bash → Bash — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Automate recurring ritual (×7): Bash → Bash → Agent(general-purpose) — draft a script/hook
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×7): Bash → Bash → Agent(general-purpose) — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Automate recurring ritual (×4): Agent(general-purpose) → Agent(general-purpose) → Agent(general-purpose) — draft a scrip
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×4): Agent(general-purpose) → Agent(general-purpose) → Agent(general-purpose) — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Automate recurring ritual (×4): Bash → Agent(general-purpose) → Bash — draft a script/hook
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×4): Bash → Agent(general-purpose) → Bash — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Automate recurring ritual (×3): Bash → Agent(general-purpose) → Agent(general-purpose) — draft a script/hook
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×3): Bash → Agent(general-purpose) → Agent(general-purpose) — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Automate recurring ritual (×3): Agent(general-purpose) → Agent(general-purpose) → Bash — draft a script/hook
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Automate recurring ritual (×3): Agent(general-purpose) → Agent(general-purpose) → Bash — draft a script/hook
+
+**When.** 2026-09-13
+
+**Impact.** Without a script, this dispatch/verify sequence is re-typed by hand every run, costing tool calls and creating drift between runs in how the check is performed.
+
+**Recommendation.** Draft the named hook/script (see enrichment in Deterministic-automation candidates, §11) and wire it into the relevant dispatch path so the sequence runs once, deterministically.
+
+**Why.** Recurring ≥3x sequences of the same tool order are a manual ritual; scripting removes the repeated manual assembly and the chance of doing one step differently each time.
+
+## 2026-09-13 — Add a bash-guard lint (or default `set -o pipefail`) for any `cmd | tail`-style pipeline whose exit code is read afterwa
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Add a bash-guard lint (or default `set -o pipefail`) for any `cmd | tail`-style pipeline whose exit code is read afterward — one such pattern reported a red guard as green this run
+
+**When.** 2026-09-13
+
+**Impact.** Without a pipefail check, a guard can exit 1 while a wrapping pipeline reports exit 0, so a red guard ships silently until an unrelated event (a CI run turning red) exposes it.
+
+**Recommendation.** Add a bash-guard lint (or a default `set -o pipefail`) rejecting exit-code reads that follow a lossy pipe such as `cmd | tail`.
+
+**Why.** This run's `cmd | tail; echo $?` pattern reported tail's exit status, not the guard's, and was only caught when an unrelated push turned CI red.
+
+## 2026-09-13 — Put model-ID/capability claims on the same forced-search trigger list as pricing/version claims — this run answered a mo
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Put model-ID/capability claims on the same forced-search trigger list as pricing/version claims — this run answered a model-ID question from memory and the user had to redirect it to search
+
+**When.** 2026-09-13
+
+**Impact.** A model-ID claim (gpt-6-astra) was answered from memory instead of searched, and the user had to redirect the run to search — a preventable extra turn.
+
+**Recommendation.** Put model-ID/capability claims on the same forced-search trigger list as pricing/version claims.
+
+**Why.** The current research-trigger table names pricing/version/lifecycle explicitly but not model-ID claims, leaving this category ungated.
+
+## 2026-09-13 — `Bash` returned 7 error(s) — friction worth removing
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** `Bash` returned 7 error(s) — friction worth removing
+
+**When.** 2026-09-13
+
+**Impact.** 7 Bash tool-call errors this run indicate friction in guard/CI invocation patterns that likely recur in future runs on this repo unless fixed at the source.
+
+**Recommendation.** Review the 7 failing Bash invocations (see issue-signal entries) and fix the underlying pattern — several trace to a `cmd | tail`-style exit-code read and to CI workflow-glob mismatches, not to one-off typos.
+
+**Why.** Recurring per-tool error counts are a reliability signal the deterministic layer already surfaces (§10); left unaddressed they cost a retry per occurrence.
+
+## 2026-09-13 — issue signal: Exit code 1 _archive _catalog _cleanup-2026-05-30 _collapse-bundles-1780205365 _from-wrappers _private-plu
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** issue signal: Exit code 1 _archive _catalog _cleanup-2026-05-30 _collapse-bundles-1780205365 _from-wrappers _private-plugins _referenc
+
+**When.** 2026-09-13
+
+**Impact.** Each transcript issue signal is a distinct exit-1/traceback captured mid-run; unresolved, the same command shape will fail identically on the next run against this repo.
+
+**Recommendation.** Trace each signal to its command (CI workflow glob matching, `pre_bash_dispatch` hook, `learn rerun` traceback, unmatched-quote eval) and fix the underlying script rather than retrying past it.
+
+**Why.** These are raw exit-1/traceback captures from the transcript (deterministic §4/§9); they name a real failing command, not a transient blip.
+
+## 2026-09-13 — issue signal: PreToolUse:Bash hook error: [root="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}"; hook="$root/scripts/hooks/
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** issue signal: PreToolUse:Bash hook error: [root="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}"; hook="$root/scripts/hooks/pre_bash_dispa
+
+**When.** 2026-09-13
+
+**Impact.** Each transcript issue signal is a distinct exit-1/traceback captured mid-run; unresolved, the same command shape will fail identically on the next run against this repo.
+
+**Recommendation.** Trace each signal to its command (CI workflow glob matching, `pre_bash_dispatch` hook, `learn rerun` traceback, unmatched-quote eval) and fix the underlying script rather than retrying past it.
+
+**Why.** These are raw exit-1/traceback captures from the transcript (deterministic §4/§9); they name a real failing command, not a transient blip.
+
+## 2026-09-13 — issue signal: --- learn rerun --- Traceback (most recent call last):   File "<string>", line 2, in <module>     import j
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** issue signal: --- learn rerun --- Traceback (most recent call last):   File "<string>", line 2, in <module>     import json,sys; d=jso
+
+**When.** 2026-09-13
+
+**Impact.** Each transcript issue signal is a distinct exit-1/traceback captured mid-run; unresolved, the same command shape will fail identically on the next run against this repo.
+
+**Recommendation.** Trace each signal to its command (CI workflow glob matching, `pre_bash_dispatch` hook, `learn rerun` traceback, unmatched-quote eval) and fix the underlying script rather than retrying past it.
+
+**Why.** These are raw exit-1/traceback captures from the transcript (deterministic §4/§9); they name a real failing command, not a transient blip.
+
+## 2026-09-13 — issue signal: Exit code 1 (eval):20: unmatched "
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** issue signal: Exit code 1 (eval):20: unmatched "
+
+**When.** 2026-09-13
+
+**Impact.** Each transcript issue signal is a distinct exit-1/traceback captured mid-run; unresolved, the same command shape will fail identically on the next run against this repo.
+
+**Recommendation.** Trace each signal to its command (CI workflow glob matching, `pre_bash_dispatch` hook, `learn rerun` traceback, unmatched-quote eval) and fix the underlying script rather than retrying past it.
+
+**Why.** These are raw exit-1/traceback captures from the transcript (deterministic §4/§9); they name a real failing command, not a transient blip.
+
+## 2026-09-13 — issue signal: Exit code 1 === which trigger on a non-main branch push? === (eval):4: no matches found: .github/workflows
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** issue signal: Exit code 1 === which trigger on a non-main branch push? === (eval):4: no matches found: .github/workflows/*.yml
+
+**When.** 2026-09-13
+
+**Impact.** Each transcript issue signal is a distinct exit-1/traceback captured mid-run; unresolved, the same command shape will fail identically on the next run against this repo.
+
+**Recommendation.** Trace each signal to its command (CI workflow glob matching, `pre_bash_dispatch` hook, `learn rerun` traceback, unmatched-quote eval) and fix the underlying script rather than retrying past it.
+
+**Why.** These are raw exit-1/traceback captures from the transcript (deterministic §4/§9); they name a real failing command, not a transient blip.
+
+## 2026-09-13 — Instrument-verification failures were ONE class this run, not three isolated incidents: (a) `cmd | tail; echo $?` report
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Instrument-verification failures were ONE class this run, not three isolated incidents: (a) `cmd | tail; echo $?` reported tail's exit code as the guard's result and read green while the guard itself was red, caught only when a push turned CI red; (b) the daemon op-reachability count was reported wrong twice — first excluding `main.rs` (which deletes the CLI surface, since the CLI lives there; transcript lines 576, 598, 607, 1662 show repeated `main.rs` inspection), then missing `cli_agent` — before landing on 47 served / 28 CLI / 21 Swift / 6 MCP; (c) `etevent replay <pane_id>` was called with the wrong argument shape (it takes workspace+session) and returned a false "0 events," nearly reported as a product defect that was the caller's mistake. All three trusted a derived reading over the actual state — see meta-cause in Issues (§9)
+
+**When.** 2026-09-13
+
+**Impact.** Three separate near-misses this run (broken guard read as passing, wrong reachability count reported twice, false '0 events' from a CLI misuse) all reached a person before being caught, at the cost of rework and a delayed push.
+
+**Recommendation.** Add ONE 'verify the instrument against a known input before trusting it on the real one' preflight family, rather than three separate point fixes — see meta-cause in Issues (§9).
+
+**Why.** 5-whys traces all three to the same root: a derived reading (echoed exit code, hand-built count, CLI return value) was trusted over the actual state without a known-good check first.
+
+## 2026-09-13 — Counterfactual: one "verify the instrument against a known input before trusting it on the real one" preflight would hav
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Counterfactual: one "verify the instrument against a known input before trusting it on the real one" preflight would have caught (a), (b), and (c) before they were reported, at the cost of one extra check each. It would NOT remove the human gate on shipping the herdr recommendation or the model-ID claim below — those need a documented-source check, not a re-run
+
+**When.** 2026-09-13
+
+**Impact.** Without the preflight, each of the three instrument failures cost a full round of investigation and re-verification before the correct answer was reported.
+
+**Recommendation.** Build the verify-instrument preflight as a small reusable check (known-input/known-output pair, run before trusting the real read) shared by the pipefail lint, the entry-point manifest check, and CLI arg validation.
+
+**Why.** Quantifying the counterfactual shows one shared mechanism removes three incidents; it does not remove the human decision gates on the herdr recommendation or the model-ID claim, which need a documented-source check instead.
+
+## 2026-09-13 — I specified a defect into the plan: telling the implementer an orphan update was truncation evidence produced a test ass
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** I specified a defect into the plan: telling the implementer an orphan update was truncation evidence produced a test asserting the wrong invariant; a live smoke test caught the resulting false "aged out" report before merge, not a plan review (orphan refs at transcript lines 7, 13, 305)
+
+**When.** 2026-09-13
+
+**Impact.** The implementer wrote a test asserting the wrong invariant (orphan-as-truncation); a fresh 15-event session then falsely reported 'aged out,' which would have been a false defect report had it reached the user before the live smoke test caught it.
+
+**Recommendation.** Require `build-loop:implementer` to re-derive any NEW test invariant from the documented replay contract before encoding it, rather than accepting the caller's framing directly (see §10 enrichment).
+
+**Why.** The spec itself carried the defect — the implementer complied correctly with an incorrect instruction; the missing control is a re-derivation check, not an implementer competence gap.
+
+## 2026-09-13 — I answered a factual question about a model ID (gpt-6-astra) from training-data memory instead of searching; the user ha
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** I answered a factual question about a model ID (gpt-6-astra) from training-data memory instead of searching; the user had to say "you should check internet if you don't know."
+
+**When.** 2026-09-13
+
+**Impact.** An unverified model-ID claim risks being repeated downstream (docs, further recommendations) before anyone checks it, and the user had to spend a turn issuing the correction.
+
+**Recommendation.** Add model-ID/capability claims to the same forced-search trigger list already used for pricing and version claims.
+
+**Why.** No trigger in the current research policy specifically covers model-ID claims, only pricing/version/lifecycle — this run shows the gap.
+
+## 2026-09-13 — Never trust `cmd | tail` (or any pipeline) for a guard's exit status without `set -o pipefail` or capturing `${PIPESTATU
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Never trust `cmd | tail` (or any pipeline) for a guard's exit status without `set -o pipefail` or capturing `${PIPESTATUS[0]}` — this run read a red guard as green
+
+**When.** 2026-09-13
+
+**Impact.** A guard read as passing when it was actually failing let a red state ship silently until an unrelated push turned CI red — the same pattern will recur on any future `cmd | tail`-style invocation.
+
+**Recommendation.** Require `set -o pipefail` (or an explicit `${PIPESTATUS[0]}` check) on any guard invocation piped through `tail` or similar before its exit code is read.
+
+**Why.** `echo $?` after a pipe reports the last command's exit status, not the guard's; no lint currently rejects this pattern.
+
+## 2026-09-13 — Search before asserting any model ID, price, or capability claim instead of answering from training-data memory when the
+
+_Source: retrospective `easy-terminal: .rally/worktrees/claude-et-agent-audit-hooks-01/.build-loop/retrospectives/2026-09-13/et-agent-audit-hooks-01.md`_
+
+**What happened.** Search before asserting any model ID, price, or capability claim instead of answering from training-data memory when the fact is checkable
+
+**When.** 2026-09-13
+
+**Impact.** Answering a model-ID question from memory instead of searching risks propagating a stale or wrong claim into further recommendations or docs.
+
+**Recommendation.** Extend the existing pricing/version forced-search trigger list to include model-ID and capability claims explicitly.
+
+**Why.** The current trigger table does not name model-ID claims as a category, only pricing/version/lifecycle — a gap this run's gpt-6-astra exchange exposed.
+
+## 2026-09-14 — Automate recurring ritual (×13): exec → exec → exec — draft a script/hook
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** Automate recurring ritual (×13): exec → exec → exec — draft a script/hook
+
+**When.** 2026-09-14
+
+**Impact.** Manual write-script/run/read/iterate ritual repeated 13 times in one live-diagnosis session; costs agent time and produces inconsistent probe coverage each time it is hand-rolled instead of scripted.
+
+**Recommendation.** Route future live network-diagnosis sessions through the shipped Chief of Staff `network diagnose` tool and 33-check drill (commit e4add5d/f871030) first, falling back to scratchpad scripting only for checks the registry does not yet cover.
+
+**Why.** The session's own deliverable is the automation of this exact ritual; not using it by default wastes the investment and re-introduces the inconsistency it was built to remove.
+
+## 2026-09-14 — Publish the macOS network-tooling gaps (no `timeout` binary, `netstat -w -c` unsupported) once in a shared reference rea
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** Publish the macOS network-tooling gaps (no `timeout` binary, `netstat -w -c` unsupported) once in a shared reference read before any live network probing, instead of letting each dispatched agent rediscover them independently — 4 rediscoveries in one session is the ready signal this belongs in a doc, not tribal knowledge per agent
+
+**When.** 2026-09-14
+
+**Impact.** 4 independent agents (the top-level orchestrator and 3 subagents) each separately hit `(eval): command not found: timeout` before the fact was recorded once, costing repeated probe rounds across the session.
+
+**Recommendation.** Publish macOS network-tooling gaps (no `timeout` binary, `netstat -w -c` unsupported) in a shared reference read before any live network probing begins.
+
+**Why.** 4 independent rediscoveries of the same fact in one session is the signal this belongs in a doc read once, not knowledge each dispatched agent has to re-learn.
+
+## 2026-09-14 — Require every dispatched reviewer (auditor, security-reviewer, cross-vendor) to report back before an orchestrator uses
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** Require every dispatched reviewer (auditor, security-reviewer, cross-vendor) to report back before an orchestrator uses "closed" language about findings, even when its own test suite is green — see Issues §9 for the near-miss this would have caught earlier
+
+**When.** 2026-09-14
+
+**Impact.** An orchestrator can declare findings closed on its own green test suite while a dispatched, broader-scope reviewer is still outstanding; this run self-corrected before push only because of the local-merge boundary.
+
+**Recommendation.** Require every dispatched reviewer (auditor, security-reviewer, cross-vendor) to report a verdict before an orchestrator is permitted to use "closed"/"done" language about findings.
+
+**Why.** Relying on the local-merge-before-push boundary to catch a premature completion claim is not guaranteed on every run; the gate should be structural, not incidental.
+
+## 2026-09-14 — The build-orchestrator (agent-ac2393f9d5e1b4982) wrote "All findings closed and 485 tests green. Merging to main." while
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** The build-orchestrator (agent-ac2393f9d5e1b4982) wrote "All findings closed and 485 tests green. Merging to main." while a dispatched, not-yet-returned independent audit was still outstanding; its own next line records this: "Outstanding audit — it measured three high-severity defects that survived my fixes. I merged locally but have not pushed, so I'll fix before pushing." The re-audit (agent-a796d622fb171a278) verdict was `reject` on N1 (attacker-removable coverage disclosure), N2 (healthy network blamed on the ISP), N3 (unreadable `ifconfig` reported as no default route). Nothing shipped in this state — the local-merge-before-push boundary caught it — but the sequencing (declaring "closed" before every dispatched reviewer reported) is the near-miss, not the corrected outcome
+
+**When.** 2026-09-14
+
+**Impact.** Nothing shipped in the false-"closed" state — the local-merge-before-push boundary caught it — but the sequencing itself (declaring closed before every dispatched reviewer reports) is a repeatable near-miss with no structural gate against it.
+
+**Recommendation.** Add a completion gate requiring all dispatched reviewer verdicts to be populated (not just launched) before completion language is permitted in an orchestrator report.
+
+**Why.** Confirmed by the orchestrator's own transcript: "All findings closed and 485 tests green. Merging to main." is immediately followed by "Outstanding audit — it measured three high-severity defects that survived my fixes."
+
+## 2026-09-14 — `backlog.py new --repo "$PWD"` was invoked twice for the same card in this session before it succeeded (2 consecutive Ba
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** `backlog.py new --repo "$PWD"` was invoked twice for the same card in this session before it succeeded (2 consecutive Bash calls with identical `backlog.py new --repo "$PWD"` structure), consistent with the known cwd-reset misfile risk for relative `$PWD` — pass an absolute repo path
+
+**When.** 2026-09-14
+
+**Impact.** Two consecutive identical `backlog.py new --repo "$PWD"` invocations were needed for the same card in this session before it filed successfully, consistent with the known cwd-reset misfile risk.
+
+**Recommendation.** Always pass an absolute repo path to `backlog.py new`, never `--repo "$PWD"`, since the harness can reset cwd between calls.
+
+**Why.** This is a previously known failure mode (see personal memory: `feedback_backlog_py_needs_absolute_repo_path.md`) that recurred in this session, indicating the guidance is not yet enforced by the tool itself.
+
+## 2026-09-14 — A layer/segment verdict may only be named by a check that measured that segment specifically, never by a check that meas
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** A layer/segment verdict may only be named by a check that measured that segment specifically, never by a check that measured the whole path end to end. Already structural at 11883a6 (`NetworkLayer.path` excluded from `NetworkLayerPinpoint.order`) — the next run should not have to re-derive this pattern for a different check-registry-shaped feature
+
+**When.** 2026-09-14
+
+**Impact.** Without this constraint, any future check-registry-shaped feature could repeat the same over-attribution defect: naming a segment from a measurement that spans the whole path.
+
+**Recommendation.** Carry forward the 11883a6 pattern — only a check that measured a specific segment may name that segment's layer — as a standard for any new check-registry feature, not just network health.
+
+**Why.** Already landed structurally at 11883a6 (`NetworkLayer.path` excluded from `NetworkLayerPinpoint.order`); the risk is this pattern staying local to one feature instead of becoming a reusable standard.
+
+## 2026-09-14 — "Findings closed" language from an orchestrator requires every dispatched reviewer to have reported, not just a green te
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/RossLabs Ambient Agent/.build-loop/retrospectives/2026-09-14/session-d11766e1-network-health.md`_
+
+**What happened.** "Findings closed" language from an orchestrator requires every dispatched reviewer to have reported, not just a green test suite. This run self-corrected before push; the next run should not depend on that same local-merge boundary catching it again
+
+**When.** 2026-09-14
+
+**Impact.** This run's premature "closed" declaration was caught only because the merge had not yet been pushed; a run without that boundary could ship an under-reviewed change.
+
+**Recommendation.** Make the reviewer-completion gate structural (see finding 4/5) rather than relying on the local-merge-before-push boundary as an implicit safety net.
+
+**Why.** The same near-miss pattern will recur on any run where an orchestrator's own tests pass before a broader-scope dispatched review returns.
+
 ## 2026-09-13 — Re-verify a subagent's or nested validator's findings against current state before acting on them
 
 _Source: retrospective `projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md` in the memory store (`scripts/_paths.py:memory_store_root()`)_
@@ -540,3 +918,59 @@ _Source: retrospective `projects/persona-lab/retrospectives/2026-09-14/session-d
 **Recommendation.** always `git fetch` immediately before using the remote-tracking ref as push proof
 
 **Why.** the remote-tracking ref only reflects the last successful fetch/push, and nothing in this session's push-verification step re-fetched before comparing
+
+## 2026-09-14 — Make this an enforced default instead of user-prompted: _Status check_
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/easy-terminal/.build-loop/retrospectives/2026-09-14/release-candidate-e89d0f6-01.md`_
+
+**What happened.** The user sent "Status check" twice (prompts 6 and 10) during a long-running background release/notarization dispatch.
+
+**When.** 2026-09-14
+
+**Impact.** Manual check-ins interrupt an otherwise autonomous background run and signal there is no proactive progress surfacing for long-running dispatched subagents.
+
+**Recommendation.** Build-loop's background/status surfacing should proactively post progress at natural checkpoints (dispatch start, phase transition, completion) for long-running dispatched subagents, rather than relying on the user asking.
+
+**Why.** No periodic status-push mechanism exists today for long-running Agent-tool dispatches; the only way to learn progress is to ask.
+
+## 2026-09-14 — issue signal: return Err(std::io::Error::new( == ProcessTable == src/event_ledger.rs:854:    fn snapshot_survives_append
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/easy-terminal/.build-loop/retrospectives/2026-09-14/release-candidate-e89d0f6-01.md`_
+
+**What happened.** A transcript issue signal referencing `src/event_ledger.rs:854` and a `ProcessTable`/ `snapshot_survives_append_rotation_and_...` test was captured by the deterministic layer from this session's transcript.
+
+**When.** 2026-09-14
+
+**Impact.** unknown — this signal traces to the earlier session-identity-hardening portion of this same session transcript (prompts 1-10), not the release-rebuild task this retrospective names; determining real impact would require the session-identity-hardening investigation, not this one.
+
+**Recommendation.** unknown — no release-rebuild-scoped action follows from this signal; if not already covered by the session-identity-hardening-01 retrospective's own Rust daemon findings, that retrospective (or a follow-up) should attribute and disposition it.
+
+**Why.** Retrospective tooling extracts issue signals from the WHOLE session transcript rather than scoping to the current run's task boundary, so a session covering two unrelated tasks bleeds one task's signals into the other's retrospective (see the companion finding on this cross-task scope bleed).
+
+## 2026-09-14 — issue signal: Exit code 128 coordination pass = True [] == ff-merge into local main ==  M .gitignore  .../2026-09-13-typ
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/easy-terminal/.build-loop/retrospectives/2026-09-14/release-candidate-e89d0f6-01.md`_
+
+**What happened.** A transcript issue signal referencing `Exit code 128` on a `git ... ff-merge into local main` coordination pass was captured by the deterministic layer from this session's transcript.
+
+**When.** 2026-09-14
+
+**Impact.** unknown — this signal traces to the earlier session-identity-hardening portion of this same session transcript, not the release-rebuild task this retrospective names; determining real impact would require the session-identity-hardening investigation.
+
+**Recommendation.** unknown — no release-rebuild-scoped action follows from this signal; if not already covered by the session-identity-hardening-01 retrospective's own findings (it names a related `git merge --ff-only` assumption gap, `BUIL-MERGE-m2ggmnztfhjv6adjk0fgh`), no new action is needed here.
+
+**Why.** Same root as the finding above: whole-session transcript scanning bleeds one task's signals into an unrelated task's retrospective.
+
+## 2026-09-14 — Both signals above are from the earlier session-identity-hardening portion of this thread, not the release rebuild
+
+_Source: retrospective `/Users/tyroneross/dev/git-folder/easy-terminal/.build-loop/retrospectives/2026-09-14/release-candidate-e89d0f6-01.md`_
+
+**What happened.** This retrospective's deterministic layer surfaced two issue signals (event_ledger.rs, git ff-merge) that trace to the session-identity-hardening portion of this SAME session transcript (prompts 1-10), not the release-rebuild task (prompts 15-19) this retrospective is about.
+
+**When.** 2026-09-14
+
+**Impact.** A retrospective's deterministic sections can misattribute signal to the wrong task when one session transcript spans two unrelated tasks, diluting the retrospective's release-rebuild-specific content with unrelated noise and risking a reader treating an already-covered issue as new.
+
+**Recommendation.** Scope the retrospective CLI's transcript-derived sections (issue signals, tool/plugin counts, prompt clustering) to the time window of the CURRENT run when a session's transcript is known to span multiple prior runs (e.g. via a recorded task-start marker), rather than scanning the whole session file unconditionally.
+
+**Why.** The retrospective locator resolves a transcript by session/cwd, not by task boundary within that session, so a single long-lived session covering multiple sequential build-loop tasks has no built-in way to scope extraction to just the current task's turns.
