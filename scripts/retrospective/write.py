@@ -246,7 +246,7 @@ def promote_durable(
     """
     try:
         if memory_root is None:
-            memory_root = build_loop_memory_root()
+            memory_root = build_loop_memory_root(workdir)
         slug = repo or workdir.name
         # Guard against scratch pollution: a mktemp workdir (`tmp.XXXX`) must
         # never create a `projects/tmp.XXXX/` dir in the curated store. The

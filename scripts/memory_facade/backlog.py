@@ -22,9 +22,13 @@ def _store_module():
     return module
 
 
-def _memory_root() -> Path:
+def _memory_root(workdir: Path | None = None) -> Path:
     override = os.environ.get("BUILD_LOOP_MEMORY_DIR")
-    return Path(override).expanduser() if override else Path.home() / "dev" / "git-folder" / "build-loop-memory"
+    if override:
+        return Path(override).expanduser()
+    from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+
+    return memory_store_root(workdir)
 
 
 def read_backlog(
@@ -43,7 +47,7 @@ def read_backlog(
         canonical_ids = {
             str(item.get("id")) for item in canonical_all if item.get("id")
         }
-        mirror_dir = _memory_root() / "projects" / slug / "backlog"
+        mirror_dir = _memory_root(workdir) / "projects" / slug / "backlog"
         mirror = store._load_mirror_items(mirror_dir)
     except Exception as exc:  # noqa: BLE001 - recall degrades gracefully
         return [], [f"backlog_unavailable: {exc}"]

@@ -23,6 +23,7 @@ from _paths import (  # type: ignore
     default_schema as _default_schema,
     memory_scope,
     project_decisions_dir,
+    set_memory_workdir,
 )
 from project_resolver import resolve_project  # type: ignore
 
@@ -103,6 +104,10 @@ def main(argv: list[str] | None = None) -> int:
         args.schema = _default_schema()
 
     workdir = Path(args.workdir).resolve()
+    # Classify by the TARGET workdir, not the process cwd, so
+    # `project_decisions_dir` below and the DB gate at `memory_scope(workdir)`
+    # agree on the same workdir.
+    set_memory_workdir(workdir)
 
     # Memory-store cutover (2026-05-26): decision files now live in the
     # canonical build-loop-memory tree under projects/<project>/decisions/.

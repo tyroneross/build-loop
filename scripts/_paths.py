@@ -126,6 +126,28 @@ def memory_disabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Process-wide target-workdir override (see ``set_memory_workdir``). Every
+# throwaway/scope classification below defaults to this when set, and to
+# ``Path.cwd()`` otherwise — never mix the two silently.
+_MEMORY_WORKDIR: Path | None = None
+
+
+def set_memory_workdir(workdir: Path | str | None) -> None:
+    """Set (or clear, with ``None``) the process-wide target-workdir override.
+
+    Entrypoints that take a ``--workdir`` distinct from the process cwd (a
+    hook invoked with cwd=<plugin scripts dir> and ``--workdir=<target
+    repo>`` is the observed failure mode) must call this ONCE, early —
+    before any ``memory_scope()``/``memory_store_root()``/project-lane call
+    — so every zero-arg helper below classifies the TARGET workdir instead
+    of the process cwd. Explicit ``workdir=`` arguments passed directly to
+    ``memory_scope()``/``memory_store_root()`` still take precedence over
+    this override.
+    """
+    global _MEMORY_WORKDIR
+    _MEMORY_WORKDIR = Path(workdir) if workdir is not None else None
+
+
 def _temp_roots() -> tuple[Path, ...]:
     """Return resolved, de-duplicated known OS/CI scratch-directory roots.
 
@@ -236,14 +258,18 @@ _SANDBOX_ANNOUNCED: set[str] = set()
 
 
 def clear_memory_scope_cache() -> None:
-    """Clear the throwaway-classification cache and the announce-once set.
+    """Clear the throwaway-classification cache, announce-once set, and the
+    ``set_memory_workdir`` override.
 
     Test-only helper: call between test cases that manipulate env vars or
     the filesystem layout ``throwaway_workdir_reason``/``memory_scope``
-    depend on, else cached results from an earlier test leak forward.
+    depend on, else cached results (or a leftover workdir override) from an
+    earlier test leak forward.
     """
+    global _MEMORY_WORKDIR
     _throwaway_workdir_reason_cached.cache_clear()
     _SANDBOX_ANNOUNCED.clear()
+    _MEMORY_WORKDIR = None
 
 
 def _announce_sandbox(root: Path, reason: str) -> None:
@@ -293,8 +319,19 @@ def memory_scope(workdir: Path | str | None = None) -> dict:
       3. ``throwaway_workdir_reason(workdir)`` is not None → sandbox.
       4. Otherwise → canonical (legacy-personal-root-if-exists, else the
          neutral per-user default).
+
+    ``workdir`` resolution: an explicit argument wins; else the process-wide
+    ``set_memory_workdir()`` override (if set); else ``Path.cwd()``. This
+    lets an entrypoint whose target workdir differs from the process cwd
+    (e.g. a hook invoked with cwd=<plugin dir>, ``--workdir=<target repo>``)
+    classify the TARGET, not the process location.
     """
-    base = workdir if workdir is not None else Path.cwd()
+    if workdir is not None:
+        base = workdir
+    elif _MEMORY_WORKDIR is not None:
+        base = _MEMORY_WORKDIR
+    else:
+        base = Path.cwd()
     try:
         resolved_base = Path(os.path.expanduser(str(base))).resolve()
     except (OSError, RuntimeError):
@@ -329,10 +366,12 @@ def memory_scope(workdir: Path | str | None = None) -> dict:
     }
 
 
-def memory_store_root() -> Path:
+def memory_store_root(workdir: Path | str | None = None) -> Path:
     """Return the resolved build-loop-memory root for this process.
 
-    Delegates to ``memory_scope()`` for the mode/reason. In ``"sandbox"``
+    Delegates to ``memory_scope(workdir)`` for the mode/reason — see that
+    function's docstring for ``workdir`` resolution order (explicit arg →
+    ``set_memory_workdir()`` override → ``Path.cwd()``). In ``"sandbox"``
     mode this call has a SIDE EFFECT (best-effort, fail-open, once per
     process per root): it creates the sandbox dir, seeds a ``.gitignore``,
     appends a skip record to ``skipped.jsonl``, and prints a one-line notice
@@ -347,7 +386,7 @@ def memory_store_root() -> Path:
     branch checks existence); callers that need the directory should create
     it — except sandbox mode, which is pre-created by this call.
     """
-    scope = memory_scope()
+    scope = memory_scope(workdir)
     if scope["mode"] == "sandbox":
         _announce_sandbox(scope["root"], scope["reason"])
     return scope["root"]
@@ -568,9 +607,9 @@ def cutover_lock_active() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def build_loop_memory_root() -> Path:
-    """Compatibility alias for ``memory_store_root()``."""
-    return memory_store_root()
+def build_loop_memory_root(workdir: Path | str | None = None) -> Path:
+    """Compatibility alias for ``memory_store_root(workdir)``."""
+    return memory_store_root(workdir)
 
 
 def project_memory_root() -> Path:

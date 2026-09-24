@@ -179,3 +179,124 @@ def test_agent_memory_root_alone_is_override(tmp_path, monkeypatch):
     scope = _paths.memory_scope(wd)
     assert scope["mode"] == "override"
     assert scope["root"] == override
+
+
+# ---------------------------------------------------------------------------
+# Real-writer-runs-with-cwd-elsewhere regression coverage. The named failure:
+# a writer's process cwd is a real, canonical-qualifying repo while its
+# ``--workdir``/target argument is a throwaway scratch location — every
+# helper below must classify the TARGET, never the process cwd.
+# ---------------------------------------------------------------------------
+
+
+def test_memory_store_root_explicit_workdir_overrides_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr(_paths, "_temp_roots", lambda: ())
+    realcwd = tmp_path / "realcwd"
+    git_init(realcwd, remote="git@example.com:me/realcwd.git")
+    monkeypatch.chdir(realcwd)
+
+    target = tmp_path / "lab" / "data" / "local" / "bench-runs" / "r1" / "a1" / "ws"
+    git_init(target)
+
+    root = _paths.memory_store_root(target)
+    assert root == target / ".build-loop" / "memory-sandbox"
+
+    # No explicit arg, no override set — the process cwd (a real repo) still
+    # resolves canonical, proving the explicit-arg call above isn't just
+    # reflecting a global "everything is sandbox now" side effect.
+    scope = _paths.memory_scope()
+    assert scope["mode"] == "canonical"
+
+
+def test_set_memory_workdir_affects_zero_arg_helpers(tmp_path, monkeypatch):
+    monkeypatch.setattr(_paths, "_temp_roots", lambda: ())
+    realcwd = tmp_path / "realcwd2"
+    git_init(realcwd, remote="git@example.com:me/realcwd2.git")
+    monkeypatch.chdir(realcwd)
+
+    target = tmp_path / "lab" / "data" / "local" / "bench-runs" / "r2" / "a1" / "ws"
+    git_init(target)
+
+    _paths.set_memory_workdir(target)
+    try:
+        decisions_dir = _paths.project_decisions_dir("ws")
+    finally:
+        _paths.set_memory_workdir(None)
+
+    assert decisions_dir == (
+        target / ".build-loop" / "memory-sandbox" / "projects" / "ws" / "decisions"
+    )
+
+
+def test_retrospective_promote_durable_targets_workdir_not_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr(_paths, "_temp_roots", lambda: ())
+    realcwd = tmp_path / "realcwd3"
+    git_init(realcwd, remote="git@example.com:me/realcwd3.git")
+    monkeypatch.chdir(realcwd)
+
+    target = tmp_path / "lab" / "data" / "local" / "bench-runs" / "r3" / "a1" / "ws"
+    git_init(target)
+
+    from retrospective.write import promote_durable
+
+    result = promote_durable(target, "run-x", {"meta": {}})
+    assert result["status"] == "ok"
+    sandbox_root = target / ".build-loop" / "memory-sandbox"
+    assert str(result["durable_path"]).startswith(str(sandbox_root))
+
+    canonical_root = Path(_paths.os.path.expanduser(_paths.NEUTRAL_MEMORY_STORE_ROOT))
+    assert not (canonical_root / "projects" / "ws").exists()
+
+
+def test_memory_writer_cli_uses_workdir_not_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr(_paths, "_temp_roots", lambda: ())
+    realcwd = tmp_path / "realcwd4"
+    git_init(realcwd, remote="git@example.com:me/realcwd4.git")
+    monkeypatch.chdir(realcwd)
+
+    target = tmp_path / "lab" / "data" / "local" / "bench-runs" / "r4" / "a1" / "ws"
+    git_init(target)
+
+    memory_writer.main([
+        "--scope", "project",
+        "--project", "ws",
+        "write",
+        "--name", "n",
+        "--description", "d",
+        "--type", "lesson",
+        "--run-id", "r1",
+        "--workdir", str(target),
+        "--host", "claude_code",
+        "--body", "A complete lesson body.",
+    ])
+
+    sandbox_lessons = target / ".build-loop" / "memory-sandbox" / "projects" / "ws" / "lessons"
+    lesson_files = list(sandbox_lessons.glob("*.md"))
+    assert len(lesson_files) == 1
+
+    canonical_root = Path(_paths.os.path.expanduser(_paths.NEUTRAL_MEMORY_STORE_ROOT))
+    assert not (canonical_root / "projects" / "ws").exists()
+
+
+def test_backlog_memory_root_respects_repo_workdir(tmp_path, monkeypatch):
+    monkeypatch.setattr(_paths, "_temp_roots", lambda: ())
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_DIR", raising=False)
+
+    target = tmp_path / "lab" / "data" / "local" / "bench-runs" / "r5" / "a1" / "ws"
+    git_init(target)
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_backlog_under_test_memscope", HERE / "backlog.py"
+    )
+    assert spec and spec.loader
+    bl = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bl)
+
+    root = bl.memory_root(target)
+    assert root == target / ".build-loop" / "memory-sandbox"
+
+    override = tmp_path / "override-root"
+    monkeypatch.setenv("BUILD_LOOP_MEMORY_DIR", str(override))
+    assert bl.memory_root(target) == override

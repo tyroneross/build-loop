@@ -79,6 +79,7 @@ import memory_update_ledger as mul  # noqa: E402
 from _paths import (  # type: ignore  # noqa: E402
     memory_scope,
     project_lessons_dir,
+    set_memory_workdir,
     top_level_lessons_dir,
 )
 
@@ -350,7 +351,9 @@ def _git_toplevel(path: Path) -> Path | None:
     return None
 
 
-def _autocommit_memory_file(path: Path, *, type_: str, name: str) -> None:
+def _autocommit_memory_file(
+    path: Path, *, type_: str, name: str, workdir: Path | str | None = None,
+) -> None:
     """Commit the just-written memory file in its own git repo.
 
     Fire-and-forget and fail-open: every failure (not a git repo, no git
@@ -363,11 +366,14 @@ def _autocommit_memory_file(path: Path, *, type_: str, name: str) -> None:
     (silently — no warning) when the write landed in the throwaway-workdir
     memory sandbox rather than the canonical store: the sandbox lives under
     the outer workspace repo and is gitignored by design, so an autocommit
-    attempt there would only ever fail.
+    attempt there would only ever fail. ``workdir`` (the write's TARGET
+    workdir, distinct from the process cwd) is passed through to
+    ``memory_scope`` so this classification matches the one ``write()``
+    actually used, not whatever the process cwd happens to be.
     """
     if not _autocommit_enabled():
         return
-    if memory_scope()["mode"] == "sandbox":
+    if memory_scope(workdir)["mode"] == "sandbox":
         return
     try:
         root = _git_toplevel(path)
@@ -782,7 +788,7 @@ def write(
 
     # Auto-commit the just-written file in its memory repo so memories are
     # never left uncommitted. Fire-and-forget, fail-open, human-authored.
-    _autocommit_memory_file(path, type_=type_, name=name)
+    _autocommit_memory_file(path, type_=type_, name=name, workdir=workdir_abs)
 
     return fm
 
@@ -1081,6 +1087,9 @@ def _maybe_queue_lesson_on_busy(args: argparse.Namespace, body: str, file_rel: s
 
 
 def _cli_write(args: argparse.Namespace) -> int:
+    # Classify by the TARGET workdir (``--workdir``), not the process cwd —
+    # entrypoints (hooks, other scripts) commonly run with cwd elsewhere.
+    set_memory_workdir(args.workdir)
     body = args.body
     if args.body_file:
         body = Path(args.body_file).read_text(encoding="utf-8")
@@ -1120,6 +1129,8 @@ def _cli_write(args: argparse.Namespace) -> int:
 
 
 def _cli_mark_applied(args: argparse.Namespace) -> int:
+    # Classify by the applying repo's workdir, not the process cwd.
+    set_memory_workdir(args.applying_workdir)
     try:
         fm = mark_applied(
             _cli_memory_dir(args),
@@ -1138,6 +1149,8 @@ def _cli_mark_applied(args: argparse.Namespace) -> int:
 
 
 def _cli_migrate(args: argparse.Namespace) -> int:
+    # Classify by the TARGET workdir, not the process cwd.
+    set_memory_workdir(args.workdir)
     summary = migrate(
         _cli_memory_dir(args),
         run_id=args.run_id,

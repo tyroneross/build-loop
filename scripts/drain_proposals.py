@@ -73,7 +73,9 @@ def _memory_root() -> Path:
     env = os.environ.get("BUILD_LOOP_MEMORY_ROOT")
     if env:
         return Path(env).expanduser()
-    return Path.home() / "dev" / "git-folder" / "build-loop-memory"
+    import _paths  # type: ignore  # noqa: PLC0415
+
+    return _paths.memory_store_root()
 
 
 def _registry_repos() -> list[dict[str, str]]:

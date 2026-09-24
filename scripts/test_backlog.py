@@ -1068,8 +1068,12 @@ class TestNoThirdPartyImports(unittest.TestCase):
     """Assert backlog.py imports ONLY Python stdlib — the host-agnostic contract."""
 
     # Python 3.10+ stdlib top-level module allowlist used by backlog.py.
+    # `importlib` is used only to dynamically LOAD the optional `_paths.py`
+    # sibling by file path (never a static `import _paths`/`from _paths
+    # import ...`) — so backlog.py still parses and its hardcoded-default
+    # fallback still runs when copied out without that sibling present.
     _STDLIB = {
-        "__future__", "argparse", "datetime", "json", "os", "re",
+        "__future__", "argparse", "datetime", "importlib", "json", "os", "re",
         "secrets", "subprocess", "sys", "time", "pathlib", "typing",
     }
 

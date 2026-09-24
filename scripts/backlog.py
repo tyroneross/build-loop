@@ -1293,16 +1293,39 @@ def _atomic_write_text(dest: Path, text: str) -> None:
         raise
 
 
-def memory_root() -> Path:
+def memory_root(repo: Path | None = None) -> Path:
     """Resolve the per-user build-loop-memory root.
 
-    Env override (BUILD_LOOP_MEMORY_DIR) wins for tests/sandboxes; otherwise the
-    canonical sibling path.
+    Env override (BUILD_LOOP_MEMORY_DIR) wins for tests/sandboxes; otherwise
+    delegates to the shared throwaway-workdir-aware resolver in
+    ``_paths.memory_store_root(repo)``, classified by ``repo`` (the target
+    workdir) when the caller has it, rather than the process cwd. Falls back
+    to the historical hardcoded path when ``_paths`` isn't reachable.
+
+    ``_paths`` is loaded dynamically by file path (never a static
+    ``import``/``from`` statement) so this module keeps zero *syntactic*
+    third-party or sibling dependencies — the host-agnostic contract
+    ``TestNoThirdPartyImports.test_only_stdlib_imports`` enforces via AST
+    scan, so backlog.py still parses and (in the override/fallback branches)
+    still runs when copied out on its own. When ``_paths.py`` isn't
+    co-located, resolution degrades to the pre-existing hardcoded default
+    rather than raising.
     """
     override = os.environ.get("BUILD_LOOP_MEMORY_DIR")
     if override:
         return Path(override)
-    return Path.home() / "dev" / "git-folder" / "build-loop-memory"
+    try:
+        import importlib.util
+
+        _paths_file = Path(__file__).resolve().parent / "_paths.py"
+        _spec = importlib.util.spec_from_file_location("_backlog_paths_dep", _paths_file)
+        if _spec is None or _spec.loader is None:
+            raise ImportError(f"cannot load {_paths_file}")
+        _paths_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_paths_mod)
+        return _paths_mod.memory_store_root(repo)
+    except Exception:
+        return Path.home() / "dev" / "git-folder" / "build-loop-memory"
 
 
 def _load_mirror_items(dest_dir: Path) -> list[dict[str, Any]]:
@@ -1424,7 +1447,7 @@ def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, A
     {written: 0, skipped: <reason>} without failing sync.
     """
     slug = project_slug(repo)
-    dest_dir = memory_root() / "projects" / slug / "backlog"
+    dest_dir = memory_root(repo) / "projects" / slug / "backlog"
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -1468,7 +1491,7 @@ def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, A
         _atomic_write_text(dest_dir / "INDEX.md", render_index(repo, union, today))
     except OSError:
         pass
-    rollup = write_cross_project_retro_rollup(memory_root(), today)
+    rollup = write_cross_project_retro_rollup(memory_root(repo), today)
     return {
         "written": written,
         "pruned": pruned,
@@ -2088,7 +2111,7 @@ def cmd_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     for raw in getattr(args, "source_repo", []) or []:
         source_repo = normalize_repo(raw)
         sources.append((str(source_repo), _source_documents(source_repo)))
-    mirror_dir = memory_root() / "projects" / project_slug(repo) / "backlog"
+    mirror_dir = memory_root(repo) / "projects" / project_slug(repo) / "backlog"
     mirror_docs: dict[str, str] = {}
     for item in _load_mirror_items(mirror_dir):
         path = Path(str(item.get("_path") or ""))

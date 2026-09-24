@@ -16,6 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import _paths  # noqa: E402
 import memory_writer as mw  # noqa: E402
 import content_index  # noqa: E402
 import audit_before_commit as audit  # noqa: E402
@@ -327,6 +328,9 @@ class AutoCommitTests(unittest.TestCase):
         # Local identity so commit works in CI without global git config.
         self._git("config", "user.email", "test@example.com", cwd=repo)
         self._git("config", "user.name", "Test User", cwd=repo)
+        # A remote so this repo doesn't ALSO read as a "generic-slug-no-remote"
+        # throwaway workdir once the temp-dir check (below) is patched off.
+        self._git("remote", "add", "origin", "git@example.com:me/repo.git", cwd=repo)
         return repo
 
     def _commit_count(self, repo: Path) -> int:
@@ -339,12 +343,24 @@ class AutoCommitTests(unittest.TestCase):
     def setUp(self):
         # Ensure a clean env each test (default ON).
         self._prev = os.environ.pop("BUILD_LOOP_MEMORY_AUTOCOMMIT", None)
+        # This class exercises real tempdir-backed git repos as stand-ins for
+        # a project workdir. Without this, every such repo lives under the
+        # system temp root and the throwaway-workdir sandbox contract (see
+        # _paths.py) would redirect the write to a gitignored sandbox and
+        # skip the autocommit under test — a false positive for THIS test
+        # class, not the throwaway-workdir behavior itself (that's covered by
+        # test_memory_scope.py).
+        self._temp_roots_patch = mock.patch.object(_paths, "_temp_roots", lambda: ())
+        self._temp_roots_patch.start()
+        _paths.clear_memory_scope_cache()
 
     def tearDown(self):
         if self._prev is None:
             os.environ.pop("BUILD_LOOP_MEMORY_AUTOCOMMIT", None)
         else:
             os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = self._prev
+        self._temp_roots_patch.stop()
+        _paths.clear_memory_scope_cache()
 
     def test_write_creates_exactly_one_memory_commit(self):
         repo = self._init_repo()
