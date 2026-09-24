@@ -18,7 +18,8 @@ synthesis-dim-vague-value, risk-reason-invalid-value,
 scope-audit-required, approach-lenses-missing, parallel-decision-record,
 no-stop-language, reads-from-dependency, activation-map-required,
 decision-without-falsifier,
-tier-sanity-judgment-on-script, tier-sanity-mechanical-on-opus.
+tier-sanity-judgment-on-script, tier-sanity-mechanical-on-opus,
+deletion-point-declared.
 
 Plan Evidence Contract (per finding):
 {
@@ -1648,6 +1649,52 @@ def rule_activation_map_required(
 
 
 # ---------------------------------------------------------------------------
+# Rule: deletion-point-declared — WARN when a plan names a worktree / isolation
+# checkout but never names when that checkout is merged and removed. The point
+# may move (Iterate slides it); the plan still has to name a default.
+# ---------------------------------------------------------------------------
+
+_WORKTREE_SIGNAL_RE = re.compile(
+    r"\b(worktree|isolation:\s*[\"']?worktree|bl/run-)",
+    re.IGNORECASE,
+)
+_DELETION_POINT_RE = re.compile(r"^\s*deletion_point\s*:", re.IGNORECASE)
+_DELETION_HEADING_RE = re.compile(r"^#+\s+deletion\s+point\b", re.IGNORECASE)
+
+
+def rule_deletion_point_declared(
+    plan_path: Path, lines: list[tuple[int, str]]
+) -> list[dict[str, Any]]:
+    """WARN if the plan provisions a worktree without a deletion_point."""
+    signal_line = next(
+        ((lineno, line) for lineno, line in lines if _WORKTREE_SIGNAL_RE.search(line)),
+        None,
+    )
+    if signal_line is None:
+        return []
+    if any(
+        _DELETION_POINT_RE.search(line) or _DELETION_HEADING_RE.search(line)
+        for _, line in lines
+    ):
+        return []
+    lineno, line = signal_line
+    return [_finding(
+        claim_text=(
+            "Plan names a worktree or isolation checkout but no `deletion_point:` "
+            "(default: Phase D after Review-G + Learn; may_change: true)."
+        ),
+        claim_kind="deletion_point_missing",
+        subject={"path": None, "symbol": None, "noun": "deletion_point"},
+        verification_command=None,
+        evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+        result="needs_attention",
+        severity="WARN",
+        confidence="high",
+        rule_id="deletion-point-declared",
+    )]
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -1679,6 +1726,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_activation_map_required(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
     findings.extend(rule_tier_sanity(plan_path, lines))
+    findings.extend(rule_deletion_point_declared(plan_path, lines))
     return findings
 
 

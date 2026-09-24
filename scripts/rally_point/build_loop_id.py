@@ -29,6 +29,7 @@ State persistence (``<workdir>/.build-loop/state.json``)::
     state.execution.run_label                (str, human-readable)
     state.execution.run_worktree_path        (str, abs path; set when isolation provisioned)
     state.execution.run_worktree_branch      (str, e.g. "bl/run-<id>"; set when isolation provisioned)
+    state.execution.deletion_point           (dict; phase D close, may_change true)
     state.execution.data_manifest_path       (str, abs path; set when isolation provisioned)
     state.execution.data_root                (str, abs path; set when isolation provisioned)
 
@@ -405,6 +406,11 @@ def generate_or_resume(
             )
             execution["run_worktree_path"] = wt_path
             execution["run_worktree_branch"] = wt_branch
+            execution["deletion_point"] = {
+                "phase": "D",
+                "trigger": "review-g-pass+learn-complete",
+                "may_change": True,
+            }
             manifest_path, data_root = _initialize_data_plane(
                 workdir_path, build_loop_id, wt_path, wt_branch
             )

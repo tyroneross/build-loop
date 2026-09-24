@@ -504,9 +504,36 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict, learn_receipt: d
            if closeout_incomplete else
            "**closeout_incomplete: false** — all closeout items are present.\n\n")
         + f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
+        + _open_items_section(workdir, decision["run_id"])
     )
     append_run.atomic_write_bytes(marker, body.encode())
     return marker
+
+
+def _open_items_section(workdir: Path, run_id: str) -> str:
+    """Inventory open worktrees at Stop. Never merges or deletes."""
+    try:
+        import closeout_ready  # noqa: WPS433
+        report = closeout_ready.closeout_ready(workdir, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001 — Stop stays fail-open
+        return f"\n## Open worktrees\n\nInventory failed: {exc}\n"
+    items = report.get("open_items") or []
+    if not items:
+        return "\n## Open worktrees\n\nNone inventoried.\n"
+    lines = [
+        "\n## Open worktrees\n",
+        "Stop does not merge or close worktrees. Phase D "
+        "(`scripts/closeout_ready.py --owner-released`) is the deletion point.\n",
+    ]
+    for item in items:
+        lines.append(
+            f"- `{item.get('disposition')}` {item.get('branch') or item.get('path')} "
+            f"— {item.get('reason')}\n"
+        )
+    path = report.get("inventory_path")
+    if path:
+        lines.append(f"\nFull inventory: `{path}`\n")
+    return "".join(lines)
 
 
 def _judgment_followup_path(workdir: Path, run_id: str) -> Path:

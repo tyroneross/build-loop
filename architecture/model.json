@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "acf7919d6df2ad5ace635ebc0c309406ff27cea76c6f89b2a754675f1a4712fa"
+    "content_sha256": "60f78f92ca075c53109a9fd2bc6cbeea30572a318464afa560ea016470b694e9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1622,6 +1622,7 @@
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
+      "scripts/closeout_ready.py": "closeout_ready.py — merge ready run work, close owned worktrees, inventory the rest.",
       "scripts/codex_hook_trust_check.py": "codex_hook_trust_check.py — is every registered Codex hook actually trusted?",
       "scripts/codex_preflight.py": "Codex preflight checker for the build-loop plugin.",
       "scripts/collapse_run.py": "collapse_run.py — End-of-run branch/worktree cleanup for build-loop.",

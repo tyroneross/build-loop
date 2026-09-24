@@ -563,6 +563,16 @@ Item 22 — Read-before-edit map: <answer or "N/A: no implementation tasks">
 ## Out of Scope
 
 <Mirror of Scope §Out of scope — keeps it visible at the bottom too.>
+
+## Deletion point
+
+deletion_point: phase-d after Review-G + Learn (may_change: true)
+
+<Required when the plan provisions a worktree or isolation checkout. Name when
+the run branch merges to local main and the worktree is removed. The default is
+Phase D (`scripts/closeout_ready.py --owner-released`). The point may slide if
+Iterate continues; rewrite this field when it does. Omit only for plans that
+never create a worktree.>
 ```
 
 ---

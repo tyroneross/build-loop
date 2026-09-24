@@ -47,6 +47,7 @@ _START_PRESERVED_IDENTITY_FIELDS = (
     "run_label",
     "run_worktree_path",
     "run_worktree_branch",
+    "deletion_point",
     "data_manifest_path",
     "data_root",
 )

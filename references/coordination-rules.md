@@ -511,7 +511,7 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 1. **Reap this run's session presence:** `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
 2. **Stop watchers:** SIGTERM any `coordination_watch.py --interval N` processes started during the run.
-3. **Finalize branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), confirm explicit owner release, then call the exact-run/exact-branch strict `scripts/collapse_run.py` invocation described in `references/phase-d-closeout.md` step 4. `collapse_run.py` is the only destructive authority. A verified terminal receipt, `strict_success:true`, and `errors:[]` are required before the integrator marks branch hygiene complete. The canonical `run-closeout` phase post enforces that receipt through `branch_closeout_gate.py`; direct Rally handoff resolution remains outside the gate and is backlog item `BUILDLOOP-COORD-001`.
+3. **Finalize branches and worktrees:** confirm explicit owner release, then run `scripts/closeout_ready.py --owner-released` as described in `references/phase-d-closeout.md` step 4. That inventories open worktrees, merges ready run branches into local `main`, and delegates destruction to `collapse_run.py` (still the only destructive authority). Remaining open items are written to `.build-loop/closeout/<run-id>-open-items.json`. A verified terminal receipt, `strict_success:true`, and `errors:[]` are required before the integrator marks a closed ref complete. The canonical `run-closeout` phase post enforces that receipt through `branch_closeout_gate.py`; direct Rally handoff resolution remains outside the gate and is backlog item `BUILDLOOP-COORD-001`.
 4. **Archive the coord file:** `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Not deletion — preserves the durable record while clearing the active queue.
 5. **Optional changes.jsonl rotation:** `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
 6. **Final post:** `post(kind="phase", run_id=<exact-run-id>, workdir=Path("$PWD"), payload={"phase": "run-closeout", ...})` rejects nonterminal branch hygiene before signaling that the run is done.
@@ -546,7 +546,7 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 | MECE packets enforcement | `scripts/brief_mece_validator.py` + `agents/build-orchestrator.md` dispatch wrappers |
 | Release-surface verification | `scripts/verify_release_surface.py` |
 | Three-file lockstep enforcement | `scripts/test_plugin_manifest.py` `VersionShapeTests` |
-| Closeout hygiene | `scripts/rally_point/lifecycle.py` + `scripts/collapse_run.py` + `agents/build-orchestrator.md` Phase D |
+| Closeout hygiene | `scripts/rally_point/lifecycle.py` + `scripts/closeout_ready.py` + `scripts/collapse_run.py` + `agents/build-orchestrator.md` Phase D |
 | Background-item identity | `scripts/background_item_identity.py` + `scripts/audit_before_commit.py` |
 | Coord-file shape | `references/coordination-file-template.md` |
 

@@ -158,7 +158,7 @@ Full protocol: `references/iterate-protocol.md`. Highlights:
 
 ### Phase D: Closeout (runs by default at end of every run)
 
-Full protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presence, reap stale peers, stop watchers, relinquish lease, collapse branches via `scripts/collapse_run.py`, archive coord file, optional changes.jsonl rotation, final `run-closeout` post, state tracking, release briefed push-hold). The `## Branch hygiene` report block is sourced from collapse_run.py's JSON. Phase D runs even when Phase 6 Learn is deferred; the only skip is an explicit `closeout: false` in the dispatch envelope.
+Full protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presence, reap stale peers, stop watchers, relinquish lease, merge+close via `scripts/closeout_ready.py` which inventories open items and delegates destruction to `scripts/collapse_run.py`, archive coord file, optional changes.jsonl rotation, final `run-closeout` post, state tracking, release briefed push-hold). The `## Branch hygiene` report block is sourced from closeout_ready.py / collapse_run.py JSON. Phase D is the pre-planned deletion point (`state.execution.deletion_point`; may_change). Phase D runs even when Phase 6 Learn is deferred; the only skip is an explicit `closeout: false` in the dispatch envelope.
 
 ### Phase 6: Learn (mandatory)
 

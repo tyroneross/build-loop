@@ -78,6 +78,8 @@ def test_provision_creates_worktree_under_canonical_root(tmp_path: Path) -> None
 
     assert exec_block["run_worktree_path"] == str(expected_path)
     assert exec_block["run_worktree_branch"] == expected_branch
+    assert exec_block["deletion_point"]["phase"] == "D"
+    assert exec_block["deletion_point"]["may_change"] is True
     assert expected_path.is_dir(), "worktree directory not created"
     manifest_path = Path(exec_block["data_manifest_path"])
     assert manifest_path.is_file(), "data manifest not created"
@@ -91,6 +93,7 @@ def test_provision_creates_worktree_under_canonical_root(tmp_path: Path) -> None
     state = json.loads((repo / ".build-loop" / "state.json").read_text())
     assert state["execution"]["run_worktree_path"] == str(expected_path)
     assert state["execution"]["run_worktree_branch"] == expected_branch
+    assert state["execution"]["deletion_point"]["phase"] == "D"
     assert state["execution"]["data_manifest_path"] == str(manifest_path)
 
     # git knows about the worktree.
