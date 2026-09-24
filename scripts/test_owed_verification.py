@@ -486,7 +486,7 @@ class TestCrossVendorDebt(_Base):
 
 
 class TestCloseGateRefusesOwedReview(_Base):
-    def _seed_recorded_run(self) -> None:
+    def _seed_recorded_run(self, files: list[str] | None = None) -> None:
         (self.workdir / ".build-loop" / "state.json").write_text(
             json.dumps(
                 {
@@ -496,7 +496,11 @@ class TestCloseGateRefusesOwedReview(_Base):
                             "date": "2026-09-12T12:00:00Z",
                             "goal": "g",
                             "outcome": "pass",
-                            "filesTouched": list(HIGH_RISK_FILES),
+                            # Docs-only on the stored row: the debt under test
+                            # comes from the manifest, and a code row would also
+                            # need acceptance receipts (run_close_lint), which is
+                            # a different gate with its own tests.
+                            "filesTouched": list(files or LOW_RISK_FILES),
                         }
                     ]
                 }
@@ -507,9 +511,12 @@ class TestCloseGateRefusesOwedReview(_Base):
     def test_close_gate_refuses_while_cross_vendor_is_owed(self) -> None:
         import run_close_lint
 
-        self._seed_recorded_run()
-        self.assertEqual(
-            run_close_lint.check(self.workdir, run_id="run_cv")["status"], "recorded"
+        # High-risk row: the gate recomputes the debt from it. Before enforcement
+        # the run is not owed (it may still lack acceptance receipts, a separate gate).
+        self._seed_recorded_run(list(HIGH_RISK_FILES))
+        self.assertNotIn(
+            run_close_lint.check(self.workdir, run_id="run_cv")["status"],
+            ("review_owed", "review_owed_other_run"),
         )
 
         ov.enforce_for_run_record(
@@ -911,7 +918,7 @@ class TestCloseGateIsScopedByOwner(_Base):
         (self.workdir / ".build-loop" / "state.json").write_text(
             json.dumps({"runs": [
                 {"run_id": rid, "date": "2026-09-12T12:00:00Z", "goal": "g",
-                 "outcome": "pass", "filesTouched": list(HIGH_RISK_FILES)}
+                 "outcome": "pass", "filesTouched": list(LOW_RISK_FILES)}  # see _seed_recorded_run
                 for rid in run_ids
             ]}),
             encoding="utf-8",

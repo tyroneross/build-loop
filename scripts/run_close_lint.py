@@ -491,8 +491,11 @@ def check(
         now=now,
     )
     resolved_workdir = Path(workdir).resolve()
-    envelope = _apply_acceptance_results(resolved_workdir, envelope)
-    return _apply_owed_verification(resolved_workdir, envelope, reconcile=not advisory)
+    # Owed review first: an un-audited diff is the more serious block, and its
+    # remediation must not be masked by a missing acceptance receipt. Acceptance
+    # only runs on an envelope that is still OK afterwards.
+    envelope = _apply_owed_verification(resolved_workdir, envelope, reconcile=not advisory)
+    return _apply_acceptance_results(resolved_workdir, envelope)
 
 
 def _check_record(
