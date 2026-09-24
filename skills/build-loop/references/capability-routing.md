@@ -228,6 +228,8 @@ Roll your own inline prompt when all of these are true:
 
 Default when uncertain: if the prompt text will exist in the repo after the build, use `prompt-builder`. If it only exists as a line in an orchestrator message during this build, inline is fine.
 
+For subagent dispatch prompts specifically, run `python3 scripts/dispatch_prompt_lint.py <prompt-file-or->` before dispatch rather than the full engine on every dispatch — a 2026-07-25 A/B test found prompt-builder on every dispatch was overkill, but hand-written prompts missed prohibition-without-fallback and unguarded-runtime-dependency gaps 3/3 times. On a hit (exit 1), run the prompt-builder optimize pass on that prompt before dispatch. On a clean result (exit 0), the inline prompt is fine as written.
+
 ### Plugin / hook / skill / agent work — mandatory
 
 If Phase 1 detects that the task touches plugin components, Phase 3 must map each task to the authoritative skill below and Phase 4 must load that skill. **Do not infer plugin formats from memory or by reading another plugin's config.**
