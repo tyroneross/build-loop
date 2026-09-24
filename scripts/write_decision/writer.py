@@ -21,6 +21,7 @@ from typing import Any
 from _paths import (  # type: ignore
     cutover_lock_active,
     default_schema as _default_schema,
+    memory_scope,
     project_decisions_dir,
 )
 from project_resolver import resolve_project  # type: ignore
@@ -481,7 +482,11 @@ def _do_write(
     # The Phase B dual-write block was removed at Phase C cutover (2026-05-05).
     # Legacy schema (build_loop_memory) is now read-only; it gets dropped in Phase D.
     if args.db:
-        db_dualwrite(new_id, fm, body_text, workdir, args.schema, args.embed_model)
+        scope = memory_scope(workdir)
+        if scope["mode"] == "sandbox":
+            log(f"DB write skipped (memory sandbox mode: {scope['reason']})")
+        else:
+            db_dualwrite(new_id, fm, body_text, workdir, args.schema, args.embed_model)
 
     print(new_id)
     log(f"wrote decision {new_id} to {new_path}")

@@ -56,6 +56,14 @@ build-loop-install --host all
 ```
 <!-- x-release-please-end -->
 
+## Memory store and sandboxing
+
+Durable memory (decisions, lessons, retrospectives) resolves through one function: `memory_store_root()`. Resolution order is `$BUILD_LOOP_MEMORY_STORE_ROOT` (aliases `$BUILD_LOOP_MEMORY_ROOT`, `$AGENT_MEMORY_ROOT`), else the existing `~/dev/git-folder/build-loop-memory` checkout if present, else `~/.build-loop-memory`.
+
+Set `$BUILD_LOOP_MEMORY_STORE_ROOT` to a private directory per run or benchmark attempt — this is the sandbox mechanism, and it always wins even from a throwaway workdir.
+
+Throwaway workdirs never write to the canonical store automatically: a run under an OS/CI temp directory, a benchmark harness run under `data/local/bench-runs/`, or a generic-named git repo (`ws`, `tmp`, `test`, `scratch`, ...) with no remote configured are all detected and redirected to `.build-loop/memory-sandbox/` inside that workdir. Setting `$BUILD_LOOP_MEMORY_DISABLE=1` forces the same redirect from anywhere. Every skipped canonical write is logged to `skipped.jsonl` in the sandbox; the build still completes.
+
 ## Reference
 
 Surface counts in this release: 55 skills, 29 agents, and two Claude commands.

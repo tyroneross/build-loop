@@ -11,6 +11,9 @@ Environment variable contract:
 - ``$BUILD_LOOP_MEMORY_STORE_ROOT``: override the build-loop-memory root.
 - ``$BUILD_LOOP_MEMORY_ROOT``: compatibility override for the same root.
 - ``$AGENT_MEMORY_ROOT``     : compatibility override for the same root.
+- ``$BUILD_LOOP_MEMORY_DISABLE``: when truthy (``1``/``true``/``yes``/``on``,
+  case-insensitive), skip the canonical store unconditionally and write to a
+  local sandbox instead (see "Throwaway workdirs" below).
 
 Default resolution (when no env override is set), in order:
   1. If the legacy personal root ``~/dev/git-folder/build-loop-memory``
@@ -27,19 +30,37 @@ Default resolution (when no env override is set), in order:
                                 new artifact (``<root>/projects/<project>/decisions/``,
                                 ``personal_memory.semantic_facts``).
 
+Throwaway workdirs (``throwaway_workdir_reason`` / ``memory_scope``):
+durable memory must never land in the canonical store when the process is
+running from a throwaway location — a scratch OS temp dir, a benchmark
+harness run under ``data/local/bench-runs/``, or a generic-named
+(``ws``/``tmp``/``test``/etc.) git repo with no remote. In those cases
+``memory_store_root()`` transparently redirects to
+``<workdir>/.build-loop/memory-sandbox`` and logs the skip to
+``skipped.jsonl`` in that sandbox — the run still completes, it just never
+touches the user's durable store. Set ``$BUILD_LOOP_MEMORY_STORE_ROOT`` (or
+an alias) to opt a throwaway workdir back into a specific store.
+
 Cutover lock:
 - ``/tmp/agent-memory-cutover.lock`` (exists) → ``write_decision.py``
   prints ``cutover in progress, skipping`` and exits 0 with no writes.
 
 These functions are pure and side-effect-free except for environment
-inspection. They never mkdir or touch files; callers handle creation.
+inspection, with ONE deliberate exception: ``memory_store_root()`` has a
+side effect (sandbox dir/gitignore/skip-log creation, best-effort) ONLY when
+it resolves to sandbox mode. They never mkdir or touch files otherwise;
+callers handle creation.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -68,6 +89,24 @@ DEFAULT_SCHEMA = "personal_memory"
 
 CUTOVER_LOCK_PATH = "/tmp/agent-memory-cutover.lock"
 
+# ---------------------------------------------------------------------------
+# Throwaway-workdir sandbox contract (see module docstring).
+# ---------------------------------------------------------------------------
+MEMORY_DISABLE_ENV = "BUILD_LOOP_MEMORY_DISABLE"
+MEMORY_STORE_OVERRIDE_ENVS = (
+    "BUILD_LOOP_MEMORY_STORE_ROOT",
+    "BUILD_LOOP_MEMORY_ROOT",
+    "AGENT_MEMORY_ROOT",
+)
+# Generic project-directory names that, combined with "no git remote", mark a
+# repo as a scratch/benchmark workspace rather than a real project.
+GENERIC_PROJECT_SLUGS = frozenset({
+    "ws", "workspace", "tmp", "temp", "test", "tests", "scratch",
+    "sandbox", "demo", "example", "repo", "project",
+})
+BENCH_RUNS_SEGMENT = "data/local/bench-runs"
+MEMORY_SANDBOX_REL = Path(".build-loop") / "memory-sandbox"
+
 # Historical name retained as a compatibility alias. The active root is now
 # the sibling `build-loop-memory` repository (or the neutral fresh-install
 # default), not `~/.build-loop/memory`.
@@ -79,34 +118,239 @@ DEFAULT_BUILD_LOOP_MEMORY_ROOT = DEFAULT_MEMORY_STORE_ROOT
 SUBCOMPONENT_PATTERNS: tuple[str, ...] = ("workers",)
 
 
-def memory_store_root() -> Path:
-    """Return the canonical build-loop-memory root.
+def memory_disabled() -> bool:
+    """Return True iff ``$BUILD_LOOP_MEMORY_DISABLE`` is set to a truthy value."""
+    raw = os.environ.get(MEMORY_DISABLE_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-    Resolution order:
-      1. ``$BUILD_LOOP_MEMORY_STORE_ROOT`` / ``$BUILD_LOOP_MEMORY_ROOT`` /
-         ``$AGENT_MEMORY_ROOT`` env override (first set wins, ``~`` expanded).
-      2. The legacy personal default ``~/dev/git-folder/build-loop-memory``
-         when it EXISTS on disk — keeps pre-neutral-default machines working
-         with zero config.
-      3. The neutral per-user default ``~/.build-loop-memory`` for fresh
-         installs.
 
-    The returned path is not required to exist (only the legacy branch checks
-    existence); callers that need the directory should create it.
+def _temp_roots() -> tuple[Path, ...]:
+    """Return resolved, de-duplicated known OS/CI scratch-directory roots.
+
+    A separate function (rather than inlining) so tests can monkeypatch it
+    to isolate ``throwaway_workdir_reason`` from the real machine's temp
+    layout. Any root that fails to resolve is skipped, never raises.
     """
-    env_raw = (
-        os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
-        or os.environ.get("BUILD_LOOP_MEMORY_ROOT")
-        or os.environ.get("AGENT_MEMORY_ROOT")
+    candidates = [tempfile.gettempdir()]
+    tmpdir_env = os.environ.get("TMPDIR")
+    if tmpdir_env:
+        candidates.append(tmpdir_env)
+    candidates.extend(["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"])
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for c in candidates:
+        try:
+            resolved = Path(c).resolve()
+        except (OSError, RuntimeError):
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return tuple(roots)
+
+
+def _matching_root(path: Path, roots: tuple[Path, ...]) -> Path | None:
+    for root in roots:
+        if path == root or str(path).startswith(str(root) + os.sep):
+            return root
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def _throwaway_workdir_reason_cached(resolved_path_str: str) -> str | None:
+    path = Path(resolved_path_str)
+
+    # 1) Known OS/CI scratch directories.
+    temp_hit = _matching_root(path, _temp_roots())
+    if temp_hit is not None:
+        return f"temp-dir:{temp_hit}"
+
+    # 2) Benchmark-harness runs.
+    posix = path.as_posix() + "/"
+    if f"/{BENCH_RUNS_SEGMENT}/" in posix:
+        return "bench-runs"
+
+    # 3) Generic-named git repo with no remote configured.
+    cursor = path
+    seen: set[str] = set()
+    while True:
+        key = str(cursor)
+        if key in seen:
+            break
+        seen.add(key)
+        if (cursor / ".git").exists():
+            name = cursor.name.lower()
+            if name in GENERIC_PROJECT_SLUGS:
+                try:
+                    out = subprocess.run(
+                        ["git", "-C", str(cursor), "remote"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    return None
+                if out.returncode == 0 and not out.stdout.strip():
+                    return f"generic-slug-no-remote:{name}"
+            break
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+
+    return None
+
+
+def throwaway_workdir_reason(workdir: Path | str | None = None) -> str | None:
+    """Return a reason string if ``workdir`` looks like a throwaway location.
+
+    THE single definition of "throwaway" for the memory-sandbox contract
+    (see module docstring). ``workdir`` defaults to ``Path.cwd()``.
+
+    Returns one of:
+      - ``"temp-dir:<root>"`` — under a known OS/CI scratch directory.
+      - ``"bench-runs"`` — under a ``data/local/bench-runs/`` segment.
+      - ``"generic-slug-no-remote:<name>"`` — nearest enclosing ``.git`` root
+        has a generic basename (``ws``, ``tmp``, ``test``, ...) AND
+        ``git remote`` reports no remotes configured.
+      - ``None`` — not throwaway (or classification could not be determined;
+        this function is conservative and never raises).
+
+    Classification is cached per resolved path; use
+    ``clear_memory_scope_cache()`` to reset (tests only).
+    """
+    base = workdir if workdir is not None else Path.cwd()
+    try:
+        resolved = Path(os.path.expanduser(str(base))).resolve()
+    except (OSError, RuntimeError):
+        return None
+    return _throwaway_workdir_reason_cached(str(resolved))
+
+
+_SANDBOX_ANNOUNCED: set[str] = set()
+
+
+def clear_memory_scope_cache() -> None:
+    """Clear the throwaway-classification cache and the announce-once set.
+
+    Test-only helper: call between test cases that manipulate env vars or
+    the filesystem layout ``throwaway_workdir_reason``/``memory_scope``
+    depend on, else cached results from an earlier test leak forward.
+    """
+    _throwaway_workdir_reason_cached.cache_clear()
+    _SANDBOX_ANNOUNCED.clear()
+
+
+def _announce_sandbox(root: Path, reason: str) -> None:
+    """Best-effort, once-per-process-per-root sandbox setup + notice.
+
+    Fail-open: any OSError is swallowed. Never raises, never blocks a write.
+    """
+    key = str(root)
+    if key in _SANDBOX_ANNOUNCED:
+        return
+    _SANDBOX_ANNOUNCED.add(key)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        gitignore = root / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text("*\n", encoding="utf-8")
+        skip_log = root / "skipped.jsonl"
+        entry = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "reason": reason,
+            "pid": os.getpid(),
+            "argv0": sys.argv[0] if sys.argv else None,
+            "canonical_store": "skipped",
+        }
+        with skip_log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+    print(
+        f"build-loop memory: canonical store skipped ({reason}); "
+        f"writing to local sandbox {root}",
+        file=sys.stderr,
     )
-    if env_raw:
-        return Path(os.path.expanduser(env_raw))
+
+
+def memory_scope(workdir: Path | str | None = None) -> dict:
+    """Return the resolved memory-write scope as a dict.
+
+    Keys: ``mode`` (``"sandbox"`` | ``"override"`` | ``"canonical"``),
+    ``reason`` (str|None), ``root`` (Path). Pure — no side effects.
+
+    Precedence:
+      1. ``memory_disabled()`` → sandbox, reason ``"BUILD_LOOP_MEMORY_DISABLE"``.
+      2. Any of ``MEMORY_STORE_OVERRIDE_ENVS`` set → override, root = the
+         first set value (``~`` expanded) — explicit opt-in always wins,
+         even from a throwaway workdir.
+      3. ``throwaway_workdir_reason(workdir)`` is not None → sandbox.
+      4. Otherwise → canonical (legacy-personal-root-if-exists, else the
+         neutral per-user default).
+    """
+    base = workdir if workdir is not None else Path.cwd()
+    try:
+        resolved_base = Path(os.path.expanduser(str(base))).resolve()
+    except (OSError, RuntimeError):
+        resolved_base = Path(base)
+
+    sandbox_root = resolved_base / MEMORY_SANDBOX_REL
+
+    if memory_disabled():
+        return {"mode": "sandbox", "reason": MEMORY_DISABLE_ENV, "root": sandbox_root}
+
+    for env_name in MEMORY_STORE_OVERRIDE_ENVS:
+        env_raw = os.environ.get(env_name)
+        if env_raw:
+            return {
+                "mode": "override",
+                "reason": None,
+                "root": Path(os.path.expanduser(env_raw)),
+            }
+
+    reason = throwaway_workdir_reason(resolved_base)
+    if reason is not None:
+        return {"mode": "sandbox", "reason": reason, "root": sandbox_root}
 
     legacy = Path(os.path.expanduser(LEGACY_PERSONAL_MEMORY_STORE_ROOT))
     if legacy.exists():
-        return legacy
+        return {"mode": "canonical", "reason": None, "root": legacy}
 
-    return Path(os.path.expanduser(NEUTRAL_MEMORY_STORE_ROOT))
+    return {
+        "mode": "canonical",
+        "reason": None,
+        "root": Path(os.path.expanduser(NEUTRAL_MEMORY_STORE_ROOT)),
+    }
+
+
+def memory_store_root() -> Path:
+    """Return the resolved build-loop-memory root for this process.
+
+    Delegates to ``memory_scope()`` for the mode/reason. In ``"sandbox"``
+    mode this call has a SIDE EFFECT (best-effort, fail-open, once per
+    process per root): it creates the sandbox dir, seeds a ``.gitignore``,
+    appends a skip record to ``skipped.jsonl``, and prints a one-line notice
+    to stderr — see ``_announce_sandbox``. In ``"override"``/``"canonical"``
+    mode, behavior is unchanged from before the sandbox contract existed:
+    pure, no filesystem writes, resolution order is env override (first set
+    of ``$BUILD_LOOP_MEMORY_STORE_ROOT`` / ``$BUILD_LOOP_MEMORY_ROOT`` /
+    ``$AGENT_MEMORY_ROOT`` wins) → legacy personal root if it exists on disk
+    → the neutral per-user default.
+
+    The returned path is not required to exist (only the legacy-canonical
+    branch checks existence); callers that need the directory should create
+    it — except sandbox mode, which is pre-created by this call.
+    """
+    scope = memory_scope()
+    if scope["mode"] == "sandbox":
+        _announce_sandbox(scope["root"], scope["reason"])
+    return scope["root"]
 
 
 def agent_memory_root() -> Path:

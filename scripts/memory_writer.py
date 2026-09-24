@@ -77,6 +77,7 @@ import memory_index as mi  # noqa: E402
 import memory_update_ledger as mul  # noqa: E402
 
 from _paths import (  # type: ignore  # noqa: E402
+    memory_scope,
     project_lessons_dir,
     top_level_lessons_dir,
 )
@@ -358,9 +359,15 @@ def _autocommit_memory_file(path: Path, *, type_: str, name: str) -> None:
     (build-loop authorship rule). No commit body trailer is added.
 
     Skipped entirely when ``BUILD_LOOP_MEMORY_AUTOCOMMIT`` is set to a falsey
-    value, so batch callers can commit once at the end.
+    value, so batch callers can commit once at the end. Also skipped
+    (silently — no warning) when the write landed in the throwaway-workdir
+    memory sandbox rather than the canonical store: the sandbox lives under
+    the outer workspace repo and is gitignored by design, so an autocommit
+    attempt there would only ever fail.
     """
     if not _autocommit_enabled():
+        return
+    if memory_scope()["mode"] == "sandbox":
         return
     try:
         root = _git_toplevel(path)
