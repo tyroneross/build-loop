@@ -25,7 +25,7 @@ WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG="$SCRIPT_DIR/../scripts/rally_point"
 
-[ -d "$PKG" ] || exit 0
+[ -d "$PKG" ] || { printf '%s\n' '{"permission":"allow"}'; exit 0; }
 
 # Read stdin (Claude Code PreToolUse JSON event). Best-effort; an empty
 # or malformed payload simply means "no operative-repo hint" — the legacy
@@ -86,14 +86,24 @@ fi
 # Stderr routing (f1): quiet on the happy path; let stderr through only
 # when BUILD_LOOP_RALLY_DEBUG=1 so diagnostics are available on demand
 # without polluting the terminal by default.
+# Always emit Cursor-valid JSON. Empty stdout fail-closes in Cursor.
+HINT=""
 if [ "${BUILD_LOOP_RALLY_DEBUG:-0}" = "1" ]; then
-    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+    HINT=$(python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
         --session-id "$EVENT_SESSION_ID" \
-        --file-path "$FILE_PATH" --command "$TOOL_CMD" || exit 0
+        --file-path "$FILE_PATH" --command "$TOOL_CMD" || true)
 else
-    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+    HINT=$(python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
         --session-id "$EVENT_SESSION_ID" \
-        --file-path "$FILE_PATH" --command "$TOOL_CMD" 2>/dev/null || exit 0
+        --file-path "$FILE_PATH" --command "$TOOL_CMD" 2>/dev/null || true)
+fi
+if [ -n "$HINT" ]; then
+    HINT="$HINT" python3 - <<'PY'
+import json, os
+print(json.dumps({"permission": "allow", "agent_message": os.environ.get("HINT", "")}))
+PY
+else
+    printf '%s\n' '{"permission":"allow"}'
 fi
 
 exit 0

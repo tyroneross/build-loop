@@ -61,6 +61,12 @@ Rules (all severity=warn):
             Without an explicit opt-in/safety marker (``BL_SAFETY_GATE`` env
             check, or a comment naming "safety gate" / "security gate" /
             "integrity gate").
+    HH005 — Stop/SubagentStop can re-open the turn without ``stop_hook_active``
+    HH006 — same event + same matcher split across multiple groups
+            Sibling hooks in one matcher-group run in parallel and each gets
+            its own stdin copy (Claude Code hook-development skill; live probe
+            2026-08-14). Extra groups with the same matcher keep independent
+            families from sharing that wave. Different matchers stay split.
 """
 from __future__ import annotations
 
@@ -525,21 +531,9 @@ def _referenced_script(cmd: str, hooks_dir: Path) -> Path | None:
     return None
 
 
-# Stop-hook re-entry + stdin-contention detectors (HH005 / HH006).
+# Stop-hook re-entry detector (HH005).
 STOP_HOOK_ACTIVE_RE = re.compile(r"stop_hook_active")
 REOPEN_RE = re.compile(r"additionalContext|hookSpecificOutput")
-# Only signals that drain the *shared stdin payload*. Deliberately excludes
-# `$(cat FILE)` (reads a file), `read -r ... <<EOF` (heredoc), and `read ... <f`
-# (file) — those don't touch the hook's stdin, so flagging them is noise.
-STDIN_READ_RE = re.compile(
-    r"\$\(\s*cat\s*-?\s*\)"   # INPUT=$(cat) / $(cat -) — bare, drains stdin
-    r"|`\s*cat\s*-?\s*`"      # INPUT=`cat`
-    r"|\bcat\s*<&0"           # cat <&0
-    r"|/dev/stdin"
-    r"|\bsys\.stdin\b"
-    r"|\bstdin\.read"
-)
-DEVNULL_IN_RE = re.compile(r"<\s*/dev/null|0<\s*/dev/null")
 PY_SCRIPT_REF_RE = re.compile(
     r"""python[0-9.]*\s+["']?
         (?:\$\{CLAUDE_PLUGIN_ROOT(?::-\$CLAUDE_PROJECT_DIR)?\})?
@@ -591,14 +585,6 @@ def _effective_text(cmd: str, hooks_dir: Path | None) -> str:
     return text
 
 
-def _reads_stdin(cmd: str, hooks_dir: Path | None) -> bool:
-    """True when the hook consumes the shared stdin payload (and is not
-    explicitly redirected from /dev/null)."""
-    if DEVNULL_IN_RE.search(cmd):
-        return False
-    return STDIN_READ_RE.search(_effective_text(cmd, hooks_dir)) is not None
-
-
 def rule_hh005(cmd: str, ctx: dict[str, Any],
                 hooks_dir: Path | None) -> list[dict[str, Any]]:
     """Stop/SubagentStop hook can re-open the turn but never checks
@@ -635,55 +621,41 @@ def rule_hh005(cmd: str, ctx: dict[str, Any],
     }]
 
 
-def rule_hh006(event: str, matcher: str | None, cmds: list[str],
-                hooks_dir: Path | None) -> list[dict[str, Any]]:
-    """>1 stdin-reading hook in one hooks-array — array hooks run in parallel
-    sharing ONE stdin fd, so the first reader drains it and starves the rest
-    (the commit_state_check vs stop_finalize loop)."""
-    readers = [c for c in cmds if _reads_stdin(c, hooks_dir)]
-    if len(readers) < 2:
-        return []
-    return [{
-        "rule_id": "HH006",
-        "severity": "warn",
-        "event": event,
-        "matcher": matcher,
-        "command": _truncate(readers[1]),
-        "script_path": None,
-        "message": (
-            f"{len(readers)} hooks in one `{event}` hooks-array read stdin — "
-            "array hooks run in parallel sharing ONE stdin fd, so the first "
-            "reader (e.g. `INPUT=$(cat)`) drains it and the rest get empty "
-            "input (breaking any `stop_hook_active` guard). Put each "
-            "stdin-reading hook in its OWN block (separate matcher object)."
-        ),
-        "evidence": {"binary": None, "line": None, "snippet": None},
-    }]
+def _matcher_key(group: dict[str, Any]) -> str:
+    matcher = group.get("matcher")
+    return "" if matcher is None else str(matcher)
 
 
-def _walk_groups(
-    payload: dict[str, Any],
-) -> list[tuple[str, str | None, list[str]]]:
-    """Walk a payload yielding (event, matcher, [commands]) per hooks-array."""
-    out: list[tuple[str, str | None, list[str]]] = []
-    hooks = payload.get("hooks")
-    if not isinstance(hooks, dict):
-        return out
-    for event, groups in hooks.items():
-        if not isinstance(groups, list):
+def rule_hh006(event: str, groups: list[Any]) -> list[dict[str, Any]]:
+    """Same event + same matcher split across groups — host parallels one
+    matcher-group; extra groups with that matcher keep independent families
+    off that wave. Different matchers (Bash vs Edit|Write) stay split."""
+    clusters: dict[str, int] = {}
+    for group in groups:
+        if not isinstance(group, dict):
             continue
-        for group in groups:
-            if not isinstance(group, dict):
-                continue
-            cmds = [
-                h["command"]
-                for h in (group.get("hooks") or [])
-                if isinstance(h, dict)
-                and isinstance(h.get("command"), str)
-                and h["command"].strip()
-            ]
-            out.append((event, group.get("matcher"), cmds))
-    return out
+        key = _matcher_key(group)
+        clusters[key] = clusters.get(key, 0) + 1
+    findings: list[dict[str, Any]] = []
+    for matcher, count in clusters.items():
+        if count < 2:
+            continue
+        findings.append({
+            "rule_id": "HH006",
+            "severity": "warn",
+            "event": event,
+            "matcher": matcher,
+            "command": "",
+            "script_path": None,
+            "message": (
+                f"{count} `{event}` groups share matcher {matcher!r}. "
+                "Hooks in one matcher-group run in parallel and each gets "
+                "its own stdin copy. Merge same-matcher groups into one "
+                "hooks array so independent families start together."
+            ),
+            "evidence": {"binary": None, "line": None, "snippet": None},
+        })
+    return findings
 
 
 def lint_payload(payload: dict[str, Any],
@@ -697,8 +669,11 @@ def lint_payload(payload: dict[str, Any],
         findings.extend(rule_hh003(cmd, ctx))
         findings.extend(rule_hh004(cmd, ctx))
         findings.extend(rule_hh005(cmd, ctx, hooks_dir))
-    for event, matcher, cmds in _walk_groups(payload):
-        findings.extend(rule_hh006(event, matcher, cmds, hooks_dir))
+    hooks = payload.get("hooks")
+    if isinstance(hooks, dict):
+        for event, groups in hooks.items():
+            if isinstance(groups, list):
+                findings.extend(rule_hh006(str(event), groups))
     return findings
 
 
@@ -738,13 +713,11 @@ SELF_TEST_BAD = {
                 ],
             },
             {
-                # HH006: two stdin-reading hooks in one array (drain race).
+                # HH006: same event + matcher split across a second group.
                 "matcher": "",
                 "hooks": [
                     {"type": "command",
-                     "command": 'INPUT=$(cat); echo "$INPUT"; exit 0'},
-                    {"type": "command",
-                     "command": 'data=$(cat); printf \'{}\''},
+                     "command": "printf '{}'; exit 0"},
                 ],
             },
         ],
@@ -809,6 +782,46 @@ def run_self_test() -> int:
             f"SELF_TEST_GOOD: expected zero findings, got "
             f"{[f['rule_id'] for f in findings]}"
         )
+
+    two_stdin = {
+        "hooks": {
+            "Stop": [{
+                "matcher": "",
+                "hooks": [
+                    {"type": "command",
+                     "command": "INPUT=$(cat); printf '{}'; exit 0"},
+                    {"type": "command",
+                     "command": "data=$(cat); printf '{}'; exit 0"},
+                ],
+            }],
+        }
+    }
+    if any(f["rule_id"] == "HH006" for f in lint_payload(two_stdin)):
+        failures.append(
+            "two stdin-reading hooks in one array must not trip HH006"
+        )
+
+    split_matchers = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [
+                    {"type": "command", "command": "printf '{}'; exit 0"},
+                ]},
+                {"matcher": "Edit|Write", "hooks": [
+                    {"type": "command", "command": "printf '{}'; exit 0"},
+                ]},
+            ],
+        }
+    }
+    if any(f["rule_id"] == "HH006" for f in lint_payload(split_matchers)):
+        failures.append("different matchers must not trip HH006")
+
+    repo = Path(__file__).resolve().parent.parent
+    for rel in ("hooks/hooks.json", ".codex/hooks.json"):
+        shipped = json.loads((repo / rel).read_text(encoding="utf-8"))
+        hh006 = [f for f in lint_payload(shipped) if f["rule_id"] == "HH006"]
+        if hh006:
+            failures.append(f"{rel} must keep same-matcher hooks in one group: {hh006}")
 
     if failures:
         print("hook_hygiene_lint self-test FAILED:", file=sys.stderr)

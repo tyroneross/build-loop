@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "60f78f92ca075c53109a9fd2bc6cbeea30572a318464afa560ea016470b694e9"
+    "content_sha256": "a4ef34dba234f07495eb01e22dfb4788dba694bcb426ee05c15bfc5a8977e3a6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -885,7 +885,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-09-14"
+          "date": "2026-09-24"
         }
       },
       "database-assessor": {
@@ -1510,7 +1510,7 @@
         "file": "skills/spec-writing/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-30"
+          "date": "2026-09-24"
         }
       },
       "sync-skills": {
@@ -2021,6 +2021,7 @@
         "pre-edit-architecture.sh",
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",
+        "pre-edit-rally-point.sh",
         "pre-edit-rally-point.sh"
       ],
       "PostToolUse": [
