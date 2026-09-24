@@ -42,14 +42,31 @@ printf '%s' "$CMD" | grep -qE '\bgit[[:space:]]+push\b' || exit 0
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PROJECT_DIR}}"
 
-# A closeout only makes sense inside a build-loop project.
-[ -d "${PROJECT_DIR}/.build-loop" ] || exit 0
-
 # Resolve python3 without depending on a populated PATH (shared helper).
 _HOOK_DIR="$(dirname "$0")"
 _py=""
 [ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
 [ -n "$_py" ] || exit 0
+
+# Attribution audit — runs for ANY git repo, not only build-loop projects: it
+# files the owner's credit-link gaps as backlog open items (deduped; closes
+# fixed ones). It self-gates: no owner profile, a third-party/forked/archived
+# repo, or BUILDLOOP_ATTRIBUTION_AUDIT=0 all make it a no-op. The pushed repo
+# is the `git -C <dir>` / leading `cd <dir>` target when the command names
+# one, else the project dir; a linked worktree resolves to its main checkout.
+_push_dir="$(printf '%s' "$CMD" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|"]+).*/\1/p' | head -1)"
+[ -n "$_push_dir" ] || _push_dir="$(printf '%s' "$CMD" | sed -nE 's/(^|.*[";&[:space:]])cd[[:space:]]+([^[:space:];&|"]+).*/\2/p' | head -1)"
+[ -n "$_push_dir" ] || _push_dir="$PROJECT_DIR"
+_common="$(git -C "$_push_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -n "$_common" ] && [ -f "${PLUGIN_ROOT}/scripts/attribution_audit.py" ]; then
+    # Output is the backlog items themselves; nothing else is written, so a
+    # non-applicable repo is left untouched.
+    nohup "$_py" "${PLUGIN_ROOT}/scripts/attribution_audit.py" file --repo "$(dirname "$_common")" \
+        >/dev/null 2>&1 &
+fi
+
+# A closeout only makes sense inside a build-loop project.
+[ -d "${PROJECT_DIR}/.build-loop" ] || exit 0
 
 CLOSEOUT_LOG_DIR="${PROJECT_DIR}/.build-loop/closeout"
 mkdir -p "$CLOSEOUT_LOG_DIR" 2>/dev/null || true

@@ -32,7 +32,7 @@ REPO_ROOT = HERE.parent  # scripts/ → repo
 HOOK = REPO_ROOT / "hooks" / "post-push-closeout.sh"
 
 
-def _run_hook(workdir: Path, tool_input: str) -> subprocess.CompletedProcess[str]:
+def _run_hook(workdir: Path, tool_input: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run the hook with TOOL_INPUT set and CLAUDE_PROJECT_DIR pointed at workdir.
 
     CLAUDE_PLUGIN_ROOT is the real hook contract: the hook exports
@@ -45,6 +45,7 @@ def _run_hook(workdir: Path, tool_input: str) -> subprocess.CompletedProcess[str
         "CLAUDE_PROJECT_DIR": str(workdir),
         "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT),
         "HOME": str(workdir),
+        **(extra_env or {}),
     }
     return subprocess.run(
         ["bash", str(HOOK)],
@@ -167,3 +168,58 @@ class TestFiresOnPush(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _git_repo(root: Path, name: str, origin: str) -> Path:
+    repo = root / name
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", origin], check=True)
+    (repo / "next.config.js").write_text("module.exports = {}\n")  # web app: footer item applies at any visibility
+    return repo
+
+
+class AttributionOnPushTest(unittest.TestCase):
+    """The same hook files attribution open items for the pushed repo."""
+
+    def _env(self, root: Path) -> dict[str, str]:
+        profile = root / "profile.json"
+        profile.write_text(json.dumps({
+            "github_owners": ["owner"],
+            "brand_name": "Example Labs",
+            "brand_url": "https://example.test",
+            "copyright_holder": "Pat Example",
+        }))
+        return {"BUILDLOOP_ATTRIBUTION_PROFILE": str(profile), "BUILD_LOOP_MEMORY_STORE_ROOT": str(root / "memory")}
+
+    def _wait_items(self, repo: Path, timeout_s: float = 10.0) -> list[Path]:
+        items = repo / ".build-loop" / "backlog" / "items"
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            found = list(items.glob("*.md")) if items.exists() else []
+            if found:
+                return found
+            time.sleep(0.2)
+        return []
+
+    def test_push_from_cd_target_files_owner_repo_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _git_repo(root, "mine", "git@github.com:owner/mine.git")
+            session = root / "session"
+            session.mkdir()
+            proc = _run_hook(session, f"cd {repo} && git push origin main", self._env(root))
+            self.assertEqual(proc.returncode, 0)
+            items = self._wait_items(repo)
+            self.assertTrue(items, "no attribution item filed for the pushed repo")
+            self.assertIn("attribution:web-app-footer", "".join(p.read_text() for p in items))
+            self.assertFalse((session / ".build-loop").exists())
+
+    def test_third_party_repo_is_left_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _git_repo(root, "theirs", "git@github.com:someone-else/theirs.git")
+            proc = _run_hook(repo, "git push", self._env(root))
+            self.assertEqual(proc.returncode, 0)
+            time.sleep(2.0)
+            self.assertFalse((repo / ".build-loop").exists())
