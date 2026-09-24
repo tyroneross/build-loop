@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "fireworks_ai",
   "display_name": "Fireworks AI",
-  "captured_at": "2026-09-07",
-  "review_after": "2026-09-21",
+  "captured_at": "2026-09-23",
+  "review_after": "2026-10-07",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "curated_serverless_snapshot",
   "coverage": {
@@ -33,67 +33,67 @@
     {
       "id": "recommended_models",
       "url": "https://docs.fireworks.ai/guides/recommended-models",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "serverless_pricing",
       "url": "https://docs.fireworks.ai/serverless/pricing",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "serverless_overview",
       "url": "https://docs.fireworks.ai/serverless/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "serverless_rate_limits",
       "url": "https://docs.fireworks.ai/serverless/rate-limits",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "list_models_api",
       "url": "https://docs.fireworks.ai/faq-new/models-inference/how-to-check-if-a-model-is-available-on-serverless",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "tool_calling",
       "url": "https://docs.fireworks.ai/guides/function-calling",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "structured_outputs",
       "url": "https://docs.fireworks.ai/structured-responses/structured-response-formatting",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "reasoning",
       "url": "https://docs.fireworks.ai/guides/reasoning",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "vision",
       "url": "https://docs.fireworks.ai/guides/querying-vision-language-models",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "video_audio_inputs",
       "url": "https://docs.fireworks.ai/guides/video-audio-inputs",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "changelog",
       "url": "https://docs.fireworks.ai/updates/changelog",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     }
   ],
@@ -116,15 +116,33 @@
       "on_demand": "dedicated GPU capacity, broader model choice, predictable performance, no hard platform rate limit"
     },
     "serverless_rate_limits": {
-      "scope": "per account and per model; adaptive",
-      "starting_total_prompt_tpm": 3600000,
-      "starting_uncached_prompt_tpm": 900000,
-      "starting_generated_tpm": 36000,
+      "scope": "per account and per model; adaptive; ceiling tiered by total model parameter count since the 2026-09-01 changelog update",
+      "tiers": {
+        "small": {
+          "parameter_count": "< 400B",
+          "total_prompt_tpm": 64800000,
+          "uncached_prompt_tpm": 16200000,
+          "generated_tpm": 648000
+        },
+        "medium": {
+          "parameter_count": "400B - < 1.6T",
+          "total_prompt_tpm": 43200000,
+          "uncached_prompt_tpm": 10800000,
+          "generated_tpm": 432000
+        },
+        "large": {
+          "parameter_count": ">= 1.6T",
+          "total_prompt_tpm": 21600000,
+          "uncached_prompt_tpm": 5400000,
+          "generated_tpm": 216000
+        }
+      },
+      "tier_notes": "Fast, Priority, and US-only variants share the base model's tier and ceilings. Models without a known parameter count use Large ceilings.",
       "failure_codes": {
         "over_limit": 429,
         "capacity_overload": 503
       },
-      "actual_limits": "read response headers; sustained usage can raise limits"
+      "actual_limits": "read response headers; sustained usage can raise limits within the tier ceiling"
     },
     "prompt_caching": {
       "default": true,
@@ -503,15 +521,41 @@
       "replacement": "accounts/fireworks/models/deepseek-v4-flash-0731"
     }
   ],
+  "scheduled_deprecations": [
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-pro-0813",
+      "effective_at": "2026-09-25",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/deepseek-v4p1-flash",
+      "note": "Announced 2026-09-16 (changelog: \"Upcoming Serverless deprecation: older DeepSeek, GLM, Muse, and Kimi models\"). Still live as of this capture; dedicated deployments unaffected."
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "effective_at": "2026-09-25",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/deepseek-v4p1-flash",
+      "note": "Announced 2026-09-16. Still live as of this capture; dedicated deployments unaffected."
+    },
+    {
+      "id": "accounts/fireworks/models/glm-5p2",
+      "effective_at": "2026-09-25",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/glm-5p3",
+      "note": "Announced 2026-09-16. Still live as of this capture; dedicated deployments unaffected."
+    }
+  ],
   "uncertainties": [
     "Context windows and complete per-model capability flags require the authenticated List Models API and are null where the captured docs did not state them.",
     "The 2026-08-27 changelog says models are deprecated from serverless effective that day but does not state a later removal date; treat those IDs as unavailable for new routing unless the runtime API proves otherwise.",
-    "The changelog says audio inference and image generation were deprecated on 2026-06-10 while current docs still describe video/audio inputs. Input understanding and generative audio/image endpoints are separate surfaces; verify the exact endpoint before use."
+    "The changelog says audio inference and image generation were deprecated on 2026-06-10 while current docs still describe video/audio inputs. Input understanding and generative audio/image endpoints are separate surfaces; verify the exact endpoint before use.",
+    "docs.fireworks.ai/updates/changelog (2026-09-16 entry) schedules accounts/fireworks/models/deepseek-v4-pro-0813, accounts/fireworks/models/deepseek-v4-flash-0731, and accounts/fireworks/models/glm-5p2 for serverless removal on 2026-09-25 (2 days after this capture); see scheduled_deprecations[]. They remain in models[] because they are not yet removed as of captured_at.",
+    "docs.fireworks.ai/guides/recommended-models now also names accounts/fireworks/models/kimi-k2p6, accounts/fireworks/models/qwen3-8b, accounts/fireworks/models/nvidia-nemotron-3-nano-omni-30b-a3b, accounts/fireworks/models/gemma-4-31b-it, and accounts/fireworks/models/qwen3-reranker-8b as recommended; not added as model records this pass (curated, non-exhaustive snapshot; kimi-k2p6 is itself scheduled for the 2026-09-25 removal above) pending a full pricing/capability re-verification.",
+    "docs.fireworks.ai/serverless/pricing no longer lists a named pricing row for accounts/fireworks/models/qwen3p7-plus (still recommended on the recommended-models page); its standard/priority per-model prices here ($0.40/$0.08/$1.60 standard) could not be re-confirmed against the current named pricing table this pass and are carried forward unchanged, not re-verified."
   ],
   "global_notes": {
     "performance": "Fireworks recommendations combine vendor internal testing, customer deployments, and external benchmarks. They are not independent Build Loop benchmarks or SLAs.",
     "production": "Serverless is best effort. Use Priority to reduce load shedding or on-demand capacity for predictable throughput and version control.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
   },
-  "provenance_note": "Re-verified 2026-09-07 against https://docs.fireworks.ai/updates/changelog and the public model list at https://app.fireworks.ai/api/models (303 models). The 2026-08-27 serverless deprecation table and every replacement id reproduced unchanged; the public model list still enumerates deprecated ids because it covers dedicated deployments as well as serverless, so it cannot be read as a serverless availability signal."
+  "provenance_note": "Re-verified 2026-09-23 against all 11 sources[] URLs (WebFetch plus raw-HTML confirmation of https://docs.fireworks.ai/updates/changelog and https://docs.fireworks.ai/serverless/pricing and https://docs.fireworks.ai/serverless/rate-limits). The 2026-08-27 serverless deprecation table and every replacement id reproduced unchanged. provider_features.serverless_rate_limits updated from flat starting values to the size-tiered ceilings the docs now publish (small/medium/large, per the 2026-09-01 changelog entry). Added scheduled_deprecations[] for the 2026-09-25 serverless removal of deepseek-v4-pro-0813, deepseek-v4-flash-0731, and glm-5p2 (docs.fireworks.ai/updates/changelog, 2026-09-16 entry). All other captured model pricing, capability, and serving-path fields matched the live docs unchanged. The public model list at https://app.fireworks.ai/api/models was not re-polled this pass."
 }

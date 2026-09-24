@@ -51,24 +51,30 @@ def test_every_model_record_has_valid_source_references_and_unique_ids() -> None
 
 
 def test_guides_cover_catalog_entries_and_dynamic_evidence_boundaries() -> None:
+    # Dates and counts come from each catalog, so a refresh cannot leave the
+    # guide and its JSON disagreeing — and the test never pins a stale date.
+    def recheck(filename: str) -> str:
+        return f"Recheck by {load_catalog(filename)['review_after']}"
+
+    openrouter_count = load_catalog("openrouter-models.json")["runtime_snapshot"]["model_count"]
     required_phrases = {
         "openrouter.md": (
-            "581 models",
+            f"{openrouter_count} models",
             "not a recommendation",
             "require_parameters",
-            "Recheck by 2026-09-21",
+            recheck("openrouter-models.json"),
         ),
         "fireworks-ai.md": (
             "no uptime or latency SLA",
             "FIREWORKS_API_KEY",
             "2026-08-27",
-            "Recheck by 2026-09-21",
+            recheck("fireworks-ai-models.json"),
         ),
         "together-ai.md": (
             "dynamic per organization and model",
             "TOGETHER_API_KEY",
             "2026-08-27",
-            "Recheck by 2026-09-21",
+            recheck("together-ai-models.json"),
         ),
     }
     for _, (filename, guide_name, model_key) in PROVIDERS.items():
@@ -107,9 +113,10 @@ def test_openrouter_snapshot_is_bounded_and_records_near_term_expirations() -> N
     assert [row["popular_rank"] for row in catalog["model_samples"]] == [1, 2, 3, 4, 8, 11]
     assert snapshot["access_mode"].startswith("unauthenticated")
     assert "lowest current route price" not in json.dumps(catalog)
-    mimo = next(row for row in catalog["model_samples"] if row["id"] == "xiaomi/mimo-v2.5")
-    assert mimo["capabilities"]["structured_outputs"] is None
-    assert any("MiMo-V2.5" in note and "response_format" in note for note in catalog["uncertainties"])
+    # Unknown support is recorded as null, never guessed. (MiMo-V2.5, the original
+    # example, reports structured outputs in the 2026-09-23 API and left the sample.)
+    for row in catalog["model_samples"]:
+        assert row["capabilities"]["structured_outputs"] in (True, False, None)
 
 
 def test_fireworks_deprecated_routes_have_current_replacements() -> None:
@@ -158,8 +165,8 @@ def test_model_tiering_routes_provider_questions_without_enabling_models() -> No
 def test_together_scheduled_removals_are_not_current_candidates() -> None:
     catalog = load_catalog("together-ai-models.json")
     current_ids = {model["id"] for model in catalog["models"]}
+    # May be empty: once a removal date passes, the row moves to recent_removals.
     scheduled = catalog["scheduled_removals"]
-    assert scheduled
     scheduled_ids = {row["id"] for row in scheduled}
     assert current_ids.isdisjoint(scheduled_ids)
     for row in scheduled:

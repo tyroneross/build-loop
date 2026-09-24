@@ -1,8 +1,8 @@
 # Together AI provider catalog and workload guide
 
-Snapshot date: **2026-09-07**
+Snapshot date: **2026-09-23**
 
-Review by: **2026-09-21**
+Review by: **2026-10-07**
 
 Machine-readable companion: `references/provider-catalogs/together-ai-models.json`
 
@@ -13,7 +13,8 @@ Use this guide for downstream Together AI workloads. The user confirmed Together
 - Start with `deepseek-ai/DeepSeek-V4-Flash-0731` for a low-cost general/function-calling candidate and `MiniMaxAI/MiniMax-M3` for a low-cost long-context multimodal agent candidate.
 - Evaluate `moonshotai/Kimi-K3` for harder chat, reasoning, and coding-agent workloads. Its list price is materially higher, so require a workload-quality gain before adoption.
 - Use `zai-org/GLM-5.3-Flash` when long context and low token price matter, then verify quality and actual throughput on the workload.
-- Use `Qwen/Qwen3.5-9B` for small/fast work only after benchmark validation. Use `openai/gpt-oss-120b` as a lower-price reasoning candidate. Together scheduled `openai/gpt-oss-20b` for removal on 2026-09-14 and names `Qwen/Qwen3.5-9B` as its replacement, so do not start new work on it.
+- Together's recommended-models page now names `zai-org/GLM-5.3` (not `zai-org/GLM-5.2`) as the coding-agent pick. `zai-org/GLM-5.2` remains a current serverless candidate with identical pricing but is no longer separately recommended.
+- Use `Qwen/Qwen3.5-9B` for small/fast work only after benchmark validation. Use `openai/gpt-oss-120b` as a lower-price reasoning candidate. The smaller GPT-OSS model was removed on 2026-09-14 (see Recent removals); `Qwen/Qwen3.5-9B` is its documented replacement.
 - Move steady, high-volume, or SLA-sensitive traffic from serverless to batch, dedicated inference, or provisioned throughput based on latency and capacity needs.
 - Do not route to a model listed as removed on the deprecations page even if another catalog surface still shows it.
 
@@ -24,9 +25,10 @@ Use this guide for downstream Together AI workloads. The user confirmed Together
 | `thinkingmachines/Inkling` | 524,288 | $1.00 / $0.17 / $4.05 | yes | yes | benchmark as a general candidate |
 | `MiniMaxAI/MiniMax-M3` | 524,288 | $0.30 / $0.06 / $1.20 | yes | yes | lower-cost agent and vision candidate |
 | `moonshotai/Kimi-K3` | 1,048,576 | $3.00 / $0.30 / $15.00 | yes | yes | chat, reasoning, coding agents |
-| `zai-org/GLM-5.3-Flash` | 1,000,000 | $0.15 / $0.03 / $0.50 | yes | yes | low-cost long context |
-| `zai-org/GLM-5.2` | 1,000,000 | $1.40 / $0.26 / $4.40 | yes | yes | coding agents and functions |
-| `openai/gpt-oss-120b` | 128,000 | $0.15 / — / $0.60 | yes | yes | reasoning candidate |
+| `zai-org/GLM-5.3-Flash` | 1,048,575 | $0.15 / $0.03 / $0.50 | yes | yes | low-cost long context |
+| `zai-org/GLM-5.3` | 1,048,575 | $1.40 / $0.26 / $4.40 | yes | yes | coding agents (recommended-models pick) |
+| `zai-org/GLM-5.2` | 1,048,575 | $1.40 / $0.26 / $4.40 | yes | yes | benchmark as a general candidate |
+| `openai/gpt-oss-120b` | 131,072 | $0.15 / — / $0.60 | yes | yes | reasoning candidate |
 | `Qwen/Qwen3.5-9B` | 262,144 | $0.17 / — / $0.25 | yes | yes | small, fast, and vision candidate |
 | `deepseek-ai/DeepSeek-V4-Flash-0731` | 1,000,000 | $0.14 / $0.03 / $0.28 | yes | yes | general, functions, coding |
 | `deepseek-ai/DeepSeek-V4-Pro-0813` | 1,048,576 | $1.32 / $0.13 / $3.96 | yes | yes | harder reasoning |
@@ -38,12 +40,12 @@ A dash in Together's capability table means unstated. The JSON records that as `
 
 | Workload | Current documented candidate | Price snapshot |
 |---|---|---:|
-| Vision | `Qwen/Qwen3.8-2.4T-A95B` | $2.50 / $0.50 cached / $6.25 per 1M |
+| Vision | `Qwen/Qwen3.8-2.4T-A95B` | $2.00 / $0.50 cached / $6.00 per 1M |
 | Image generation | `openai/gpt-image-2` | check per-megapixel page |
 | Video generation | `ByteDance/Seedance-2.5` | check per-output page |
 | Text to speech | `cartesia/sonic-3` | $65 per 1M characters |
-| Speech to text | `nvidia/nemotron-3.5-asr-streaming-0.6b` | $0.0015 per audio minute |
-| Embeddings | `intfloat/multilingual-e5-large-instruct` | $0.02 per 1M input tokens; 514-token context |
+| Speech to text | `nvidia/nemotron-3.5-asr-streaming-0.6b` | $0.0045 per audio minute |
+| Embeddings | none recorded in this snapshot | the previous candidate was removed on 2026-09-14 (see Recent removals) |
 
 Together currently lists rerank and moderation only on dedicated inference, not serverless.
 
@@ -75,14 +77,7 @@ Together currently lists rerank and moderation only on dedicated inference, not 
 
 ## Scheduled removals
 
-Together has published a removal date for these models. They are excluded from the current-candidate table above; migrate before the date rather than after it.
-
-| Model | Removal date | Documented replacement |
-|---|---|---|
-| `openai/gpt-oss-20b` | 2026-09-14 | `Qwen/Qwen3.5-9B` |
-| `google/gemma-4-31B-it` | 2026-09-14 | `zai-org/GLM-5.3-Flash` |
-| `thinkingmachines/Inkling-Small` | 2026-09-14 | `zai-org/GLM-5.3-Flash` |
-| `intfloat/multilingual-e5-large-instruct` | 2026-09-14 | none published |
+None published as of 2026-09-23. The four models Together had dated for 2026-09-14 are now under Recent removals.
 
 ## Recent removals
 
@@ -90,6 +85,13 @@ The deprecations page records these current removals:
 
 | Removed | Date | Migration note |
 |---|---|---|
+| `openai/gpt-oss-20b` | 2026-09-14 | use `Qwen/Qwen3.5-9B`; dedicated endpoint remains available |
+| `google/gemma-4-31B-it` | 2026-09-14 | use `zai-org/GLM-5.3-Flash`; dedicated endpoint remains available |
+| `thinkingmachines/Inkling-Small` | 2026-09-14 | use `zai-org/GLM-5.3-Flash`; dedicated endpoint remains available |
+| `intfloat/multilingual-e5-large-instruct` | 2026-09-14 | no replacement published; no dedicated endpoint |
+
+The 2026-09-14 rows are past their published removal date and absent from the 2026-09-23 serverless models page, although the deprecations page still files them under "Scheduled".
+
 | `nvidia/Nemotron-3-ultra-550b-a55b` | 2026-08-27 | dedicated endpoint remains available |
 | `pearl-ai/gemma-4-31b-it` | 2026-08-27 | no dedicated endpoint |
 | `deepseek-ai/DeepSeek-V4-Pro` | 2026-08-27 | use `deepseek-ai/DeepSeek-V4-Pro-0813` |
@@ -109,7 +111,7 @@ Together distinguishes redirects from new models. Same-lineage upgrades can redi
 
 ## Freshness protocol
 
-Recheck by 2026-09-21 because Together removed six decision-relevant models within ten days of this snapshot.
+Recheck by 2026-10-07. The 2026-09-23 pass moved the four models dated 2026-09-14 to Recent removals (absent from the serverless models page); confirm the deprecations page has caught up on the next pass.
 
 1. Fetch serverless models, recommended models, deprecations, limits, pricing, and every capability page used by a production workload.
 2. If `TOGETHER_API_KEY` is available, test account access and record only model IDs and non-secret metadata.
@@ -119,7 +121,7 @@ Recheck by 2026-09-21 because Together removed six decision-relevant models with
 
 ## Provenance
 
-All sources were fetched on 2026-08-29 and are Together AI first-party documentation. Account-specific runtime access was not tested because `TOGETHER_API_KEY` was unavailable.
+All sources were re-fetched on 2026-09-23 and are Together AI first-party documentation. Account-specific runtime access was not tested because `TOGETHER_API_KEY` was unavailable.
 
 - [Serverless models](https://docs.together.ai/docs/serverless/models)
 - [Recommended models](https://docs.together.ai/docs/inference/recommended-models)
@@ -138,3 +140,4 @@ All sources were fetched on 2026-08-29 and are Together AI first-party documenta
 - 2026-08-29: Added current serverless decision candidates, specialist modalities, capability rules, dynamic limits, capacity guidance, and recent removals.
 - 2026-08-29: Recorded the missing account-runtime check and preserved unstated capability fields as unknown.
 - 2026-09-07: Re-verified against the live deprecations page. Three models this guide listed as current serverless candidates now carry a 2026-09-14 removal date and moved to Scheduled removals with their documented replacements; the historical removal table reproduced unchanged.
+- 2026-09-23: Re-verified against all 11 sources. Corrected `openai/gpt-oss-120b` context to 131,072; corrected `zai-org/GLM-5.2` and `zai-org/GLM-5.3-Flash` context to 1,048,575; added `zai-org/GLM-5.3` as the recommended-models coding pick (`zai-org/GLM-5.2` no longer separately recommended); corrected `Qwen/Qwen3.8-2.4T-A95B` price to $2.00/$0.50 cached/$6.00; corrected `nvidia/nemotron-3.5-asr-streaming-0.6b` price to $0.0045 per audio minute. Moved the four models dated 2026-09-14 from Scheduled to Recent removals: they are past that date and absent from the serverless models page, although the deprecations page still labels them "Scheduled". All other model rows reproduced unchanged.

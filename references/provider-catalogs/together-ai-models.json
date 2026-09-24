@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "together_ai",
   "display_name": "Together AI",
-  "captured_at": "2026-09-07",
-  "review_after": "2026-09-21",
+  "captured_at": "2026-09-23",
+  "review_after": "2026-10-07",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "curated_serverless_snapshot",
   "coverage": {
@@ -32,67 +32,67 @@
     {
       "id": "serverless_models",
       "url": "https://docs.together.ai/docs/serverless/models",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "recommended_models",
       "url": "https://docs.together.ai/docs/inference/recommended-models",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "rate_limits",
       "url": "https://docs.together.ai/docs/serverless/rate-limits",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "deprecations",
       "url": "https://docs.together.ai/docs/deprecations",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "structured_outputs",
       "url": "https://docs.together.ai/docs/inference/chat/structured-outputs",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "reasoning",
       "url": "https://docs.together.ai/docs/inference/chat/reasoning",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "function_calling",
       "url": "https://docs.together.ai/docs/inference/function-calling/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "vision",
       "url": "https://docs.together.ai/docs/inference/vision/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "transcription",
       "url": "https://docs.together.ai/docs/inference/transcription/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "text_to_speech",
       "url": "https://docs.together.ai/docs/inference/text-to-speech/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     },
     {
       "id": "pricing",
       "url": "https://www.together.ai/pricing",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1"
     }
   ],
@@ -211,7 +211,7 @@
       "id": "zai-org/GLM-5.3-Flash",
       "display_name": "GLM-5.3 Flash",
       "lifecycle": "serverless",
-      "context_window_tokens": 1000000,
+      "context_window_tokens": 1048575,
       "pricing": {
         "unit": "usd_per_million_tokens",
         "input": 0.15,
@@ -229,10 +229,34 @@
       ]
     },
     {
+      "id": "zai-org/GLM-5.3",
+      "display_name": "GLM-5.3",
+      "lifecycle": "serverless",
+      "context_window_tokens": 1048575,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 1.4,
+        "cached_input": 0.26,
+        "output": 4.4
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
+      },
+      "best_fit": [
+        "coding_agents"
+      ],
+      "sources": [
+        "serverless_models",
+        "recommended_models"
+      ]
+    },
+    {
       "id": "zai-org/GLM-5.2",
       "display_name": "GLM-5.2",
       "lifecycle": "serverless",
-      "context_window_tokens": 1000000,
+      "context_window_tokens": 1048575,
       "pricing": {
         "unit": "usd_per_million_tokens",
         "input": 1.4,
@@ -244,13 +268,8 @@
         "structured_outputs": true,
         "reasoning": true
       },
-      "best_fit": [
-        "coding_agents",
-        "function_calling"
-      ],
       "sources": [
         "serverless_models",
-        "recommended_models",
         "reasoning",
         "function_calling"
       ]
@@ -259,7 +278,7 @@
       "id": "openai/gpt-oss-120b",
       "display_name": "GPT-OSS 120B",
       "lifecycle": "serverless",
-      "context_window_tokens": 128000,
+      "context_window_tokens": 131072,
       "pricing": {
         "unit": "usd_per_million_tokens",
         "input": 0.15,
@@ -388,9 +407,9 @@
       "use": "vision",
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 2.5,
+        "input": 2.0,
         "cached_input": 0.5,
-        "output": 6.25
+        "output": 6.0
       },
       "sources": [
         "serverless_models",
@@ -430,7 +449,7 @@
       "use": "speech_to_text",
       "pricing": {
         "unit": "usd_per_audio_minute",
-        "amount": 0.0015
+        "amount": 0.0045
       },
       "sources": [
         "serverless_models",
@@ -453,6 +472,29 @@
     }
   ],
   "recent_removals": [
+    {
+      "id": "openai/gpt-oss-20b",
+      "removed_at": "2026-09-14",
+      "dedicated_available": true,
+      "replacement": "Qwen/Qwen3.5-9B"
+    },
+    {
+      "id": "google/gemma-4-31B-it",
+      "removed_at": "2026-09-14",
+      "dedicated_available": true,
+      "replacement": "zai-org/GLM-5.3-Flash"
+    },
+    {
+      "id": "thinkingmachines/Inkling-Small",
+      "removed_at": "2026-09-14",
+      "dedicated_available": true,
+      "replacement": "zai-org/GLM-5.3-Flash"
+    },
+    {
+      "id": "intfloat/multilingual-e5-large-instruct",
+      "removed_at": "2026-09-14",
+      "dedicated_available": false
+    },
     {
       "id": "nvidia/Nemotron-3-ultra-550b-a55b",
       "removed_at": "2026-08-27",
@@ -489,33 +531,15 @@
   "uncertainties": [
     "A hyphen in Together's function-calling or structured-output table is recorded as null, not false.",
     "Account-specific model access and effective rate limits were not tested because TOGETHER_API_KEY was unavailable.",
-    "Serverless recommendations can change independently of dedicated endpoint availability."
+    "Serverless recommendations can change independently of dedicated endpoint availability.",
+    "Qwen/Qwen3.8-2.4T-A95B cached_input: the serverless models table and the pricing page disagree ($0.50 vs $0.25 per 1M tokens as of 2026-09-23). This record keeps the serverless_models table value per source_precedence.",
+    "The deprecations page still files openai/gpt-oss-20b, google/gemma-4-31B-it, thinkingmachines/Inkling-Small, and intfloat/multilingual-e5-large-instruct under 'Scheduled deprecations' (removal date 2026-09-14), but none of the four appears on the 2026-09-23 serverless models page, so they are recorded under recent_removals. Dedicated-endpoint availability follows the deprecations page."
   ],
   "global_notes": {
     "performance": "Together recommendations are vendor guidance. Benchmark finalists on representative prompts and record p50/p95 latency, tokens per second, error rate, and cost.",
     "deprecations": "The deprecations page outranks a catalog row when availability conflicts.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
   },
-  "scheduled_removals": [
-    {
-      "id": "openai/gpt-oss-20b",
-      "removal_date": "2026-09-14",
-      "replacement": "Qwen/Qwen3.5-9B"
-    },
-    {
-      "id": "google/gemma-4-31B-it",
-      "removal_date": "2026-09-14",
-      "replacement": "zai-org/GLM-5.3-Flash"
-    },
-    {
-      "id": "thinkingmachines/Inkling-Small",
-      "removal_date": "2026-09-14",
-      "replacement": "zai-org/GLM-5.3-Flash"
-    },
-    {
-      "id": "intfloat/multilingual-e5-large-instruct",
-      "removal_date": "2026-09-14"
-    }
-  ],
-  "provenance_note": "Re-verified 2026-09-07 against https://docs.together.ai/docs/deprecations. That page now schedules 2026-09-14 removals for models this catalog previously listed as current serverless decision candidates (openai/gpt-oss-20b, google/gemma-4-31B-it); they moved to scheduled_removals with their documented replacements. The historical removal table reproduced unchanged."
+  "scheduled_removals": [],
+  "provenance_note": "Re-verified 2026-09-23 against all 11 listed sources. Changes vs the 2026-09-07 capture: openai/gpt-oss-120b context_window_tokens corrected 128000 -> 131072 (https://docs.together.ai/docs/serverless/models); zai-org/GLM-5.2 and zai-org/GLM-5.3-Flash context_window_tokens corrected 1000000 -> 1048575 (same source); zai-org/GLM-5.3 added as a current model, now the recommended coding-agent pick per https://docs.together.ai/docs/inference/recommended-models (GLM-5.2 lost the coding_agents/function_calling best_fit tags because recommended_models no longer names it); Qwen/Qwen3.8-2.4T-A95B pricing corrected input 2.5 -> 2.0 and output 6.25 -> 6.0 (serverless_models table); nvidia/nemotron-3.5-asr-streaming-0.6b price corrected 0.0015 -> 0.0045 usd_per_audio_minute (https://www.together.ai/pricing). All other model rows, recent_removals, and scheduled_removals were re-checked and reproduced unchanged. The historical removal table reproduced unchanged."
 }

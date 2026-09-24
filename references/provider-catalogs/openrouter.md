@@ -1,8 +1,8 @@
 # OpenRouter provider catalog and workload guide
 
-Snapshot date: **2026-09-07**
+Snapshot date: **2026-09-23**
 
-Review by: **2026-09-21**
+Review by: **2026-10-07**
 
 Machine-readable companion: `references/provider-catalogs/openrouter-models.json`
 
@@ -18,33 +18,33 @@ Use this guide for downstream workloads that call OpenRouter. OpenRouter is a dy
 
 ## Live snapshot
 
-The public `GET /api/v1/models?output_modalities=all` response returned **581 models** on 2026-09-07. The endpoint was called unauthenticated: no credential was sent and no response header was retained. Response digest `234f1a34c4584f05d4708d16709833518584bfc284398901b20ac9d98cdc2501`.
+The public `GET /api/v1/models?output_modalities=all` response returned **620 models** on 2026-09-23. The endpoint was called unauthenticated: no credential was sent and no response header was retained. Response digest `7a4e4ddb12b5647fe5b398c82d55467b73c651cf5a31b27c75d3c03a515e5018`.
 
 | Live attribute | Count |
 |---|---:|
-| Models | 581 |
-| Tool-capable | 363 |
-| Structured-output capable | 448 |
-| Reasoning control | 305 |
-| Image input | 336 |
-| Audio input | 75 |
+| Models | 620 |
+| Tool-capable | 389 |
+| Structured-output capable | 376 |
+| Reasoning control | 329 |
+| Image input | 364 |
+| Audio input | 78 |
 
 These are dated inventory counts, not stable platform limits. Query the endpoint again before changing production routing.
 
 ### Representative popular text models
 
-The following rows were returned near the top of `GET /api/v1/models?output_modalities=all&sort=most-popular` on the snapshot date. The 581-row response digest was `4480b4b60f1003d8b60e67ae466b3413a1b267d24f484c6f8f99b3551b2058a8`. Popularity is an operational signal, not a recommendation.
+The following rows were returned near the top of `GET /api/v1/models?output_modalities=all&sort=most-popular` on the snapshot date. The 620-row response digest was `f369ef469377de1105988a07ea73ffb2c8e213fc7d4661b0c471191ef1f31fac`. Popularity is an operational signal, not a recommendation.
 
 | Model | Weekly-popularity rank | Context | Input/output per 1M tokens | Inputs | Tools / schema / reasoning |
 |---|---:|---:|---:|---|---|
-| `tencent/hy4-preview` | 1 | 1,048,576 | $0.834 / $2.501 | text | yes / yes / yes |
-| `openai/gpt-5.6-luna` | 2 | 1,050,000 | $0.2 / $1.2 | file, image, text | yes / yes / yes |
-| `z-ai/glm-5.3-flash` | 3 | 1,310,720 | $0.075 / $0.25 | image, text, video | yes / yes / yes |
-| `deepseek/deepseek-v4-flash-0731` | 4 | 1,310,720 | $0.14 / $0.28 | text | yes / yes / yes |
-| `nvidia/nemotron-3-ultra-550b-a55b:free` | 8 | 1,000,000 | $0 / $0 | text | yes / no / yes |
-| `xiaomi/mimo-v2.5` | 11 | 1,050,000 | $0.14 / $0.28 | audio, image, text, video | yes / unknown / yes |
+| `z-ai/glm-5.3-flash` | 1 | 1,048,576 | $0.15 / $0.5 | image, text, video | yes / yes / yes |
+| `deepseek/deepseek-v4.1-flash` | 2 | 1,048,576 | $0.14 / $0.42 | image, text | yes / yes / yes |
+| `tencent/hy4-preview` | 3 | 1,048,576 | $0.834 / $2.501 | text | yes / yes / yes |
+| `openai/gpt-5.6-luna` | 4 | 1,050,000 | $0.2 / $1.2 | file, image, text | yes / yes / yes |
+| `tencent/hy3` | 8 | 262,144 | $0.132 / $0.528 | text | yes / yes / yes |
+| `google/gemini-3.8-flash` | 11 | 1,048,576 | $0.75 / $3.75 | audio, file, image, text, video | yes / yes / yes |
 
-Prices are the Models API top-provider values under default conditions at capture time. Conditional overrides, a promotional model-page price, or an explicit provider route can change the actual price. For example, MiMo-V2.5's official model page displayed $0.119/$0.238 while the API returned $0.14/$0.28 (both re-read 2026-09-07).
+Prices are the Models API top-provider values under default conditions at capture time. Conditional overrides, a promotional model-page price, or an explicit provider route can change the actual price. The 2026-09-07 snapshot's rank-11 slot was `xiaomi/mimo-v2.5` (now ranked 6th); it dropped out of this six-row sample when the top ranks reshuffled and is no longer tracked here. Its official model page listed $0.119/$0.238 per million tokens against $0.119/$0.238 shown on 2026-09-23 (15%-off promotional rate), while the Models API's own top-provider pricing field returned $0.14/$0.28 — the discrepancy this catalog previously flagged persists but is no longer in the representative sample.
 
 ## Capability and routing rules
 
@@ -70,24 +70,38 @@ Prices are the Models API top-provider values under default conditions at captur
 
 ## Deprecation watch
 
-The live API returned 9 non-null `expiration_date` values. 6 are operationally actionable, and the two `nex-agi` rows expire the day after this capture:
+The live API returned 24 non-null `expiration_date` values. 20 are operationally actionable (a real shutdown date, not the far-future sentinel), and the two `nex-agi` rows expire nearest this capture:
 
 | Model | Expiration |
 |---|---|
-| `nex-agi/nex-n2-mini` | 2026-09-08 |
-| `nex-agi/nex-n2-pro` | 2026-09-08 |
-| `z-ai/glm-4.7-flash` | 2026-09-10 |
-| `dots-studio/dots-3-note-preview:free` | 2026-09-30 |
-| `z-ai/glm-4.5v` | 2026-12-31 |
+| `nex-agi/nex-n2.5-mini:free` | 2026-09-25 |
+| `nex-agi/nex-n2.5-pro:free` | 2026-09-25 |
+| `deepseek/deepseek-v3.2` | 2026-09-28 |
+| `deepseek/deepseek-v3.2-exp` | 2026-09-28 |
+| `deepseek/deepseek-v3.1-terminus` | 2026-09-28 |
+| `deepseek/deepseek-r1-distill-llama-70b` | 2026-09-28 |
+| `minimax/minimax-m2.1` | 2026-10-08 |
+| `baidu/ernie-4.5-vl-424b-a47b` | 2026-10-08 |
+| `google/gemini-2.5-flash-lite` | 2026-10-20 |
+| `google/gemini-2.5-flash` | 2026-10-20 |
+| `google/gemini-2.5-flash:batch` | 2026-10-20 |
+| `google/gemini-2.5-pro` | 2026-10-20 |
+| `google/gemini-2.5-pro:batch` | 2026-10-20 |
+| `bytedance-seed/seed-2.0-code` | 2026-11-11 |
+| `bytedance/seedance-1-5-pro` | 2026-11-11 |
+| `bytedance-seed/seed-1.6-flash` | 2026-11-11 |
+| `bytedance-seed/seed-1.6` | 2026-11-11 |
 | `z-ai/glm-4.5` | 2026-12-31 |
+| `dots-studio/dots-3-note-preview:free` | 2026-12-31 |
+| `google/gemini-2.5-flash-image` | 2027-03-15 |
 
-3 Z.ai rows used `2098-12-31`. The catalog preserves that value as provider metadata but does not interpret it as a real migration deadline. Query the single-model endpoint before relying on any expiring ID.
+The `nex-agi/nex-n2-mini`, `nex-agi/nex-n2-pro`, and `z-ai/glm-4.7-flash` rows from the 2026-09-07 snapshot have already expired and left the live catalog. `z-ai/glm-4.5v` no longer carries an expiration date. 4 rows (`stealth/space-bunny-alpha`, `z-ai/glm-5.3-flashx`, `z-ai/glm-5v-turbo`, `z-ai/glm-5-turbo`) used `2098-12-31`. The catalog preserves that value as provider metadata but does not interpret it as a real migration deadline. Query the single-model endpoint before relying on any expiring ID.
 
 ## Pricing and rate limits
 
 - OpenRouter returns per-token, per-request, image, web-search, reasoning, and cache prices in the Models API where applicable.
 - The FAQ documents a 5.5% credit-purchase fee with a $0.80 minimum and pass-through inference pricing.
-- The FAQ and BYOK guide say the first 1M BYOK requests per month waive the 5% BYOK fee. The pricing page currently presents a different plan-level BYOK threshold. Recheck the pricing page and workspace contract before a billing decision.
+- The FAQ and BYOK guide no longer describe a request-count waiver. As of 2026-09-23 both agree with the pricing page: the BYOK fee waiver is a plan-level monthly list-price inference-cost allowance (Pay-as-you-go: $25,000/month; Enterprise: $200,000/month), with the 5% fee applying only above that allowance. This supersedes the prior "first 1M BYOK requests/month" reading recorded on 2026-09-07.
 - Free routes allow 50 requests per day in total until the account has purchased at least $10 of credits, then 1,000 per day. Treat free routes as evaluation capacity.
 - Paid and BYOK capacity depends on the account and upstream provider. Read response metadata and provider responses instead of encoding a fixed paid-plan limit.
 
@@ -102,7 +116,7 @@ The live API returned 9 non-null `expiration_date` values. 6 are operationally a
 
 ## Freshness protocol
 
-Recheck by 2026-09-21 because the live catalog contains near-term expirations and changes continuously.
+Recheck by 2026-10-07 because the live catalog contains near-term expirations and changes continuously.
 
 1. Fetch `GET /api/v1/models?output_modalities=all` and record the response digest, counts, capability flags, prices, and expiration dates without retaining credentials.
 2. Re-fetch provider routing, model fallback, structured output, tool, reasoning, multimodal, pricing, FAQ, and BYOK docs.
@@ -114,7 +128,7 @@ Refresh immediately before a production routing or billing change, after an upst
 
 ## Provenance
 
-All sources were re-fetched on 2026-09-07 and are OpenRouter first-party pages or the first-party Models API.
+All sources were re-fetched on 2026-09-23 and are OpenRouter first-party pages or the first-party Models API.
 
 - [Models API contract](https://openrouter.ai/docs/guides/overview/models)
 - [Provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)
@@ -132,4 +146,5 @@ All sources were re-fetched on 2026-09-07 and are OpenRouter first-party pages o
 
 - 2026-08-29: Added a live aggregate snapshot, representative popular models, capability and policy routing guidance, expiration watch, commercial caveats, and a seven-day freshness contract.
 - 2026-08-29: Kept the 540-model live catalog out of source control and made the Models API the exhaustive source of truth.
-- 2026-09-07: Refreshed every dynamic field against the live Models API (581 models, up from 540). The popular-model sample, capability counts, response digests, and expiration watch were re-derived; `moonshotai/kimi-k2.5` no longer carries an expiration date and left the watch list. Capture is unauthenticated, so per-account routing and negotiated pricing may differ.
+- 2026-09-07: Refreshed every dynamic field against the live Models API (581 models, up from 540). The popular-model sample, capability counts, response digests, and expiration watch were re-derived; `moonshotai/kimi-k2.5` no longer carries an expiration date and left the watch list. Capture is unauthenticated, so per-account routing and negotiated pricing may differ. The freshness protocol at the time read "Recheck by 2026-09-21."
+- 2026-09-23: Refreshed every dynamic field against the live Models API (620 models, up from 581). Capability counts, both response digests, the actionable-expiration watch (20 rows, up from 6; 3 previously-watched rows expired and left the catalog), and the sentinel count (4, up from 3) were re-derived. The popularity ranking reshuffled: ranks 1-4 are the same four models reordered plus one swap, and the rank-8 and rank-11 sample rows changed to `tencent/hy3` and `google/gemini-3.8-flash`; `xiaomi/mimo-v2.5` fell from rank 11 to rank 6 and is no longer in the six-row representative sample. The BYOK fee-waiver threshold changed from a request-count reading to a documented monthly list-price cost allowance, confirmed consistent across the FAQ, BYOK guide, and pricing page. Capture remains unauthenticated.

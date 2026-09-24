@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "openrouter",
   "display_name": "OpenRouter",
-  "captured_at": "2026-09-07",
-  "review_after": "2026-09-21",
+  "captured_at": "2026-09-23",
+  "review_after": "2026-10-07",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "dynamic_aggregator_snapshot",
   "coverage": {
@@ -37,98 +37,98 @@
     {
       "id": "models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "popular_models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all&sort=most-popular",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "single_model_api",
       "url": "https://openrouter.ai/docs/guides/overview/models",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "mimo_model_page",
       "url": "https://openrouter.ai/xiaomi/mimo-v2.5-20260422/apps",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "model_page"
     },
     {
       "id": "provider_routing",
       "url": "https://openrouter.ai/docs/guides/routing/provider-selection",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "model_fallbacks",
       "url": "https://openrouter.ai/docs/guides/routing/model-fallbacks",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "structured_outputs",
       "url": "https://openrouter.ai/docs/guides/features/structured-outputs",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "tool_calling",
       "url": "https://openrouter.ai/docs/guides/features/tool-calling",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "reasoning",
       "url": "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "multimodal",
       "url": "https://openrouter.ai/docs/guides/overview/multimodal/overview",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "latency",
       "url": "https://openrouter.ai/docs/features/latency-and-performance",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "pricing",
       "url": "https://openrouter.ai/pricing",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "faq",
       "url": "https://openrouter.ai/docs/faq",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "byok",
       "url": "https://openrouter.ai/docs/guides/overview/auth/byok",
-      "captured_at": "2026-09-07",
+      "captured_at": "2026-09-23",
       "tier": "T1",
       "kind": "documentation"
     }
@@ -136,53 +136,109 @@
   "runtime_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all",
     "access_mode": "unauthenticated public endpoint; no credential sent or retained",
-    "response_sha256": "234f1a34c4584f05d4708d16709833518584bfc284398901b20ac9d98cdc2501",
-    "model_count": 581,
+    "response_sha256": "7a4e4ddb12b5647fe5b398c82d55467b73c651cf5a31b27c75d3c03a515e5018",
+    "model_count": 620,
     "capability_counts": {
-      "tools": 363,
-      "structured_outputs": 448,
-      "reasoning": 305,
-      "image_input": 336,
-      "audio_input": 75
+      "tools": 389,
+      "structured_outputs": 376,
+      "reasoning": 329,
+      "image_input": 364,
+      "audio_input": 78
     },
-    "expiration_date_count": 9,
+    "expiration_date_count": 24,
     "actionable_expirations": [
       {
-        "id": "nex-agi/nex-n2-mini",
-        "expiration_date": "2026-09-08"
+        "id": "nex-agi/nex-n2.5-mini:free",
+        "expiration_date": "2026-09-25"
       },
       {
-        "id": "nex-agi/nex-n2-pro",
-        "expiration_date": "2026-09-08"
+        "id": "nex-agi/nex-n2.5-pro:free",
+        "expiration_date": "2026-09-25"
       },
       {
-        "id": "z-ai/glm-4.7-flash",
-        "expiration_date": "2026-09-10"
+        "id": "deepseek/deepseek-v3.2",
+        "expiration_date": "2026-09-28"
       },
       {
-        "id": "dots-studio/dots-3-note-preview:free",
-        "expiration_date": "2026-09-30"
+        "id": "deepseek/deepseek-v3.2-exp",
+        "expiration_date": "2026-09-28"
       },
       {
-        "id": "z-ai/glm-4.5v",
-        "expiration_date": "2026-12-31"
+        "id": "deepseek/deepseek-v3.1-terminus",
+        "expiration_date": "2026-09-28"
+      },
+      {
+        "id": "deepseek/deepseek-r1-distill-llama-70b",
+        "expiration_date": "2026-09-28"
+      },
+      {
+        "id": "minimax/minimax-m2.1",
+        "expiration_date": "2026-10-08"
+      },
+      {
+        "id": "baidu/ernie-4.5-vl-424b-a47b",
+        "expiration_date": "2026-10-08"
+      },
+      {
+        "id": "google/gemini-2.5-flash-lite",
+        "expiration_date": "2026-10-20"
+      },
+      {
+        "id": "google/gemini-2.5-flash",
+        "expiration_date": "2026-10-20"
+      },
+      {
+        "id": "google/gemini-2.5-flash:batch",
+        "expiration_date": "2026-10-20"
+      },
+      {
+        "id": "google/gemini-2.5-pro",
+        "expiration_date": "2026-10-20"
+      },
+      {
+        "id": "google/gemini-2.5-pro:batch",
+        "expiration_date": "2026-10-20"
+      },
+      {
+        "id": "bytedance-seed/seed-2.0-code",
+        "expiration_date": "2026-11-11"
+      },
+      {
+        "id": "bytedance/seedance-1-5-pro",
+        "expiration_date": "2026-11-11"
+      },
+      {
+        "id": "bytedance-seed/seed-1.6-flash",
+        "expiration_date": "2026-11-11"
+      },
+      {
+        "id": "bytedance-seed/seed-1.6",
+        "expiration_date": "2026-11-11"
       },
       {
         "id": "z-ai/glm-4.5",
         "expiration_date": "2026-12-31"
+      },
+      {
+        "id": "dots-studio/dots-3-note-preview:free",
+        "expiration_date": "2026-12-31"
+      },
+      {
+        "id": "google/gemini-2.5-flash-image",
+        "expiration_date": "2027-03-15"
       }
     ],
     "sentinel_expirations": {
       "value": "2098-12-31",
-      "count": 3,
+      "count": 4,
       "interpretation": "Far-future values are retained as provider metadata but are not treated as actionable shutdown dates."
     }
   },
   "popular_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all&sort=most-popular",
     "sort_semantics": "most tokens processed in the last week",
-    "response_sha256": "4480b4b60f1003d8b60e67ae466b3413a1b267d24f484c6f8f99b3551b2058a8",
-    "model_count": 581
+    "response_sha256": "f369ef469377de1105988a07ea73ffb2c8e213fc7d4661b0c471191ef1f31fac",
+    "model_count": 620
   },
   "provider_features": {
     "api": {
@@ -233,13 +289,68 @@
       "credit_purchase_fee_percent": 5.5,
       "credit_purchase_minimum_fee_usd": 0.8,
       "byok_fee_percent_after_waiver": 5.0,
-      "byok_waiver": "FAQ and BYOK docs say first 1M BYOK requests per month; the pricing page presents a different plan-level threshold. Recheck the pricing page and workspace terms before a billing decision."
+      "byok_waiver": "FAQ and BYOK docs now agree: the BYOK fee waiver is a plan-level monthly list-price inference-cost allowance, not a request count. Pay-as-you-go plans get the first $25,000/month of list-price inference with no BYOK fee; Enterprise gets $200,000/month. The 5% fee applies only above that allowance. This supersedes the prior '1M BYOK requests/month' reading, which the live docs no longer state."
     }
   },
   "model_samples": [
     {
-      "id": "tencent/hy4-preview",
+      "id": "z-ai/glm-5.3-flash",
       "popular_rank": 1,
+      "context_window_tokens": 1048576,
+      "modalities": {
+        "input": [
+          "image",
+          "text",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.15,
+        "output": 0.5
+      },
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": true,
+        "reasoning": true
+      },
+      "sources": [
+        "popular_models_api"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "popular_rank": 2,
+      "context_window_tokens": 1048576,
+      "modalities": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.14,
+        "output": 0.42
+      },
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": true,
+        "reasoning": true
+      },
+      "sources": [
+        "popular_models_api"
+      ]
+    },
+    {
+      "id": "tencent/hy4-preview",
+      "popular_rank": 3,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
@@ -265,7 +376,7 @@
     },
     {
       "id": "openai/gpt-5.6-luna",
-      "popular_rank": 2,
+      "popular_rank": 4,
       "context_window_tokens": 1050000,
       "modalities": {
         "input": [
@@ -292,63 +403,9 @@
       ]
     },
     {
-      "id": "z-ai/glm-5.3-flash",
-      "popular_rank": 3,
-      "context_window_tokens": 1310720,
-      "modalities": {
-        "input": [
-          "image",
-          "text",
-          "video"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "pricing": {
-        "unit": "usd_per_million_tokens",
-        "input": 0.075,
-        "output": 0.25
-      },
-      "capabilities": {
-        "tools": true,
-        "structured_outputs": true,
-        "reasoning": true
-      },
-      "sources": [
-        "popular_models_api"
-      ]
-    },
-    {
-      "id": "deepseek/deepseek-v4-flash-0731",
-      "popular_rank": 4,
-      "context_window_tokens": 1310720,
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "pricing": {
-        "unit": "usd_per_million_tokens",
-        "input": 0.14,
-        "output": 0.28
-      },
-      "capabilities": {
-        "tools": true,
-        "structured_outputs": true,
-        "reasoning": true
-      },
-      "sources": [
-        "popular_models_api"
-      ]
-    },
-    {
-      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "id": "tencent/hy3",
       "popular_rank": 8,
-      "context_window_tokens": 1000000,
+      "context_window_tokens": 262144,
       "modalities": {
         "input": [
           "text"
@@ -359,12 +416,12 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.0,
-        "output": 0.0
+        "input": 0.132,
+        "output": 0.528
       },
       "capabilities": {
         "tools": true,
-        "structured_outputs": false,
+        "structured_outputs": true,
         "reasoning": true
       },
       "sources": [
@@ -372,12 +429,13 @@
       ]
     },
     {
-      "id": "xiaomi/mimo-v2.5",
+      "id": "google/gemini-3.8-flash",
       "popular_rank": 11,
-      "context_window_tokens": 1050000,
+      "context_window_tokens": 1048576,
       "modalities": {
         "input": [
           "audio",
+          "file",
           "image",
           "text",
           "video"
@@ -388,23 +446,20 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.14,
-        "output": 0.28
+        "input": 0.75,
+        "output": 3.75
       },
       "capabilities": {
         "tools": true,
-        "structured_outputs": null,
+        "structured_outputs": true,
         "reasoning": true
       },
       "sources": [
-        "popular_models_api",
-        "mimo_model_page"
+        "popular_models_api"
       ]
     }
   ],
   "uncertainties": [
-    "The MiMo-V2.5 Models API record lists structured_outputs while its official model page states 'It does not support response_format, so JSON output is not enforced' (both re-read 2026-09-07). The per-model structured_outputs field remains null until an exact endpoint probe resolves the conflict.",
-    "The MiMo-V2.5 model page quoted $0.119/$0.238 per million input/output tokens against the Models API's $0.14/$0.28 (both read 2026-09-07). This snapshot retains the API values and requires live account/provider confirmation before billing decisions.",
     "This capture used the unauthenticated public endpoint. Per-account routing, provider allow-lists, and negotiated pricing can differ from these values."
   ],
   "global_notes": {

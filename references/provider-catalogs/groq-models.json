@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "provider": "groq",
-  "captured_at": "2026-08-18",
-  "review_after": "2026-09-17",
+  "captured_at": "2026-09-23",
+  "review_after": "2026-10-23",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "source_precedence": [
     "deprecations",
@@ -29,21 +29,21 @@
     "provider_features.batch_processing"
   ],
   "sources": [
-    {"id": "models", "url": "https://console.groq.com/docs/models", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "deprecations", "url": "https://console.groq.com/docs/deprecations", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "structured_outputs", "url": "https://console.groq.com/docs/structured-outputs", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "tool_use", "url": "https://console.groq.com/docs/tool-use/overview", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "reasoning", "url": "https://console.groq.com/docs/reasoning", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "responses_api", "url": "https://console.groq.com/docs/responses-api", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "vision", "url": "https://console.groq.com/docs/vision", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "speech_to_text", "url": "https://console.groq.com/docs/speech-to-text", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "text_to_speech", "url": "https://console.groq.com/docs/text-to-speech", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "rate_limits", "url": "https://console.groq.com/docs/rate-limits", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "prompt_caching", "url": "https://console.groq.com/docs/prompt-caching", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "flex", "url": "https://console.groq.com/docs/flex-processing", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "batch", "url": "https://console.groq.com/docs/batch", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "latency", "url": "https://console.groq.com/docs/production-readiness/optimizing-latency", "captured_at": "2026-08-18", "tier": "T1"},
-    {"id": "production_checklist", "url": "https://console.groq.com/docs/production-readiness/production-ready-checklist", "captured_at": "2026-08-18", "tier": "T1"}
+    {"id": "models", "url": "https://console.groq.com/docs/models", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "deprecations", "url": "https://console.groq.com/docs/deprecations", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "structured_outputs", "url": "https://console.groq.com/docs/structured-outputs", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "tool_use", "url": "https://console.groq.com/docs/tool-use/overview", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "reasoning", "url": "https://console.groq.com/docs/reasoning", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "responses_api", "url": "https://console.groq.com/docs/responses-api", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "vision", "url": "https://console.groq.com/docs/vision", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "speech_to_text", "url": "https://console.groq.com/docs/speech-to-text", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "text_to_speech", "url": "https://console.groq.com/docs/text-to-speech", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "rate_limits", "url": "https://console.groq.com/docs/rate-limits", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "prompt_caching", "url": "https://console.groq.com/docs/prompt-caching", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "flex", "url": "https://console.groq.com/docs/flex-processing", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "batch", "url": "https://console.groq.com/docs/batch", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "latency", "url": "https://console.groq.com/docs/production-readiness/optimizing-latency", "captured_at": "2026-09-23", "tier": "T1"},
+    {"id": "production_checklist", "url": "https://console.groq.com/docs/production-readiness/production-ready-checklist", "captured_at": "2026-09-23", "tier": "T1"}
   ],
   "global_notes": {
     "performance": "Throughput and benchmark values are Groq-advertised observations, not independent Build Loop benchmarks or end-to-end latency SLAs.",
@@ -53,7 +53,8 @@
     "retired": "lifecycle 'retired' means the announced shutdown date has passed and the model no longer appears on the models page, the rate-limits page, or the runtime models endpoint. Enterprise committed-spend contracts may still be served where the deprecation notice carved them out. Technical fields on a retired entry carry values_as_of and are last-known values for migration reference, not current offerings.",
     "active_models_api": "GET https://api.groq.com/openai/v1/models was queried on 2026-08-18 with a Developer-plan key and returned 13 active IDs. Neither llama-3.1-8b-instant nor llama-3.3-70b-versatile was present, confirming the 2026-08-16 shutdown. minimaxai/minimax-m2.7 was also absent, which is expected for a non-Enterprise key and is not evidence of removal. Runtime pricing and context values for the 12 documented IDs matched the models page exactly.",
     "undocumented_runtime_models": "The 2026-08-18 runtime listing also returned allam-2-7b (owner SDAIA, 4,096 context, json_object mode only, no pricing block). No page under console.groq.com/docs describes it, so its lifecycle, pricing, and support status cannot be established from primary documentation. It is deliberately excluded from models[] rather than recorded on runtime evidence alone.",
-    "stale_capability_pages": "The tool-use page still lists llama-3.3-70b-versatile and llama-3.1-8b-instant in its capability matrix after their shutdown. source_precedence resolves this: the deprecations page outranks capability-specific pages."
+    "stale_capability_pages": "The tool-use page still lists llama-3.3-70b-versatile and llama-3.1-8b-instant in its capability matrix after their shutdown. source_precedence resolves this: the deprecations page outranks capability-specific pages.",
+    "compound_retirement_2026-09-23": "The deprecations page confirms groq/compound and groq/compound-mini were announced 2026-08-24 and decommissioned 2026-09-21; the 2026-09-23 fetch of the models page no longer lists either ID. No replacement was named (the deprecations table shows a dash), and the page does not state which plans were affected, so plans and enterprise_committed_spend_affected are recorded as null rather than assumed."
   },
   "provider_features": {
     "responses_api": {"lifecycle": "beta", "sources": ["responses_api"]},
@@ -88,7 +89,7 @@
       "pricing": {"unit": "usd_per_million_tokens", "input": 0.59, "output": 0.79},
       "developer_plan_limits": {"tpm": 300000, "rpm": 1000},
       "capabilities": {"reasoning": false, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": true, "built_in_tools": false, "prompt_caching": false, "vision": false},
-      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "shutdown_confirmed_at": "2026-08-18", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"]},
+      "deprecation": {"announced_at": "2026-06-17", "shutdown_at": "2026-08-16", "shutdown_confirmed_at": "2026-08-18", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]},
       "sources": ["models", "deprecations", "tool_use"]
     },
     {
@@ -99,7 +100,7 @@
       "context_window_tokens": 131072,
       "max_completion_tokens": 65536,
       "advertised_tokens_per_second": 500,
-      "pricing": {"unit": "usd_per_million_tokens", "input": 0.15, "output": 0.60},
+      "pricing": {"unit": "usd_per_million_tokens", "input": 0.15, "output": 0.6},
       "developer_plan_limits": {"tpm": 250000, "rpm": 1000},
       "capabilities": {"reasoning": true, "reasoning_effort": ["low", "medium", "high"], "reasoning_interface": "include_reasoning", "reasoning_format_supported": false, "strict_structured_outputs": true, "best_effort_structured_outputs": true, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": false, "built_in_tools": true, "prompt_caching": true, "vision": false},
       "sources": ["models", "structured_outputs", "tool_use", "reasoning", "prompt_caching"]
@@ -112,7 +113,7 @@
       "context_window_tokens": 131072,
       "max_completion_tokens": 65536,
       "advertised_tokens_per_second": 1000,
-      "pricing": {"unit": "usd_per_million_tokens", "input": 0.075, "output": 0.30},
+      "pricing": {"unit": "usd_per_million_tokens", "input": 0.075, "output": 0.3},
       "developer_plan_limits": {"tpm": 250000, "rpm": 1000},
       "capabilities": {"reasoning": true, "reasoning_effort": ["low", "medium", "high"], "reasoning_interface": "include_reasoning", "reasoning_format_supported": false, "strict_structured_outputs": true, "best_effort_structured_outputs": true, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": false, "built_in_tools": true, "prompt_caching": true, "vision": false},
       "sources": ["models", "structured_outputs", "tool_use", "reasoning", "prompt_caching"]
@@ -144,7 +145,8 @@
     {
       "id": "groq/compound",
       "kind": "compound_system",
-      "lifecycle": "production",
+      "lifecycle": "retired",
+      "values_as_of": "2026-08-18",
       "modalities": ["text_input", "text_output"],
       "context_window_tokens": 131072,
       "max_completion_tokens": 8192,
@@ -152,12 +154,14 @@
       "pricing": {"unit": "pass_through", "note": "Underlying model and server-side tool charges apply."},
       "developer_plan_limits": {"tpm": 200000, "rpm": 200},
       "capabilities": {"reasoning": false, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": false, "remote_tools": false, "parallel_tools": null, "built_in_tools": true, "prompt_caching": false, "vision": false},
-      "sources": ["models", "tool_use"]
+      "deprecation": {"announced_at": "2026-08-24", "shutdown_at": "2026-09-21", "shutdown_confirmed_at": "2026-09-23", "plans": null, "enterprise_committed_spend_affected": null, "replacements": []},
+      "sources": ["models", "tool_use", "deprecations"]
     },
     {
       "id": "groq/compound-mini",
       "kind": "compound_system",
-      "lifecycle": "production",
+      "lifecycle": "retired",
+      "values_as_of": "2026-08-18",
       "modalities": ["text_input", "text_output"],
       "context_window_tokens": 131072,
       "max_completion_tokens": 8192,
@@ -165,7 +169,8 @@
       "pricing": {"unit": "pass_through", "note": "Underlying model and server-side tool charges apply."},
       "developer_plan_limits": {"tpm": 200000, "rpm": 200},
       "capabilities": {"reasoning": false, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": false, "remote_tools": false, "parallel_tools": null, "built_in_tools": true, "prompt_caching": false, "vision": false},
-      "sources": ["models", "tool_use"]
+      "deprecation": {"announced_at": "2026-08-24", "shutdown_at": "2026-09-21", "shutdown_confirmed_at": "2026-09-23", "plans": null, "enterprise_committed_spend_affected": null, "replacements": []},
+      "sources": ["models", "tool_use", "deprecations"]
     },
     {
       "id": "canopylabs/orpheus-arabic-saudi",
@@ -236,25 +241,42 @@
       "context_window_tokens": 131072,
       "max_completion_tokens": 65536,
       "advertised_tokens_per_second": 1000,
-      "pricing": {"unit": "usd_per_million_tokens", "input": 0.075, "output": 0.30},
+      "pricing": {"unit": "usd_per_million_tokens", "input": 0.075, "output": 0.3},
       "developer_plan_limits": {"tpm": 150000, "rpm": 1000},
       "capabilities": {"reasoning": true, "reasoning_effort": null, "strict_structured_outputs": false, "best_effort_structured_outputs": true, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": false, "built_in_tools": false, "prompt_caching": true, "vision": false},
       "sources": ["models", "structured_outputs", "tool_use", "reasoning", "prompt_caching"]
     },
     {
-      "id": "qwen/qwen3.6-27b",
+      "id": "qwen/qwen3.8-27b",
       "kind": "multimodal_chat_model",
       "lifecycle": "preview",
       "modalities": ["text_input", "image_input", "text_output"],
       "context_window_tokens": 131072,
       "max_completion_tokens": 16384,
       "max_file_size_mb": 20,
+      "max_images_per_request": 3,
+      "advertised_tokens_per_second": 450,
+      "pricing": {"unit": "usd_per_million_tokens", "input": 0.8, "output": 4.0},
+      "developer_plan_limits": {"tpm": 250000, "rpm": 1000},
+      "capabilities": {"reasoning": true, "reasoning_effort": ["none", "default", "low", "medium", "high"], "reasoning_interface": "reasoning_format", "reasoning_format_supported": true, "strict_structured_outputs": true, "best_effort_structured_outputs": true, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": true, "built_in_tools": false, "prompt_caching": false, "vision": true},
+      "sources": ["models", "reasoning", "structured_outputs", "tool_use", "vision"]
+    },
+    {
+      "id": "qwen/qwen3.6-27b",
+      "kind": "multimodal_chat_model",
+      "lifecycle": "retired",
+      "modalities": ["text_input", "image_input", "text_output"],
+      "context_window_tokens": 131072,
+      "max_completion_tokens": 16384,
+      "max_file_size_mb": 20,
       "max_images_per_request": 5,
       "advertised_tokens_per_second": 500,
-      "pricing": {"unit": "usd_per_million_tokens", "input": 0.60, "output": 3.00},
+      "pricing": {"unit": "usd_per_million_tokens", "input": 0.6, "output": 3.0},
       "developer_plan_limits": {"tpm": 250000, "rpm": 1000},
       "capabilities": {"reasoning": true, "reasoning_effort": ["none", "default"], "reasoning_interface": "reasoning_format", "reasoning_format_supported": true, "strict_structured_outputs": false, "best_effort_structured_outputs": false, "json_object_mode": true, "local_tools": true, "remote_tools": true, "parallel_tools": true, "built_in_tools": false, "prompt_caching": false, "vision": true},
-      "sources": ["models", "tool_use", "reasoning", "vision"]
+      "sources": ["deprecations", "models", "reasoning", "tool_use", "vision"],
+      "values_as_of": "2026-09-07",
+      "deprecation": {"announced_at": null, "shutdown_at": "2026-09-14", "shutdown_confirmed_at": "2026-09-23", "plans": ["free", "developer"], "enterprise_committed_spend_affected": false, "replacements": ["qwen/qwen3.8-27b"]}
     }
   ]
 }

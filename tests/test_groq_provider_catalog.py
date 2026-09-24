@@ -75,9 +75,10 @@ def test_catalog_covers_models_page_snapshot_without_duplicate_ids() -> None:
         "meta-llama/llama-prompt-guard-2-86m",
         "minimaxai/minimax-m2.7",
         "openai/gpt-oss-safeguard-20b",
+        "qwen/qwen3.8-27b",
         "qwen/qwen3.6-27b",
     }
-    assert len(ids) == len(set(ids)) == 15
+    assert len(ids) == len(set(ids)) == 16
     assert set(ids) == expected_ids
     source_ids = {source["id"] for source in catalog["sources"]}
     assert all(model["sources"] and set(model["sources"]) <= source_ids for model in catalog["models"])
@@ -87,7 +88,7 @@ def test_deprecation_schedule_overrides_models_page_badge() -> None:
     models = models_by_id(load_catalog())
     expected = {
         "llama-3.1-8b-instant": ["openai/gpt-oss-20b"],
-        "llama-3.3-70b-versatile": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"],
+        "llama-3.3-70b-versatile": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
     }
     for model_id, replacements in expected.items():
         model = models[model_id]
@@ -112,7 +113,8 @@ def test_strict_structured_outputs_are_not_overclaimed() -> None:
         for model_id, model in models.items()
         if model.get("capabilities", {}).get("strict_structured_outputs") is True
     }
-    assert strict_ids == {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+    # Structured-outputs page (2026-09-23) lists strict mode for GPT-OSS 20B/120B and Qwen 3.8 27B.
+    assert strict_ids == {"openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"}
 
 
 def test_reasoning_controls_are_model_family_specific() -> None:
@@ -121,7 +123,7 @@ def test_reasoning_controls_are_model_family_specific() -> None:
         capabilities = models[model_id]["capabilities"]
         assert capabilities["reasoning_interface"] == "include_reasoning"
         assert capabilities["reasoning_format_supported"] is False
-    for model_id in ("qwen/qwen3.6-27b", "minimaxai/minimax-m2.7"):
+    for model_id in ("qwen/qwen3.8-27b", "minimaxai/minimax-m2.7"):
         capabilities = models[model_id]["capabilities"]
         assert capabilities["reasoning_interface"] == "reasoning_format"
         assert capabilities["reasoning_format_supported"] is True
@@ -143,8 +145,10 @@ def test_dynamic_fields_are_real_catalog_paths() -> None:
 
 def test_preview_modalities_are_not_presented_as_stable_production() -> None:
     models = models_by_id(load_catalog())
-    assert models["qwen/qwen3.6-27b"]["lifecycle"] == "preview"
-    assert models["qwen/qwen3.6-27b"]["capabilities"]["vision"] is True
+    assert models["qwen/qwen3.8-27b"]["lifecycle"] == "preview"
+    assert models["qwen/qwen3.8-27b"]["capabilities"]["vision"] is True
+    # Groq replaced 3.6 with 3.8 on 2026-09-14 (deprecations page).
+    assert models["qwen/qwen3.6-27b"]["lifecycle"] == "retired"
     assert models["canopylabs/orpheus-v1-english"]["lifecycle"] == "preview"
     assert models["canopylabs/orpheus-arabic-saudi"]["lifecycle"] == "preview"
 

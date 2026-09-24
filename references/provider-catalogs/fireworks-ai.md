@@ -1,8 +1,8 @@
 # Fireworks AI provider catalog and workload guide
 
-Snapshot date: **2026-09-07**
+Snapshot date: **2026-09-23**
 
-Review by: **2026-09-21**
+Review by: **2026-10-07**
 
 Machine-readable companion: `references/provider-catalogs/fireworks-ai-models.json`
 
@@ -15,6 +15,7 @@ Use this guide for downstream Fireworks AI inference. It covers the current offi
 - Evaluate `accounts/fireworks/models/deepseek-v4-pro-0813`, `accounts/fireworks/models/kimi-k3`, and `accounts/fireworks/models/glm-5p2` for harder coding, agent, or reasoning workloads.
 - Use `accounts/fireworks/models/qwen3-omni-30b-a3b-instruct` only for a deployed audio/video-input workload after confirming the exact deployment surface. The current changelog and current input guides describe different audio/image surfaces.
 - Do not route new work to the 2026-08-27 deprecated serverless IDs. Use their documented replacements.
+- `accounts/fireworks/models/deepseek-v4-pro-0813`, `accounts/fireworks/models/deepseek-v4-flash-0731`, and `accounts/fireworks/models/glm-5p2` are scheduled for serverless removal on **2026-09-25** (2 days after this snapshot). Migrate to `accounts/fireworks/models/deepseek-v4p1-flash` (both DeepSeek IDs) or `accounts/fireworks/models/glm-5p3` before that date. See "Upcoming serverless deprecations" below.
 
 ## Current decision candidates
 
@@ -45,15 +46,15 @@ The Priority column on the pricing page is the source of truth for Priority avai
 
 ### Adaptive rate limits
 
-Fireworks documents three adaptive serverless metrics per account and model:
+Fireworks documents three adaptive serverless metrics per account and model, with ceilings now tiered by the model's total parameter count (changed 2026-09-01; previously a single flat starting ceiling applied to every model):
 
-| Metric | Starting limit |
-|---|---:|
-| Total prompt TPM | 3,600,000 |
-| Uncached prompt TPM | 900,000 |
-| Generated TPM | 36,000 |
+| Tier | Total parameters | Total prompt TPM | Uncached prompt TPM | Generated TPM |
+|---|---|---:|---:|---:|
+| Small | < 400B | 64,800,000 | 16,200,000 | 648,000 |
+| Medium | 400B – < 1.6T | 43,200,000 | 10,800,000 | 432,000 |
+| Large | ≥ 1.6T | 21,600,000 | 5,400,000 | 216,000 |
 
-Sustained usage can raise the limit. Read the `X-Ratelimit-*` response headers. A 429 means the request crossed the adaptive limit; a 503 means the shared deployment could not serve it. Use bounded backoff for 429 and consider Priority, a fallback, or dedicated capacity for 503.
+Fast, Priority, and US-only variants share their base model's tier and ceiling. A model with an unknown parameter count uses the Large ceiling. Sustained usage can raise the limit within the tier ceiling. Read the `X-Ratelimit-*` response headers. A 429 means the request crossed the adaptive limit; a 503 means the shared deployment could not serve it. Use bounded backoff for 429 and consider Priority, a fallback, or dedicated capacity for 503.
 
 ### Prompt caching
 
@@ -93,6 +94,18 @@ Fireworks marked the following serverless routes deprecated effective 2026-08-27
 
 `deepseek-v4-flash` was deprecated on 2026-08-14 in favor of `deepseek-v4-flash-0731`. The changelog does not give a later removal date for these entries. Treat them as unavailable for new serverless routing unless the List Models API proves otherwise.
 
+## Upcoming serverless deprecations (effective 2026-09-25)
+
+Fireworks announced on 2026-09-16 that several older serverless models are decommissioned on **September 25, 2026**, dedicated deployments unaffected. Of the models tracked in this catalog:
+
+| Deprecated route | Replacement |
+|---|---|
+| `deepseek-v4-pro-0813` | `deepseek-v4p1-flash` |
+| `deepseek-v4-flash-0731` | `deepseek-v4p1-flash` |
+| `glm-5p2` | `glm-5p3` |
+
+All three remain live as of this 2026-09-23 snapshot and are still listed under `models[]`, not `deprecations[]`, because the removal has not yet taken effect. See `scheduled_deprecations[]` in the JSON companion. Do not start new serverless integrations against these three IDs; migrate before 2026-09-25.
+
 ## Production checklist
 
 1. Fetch `supports_serverless=true` with the List Models API using the deployment account's credential.
@@ -103,7 +116,7 @@ Fireworks marked the following serverless routes deprecated effective 2026-08-27
 
 ## Freshness protocol
 
-Recheck by 2026-09-21 because the latest serverless deprecation took effect two days before this snapshot.
+Recheck by 2026-10-07. Recheck sooner than that if needed: the 2026-09-25 scheduled deprecation of `deepseek-v4-pro-0813`, `deepseek-v4-flash-0731`, and `glm-5p2` (see above) takes effect 2 days after this snapshot and should be re-verified once it lands.
 
 1. Fetch the model library, List Models API, pricing, serving paths, rate limits, recommended models, capabilities, and changelog.
 2. Diff every `dynamic_fields` path in the JSON companion.
@@ -113,7 +126,7 @@ Recheck by 2026-09-21 because the latest serverless deprecation took effect two 
 
 ## Provenance
 
-All sources were fetched on 2026-08-29 and are Fireworks first-party documentation. The List Models endpoint was not called because `FIREWORKS_API_KEY` was unavailable.
+All sources were re-fetched on 2026-09-23 and are Fireworks first-party documentation. The List Models endpoint was not called because `FIREWORKS_API_KEY` was unavailable.
 
 - [Recommended models](https://docs.fireworks.ai/guides/recommended-models)
 - [Serverless pricing](https://docs.fireworks.ai/serverless/pricing)
@@ -129,5 +142,6 @@ All sources were fetched on 2026-08-29 and are Fireworks first-party documentati
 
 ## Changelog
 
+- 2026-09-23: Re-verified against all 11 sources (WebFetch plus raw-HTML confirmation of pricing, rate-limits, and changelog pages). Replaced the flat adaptive-rate-limit starting values with the size-tiered ceilings (small/medium/large) Fireworks published 2026-09-01. Added the 2026-09-25 scheduled serverless removal of `deepseek-v4-pro-0813`, `deepseek-v4-flash-0731`, and `glm-5p2` with replacements. All other pricing, capability, and serving-path fields for tracked models matched the live docs unchanged.
 - 2026-08-29: Added current model recommendations, headline pricing, serving tiers, adaptive limits, caching, tools, schemas, reasoning, multimodal boundaries, and deprecation migrations.
 - 2026-08-29: Recorded missing runtime credential coverage and kept unstated context/capability fields null.
