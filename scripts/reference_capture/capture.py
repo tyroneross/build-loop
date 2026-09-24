@@ -208,6 +208,9 @@ def capture_reference(
         extra_frontmatter=extra_frontmatter,
         scope=scope,
         project=resolved_project,
+        # Template-built body: its last line is the caller's short decision
+        # label, not prose that could have been cut off mid-sentence.
+        allow_truncated=True,
     )
 
     return {

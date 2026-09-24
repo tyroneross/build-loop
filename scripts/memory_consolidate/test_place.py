@@ -48,7 +48,7 @@ class PlaceTests(unittest.TestCase):
 
     def test_place_with_heuristic_decision_lands_in_lane(self):
         c = self.intake.submit(
-            "watch out for the path footgun in lane resolution",
+            "Watch out for the path footgun in lane resolution.",
             workdir=self.tmp,
             run_id="run_test", host="claude_code",
             hint="gotcha footgun", project="demoproj",
@@ -71,7 +71,7 @@ class PlaceTests(unittest.TestCase):
 
     def test_place_with_decision_overrides_lane_to_debugging(self):
         c = self.intake.submit(
-            "crash on startup, NPE in foo",
+            "crash on startup, NPE in foo.",
             workdir=self.tmp,
             run_id="run_test", host="claude_code",
             hint="bug crash exception", project="demoproj",
@@ -112,14 +112,14 @@ class PlaceTests(unittest.TestCase):
 
     def test_place_rejects_double_placement(self):
         """Placing the same candidate twice raises — it's already in placed/."""
-        c = self.intake.submit("body", workdir=self.tmp, run_id="r", host="claude_code", project="demoproj")
+        c = self.intake.submit("A lesson body.", workdir=self.tmp, run_id="r", host="claude_code", project="demoproj")
         decision = self.classify.heuristic_decision(c, similar=[])
         self.place.place(c.id, decision, workdir=self.tmp)
         with self.assertRaises(ValueError):
             self.place.place(c.id, decision, workdir=self.tmp)
 
     def test_reject_transitions_to_rejected(self):
-        c = self.intake.submit("body", workdir=self.tmp, run_id="r", host="claude_code")
+        c = self.intake.submit("A lesson body.", workdir=self.tmp, run_id="r", host="claude_code")
         self.place.reject(c.id, reason="dupe", workdir=self.tmp)
         rejected_dir = self.tmp / ".build-loop/pending-lessons/rejected"
         self.assertEqual(len(list(rejected_dir.glob("*.json"))), 1)

@@ -432,7 +432,7 @@ class CorrectionsAreDraftedNeverDecided(unittest.TestCase):
             mem = Path(mem_dir)
             candidate = disposition.stamp([correction()])[0]
             path = Path(memory_route._write_via_memory_writer(
-                candidate, "t", "body", memory_dir=mem, now=NOW))
+                candidate, "t", "A drafted body.", memory_dir=mem, now=NOW))
             self.assertIn("status: candidate", path.read_text(encoding="utf-8"))
 
             # The human promotes it: removes the marker and rewrites the body.
@@ -462,9 +462,9 @@ class CorrectionsAreDraftedNeverDecided(unittest.TestCase):
             mem = Path(mem_dir)
             candidate = disposition.stamp([correction()])[0]
             first = memory_route._write_via_memory_writer(
-                candidate, "t", "first body", memory_dir=mem, now=NOW)
+                candidate, "t", "first body.", memory_dir=mem, now=NOW)
             second = memory_route._write_via_memory_writer(
-                candidate, "t", "second body", memory_dir=mem, now=NOW)
+                candidate, "t", "second body.", memory_dir=mem, now=NOW)
             self.assertEqual(first, second)
             self.assertIn("first body", Path(first).read_text(encoding="utf-8"))
             self.assertNotIn("second body", Path(first).read_text(encoding="utf-8"))
@@ -523,7 +523,7 @@ class TheRealWriterStampsTheCandidateMarkers(unittest.TestCase):
         """
         candidate = disposition.stamp([correction()])[0]
         path = Path(memory_route._write_via_memory_writer(
-            candidate, "t", "body", memory_dir=self.mem, now=NOW))
+            candidate, "t", "A drafted body.", memory_dir=self.mem, now=NOW))
         self.assertTrue(
             str(path).startswith(str(self.mem)),
             f"wrote outside the injected memory dir: {path}")

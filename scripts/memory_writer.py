@@ -575,7 +575,9 @@ def _is_body_truncated(body: str) -> bool:
     lines = [ln for ln in body.splitlines() if ln.strip()]
     if not lines:
         return False
-    last = lines[-1].rstrip()
+    # Closing Markdown emphasis or quotes after the punctuation ("... done._",
+    # "**Why:** it failed.**") do not make a sentence unfinished.
+    last = lines[-1].rstrip().rstrip("*_~\"'")
     if last and last[-1] in _TERMINAL_CHARS:
         return False
     if _CODE_FENCE_RE.match(last) or _LIST_ITEM_RE.match(last) or _TABLE_ROW_RE.match(last):

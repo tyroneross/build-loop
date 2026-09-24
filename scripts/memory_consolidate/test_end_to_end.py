@@ -126,7 +126,7 @@ class EndToEndTests(unittest.TestCase):
         """Even if the host LLM sets ``decision.filename = 'projects/<slug>/issues/x.md'``,
         the writer guard normalises it. DoD: the exact double-nest is impossible."""
         c = self.intake.submit(
-            "another lesson body",
+            "Another lesson body.",
             workdir=self.tmp, run_id="run_x", host="claude_code",
             hint="issue", project="demoproj",
         )
@@ -172,7 +172,7 @@ class CLIEndToEndTests(unittest.TestCase):
         r = self._run(
             "--workdir", str(self.tmp),
             "submit", "--run-id", "rx", "--host", "claude_code",
-            "--content", "footgun in path normalization",
+            "--content", "Footgun in path normalization.",
             "--hint", "gotcha", "--project", "demoproj",
             "--json",
         )

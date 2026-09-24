@@ -1011,6 +1011,8 @@ class DuplicateAndTruncationGuardTests(unittest.TestCase):
             "| col a | col b |\n| --- | --- |\n| 1 | 2 |",
             "```\ncode block\n```",
             "A sentence that ends properly.",
+            "_candidate_id: `abc`, last seen 2026-08-24._",  # italic closer after the period
+            "**Why:** the build failed.**",
         ]
         for i, body in enumerate(ok_bodies):
             fm = mw.write(
