@@ -154,7 +154,7 @@ CATEGORY_KEYWORDS = [
                       "trace", "logging-tracer", "memory-first", "sourcekit")),
     # Validation includes plugin-hygiene checks (cache sync, namesake
     # collisions) and api-dependency contract checks.
-    ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic",
+    ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic", "acceptance",
                       "review", "rubric", "lint", "cache sync", "cache-sync",
                       # Commit-time drift/hygiene gates: artifact regen guard
                       # (keeps checked-in generated artifacts in sync) sits with

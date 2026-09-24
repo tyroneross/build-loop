@@ -515,7 +515,7 @@ _Source: retrospective `.build-loop/retrospectives/2026-09-12/bl-20260912T144000
 
 ## 2026-09-13 — Re-verify a subagent's or nested validator's findings against current state before acting on them
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop-memory/projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md`_
+_Source: retrospective `projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md` in the memory store (`scripts/_paths.py:memory_store_root()`)_
 
 **What happened.** What happened: this session was burned once by treating a stale validator report as current (§1) and only caught it by re-checking (§5)
 
@@ -529,7 +529,7 @@ _Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop-memory/proje
 
 ## 2026-09-13 — `git fetch` immediately before comparing local `HEAD` to a remote-tracking ref as push evidence
 
-_Source: retrospective `/Users/tyroneross/dev/git-folder/build-loop-memory/projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md`_
+_Source: retrospective `projects/persona-lab/retrospectives/2026-09-14/session-d5898945.md` in the memory store (`scripts/_paths.py:memory_store_root()`)_
 
 **What happened.** What happened: this session compared HEAD to a cached `origin/main` ref once without re-fetching, right after a DNS blip (§4)
 
