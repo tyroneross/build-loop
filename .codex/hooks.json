@@ -6,6 +6,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/session-start-tool-state.sh\" 2>/dev/null || printf '{}'",
+            "timeout": 2000
+          },
+          {
+            "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" session-start </dev/null 2>/dev/null || printf '{}'",
             "timeout": 3000
           },
