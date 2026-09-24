@@ -175,8 +175,8 @@ def test_select_backend_uses_daemon_when_available(monkeypatch):
         {
             "ok": True,
             "warm": True,
-            "backend": "mlx",
-            "model": "mlx-community/mxbai-embed-large-v1",
+            "backend": "ollama",
+            "model": "bge-m3",
             "dim": 1024,
         },
     )
@@ -198,8 +198,8 @@ def test_embed_routes_through_daemon_when_available(monkeypatch):
         {
             "ok": True,
             "warm": True,
-            "backend": "mlx",
-            "model": "mlx-community/mxbai-embed-large-v1",
+            "backend": "ollama",
+            "model": "bge-m3",
             "dim": 4,  # tiny to keep the test obvious
         },
     )
@@ -252,7 +252,7 @@ def test_embed_batch_routes_through_daemon(monkeypatch):
     """Batch embed routes through /embed with the full text list."""
     _patch_urlopen_health(
         monkeypatch,
-        {"ok": True, "warm": True, "backend": "mlx", "model": "x", "dim": 2},
+        {"ok": True, "warm": True, "backend": "ollama", "model": "bge-m3", "dim": 2},
     )
 
     captured: dict[str, Any] = {}
@@ -304,7 +304,7 @@ def test_daemon_503_falls_back_to_inprocess_on_next_process(monkeypatch):
     """
     _patch_urlopen_health(
         monkeypatch,
-        {"ok": True, "warm": True, "backend": "mlx", "model": "x", "dim": 4},
+        {"ok": True, "warm": True, "backend": "ollama", "model": "bge-m3", "dim": 4},
     )
 
     class _FakeConn:
