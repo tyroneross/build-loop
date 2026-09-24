@@ -14,10 +14,19 @@ Reads three durable-signal sources written by the existing pipeline:
    refinement. Maps to `queued_pending_lesson`.
 3. ``.build-loop/pending-lessons/pending/*.json`` — structured
    ``memory_consolidate.intake`` queue. Also `queued_pending_lesson`.
+4. ``<memory_root>/projects/<slug>/lessons/*.md`` — lessons written straight
+   to the durable memory store, bypassing the retro/pending-lessons pipeline
+   entirely. Attributed to a run via ``INDEX.jsonl`` rows carrying a matching
+   ``run_id``, or a lesson file whose text contains the run id. Maps directly
+   to `wrote_memory` — a direct durable write outranks every other signal.
 
 Routing rule (strict — single source of truth):
 
-    if retrospective produced a durable_path AND enforce_candidates >= 1 →
+    if a memory-store lesson is attributable to this run_id →
+        wrote_memory   (a direct durable write; checked first, regardless of
+                        retro enforce-candidate count)
+
+    elif retrospective produced a durable_path AND enforce_candidates >= 1 →
         wrote_memory   (the retro already wrote durable; pending-lessons are
                         secondary candidates the host agent will refine)
 
@@ -145,7 +154,68 @@ def _latest_retro_summary(workdir: Path, run_id: str | None = None) -> dict[str,
     }
 
 
-def detect_durable_signal(workdir: Path, run_id: str | None = None) -> dict[str, Any]:
+def _memory_lessons_for_run(memory_root: Path, slug: str, run_id: str | None) -> list[str]:
+    """Return sorted lesson-file paths under the durable store attributable to ``run_id``.
+
+    A lesson written straight to ``<memory_root>/projects/<slug>/lessons/*.md`` never
+    touches the retro or pending-lessons pipeline, so it is invisible to closeout
+    unless looked up directly here. Attribution sources: (1) an ``INDEX.jsonl`` row
+    whose ``run_id`` matches and whose ``file`` exists in the lessons dir; (2) any
+    ``*.md`` in the lessons dir whose text contains the exact run id. Deduped.
+
+    Fail-soft: never raises. ``run_id`` unset means unscoped — cannot attribute → [].
+    """
+    if not run_id:
+        return []
+    try:
+        lessons_dir = memory_root / "projects" / Path(*slug.split("/")) / "lessons"
+        if not lessons_dir.is_dir():
+            return []
+
+        found: set[str] = set()
+
+        index_path = lessons_dir / "INDEX.jsonl"
+        if index_path.is_file():
+            for line in index_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict) or row.get("run_id") != run_id:
+                    continue
+                fname = row.get("file")
+                if not fname:
+                    continue
+                candidate = lessons_dir / str(fname)
+                if candidate.is_file():
+                    found.add(str(candidate))
+
+        # Token-boundary match — a plain substring check would count `bl-X-extra`
+        # or `xbl-X` as mentioning run `bl-X`. `-` is a legal run-id character, so
+        # it's excluded from the boundary class alongside `\w`.
+        id_pattern = re.compile(rf"(?<![\w-]){re.escape(run_id)}(?![\w-])")
+        for md in lessons_dir.glob("*.md"):
+            try:
+                text = md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if id_pattern.search(text):
+                found.add(str(md))
+
+        return sorted(found)
+    except OSError:
+        return []
+
+
+def detect_durable_signal(
+    workdir: Path,
+    run_id: str | None = None,
+    *,
+    memory_root: Path | str | None = None,
+) -> dict[str, Any]:
     """Inspect the durable-signal sources.
 
     Returns::
@@ -156,6 +226,7 @@ def detect_durable_signal(workdir: Path, run_id: str | None = None) -> dict[str,
           "retro_enforce_candidates": int,
           "retro_durable_path": str | None,
           "retro_summary_path": str | None,
+          "memory_lesson_paths": list[str],  # direct writes to the durable lessons store
         }
     """
     workdir = Path(workdir).resolve()
@@ -167,17 +238,43 @@ def detect_durable_signal(workdir: Path, run_id: str | None = None) -> dict[str,
     retro_enforce = _count_retro_enforce(retro_enforce_root, run_id)
     retro = _latest_retro_summary(workdir, run_id)
 
+    memory_lesson_paths: list[str] = []
+    if run_id:
+        try:
+            if memory_root:
+                mem_root = Path(os.path.expanduser(str(memory_root)))
+            else:
+                from _paths import memory_store_root  # noqa: PLC0415
+                mem_root = memory_store_root()
+            try:
+                from _paths import derive_slug_from_cwd  # noqa: PLC0415
+                slug = derive_slug_from_cwd(workdir)
+            except Exception:  # noqa: BLE001
+                slug = workdir.name
+            memory_lesson_paths = _memory_lessons_for_run(mem_root, slug, run_id)
+        except Exception:  # noqa: BLE001 — advisory; failure → no lessons detected
+            memory_lesson_paths = []
+
     return {
         "raw_candidates_flat": raw_flat,
         "raw_candidates_queued": raw_queued,
         "retro_enforce_candidates": retro_enforce,
         "retro_durable_path": retro.get("durable_path"),
         "retro_summary_path": retro.get("summary_path"),
+        "memory_lesson_paths": memory_lesson_paths,
     }
 
 
 def _classify(signal: dict[str, Any]) -> tuple[str, str]:
     """Apply the routing rule. Returns (status, reason)."""
+    memory_lessons = signal.get("memory_lesson_paths") or []
+    if memory_lessons:
+        return (
+            "wrote_memory",
+            f"{len(memory_lessons)} durable lesson(s) in memory store for this run: "
+            f"{memory_lessons[0]}",
+        )
+
     raw_flat = int(signal.get("raw_candidates_flat") or 0)
     raw_queued = int(signal.get("raw_candidates_queued") or 0)
     retro_enforce = int(signal.get("retro_enforce_candidates") or 0)
@@ -571,7 +668,7 @@ def run(
           "run_id": str,
           "ts": iso8601,
           "workdir": str,
-          "signal": {raw_candidates_flat, raw_candidates_queued, retro_enforce_candidates, retro_durable_path, retro_summary_path},
+          "signal": {raw_candidates_flat, raw_candidates_queued, retro_enforce_candidates, retro_durable_path, retro_summary_path, memory_lesson_paths},
           "written_to": str | None,        # path under .build-loop/closeout/
           "error": str | None,             # internal-error reason when degraded
         }
@@ -596,7 +693,7 @@ def run(
     }
 
     try:
-        signal = detect_durable_signal(workdir, run_id)
+        signal = detect_durable_signal(workdir, run_id, memory_root=memory_root)
         envelope["signal"] = signal
         status, reason = _classify(signal)
         envelope["closeout_status"] = status

@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE.parent))  # scripts/ on path so ``import closeout`` 
 
 from closeout.status import (  # noqa: E402
     CLOSEOUT_STATUSES,
+    _classify,
     detect_durable_signal,
     run,
 )
@@ -141,11 +142,101 @@ def test_detect_durable_signal_selects_only_the_requested_run(tmp_path: Path) ->
     _write_retro_summary(workdir, date="2026-06-09", run_id="run-1")
     _write_retro_summary(workdir, date="2026-06-10", run_id="unrelated")
 
-    sig = detect_durable_signal(workdir, "run-1")
+    sig = detect_durable_signal(workdir, "run-1", memory_root=tmp_path / "no-real-store")
 
     assert sig["retro_enforce_candidates"] == 1
     assert sig["retro_summary_path"].endswith("/2026-06-09/run-1.summary.md")
     assert sig["retro_durable_path"].endswith("/2026-06-09/run-1.md")
+
+
+# ---------------------------------------------------------------------------
+# _memory_lessons_for_run / detect_durable_signal — direct durable writes.
+# ALWAYS pass an explicit tmp memory_root so the real store is never read.
+# ---------------------------------------------------------------------------
+
+
+def _write_memory_lesson_md(mem: Path, slug: str, run_id: str, name: str = "lesson.md") -> Path:
+    lessons_dir = mem / "projects" / Path(*slug.split("/")) / "lessons"
+    lessons_dir.mkdir(parents=True, exist_ok=True)
+    path = lessons_dir / name
+    path.write_text(f"# Lesson\n\nLearned from run {run_id}.\n", encoding="utf-8")
+    return path
+
+
+def test_memory_lesson_md_mentioning_run_id_yields_wrote_memory(tmp_path: Path) -> None:
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    run_id = "run-mem-1"
+    slug = _slug(workdir)
+    _write_memory_lesson_md(mem, slug, run_id, "2026-09-24-cascade-routing-run.md")
+
+    sig = detect_durable_signal(workdir, run_id, memory_root=mem)
+    assert len(sig["memory_lesson_paths"]) == 1
+    assert sig["memory_lesson_paths"][0].endswith("2026-09-24-cascade-routing-run.md")
+    status, reason = _classify(sig)
+    assert status == "wrote_memory"
+    assert "durable lesson" in reason
+
+
+def test_memory_lesson_index_row_with_existing_file_yields_wrote_memory(tmp_path: Path) -> None:
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    run_id = "run-mem-2"
+    slug = _slug(workdir)
+    lesson_path = _write_memory_lesson_md(mem, slug, run_id, "indexed-lesson.md")
+    lessons_dir = lesson_path.parent
+    index_row = {"run_id": run_id, "file": lesson_path.name}
+    (lessons_dir / "INDEX.jsonl").write_text(json.dumps(index_row) + "\n", encoding="utf-8")
+
+    sig = detect_durable_signal(workdir, run_id, memory_root=mem)
+    assert str(lesson_path) in sig["memory_lesson_paths"]
+    status, _ = _classify(sig)
+    assert status == "wrote_memory"
+
+
+def test_memory_lesson_for_different_run_stays_no_durable_lesson(tmp_path: Path) -> None:
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    slug = _slug(workdir)
+    _write_memory_lesson_md(mem, slug, "some-other-run", "other-run-lesson.md")
+
+    sig = detect_durable_signal(workdir, "run-mem-3", memory_root=mem)
+    assert sig["memory_lesson_paths"] == []
+    status, _ = _classify(sig)
+    assert status == "no_durable_lesson"
+
+
+def test_memory_lesson_substring_embedded_in_longer_token_does_not_count(tmp_path: Path) -> None:
+    """`bl-X` must not match inside `bl-X-extra` or `xbl-X` — token-boundary only."""
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    run_id = "bl-X"
+    slug = _slug(workdir)
+    lessons_dir = mem / "projects" / Path(*slug.split("/")) / "lessons"
+    lessons_dir.mkdir(parents=True, exist_ok=True)
+
+    embedded_suffix = lessons_dir / "embedded-suffix.md"
+    embedded_suffix.write_text("# Lesson\n\nSeen in bl-X-extra during triage.\n", encoding="utf-8")
+    embedded_prefix = lessons_dir / "embedded-prefix.md"
+    embedded_prefix.write_text("# Lesson\n\nSeen in xbl-X during triage.\n", encoding="utf-8")
+    bounded = lessons_dir / "bounded.md"
+    bounded.write_text("# Lesson\n\nLearned from run bl-X.\n", encoding="utf-8")
+
+    sig = detect_durable_signal(workdir, run_id, memory_root=mem)
+    assert str(bounded) in sig["memory_lesson_paths"]
+    assert str(embedded_suffix) not in sig["memory_lesson_paths"]
+    assert str(embedded_prefix) not in sig["memory_lesson_paths"]
+    assert len(sig["memory_lesson_paths"]) == 1
+
+
+def test_memory_lessons_unscoped_run_id_none_counts_nothing(tmp_path: Path) -> None:
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    slug = _slug(workdir)
+    _write_memory_lesson_md(mem, slug, "run-mem-4", "unscoped-lesson.md")
+
+    sig = detect_durable_signal(workdir, None, memory_root=mem)
+    assert sig["memory_lesson_paths"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +246,7 @@ def test_detect_durable_signal_selects_only_the_requested_run(tmp_path: Path) ->
 
 def test_run_no_durable_signal_yields_no_durable_lesson(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
-    env = run(workdir, run_id="r1", source="phase-6-learn")
+    env = run(workdir, run_id="r1", source="phase-6-learn", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "no_durable_lesson"
     assert env["source"] == "phase-6-learn"
     assert env["written_to"] and Path(env["written_to"]).is_file()
@@ -166,7 +257,7 @@ def test_run_no_durable_signal_yields_no_durable_lesson(tmp_path: Path) -> None:
 def test_run_raw_candidate_only_yields_queued_pending_lesson(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
     _write_flat_candidate(workdir)
-    env = run(workdir, run_id="r2", source="post-push")
+    env = run(workdir, run_id="r2", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "queued_pending_lesson"
     assert "candidate" in env["reason"]
 
@@ -174,7 +265,7 @@ def test_run_raw_candidate_only_yields_queued_pending_lesson(tmp_path: Path) -> 
 def test_run_queued_intake_candidate_yields_queued_pending_lesson(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
     _write_queued_candidate(workdir)
-    env = run(workdir, run_id="r3", source="post-push-armed")
+    env = run(workdir, run_id="r3", source="post-push-armed", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "queued_pending_lesson"
 
 
@@ -182,7 +273,7 @@ def test_run_retro_durable_plus_enforce_yields_wrote_memory(tmp_path: Path) -> N
     workdir = _scratch(tmp_path)
     _write_enforce_candidate(workdir, "r4-01.md")
     _write_retro_summary(workdir, run_id="r4", with_durable=True)
-    env = run(workdir, run_id="r4", source="post-push")
+    env = run(workdir, run_id="r4", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "wrote_memory"
     assert "durable_path" in env["reason"]
 
@@ -192,7 +283,7 @@ def test_run_retro_enforce_without_durable_falls_back_to_queued(tmp_path: Path) 
     workdir = _scratch(tmp_path)
     _write_enforce_candidate(workdir, "r5-01.md")
     _write_retro_summary(workdir, run_id="r5", with_durable=False)
-    env = run(workdir, run_id="r5", source="post-push")
+    env = run(workdir, run_id="r5", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "queued_pending_lesson"
 
 
@@ -216,7 +307,7 @@ def test_contract_durable_signal_never_emits_no_durable_lesson(tmp_path: Path) -
             setup(workdir, "contract-01.md")
         else:
             setup(workdir)
-        env = run(workdir, run_id="contract", source="post-push")
+        env = run(workdir, run_id="contract", source="post-push", memory_root=str(tmp_path / "no-real-store"))
         assert env["closeout_status"] != "no_durable_lesson", (
             f"setup={setup.__name__} emitted no_durable_lesson despite durable signal — "
             "this is the spec's detectable-failure mode and MUST trip CI."
@@ -304,7 +395,7 @@ def test_real_writer_output_reaches_wrote_memory(tmp_path: Path) -> None:
         workdir, "e2e-run",
         durable_path="/mem/projects/demo/retrospectives/2026-07-21/e2e-run.md",
     )
-    env = run(workdir, run_id="e2e-run", source="post-push")
+    env = run(workdir, run_id="e2e-run", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "wrote_memory", (
         f"real writer output did not reach wrote_memory: {env['closeout_status']} / "
         f"{env['reason']} — the writer/reader durable-line contract has diverged"
@@ -316,7 +407,7 @@ def test_real_writer_without_promotion_never_claims_wrote_memory(tmp_path: Path)
     workdir = _scratch(tmp_path)
     _write_enforce_candidate(workdir, "e2e-skip-01.md")
     _real_writer_summary(workdir, "e2e-skip", durable_path=None)
-    env = run(workdir, run_id="e2e-skip", source="post-push")
+    env = run(workdir, run_id="e2e-skip", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "queued_pending_lesson"
     assert env["signal"]["retro_durable_path"] is None
 
@@ -325,13 +416,13 @@ def test_real_writer_with_no_signal_at_all_stays_no_durable_lesson(tmp_path: Pat
     """`no_durable_lesson` remains the honest answer when there is no signal."""
     workdir = _scratch(tmp_path)
     _real_writer_summary(workdir, "e2e-none", durable_path=None)
-    env = run(workdir, run_id="e2e-none", source="post-push")
+    env = run(workdir, run_id="e2e-none", source="post-push", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "no_durable_lesson"
 
 
 def test_run_emits_machine_readable_json_artifact(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
-    env = run(workdir, run_id="json-r", source="phase-6-learn")
+    env = run(workdir, run_id="json-r", source="phase-6-learn", memory_root=str(tmp_path / "no-real-store"))
     out = Path(env["written_to"])
     payload = json.loads(out.read_text(encoding="utf-8"))
     for key in ("closeout_status", "reason", "source", "run_id", "ts", "signal"):
@@ -343,7 +434,7 @@ def test_run_is_non_raising_on_unreadable_workdir(tmp_path: Path) -> None:
     """Closeout never blocks the caller — internal errors degrade, never raise."""
     workdir = tmp_path / "does-not-exist"
     # ``workdir`` is missing; detect_durable_signal returns zeros; status persists OK.
-    env = run(workdir, run_id="nope", source="ad-hoc")
+    env = run(workdir, run_id="nope", source="ad-hoc", memory_root=str(tmp_path / "no-real-store"))
     assert env["closeout_status"] == "no_durable_lesson"
     # The closeout artifact lives inside the (now-created) workdir.
     assert env["written_to"] and Path(env["written_to"]).is_file()
@@ -351,7 +442,7 @@ def test_run_is_non_raising_on_unreadable_workdir(tmp_path: Path) -> None:
 
 def test_run_source_is_normalized(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
-    env = run(workdir, run_id="src", source="unknown-source-name")
+    env = run(workdir, run_id="src", source="unknown-source-name", memory_root=str(tmp_path / "no-real-store"))
     assert env["source"] == "ad-hoc"
 
 

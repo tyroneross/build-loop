@@ -16,7 +16,11 @@ sys.path.insert(0, str(HERE.parent))
 from unittest.mock import patch  # noqa: E402
 sys.path.insert(0, str(HERE.parent.parent))  # scripts/ for temporal_membership
 from retrospective import locate  # noqa: E402
-from retrospective.synthesize import run as synth_run, _merge_judge_decisions  # noqa: E402
+from retrospective.synthesize import (  # noqa: E402
+    run as synth_run,
+    _merge_judge_decisions,
+    _load_judge_decisions_json,
+)
 import temporal_membership as tm  # noqa: E402
 
 
@@ -313,6 +317,68 @@ class CodexHostAbsenceTests(unittest.TestCase):
         self.assertIn("no transcript for this run", body)
         self.assertIn("host=codex", body)
         self.assertNotIn("STALE_UNRELATED_PROMPT", body)
+
+
+class JudgeDecisionsCanonicalShapeTests(unittest.TestCase):
+    """Real runs write {"run_id": ..., "judge_decisions": [...]} — the canonical shape."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tmp_dir = Path(self.tmp.name)
+
+    def _write(self, workdir: Path, payload: dict) -> None:
+        (workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        (workdir / ".build-loop" / "judge-decisions.json").write_text(
+            json.dumps(payload), encoding="utf-8",
+        )
+
+    def test_judge_decisions_key_loads_for_matching_run(self) -> None:
+        workdir = self.tmp_dir / "proj"
+        self._write(workdir, {
+            "run_id": "bl-real-run",
+            "judge_decisions": [
+                {"judge_id": f"j{i}", "verdict": "warn"} for i in range(5)
+            ],
+        })
+        loaded = _load_judge_decisions_json(workdir, "bl-real-run")
+        self.assertEqual(len(loaded), 5)
+
+    def test_judge_decisions_key_empty_for_different_run(self) -> None:
+        workdir = self.tmp_dir / "proj2"
+        self._write(workdir, {
+            "run_id": "bl-real-run",
+            "judge_decisions": [
+                {"judge_id": f"j{i}", "verdict": "warn"} for i in range(5)
+            ],
+        })
+        loaded = _load_judge_decisions_json(workdir, "some-other-run")
+        self.assertEqual(loaded, [])
+
+    def test_end_to_end_meta_judge_decision_count_from_canonical_file(self) -> None:
+        workdir = self.tmp_dir / "proj3"
+        build_loop = workdir / ".build-loop"
+        build_loop.mkdir(parents=True)
+        # state.json's run carries no judge_decisions of its own.
+        (build_loop / "state.json").write_text(json.dumps({
+            "execution": {"build_loop_id": "canon-run"},
+            "runs": [{"run_id": "canon-run", "outcome": "pass"}],
+        }), encoding="utf-8")
+        self._write(workdir, {
+            "run_id": "canon-run",
+            "judge_decisions": [
+                {"judge_id": f"j{i}", "checkpoint_id": "", "verdict": "warn",
+                 "variances": []}
+                for i in range(5)
+            ],
+        })
+
+        r = synth_run(
+            workdir, run_id="canon-run", transcript=None,
+            memory_root=self.tmp_dir / "no-memory",
+        )
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual(r["meta"].get("judge_decision_count"), 5)
 
 
 if __name__ == "__main__":

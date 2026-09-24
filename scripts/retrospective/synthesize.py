@@ -61,12 +61,22 @@ def _load_state_json(workdir: Path) -> dict[str, Any]:
         return {}
 
 
-def _load_judge_decisions_json(workdir: Path) -> list[dict[str, Any]]:
+def _load_judge_decisions_json(
+    workdir: Path, run_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Read `.build-loop/judge-decisions.json` without enforcing writer policy.
 
     The writer validates judge envelopes before persisting them to state.json.
     Retrospective synthesis is best-effort: malformed or absent files degrade to
     no extra signals rather than blocking the background retrospective.
+
+    The canonical shape written by real runs is ``{"run_id": ..., "judge_decisions":
+    [...]}``; ``{"decisions": [...]}`` and a bare list are accepted for back-compat.
+
+    When ``run_id`` is given: a top-level ``run_id`` that disagrees means the whole
+    file belongs to another run → []. Any individual decision carrying its own
+    ``run_id``/``build_loop_id`` that disagrees is dropped. ``run_id=None`` applies
+    no filtering (unscoped caller).
     """
     p = workdir / ".build-loop" / "judge-decisions.json"
     if not p.is_file():
@@ -75,11 +85,26 @@ def _load_judge_decisions_json(workdir: Path) -> list[dict[str, Any]]:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
-    if isinstance(data, dict) and isinstance(data.get("decisions"), list):
-        data = data["decisions"]
+    file_run_id = data.get("run_id") if isinstance(data, dict) else None
+    if run_id is not None and file_run_id and str(file_run_id) != str(run_id):
+        return []
+    if isinstance(data, dict):
+        for key in ("judge_decisions", "decisions"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
     if not isinstance(data, list):
         return []
-    return [item for item in data if isinstance(item, dict)]
+    decisions = [item for item in data if isinstance(item, dict)]
+    if run_id is None:
+        return decisions
+    kept: list[dict[str, Any]] = []
+    for item in decisions:
+        item_run_id = item.get("run_id") or item.get("build_loop_id")
+        if item_run_id and str(item_run_id) != str(run_id):
+            continue
+        kept.append(item)
+    return kept
 
 
 def _decision_key(decision: dict[str, Any]) -> str:
@@ -298,7 +323,7 @@ def run(
         run_host = (str(target_run.get("host") or "").strip() or None)
         run_start, run_end = tm.run_window(target_run)
         state = _merge_judge_decisions(
-            state, _load_judge_decisions_json(workdir), rid,
+            state, _load_judge_decisions_json(workdir, rid), rid,
             run_start, run_end, run_host,
         )
         tx_reason = None
