@@ -8,8 +8,10 @@ CLI:
 
 Exit codes: always 0 (fail-soft, never blocks).
 
---hook mode: emits valid Stop-hook JSON. Clean repos print {}; dirty tracked
-work prints one advisory context message and never blocks.
+--hook mode: emits valid Stop-hook JSON. Clean repos, and repos with no
+build-loop run marker (`.build-loop/state.json` or `.build-loop/optimize/`),
+print {}; dirty tracked work inside a run prints one advisory context message
+and never blocks.
 
 --json mode: emits the full envelope as JSON.
 
@@ -166,7 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.hook:
-        if result["has_uncommitted_tracked"]:
+        # Only advise inside a build-loop run. Without run state (a skipped
+        # small task, or a plain session) the advisory buys nothing and costs
+        # a full extra model turn, because Stop-hook context re-enters the model.
+        # Optimize mode skips Phase 1, so it never writes state.json; its own
+        # working directory is the run marker there.
+        bl = Path(workdir) / ".build-loop"
+        has_run_state = (bl / "state.json").is_file() or (bl / "optimize").is_dir()
+        if has_run_state and result["has_uncommitted_tracked"]:
             changed = result.get("tracked_changed", [])
             details = "\n".join(f"- {path}" for path in changed[:20])
             remaining = len(changed) - 20 if isinstance(changed, list) else 0

@@ -33,6 +33,12 @@ def _init_repo(tmpdir: str) -> Path:
     return root
 
 
+def _mark_run(root: Path) -> None:
+    """Give the repo build-loop run state; the Stop advisory only fires inside a run."""
+    (root / ".build-loop").mkdir(exist_ok=True)
+    (root / ".build-loop" / "state.json").write_text("{}\n")
+
+
 def _run(*extra_args: str, workdir: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--workdir", workdir, *extra_args],
@@ -88,6 +94,7 @@ class TestModifiedTrackedFile(unittest.TestCase):
     def test_hook_prints_advisory_json_for_modified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _init_repo(tmp)
+            _mark_run(root)
             (root / "README").write_text("changed\n")
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
@@ -153,12 +160,33 @@ class TestStagedFile(unittest.TestCase):
     def test_hook_prints_advisory_json_for_staged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _init_repo(tmp)
+            _mark_run(root)
             (root / "README").write_text("updated\n")
             _git("add", "README", cwd=tmp)
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
             data = json.loads(cp.stdout)
             context = data["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Advisory only", context)
+
+    def test_hook_noop_json_without_run_state(self) -> None:
+        # A skipped small task has no run state; an advisory here would cost
+        # a full extra model turn for no benefit.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            (root / "README").write_text("changed\n")
+            cp = _run("--hook", workdir=tmp)
+            self.assertEqual(cp.returncode, 0)
+            self.assertEqual(json.loads(cp.stdout), {})
+
+    def test_hook_prints_advisory_json_in_optimize_run(self) -> None:
+        # Optimize mode skips Phase 1 and never writes state.json.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            (root / ".build-loop" / "optimize").mkdir(parents=True)
+            (root / "README").write_text("changed\n")
+            cp = _run("--hook", workdir=tmp)
+            context = json.loads(cp.stdout)["hookSpecificOutput"]["additionalContext"]
             self.assertIn("Advisory only", context)
 
 

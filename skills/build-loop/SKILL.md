@@ -56,7 +56,7 @@ Default behavior: complete Phase 1–6 and required fixes autonomously within a 
 
 ## Scope Check
 
-Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
+Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value. `/build-loop:run` applies this same check before it loads this skill, so a skipped task never pays for this file; the check here covers direct skill loads.
 
 ## Keep going until done
 
