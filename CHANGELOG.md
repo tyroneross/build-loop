@@ -17,6 +17,35 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.46.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.1...build-loop-v0.46.0) (2026-09-24)
+
+
+### Features
+
+* **attribution:** file credit-link gaps as open items on every push ([58a22dc](https://github.com/tyroneross/build-loop/commit/58a22dc0202515688fcf079ee08178b810191ebb))
+* **capture:** split transcripts by who said what before asking a model ([6eff193](https://github.com/tyroneross/build-loop/commit/6eff19377c9f7d4aed652ec9f58044678fe3ec15))
+* select risk-targeted acceptance lanes ([9887fb0](https://github.com/tyroneross/build-loop/commit/9887fb07a7cb483fc77fb7e08a128f820c1008ab))
+
+
+### Bug Fixes
+
+* **attribution:** never delay a push; address independent-audit findings ([09040e1](https://github.com/tyroneross/build-loop/commit/09040e1c72f47b9459544e5878c129c8eeb3456e))
+* classify acceptance_selector and drop maintainer-only paths from shipped docs ([eafdf0a](https://github.com/tyroneross/build-loop/commit/eafdf0ab3ba5e351726a12e58bfb1d44cc877f8b))
+* **decisions:** separate a decision MADE from a decision NEEDED ([97fb7dc](https://github.com/tyroneross/build-loop/commit/97fb7dc07b990a05fbb14d90333f4f90884971ab))
+* **knowledge:** read the canonical review queue, not only the legacy .episodic path ([65c5c66](https://github.com/tyroneross/build-loop/commit/65c5c66695f461751973a1cdfe7e2dd6e2636329))
+* **memory_writer:** dedupe by body hash and reject truncated bodies ([b50c285](https://github.com/tyroneross/build-loop/commit/b50c285a3af0b6639f9d44ea27a59dbe0b8db8ca))
+* **memory_writer:** stop the truncation guard rejecting finished text ([3255acb](https://github.com/tyroneross/build-loop/commit/3255acbec2aa427c555fb6712bf5933d575698ea))
+* **memory:** one malformed run row no longer blanks all canonical memory ([09f1f89](https://github.com/tyroneross/build-loop/commit/09f1f89d62bc2a57f8cd7e43f1e2082538f2358b))
+* **memory:** rank on summaries, ignore function words, resolve paths only for hits ([fa000b2](https://github.com/tyroneross/build-loop/commit/fa000b2fb24b3735d1da4db46074c6dadc9920bd))
+* **memory:** stale index answers from index plus changed files; never return unvetted captures ([28caaa4](https://github.com/tyroneross/build-loop/commit/28caaa45f4d97a719efc1caa47157fae12ecdaaa))
+* **models:** treat Cursor as a multi-provider host ([761dcdf](https://github.com/tyroneross/build-loop/commit/761dcdf44e03b56e0e3098aeee0b8468f74722a7))
+* **run_close_lint:** check owed review before acceptance receipts ([b95f8d1](https://github.com/tyroneross/build-loop/commit/b95f8d1af19169d1a7cf8fc1d1276b2e55677390))
+
+
+### Performance Improvements
+
+* **run:** decide small-vs-full before loading the skill; silence the Stop advisory outside runs ([48b8ef2](https://github.com/tyroneross/build-loop/commit/48b8ef26f691aae7a7ac7004ccbc3bc768b255e6))
+
 ## [0.45.1](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.0...build-loop-v0.45.1) (2026-09-13)
 
 
