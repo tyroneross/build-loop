@@ -39,8 +39,9 @@ Subcommands (all print JSON)::
     attribution_audit.py file   --repo <path>      # backlog items, deduped; closes fixed ones
     attribution_audit.py sweep  --root <dir> [--root <dir>...] [--file]
 
-Fail-open: a network or ``gh`` failure marks visibility ``unknown`` and skips
-public-only items rather than guessing. Exit code is 0 unless arguments are
+Fail-closed on facts, fail-open on exit: when ``gh`` cannot answer, the repo is
+``gh_unavailable`` and nothing is assessed or filed (a fork would otherwise
+look like the owner's repo). Exit code is 0 unless arguments are
 invalid.
 """
 from __future__ import annotations
@@ -137,6 +138,11 @@ def github_slug(repo: Path) -> str | None:
 
 
 def gh_repo_view(slug: str) -> dict[str, Any] | None:
+    # Test seam for the hook tests, which cannot reach GitHub: a JSON file with
+    # the `gh repo view` fields to return for every slug.
+    fixture = os.environ.get("BUILDLOOP_ATTRIBUTION_GH_FIXTURE")
+    if fixture:
+        return load_json(Path(fixture))
     fields = "visibility,isFork,isArchived,homepageUrl,repositoryTopics,licenseInfo"
     try:
         out = subprocess.run(
@@ -181,14 +187,32 @@ def is_apache(repo: Path) -> bool:
     return "Apache License" in text and "Version 2.0" in text
 
 
+def is_markdown(p: Path) -> bool:
+    return p.suffix.lower() in (".md", ".markdown")
+
+
 def readme_file(repo: Path) -> Path | None:
     return _first(repo, ("README.md", "readme.md", "README.markdown", "README.rst", "README.txt", "README"))
 
 
+APP_FRAMEWORK_MARKERS = tuple(m for m in WEB_APP_MARKERS if not m.startswith("vite."))
+
+
 def is_web_app(repo: Path) -> bool:
-    if any((repo / m).is_file() for m in WEB_APP_MARKERS):
+    """A deployable site, not a library that happens to ship a demo page.
+
+    App-framework configs (Next, Astro, Nuxt, Remix, SvelteKit) are decisive.
+    A Vite config or root index.html counts only when package.json publishes
+    nothing (no ``main``/``exports``/``bin``/``module``) — library mode ships
+    those fields, an app does not.
+    """
+    if any((repo / m).is_file() for m in APP_FRAMEWORK_MARKERS):
         return True
-    return (repo / "index.html").is_file() and (repo / "package.json").is_file()
+    if not ((repo / "vite.config.ts").is_file() or (repo / "vite.config.js").is_file()
+            or (repo / "index.html").is_file()):
+        return False
+    pkg = load_json(repo / "package.json") if (repo / "package.json").is_file() else None
+    return pkg is not None and not any(pkg.get(k) for k in ("main", "exports", "bin", "module"))
 
 
 def source_mentions(repo: Path, needle: str, budget: int = 4000) -> bool:
@@ -229,7 +253,7 @@ def load_json(p: Path) -> dict[str, Any] | None:
 def _item(item_id: str, status: str, disposition: str | None, title: str, detail: str, fix: str = "") -> dict[str, Any]:
     return {
         "id": item_id,
-        "status": status,  # present | missing | not_applicable | unknown
+        "status": status,  # present | missing | not_applicable
         "disposition": disposition if status == "missing" else None,
         "title": title,
         "detail": detail,
@@ -259,11 +283,16 @@ def assess(repo: Path, profile: dict[str, Any] | None, gh: GhFetcher = gh_repo_v
         return result
 
     meta = gh(slug)
-    visibility = (meta or {}).get("visibility", "UNKNOWN").lower()
-    if meta and meta.get("isFork"):
+    if meta is None:
+        # Without GitHub metadata a fork of someone else's project looks like
+        # the owner's own repo. Assess nothing rather than risk filing into it.
+        result["reason"] = "gh_unavailable"
+        return result
+    visibility = str(meta.get("visibility", "UNKNOWN")).lower()
+    if meta.get("isFork"):
         result["reason"] = "fork"
         return result
-    if meta and meta.get("isArchived"):
+    if meta.get("isArchived"):
         result["reason"] = "archived"
         return result
 
@@ -280,8 +309,6 @@ def assess(repo: Path, profile: dict[str, Any] | None, gh: GhFetcher = gh_repo_v
     items: list[dict[str, Any]] = []
 
     def public_only(item_id: str, title: str) -> dict[str, Any] | None:
-        if visibility == "unknown":
-            return _item(item_id, "unknown", None, title, "visibility unknown (gh unavailable); not assessed")
         if not public:
             return _item(item_id, "not_applicable", None, title, "private repo: no public discovery value")
         return None
@@ -315,8 +342,12 @@ def assess(repo: Path, profile: dict[str, Any] | None, gh: GhFetcher = gh_repo_v
     readme = readme_file(repo)
     if gate:
         items.append(gate)
-    elif readme and brand_url in _read(readme):
+    elif readme and brand_url in _read(readme, 10_000_000):
         items.append(_item("readme-credit", "present", None, t, readme.name))
+    elif readme and not is_markdown(readme):
+        items.append(_item("readme-credit", "missing", "planned", t,
+                           f"{readme.name} is not Markdown; add the credit in its own format",
+                           f"Add a credit line linking {brand_url} to {readme.name}"))
     else:
         items.append(_item("readme-credit", "missing", "auto", t,
                            "README does not link the owner" if readme else "no README",
@@ -444,10 +475,20 @@ def apply(repo: Path, profile: dict[str, Any], only: set[str] | None = None,
             (repo / "NOTICE").write_text(f"{body}\n{brand}: {url}\n")
             changed.append("NOTICE")
         elif iid == "readme-credit":
+            # Append-only: existing bytes are never read back and rewritten, so
+            # size limits and encodings cannot corrupt the file.
             readme = readme_file(repo) or (repo / "README.md")
-            body = _read(readme) if readme.is_file() else f"# {repo.name}\n"
-            sep = "" if body.endswith("\n") else "\n"
-            readme.write_text(f"{body}{sep}\n---\n\n{profile['readme_credit']}\n")
+            credit = f"\n---\n\n{profile['readme_credit']}\n"
+            if readme.is_file():
+                with readme.open("rb") as fh:
+                    size = fh.seek(0, 2)
+                    if size:
+                        fh.seek(size - 1)
+                    ends_nl = size == 0 or fh.read(1) == b"\n"
+                with readme.open("a", encoding="utf-8") as fh:
+                    fh.write(("" if ends_nl else "\n") + credit)
+            else:
+                readme.write_text(f"# {repo.name}\n{credit}")
             changed.append(readme.name)
         elif iid == "citation-cff":
             slug = report.get("slug", "")
@@ -495,7 +536,9 @@ def _existing_items(repo: Path) -> dict[str, tuple[str, str]]:
     """Map attribution item id -> (backlog id, status) for items this tool filed."""
     found: dict[str, tuple[str, str]] = {}
     items_dir = repo / ".build-loop" / "backlog" / "items"
-    for d in (items_dir, items_dir.parent / "archive"):
+    # Archive first, live items second: a re-filed live item must win over the
+    # archived "done" copy of the same gap, or every push would file it again.
+    for d in (items_dir.parent / "archive", items_dir):
         if not d.is_dir():
             continue
         for f in d.glob("*.md"):
@@ -532,6 +575,12 @@ def file_items(repo: Path, profile: dict[str, Any], gh: GhFetcher = gh_repo_view
     if not report["applies"]:
         return summary
     repo = repo.resolve()
+    _file_items(repo, report, backlog, summary)
+    return summary
+
+
+def _file_items(repo: Path, report: dict[str, Any], backlog: Callable[[list[str]], dict[str, Any]],
+                 summary: dict[str, Any]) -> None:
     existing = _existing_items(repo)
     for item in report["items"]:
         iid = item["id"]
@@ -565,7 +614,6 @@ def file_items(repo: Path, profile: dict[str, Any], gh: GhFetcher = gh_repo_view
             args += ["--bucket", "planned"]
         res = backlog(args)
         summary["filed"].append({"item": iid, "disposition": disposition, "backlog": res.get("id"), "ok": res.get("ok")})
-    return summary
 
 
 # ── sweep ─────────────────────────────────────────────────────────────────────

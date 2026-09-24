@@ -166,10 +166,6 @@ class TestFiresOnPush(unittest.TestCase):
             self.assertEqual(cp.returncode, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _git_repo(root: Path, name: str, origin: str) -> Path:
     repo = root / name
     repo.mkdir()
@@ -190,9 +186,13 @@ class AttributionOnPushTest(unittest.TestCase):
             "brand_url": "https://example.test",
             "copyright_holder": "Pat Example",
         }))
-        return {"BUILDLOOP_ATTRIBUTION_PROFILE": str(profile), "BUILD_LOOP_MEMORY_STORE_ROOT": str(root / "memory")}
+        fixture = root / "gh.json"
+        fixture.write_text(json.dumps({"visibility": "PRIVATE", "isFork": False, "isArchived": False,
+                                       "homepageUrl": "", "repositoryTopics": []}))
+        return {"BUILDLOOP_ATTRIBUTION_PROFILE": str(profile), "BUILD_LOOP_MEMORY_STORE_ROOT": str(root / "memory"),
+                "BUILDLOOP_ATTRIBUTION_GH_FIXTURE": str(fixture)}
 
-    def _wait_items(self, repo: Path, timeout_s: float = 10.0) -> list[Path]:
+    def _wait_items(self, repo: Path, timeout_s: float = 45.0) -> list[Path]:
         items = repo / ".build-loop" / "backlog" / "items"
         deadline = time.time() + timeout_s
         while time.time() < deadline:
@@ -218,8 +218,17 @@ class AttributionOnPushTest(unittest.TestCase):
     def test_third_party_repo_is_left_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            repo = _git_repo(root, "theirs", "git@github.com:someone-else/theirs.git")
-            proc = _run_hook(repo, "git push", self._env(root))
-            self.assertEqual(proc.returncode, 0)
-            time.sleep(2.0)
-            self.assertFalse((repo / ".build-loop").exists())
+            env = self._env(root)
+            theirs = _git_repo(root, "theirs", "git@github.com:someone-else/theirs.git")
+            mine = _git_repo(root, "mine", "git@github.com:owner/mine.git")
+            self.assertEqual(_run_hook(theirs, "git push", env).returncode, 0)
+            # Positive control: the same hook + env DOES file for an owned repo,
+            # so the absence below means "refused", not "the hook never ran".
+            self.assertEqual(_run_hook(mine, "git push", env).returncode, 0)
+            self.assertTrue(self._wait_items(mine), "positive control filed nothing")
+            self.assertFalse((theirs / ".build-loop").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
+

@@ -81,11 +81,43 @@ def test_private_repo_only_checks_the_web_app_footer(tmp_path):
         assert items[iid]["status"] == "not_applicable", iid
 
 
-def test_unknown_visibility_is_not_guessed(tmp_path):
+def test_no_github_metadata_means_nothing_is_assessed(tmp_path):
+    """Without gh a fork is indistinguishable from the owner's repo, so do nothing."""
     repo = make_repo(tmp_path)
-    items = by_id(aa.assess(repo, profile(tmp_path), lambda _slug: None))
-    assert items["readme-credit"]["status"] == "unknown"
-    assert items["license"]["status"] == "unknown"
+    (repo / "next.config.js").write_text("module.exports = {}\n")
+    out = aa.assess(repo, profile(tmp_path), lambda _slug: None)
+    assert (out["applies"], out["reason"], out["items"]) == (False, "gh_unavailable", [])
+    filed = aa.file_items(repo, profile(tmp_path), lambda _slug: None, lambda args: {"ok": True, "id": "X"})
+    assert filed["filed"] == [] and not (repo / ".build-loop").exists()
+
+
+def test_library_with_demo_page_is_not_a_web_app(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "index.html").write_text("<html></html>\n")
+    (repo / "vite.config.ts").write_text("export default {}\n")
+    (repo / "package.json").write_text(json.dumps({"name": "lib", "main": "dist/index.js"}))
+    assert aa.is_web_app(repo) is False
+    (repo / "package.json").write_text(json.dumps({"name": "site"}))
+    assert aa.is_web_app(repo) is True
+
+
+def test_readme_credit_is_append_only(tmp_path):
+    repo = make_repo(tmp_path)
+    original = b"# proj\n" + b"x" * 500_000 + b"\n\xff\xfe not utf-8"  # > old 400K read cap, invalid UTF-8
+    (repo / "README.md").write_bytes(original)
+    aa.apply(repo, profile(tmp_path), {"readme-credit"}, gh=gh())
+    after = (repo / "README.md").read_bytes()
+    assert after.startswith(original)
+    assert after.endswith(b"\n---\n\nBuilt by [Example Labs](https://example.test)\n")
+
+
+def test_non_markdown_readme_is_planned_not_auto(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "README.rst").write_text("proj\n====\n")
+    item = by_id(aa.assess(repo, profile(tmp_path), gh()))["readme-credit"]
+    assert (item["status"], item["disposition"]) == ("missing", "planned")
+    assert aa.apply(repo, profile(tmp_path), gh=gh())["applied"].count("README.rst") == 0
+    assert (repo / "README.rst").read_text() == "proj\n====\n"
 
 
 def test_public_repo_gaps_and_dispositions(tmp_path):
@@ -220,3 +252,19 @@ def test_file_items_against_the_real_backlog_tool(tmp_path, monkeypatch):
     third = aa.file_items(repo, prof, gh())
     assert third["closed"] == ["notice"]
     assert aa._existing_items(repo)["notice"][1] == "done"
+
+
+def test_live_item_wins_over_archived_copy_of_the_same_gap(tmp_path):
+    repo = make_repo(tmp_path)
+    base = repo / ".build-loop" / "backlog"
+    for sub, bid, status in (("archive", "BL-old", "done"), ("items", "BL-new", "open")):
+        (base / sub).mkdir(parents=True, exist_ok=True)
+        (base / sub / f"{bid}.md").write_text(
+            f"---\nid: {bid}\nstatus: {status}\nprovenance:\n  source: {aa.PROVENANCE_SOURCE}\n"
+            "  ref: attribution:readme-credit\n---\n")
+    assert aa._existing_items(repo)["readme-credit"] == ("BL-new", "open")
+    calls = []
+    out = aa.file_items(repo, profile(tmp_path), gh(), lambda args: calls.append(args) or {"ok": True, "id": "X"})
+    assert "readme-credit" in out["kept"]
+    assert not any("attribution:readme-credit" in c for c in calls)
+

@@ -133,13 +133,13 @@ The four layers above make removing attribution illegal or detectable. The disco
 | `web-app-footer` | any web app, public or private (the site is public) | planned — UI change a build-loop run makes and reviews |
 | `data-license` | public repo with tracked data files | decision — CC BY 4.0 for data, never for code |
 
-Skipped entirely: forks, archived repos, third-party origins, linked worktrees, repos with no GitHub origin. Unknown visibility (no `gh`) is reported `unknown`, never guessed.
+Skipped entirely: forks, archived repos, third-party origins, linked worktrees, repos with no GitHub origin, and any repo when `gh` cannot answer (a fork would otherwise look like the owner's repo).
 
 **Rules the items encode:** require credit, never a followed link (Google's link-spam policy names ToS-required links, keyword-rich widget links and links spread across many sites' footers); brand-name anchors only; README links on GitHub are `nofollow`, so repo credits buy discovery and clicks, not ranking.
 
 **When it runs:**
-- **Every push from a Claude session:** `hooks/post-push-closeout.sh` runs `attribution_audit.py file` in the background for the pushed repo. It files one backlog item per applicable gap (`area: attribution`, provenance `attribution:<item>`), skips items already tracked or dropped, and marks items `done` once the gap is gone. `auto`/`planned` items land in the `planned` bucket for the next run's pickup; `decision` items land in the `decision` bucket gated `product-decision`.
-- **Build-loop runs:** Phase 1 reads open `attribution` items like any backlog work; the fix for `auto` items is `attribution_audit.py apply --repo <path>` (writes files, never commits).
+- **Every push from a Claude session:** `hooks/post-push-closeout.sh` runs `attribution_audit.py file` fully detached for the pushed repo, so it never delays the push or the turn. It files one backlog item per applicable gap (`area: attribution`, provenance `attribution:<item>`), skips items already tracked or dropped, and marks items `done` once the gap is gone. `auto`/`planned` items land in the `planned` bucket for the next run's pickup; `decision` items land in the `decision` bucket gated `product-decision`.
+- **Build-loop runs:** open `attribution` items are ordinary backlog work; the fix for `auto` items is `attribution_audit.py apply --repo <path>` (writes files, never commits).
 - **Fleet sweep:** `attribution_audit.py sweep --root ~/dev/git-folder --file`.
 - Kill switch: `BUILDLOOP_ATTRIBUTION_AUDIT=0`.
 
