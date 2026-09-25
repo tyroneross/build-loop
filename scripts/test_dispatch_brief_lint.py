@@ -89,5 +89,102 @@ class TheOmissionsThatCostTime(unittest.TestCase):
         self.assertTrue(lint.check(_brief("just prose, no contract\n")))
 
 
+class ForbiddenActionsForWriteCapableBriefs(unittest.TestCase):
+    """A brief that can Write/Edit/Bash needs to say what it must not do."""
+
+    def test_read_only_brief_without_forbidden_passes(self) -> None:
+        self.assertEqual(lint.check(_brief(GOOD)), [])
+
+    def test_write_capable_via_tools_field_without_forbidden_fails(self) -> None:
+        bad = GOOD.replace("durable: build-loop-memory/projects/navgator/handoffs/\n",
+                            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+                            "tools: Read, Write, Bash\n")
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("forbidden" in p for p in problems))
+
+    def test_write_capable_via_body_text_without_forbidden_fails(self) -> None:
+        bad = GOOD + "\nYou may commit your changes when the goal is met.\n"
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("forbidden" in p for p in problems))
+
+    def test_write_capable_with_forbidden_default_passes(self) -> None:
+        good = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+            "forbidden: default\n"
+            "tools: Read, Write, Bash\n",
+        )
+        self.assertEqual(lint.check(_brief(good)), [])
+
+    def test_custom_forbidden_missing_one_prohibition_names_it(self) -> None:
+        custom = (
+            "no persistence beyond the task; no owner identity in outbound "
+            "requests; never acknowledge or skip a safety gate"
+            # deliberately omits "commit only your own files"
+        )
+        bad = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            f"durable: build-loop-memory/projects/navgator/handoffs/\n"
+            f"forbidden: {custom}\n"
+            f"tools: Read, Write, Bash\n",
+        )
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("commit only your own" in p for p in problems))
+
+    def test_custom_forbidden_covering_all_four_passes(self) -> None:
+        custom = (
+            "no persistence beyond the task (no LaunchAgents, registries, "
+            "cron jobs); never include owner identity/email in outbound "
+            "requests; never acknowledge, override, or skip a safety gate; "
+            "commit only your own files"
+        )
+        good = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            f"durable: build-loop-memory/projects/navgator/handoffs/\n"
+            f"forbidden: {custom}\n"
+            f"tools: Read, Write, Bash\n",
+        )
+        self.assertEqual(lint.check(_brief(good)), [])
+
+    def test_forbidden_placeholder_fails(self) -> None:
+        bad = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+            "forbidden: <default | your own list>\n"
+            "write_capable: true\n",
+        )
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("placeholder" in p for p in problems))
+
+
+class CodexExecStdinHang(unittest.TestCase):
+    """`codex exec` launched non-interactively without stdin closed hangs."""
+
+    def test_codex_exec_without_dev_null_fails(self) -> None:
+        bad = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+            "forbidden: default\n"
+            "tools: Read, Write, Bash\n",
+        ) + "\nRun: codex exec 'do the thing'\n"
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("codex exec" in p and "/dev/null" in p for p in problems))
+
+    def test_codex_exec_with_dev_null_passes(self) -> None:
+        good = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+            "forbidden: default\n"
+            "tools: Read, Write, Bash\n",
+        ) + "\nRun: codex exec 'do the thing' < /dev/null\n"
+        self.assertEqual(lint.check(_brief(good)), [])
+
+    def test_codex_exec_on_read_only_brief_is_not_checked(self) -> None:
+        """The codex-exec stdin check only fires once a brief is write-capable."""
+        read_only = GOOD + "\nRun: codex exec 'do the thing'\n"
+        problems = lint.check(_brief(read_only))
+        self.assertFalse(any("codex exec" in p for p in problems))
+
+
 if __name__ == "__main__":
     unittest.main()

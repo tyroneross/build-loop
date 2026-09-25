@@ -19,6 +19,10 @@ max_iterations:  <hard cap; terminates even if the goal is never reachable>
 report_primary:  <rally | commit | the-content-itself | <named channel>>
 report_backup:   <path other agents already check>
 durable:         <path that survives a clone, or the literal word: none>
+forbidden:       default  # only required if this brief can Write/Edit/Bash/NotebookEdit or
+                           # commit/push/edit; `default` = no persistence beyond the task, no
+                           # owner identity in outbound requests, never ack/override/skip a
+                           # safety gate, commit only your own files
 ---
 ```
 
@@ -26,6 +30,11 @@ durable:         <path that survives a clone, or the literal word: none>
 one is a decision you made, the other is a decision nobody made. `.build-loop/` is
 gitignored, so a report written only there dies with the machine — that is the failure this
 field exists to force a choice about.
+
+`forbidden` works the same way, but only when the brief is write-capable (it grants
+Write/Edit/Bash/NotebookEdit, or its prose tells the agent to commit/push/edit). `default`
+applies the four prohibitions above verbatim; a custom value must still cover all four or
+the lint names the ones missing. Read-only briefs don't need this field at all.
 
 ---
 
