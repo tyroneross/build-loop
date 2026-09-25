@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "670690a6ff4cfed406dab750f611312526018672288ced858f1724ef4f820f56"
+    "content_sha256": "1c9bf221303a2e43c2ed51701e9aa57923737ad6671c60f3a07a770719859731"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -885,7 +885,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-09-14"
+          "date": "2026-09-25"
         }
       },
       "database-assessor": {
@@ -1596,6 +1596,7 @@
       "scripts/blm.py": "Host-neutral build-loop-memory CLI.",
       "scripts/blm_api.py": "Optional local HTTP adapter for build-loop-memory.",
       "scripts/branch_closeout_gate.py": "Verify branch hygiene before a run can post its terminal closeout phase.",
+      "scripts/branch_head_drift.py": "Detect branch-head drift between an integration merge and today's history.",
       "scripts/bridge_lesson_to_harness.py": "Mirror a build-loop-memory lesson/feedback into the harness auto-memory store.",
       "scripts/brief_mece_validator.py": "Validate peer handoff briefs for the seven MECE ownership fields.\"\"\"",
       "scripts/budget_check.py": "Wall-clock budget tracker for the autonomous iterate loop (plan §14.4 B).",

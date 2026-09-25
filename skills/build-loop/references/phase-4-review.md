@@ -419,6 +419,8 @@ validates the map and calculates `groundwork.convergence/v1`.
 
 **Orphan scan**: invoke `Skill("build-loop:architecture-dead")` — runs `navgator dead`, diffs against the Phase 1 Assess baseline, surfaces ONLY new orphans introduced this build. No-ops cleanly when `.navgator/architecture/index.json` is absent.
 
+**Branch-head drift check** (when this run merges other branches, before any integration build, live smoke, or deploy): a stale merge — an integration branch built against a history-branch head that has since moved — passes every other gate silently. At merge time, record the merged branch(es)' heads with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/branch_head_drift.py" record --workdir "$PWD" --branch <name> --json`; immediately before integration build/smoke/deploy, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/branch_head_drift.py" check --workdir "$PWD" --json`. Exit 0 means every recorded head still matches; exit 1 means re-merge first — the drifted branch(es) are named in the output.
+
 **Deployment policy gate** (before any push/deploy): run:
 
 ```bash
