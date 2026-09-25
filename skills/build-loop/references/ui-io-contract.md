@@ -25,6 +25,28 @@ Every UI plan must include a `## UI Input/Output Contract` section before implem
 | Validation/security | Presentation, application, and domain validation; sanitization; auth/authz display behavior |
 | Traceability | Data schema, API endpoint/method, design-system component, and rationale |
 
+## UI Container Contract
+
+Every renderable UI change, including copy and typography changes, also needs a
+`## UI Container Contract` plan section. Write these four bullets before picking
+font sizes or editing strings:
+
+- **Container:** the real parent surface and usable content area after safe
+  areas, sheet/window bounds, padding, adjacent controls, and fixed footers.
+- **Constrained case:** the smallest relevant supported width or height, plus
+  large text and the longest realistic content that can alter wrapping.
+- **Text fit:** semantic text role, allowed line count, wrap/truncation behavior,
+  and which controls must remain visible or scroll into view.
+- **Rendered probe:** the exact running screen/state and constrained size to
+  capture with IBR or a platform screenshot/AX fallback. Inspect the text and
+  its container together; a build, source string, or isolated text preview is
+  not fit evidence.
+
+Use measured dimensions when available. If the app cannot render during
+planning, name the target device/window and measure the actual container in
+the probe before declaring the layout verified. Keep the probe scoped to the
+changed surface; do not turn every UI edit into a full-device sweep.
+
 ## Recipient Outputs
 
 For links, exports, generated artifacts and native share actions, link the record defined in `share-presentation.md`. Include recipient-facing title, text, imagery, identity, payload, privacy and fallback in the output inventory. The shared contract owns applicability and verification.

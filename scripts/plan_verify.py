@@ -19,6 +19,8 @@ scope-audit-required, approach-lenses-missing, parallel-decision-record,
 no-stop-language, reads-from-dependency, activation-map-required,
 decision-without-falsifier,
 tier-sanity-judgment-on-script, tier-sanity-mechanical-on-opus.
+UI plans also require a concrete container and text-fit contract when
+`--ui-target` is supplied.
 
 Plan Evidence Contract (per finding):
 {
@@ -1652,7 +1654,62 @@ def rule_activation_map_required(
 # ---------------------------------------------------------------------------
 
 
-def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
+_UI_CONTAINER_HEADING_RE = re.compile(r"^\s*##\s+UI Container Contract\s*$", re.IGNORECASE)
+_UI_CONTAINER_FIELD_RE = re.compile(
+    r"^\s*[-*]\s+(?:\*\*)?(Container|Constrained case|Text fit|Rendered probe)(?:\*\*)?\s*:\s*(.*)$",
+    re.IGNORECASE,
+)
+_UI_CONTAINER_PLACEHOLDER_RE = re.compile(r"^(?:tbd|todo|unknown|n/?a|none|pending)\.?$", re.IGNORECASE)
+
+
+def rule_ui_container_contract(
+    plan_path: Path, lines: list[tuple[int, str]], ui_target: str | None
+) -> list[dict[str, Any]]:
+    """BLOCKER for UI plans that omit the actual container/text-fit probe.
+
+    A render can only prove fit at a named constraint. Requiring these four
+    fields makes the decision and the intended probe visible before code is
+    written; the visual-evidence gate checks the executed probe later.
+    """
+    if not ui_target:
+        return []
+    heading_index = next((i for i, (_, line) in enumerate(lines) if _UI_CONTAINER_HEADING_RE.match(line)), None)
+    if heading_index is None:
+        return [_finding(
+            claim_text="UI plan needs a `## UI Container Contract` section before implementation.",
+            claim_kind="ui_container_missing",
+            subject={"path": None, "symbol": None, "noun": "UI Container Contract"},
+            evidence={"file": str(plan_path), "line": 1, "snippet": ""},
+            result="no_match", marker="❌", severity="BLOCKER", confidence="high",
+            rule_id="ui-container-contract",
+        )]
+
+    fields: dict[str, tuple[int, str]] = {}
+    for lineno, line in lines[heading_index + 1:]:
+        if re.match(r"^\s*#{1,2}\s+", line):
+            break
+        match = _UI_CONTAINER_FIELD_RE.match(line)
+        if match:
+            fields[match.group(1).lower()] = (lineno, match.group(2).strip())
+
+    out: list[dict[str, Any]] = []
+    for field in ("container", "constrained case", "text fit", "rendered probe"):
+        entry = fields.get(field)
+        if entry and entry[1] and not _UI_CONTAINER_PLACEHOLDER_RE.fullmatch(entry[1]):
+            continue
+        out.append(_finding(
+            claim_text=f"UI Container Contract needs a concrete `{field}` value.",
+            claim_kind="ui_container_field_missing",
+            subject={"path": None, "symbol": None, "noun": field},
+            evidence={"file": str(plan_path), "line": entry[0] if entry else lines[heading_index][0],
+                      "snippet": entry[1] if entry else lines[heading_index][1]},
+            result="no_match", marker="❌", severity="BLOCKER", confidence="high",
+            rule_id="ui-container-contract",
+        ))
+    return out
+
+
+def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) -> list[dict[str, Any]]:
     text = plan_path.read_text(encoding="utf-8")
     lines = strip_fenced_blocks(text)
     findings: list[dict[str, Any]] = []
@@ -1679,6 +1736,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_activation_map_required(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
     findings.extend(rule_tier_sanity(plan_path, lines))
+    findings.extend(rule_ui_container_contract(plan_path, lines, ui_target))
     return findings
 
 
@@ -1892,6 +1950,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Deterministic plan verifier (build-loop Phase 2 gate).")
     p.add_argument("plan", help="Path to plan markdown file")
     p.add_argument("--repo", help="Repo root for grep checks (defaults to plan file's parent's git root)")
+    p.add_argument("--ui-target", help="UI target when this plan changes a renderable interface")
     p.add_argument("--json", action="store_true", help="Emit findings as JSON")
     p.add_argument("--quiet", action="store_true", help="Suppress human summary on stdout")
     args = p.parse_args(argv)
@@ -1903,7 +1962,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
 
     try:
-        findings = run_all(plan_path, repo)
+        findings = run_all(plan_path, repo, args.ui_target)
     except Exception as e:  # noqa: BLE001 — verifier-error -> exit 2
         print(f"plan-verify: error: {e}", file=sys.stderr)
         return 2

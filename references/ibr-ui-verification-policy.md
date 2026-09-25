@@ -14,6 +14,14 @@ When Build Loop **updates, compares, or audits a renderable UI design**, invoke 
 | Compare | Capture both candidates or use `match`/`compare`; report intentional differences separately from style or behavior drift. |
 | Audit | Run the narrowest `scan`, flow, or platform scan that checks layout, accessibility, handlers, semantic state, and console health. |
 
+For changed UI text, typography, or layout, include the plan's constrained
+container case in the selected IBR checks: the actual sheet/window/card after
+insets, representative long content, and large text when relevant. Inspect
+the screenshot and AX/DOM bounds for unexpected wrapping, clipping, overlap,
+and scroll reachability. Record measured size and the artifact path in the
+Build Loop `layout_probe` envelope. An IBR `PASS` at a wider viewport does not
+prove fit in the constrained container.
+
 IBR verifies the design. Build Loop still owns design direction through the UI input/output contract, Calm Precision, project tokens, and `.build-loop/app-contract/ui.md`.
 
 ## Applicability

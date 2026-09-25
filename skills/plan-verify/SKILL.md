@@ -28,13 +28,14 @@ non-deterministic checks).
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> \
   --repo "$PWD" \
-  --json
+  --json [--ui-target <target>]
 ```
 
 Args:
 
 - `<plan.md>` — required path to plan markdown
 - `--repo <path>` — repo root for grep checks (omit if no repo-relative claims)
+- `--ui-target <target>` — required when the plan changes a renderable UI; checks `## UI Container Contract`
 - `--json` — emit findings JSON (default: human summary)
 - `--quiet` — suppress human summary
 
@@ -62,6 +63,7 @@ Args:
 | 10 | `risk-surface-change-without-threat-model` | Plan surfaces any risk-surface signal (new tool / MCP / LLM call / persistent memory / auth change / external API / user-data handling) without referencing a threat-model artifact, OWASP/ASI ID, or "threat-model: not-applicable: <reason>" anywhere in the doc | **BLOCKER** |
 | 11 | `parallel-decision-record` | A plan names multiple independent / parallel-safe chunks but omits `parallel_batch:` or `parallel_skipped_reason:` | **BLOCKER** |
 | 12 | `approach-lenses-missing` | A non-trivial architecture/workflow/dependency/interface plan omits `## Approach Lenses` or `Approach Lenses: n/a - <reason>` | WARN |
+| 13 | `ui-container-contract` | With `--ui-target`, UI plan omits real container, constrained case, text-fit behavior, or rendered probe | **BLOCKER** |
 
 Rules 8–10 ship with the `security-methodology` skill (build-loop 0.7.x). They lint the security boundary at Phase 2 the same way rules 1–4 lint the factual / orphan / package boundary. When rule 10 fires, the orchestrator's Phase 1 trigger-detector should also be flipping `triggers.riskSurfaceChange: true` — if rule 10 fires but the trigger isn't set, that's a Phase 1 detection gap worth investigating.
 

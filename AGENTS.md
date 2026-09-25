@@ -4,6 +4,16 @@ Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for signif
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
+## UI container rule for every host
+
+When a task changes rendered text, typography, or layout, inspect the actual
+parent container before editing. Name its usable size after insets and nearby
+controls, the smallest relevant width/large-text state, and the intended
+wrapping or truncation behavior. Render that constrained state with realistic
+long content and inspect pixels or AX bounds before claiming fit. Build Loop's
+`## UI Container Contract`, `plan_verify.py --ui-target`, and chunk-close
+`layout_probe` gate encode this rule so it survives agent/model changes.
+
 ## Autonomy gate — the three things that confirm (governing rule, highest priority)
 
 Once a plan is accepted, the loop does not stop to ask. Exactly three actions require human confirmation; everything else auto-executes:
@@ -356,6 +366,7 @@ Full provider substitution table (Thinking / Code / Pattern → each host's mode
   - **Bridge/backcast:** the smallest credible path from the current-constraints approach toward the clean-sheet target, including debt retired, dependencies added/removed, and decision points.
   - **Recommendation:** which path to execute now and why. If the recommendation follows current constraints instead of the clean-sheet approach, name the constraint that justifies the compromise.
 - **UI input/output contract gate**: if `uiTarget != null`, add a `## UI Input/Output Contract` section before mockups or implementation. It must name every changed surface's inputs, outputs, data taxonomy, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and schema/API/design-system traceability.
+- **UI container contract gate**: if `uiTarget != null`, add `## UI Container Contract` with the actual parent/usable area, constrained size or large-text case, text-fit behavior, and rendered probe. Run `plan_verify.py --ui-target <target>` so the deterministic rule checks it.
 - **Recent design structures gate**: if `uiTarget != null`, pass `skills/build-loop/references/recent-design-structures.md` to `design-contract-specialist` after the UI input/output contract exists. The specialist chooses the structure based on product/workflow/data/platform fit; recent structures are options, not requirements.
 - **Enumerate synthesis dimensions** for any commit that involves design judgment (UI placement, copy tone, CTA tier, schema shape, dispatch contracts, etc.). Add a `synthesis_dimensions:` block to the plan listing each named decision with a concrete claimed value:
   ```yaml
@@ -380,7 +391,7 @@ Full provider substitution table (Thinking / Code / Pattern → each host's mode
 
 1. **`plan-verify` (deterministic, Python stdlib)** — run grep-checkable rules over the plan:
    ```bash
-   python3 <build-loop>/scripts/plan_verify.py <plan-file> --repo "$PWD" --json
+   python3 <build-loop>/scripts/plan_verify.py <plan-file> --repo "$PWD" --json [--ui-target <target>]
    ```
    Catches: deletes/orphans contradicted by repo grep, internal numeric drift, route changes without evidence, package-state contradictions, missing markers, scope-split breadth.
    - Exit 0 → continue to step 2.

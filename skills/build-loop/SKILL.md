@@ -198,6 +198,13 @@ Core rule: build decisions should create user value and a delightful, trustworth
 
 Every UI build uses `references/ui-io-contract.md`. Before component choices are locked, build-loop must name every affected user input and system output, classify its data shape, map the operation and domain verb, choose the matching input/output component, document states and modality fallbacks, and trace validation/security to the right layer.
 
+Every renderable UI change also names the actual parent container, limiting
+size, text wrapping policy, and constrained rendered probe in a `## UI
+Container Contract`. `plan_verify.py --ui-target <target>` checks that plan
+section, and the chunk-close visual gate checks for a nonempty probe artifact.
+The reviewer still inspects the pixels or AX bounds; metadata alone is not a
+claim that text fits.
+
 For UI work, Phase 2 plans must include a `## UI Input/Output Contract` section. Phase 3 UI implementer prompts must carry that contract, and Phase 4 validation must check that changed UI surfaces still match it. This applies to forms, tables, charts, voice/audio, file workflows, generated AI output, and streaming responses.
 
 ## Modular Systems Pack

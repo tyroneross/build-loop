@@ -18,13 +18,23 @@
 //     "uiTarget": "macos" | "mobile" | "web" | null,
 //     "files_changed": ["...", "..."],
 //     "verification": "<freeform string describing how the implementer verified>",
-//     "evidence_paths": ["screenshots/foo.png", ...]   // optional
+//     "evidence_paths": ["screenshots/foo.png", ...],  // optional
+//     "uiTouched": true, // optional explicit signal for nonstandard UI paths
+//     "layout_probe": {
+//       "container": "<actual parent surface and usable width>",
+//       "constraint": "<narrow size or large-text setting>",
+//       "content": "<representative long text/state>",
+//       "capture_target": "<running app/session or URL and screen>",
+//       "evidence_path": "<existing PNG screenshot>",
+//       "inspection": "<what the screenshot showed about fit>",
+//       "outcome": "pass"
+//     }
 //   }
 // Extra fields are ignored. Missing fields are treated conservatively
 // (no claim => no evidence).
 //
 // Exit codes:
-//   0  pass            — non-UI diff OR genuine visual/AX evidence present
+//   0  pass            — non-UI diff OR required screenshot metadata present
 //   1  warn            — UI diff + ambiguous evidence; agent should clarify
 //   2  reject          — UI diff + ONLY symbol/string evidence; BLOCK chunk-close
 //   3  malformed       — envelope unreadable / invalid JSON
@@ -41,7 +51,7 @@ import path from 'node:path';
 
 const UI_FILE_PATTERNS = [
   /(^|\/)Views\//,            // Apple-platform convention
-  /\.swift$/,                 // any Swift source (heuristic — paired w/ uiTarget)
+  /(?:View|Screen|Page|Sheet|Window|Toolbar|Row|Card)\.swift$/,
   /\.tsx$/,
   /\.jsx$/,
   /\.vue$/,
@@ -118,6 +128,47 @@ function classifyEvidence(verificationText, evidencePaths) {
   };
 }
 
+function checkLayoutProbe(probe, root) {
+  if (!probe || typeof probe !== 'object' || Array.isArray(probe)) {
+    return 'missing layout_probe for the actual UI container and constrained text state';
+  }
+  for (const field of ['container', 'constraint', 'content', 'capture_target', 'evidence_path', 'inspection']) {
+    if (typeof probe[field] !== 'string' || !probe[field].trim()) {
+      return `layout_probe.${field} must name the rendered surface and evidence`;
+    }
+  }
+  if (!/(?:\d+\s*(?:pt|px)|narrow|compact|smallest|large text|dynamic type)/i.test(probe.constraint)) {
+    return 'layout_probe.constraint must identify a limiting size or large-text setting';
+  }
+  if (probe.outcome !== 'pass') {
+    return 'layout_probe.outcome must be pass after inspecting wrapping, clipping, overlap, and reachability';
+  }
+  const evidencePath = path.resolve(root, probe.evidence_path);
+  try {
+    const stat = fs.statSync(evidencePath);
+    if (!stat.isFile() || stat.size === 0) return 'layout_probe.evidence_path must be a nonempty file';
+    if (!/\.png$/i.test(evidencePath)) return 'layout_probe.evidence_path must be a PNG screenshot';
+    const header = Buffer.alloc(24);
+    const fd = fs.openSync(evidencePath, 'r');
+    try {
+      if (fs.readSync(fd, header, 0, 24, 0) !== 24 ||
+          !header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+          header.toString('ascii', 12, 16) !== 'IHDR' ||
+          header.readUInt32BE(16) === 0 || header.readUInt32BE(20) === 0) {
+        return 'layout_probe.evidence_path is not a PNG image with dimensions';
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return `layout_probe.evidence_path does not exist: ${probe.evidence_path}`;
+  }
+  if (!/(?:wrap|clipp|overlap|reach|visible|fit)/i.test(probe.inspection)) {
+    return 'layout_probe.inspection must describe observed text fit';
+  }
+  return null;
+}
+
 // --- Main -------------------------------------------------------------------
 
 function parseArgs(argv) {
@@ -170,6 +221,7 @@ function main() {
   const filesChanged = Array.isArray(env.files_changed) ? env.files_changed : [];
   const verification = typeof env.verification === 'string' ? env.verification : '';
   const evidencePaths = Array.isArray(env.evidence_paths) ? env.evidence_paths : [];
+  const layoutProbe = env.layout_probe;
 
   // Skip when no UI target is configured for this build.
   if (uiTarget === null || uiTarget === undefined) {
@@ -183,7 +235,7 @@ function main() {
 
   // Skip when this chunk didn't touch any UI file.
   const uiFiles = filesChanged.filter(isUiFile);
-  if (uiFiles.length === 0) {
+  if (uiFiles.length === 0 && env.uiTouched !== true) {
     emit('pass', 'no UI files changed in this chunk', {
       ui_changed: false,
       ui_files: [],
@@ -193,9 +245,21 @@ function main() {
   }
 
   // UI was touched — evidence is required.
-  const { accepted_evidence, symbol_signals } = classifyEvidence(verification, evidencePaths);
+  const { accepted_evidence, symbol_signals } = classifyEvidence(
+    verification,
+    [...evidencePaths, ...(layoutProbe?.evidence_path ? [layoutProbe.evidence_path] : [])]
+  );
 
   if (accepted_evidence.length > 0) {
+    const probeError = checkLayoutProbe(layoutProbe, args.root);
+    if (probeError) {
+      emit('reject', probeError, {
+        ui_changed: true,
+        ui_files: uiFiles,
+        symbol_only: false,
+        accepted_evidence,
+      });
+    }
     emit('pass', 'visual/AX evidence present', {
       ui_changed: true,
       ui_files: uiFiles,

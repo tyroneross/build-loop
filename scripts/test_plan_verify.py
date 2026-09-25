@@ -60,6 +60,50 @@ class ContractShapeTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+class UIContainerContractTests(unittest.TestCase):
+    def _check(self, body: str, ui_target: str | None = "macos") -> tuple[int, dict]:
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as file:
+            file.write(body)
+            path = Path(file.name)
+        try:
+            args = [str(path), "--json"]
+            if ui_target:
+                args.extend(["--ui-target", ui_target])
+            result = run(args)
+            return result.returncode, json.loads(result.stdout)
+        finally:
+            path.unlink()
+
+    def test_ui_plan_without_container_contract_blocks(self) -> None:
+        code, payload = self._check("# Plan\n\nAdjust the Today heading.\n")
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["summary"]["by_rule_id"]["ui-container-contract"]["BLOCKER"], 1)
+
+    def test_placeholder_fields_do_not_count(self) -> None:
+        code, payload = self._check(
+            "# Plan\n\n## UI Container Contract\n"
+            "- Container: Today sheet, 24 pt insets\n"
+            "- Constrained case: TBD\n"
+            "- Text fit: headline, at most two lines; actions remain visible\n"
+            "- Rendered probe: pending\n"
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["summary"]["by_rule_id"]["ui-container-contract"]["BLOCKER"], 2)
+
+    def test_concrete_ui_contract_passes_and_non_ui_is_exempt(self) -> None:
+        body = (
+            "# Plan\n\n## UI Container Contract\n"
+            "- Container: Today sheet; content width after 24 pt side insets\n"
+            "- Constrained case: 320 pt window with large Dynamic Type and long task title\n"
+            "- Text fit: headline up to two lines; body wraps; controls do not clip\n"
+            "- Rendered probe: capture the running sheet at the constrained case and inspect text bounds\n"
+        )
+        code, payload = self._check(body)
+        self.assertEqual(code, 0, payload)
+        code, payload = self._check("# Plan\n\nNo UI change.\n", ui_target=None)
+        self.assertEqual(code, 0, payload)
+
+
 class FencedCodeExclusionTests(unittest.TestCase):
     """Claims inside fenced code blocks must be ignored."""
 

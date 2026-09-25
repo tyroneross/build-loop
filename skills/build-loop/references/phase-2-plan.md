@@ -51,6 +51,7 @@
 7-share. **Share presentation gate** (every build): follow `references/share-presentation.md`, complete the applicability record and applicable surface fields, link `## Share Presentation` from the plan, and run `share_presentation_check.py` before implementation. An explicit not-applicable reason completes unrelated builds.
 
 8. **UI input/output contract gate**: If `uiTarget != null`, load `references/ui-io-contract.md` and add a `## UI Input/Output Contract` section to the plan before mockups or implementation. The section must cover every affected screen/component and name: user inputs, system outputs, data taxonomy, CRUD/domain operation, component mapping, state matrix, modality fallback, validation/security, and traceability. If a planned UI component has no named input/output, remove it or mark it decorative with rationale; decorative controls are usually a scope error.
+8-container. **UI container gate**: For every renderable UI change, including copy, add `## UI Container Contract` with `Container`, `Constrained case`, `Text fit`, and `Rendered probe` bullets as defined in `references/ui-io-contract.md`. Read the actual parent layout before setting typography. Plan the narrow or large-text probe against realistic long content; do not infer fit from string length or a detached preview.
 8a. **Calm Precision core-consideration gate**: If `uiTarget != null`, the design direction must treat Calm Precision as a core decision gate before selecting structure, style mode, motion, or interaction behavior. The resulting `.build-loop/app-contract/ui.md` must include `## Calm Precision Core Considerations` with relevant principles, perceptual foundations, implementation effects, and explicit exceptions.
 8b. **Recent design structures gate**: If `uiTarget != null`, load `references/recent-design-structures.md` before dispatching `design-contract-specialist`. The specialist, not the planner, selects the structure. The plan should pass the file path and any relevant mockup/screenshot/design artifacts; it should not force a named structure unless the user explicitly requested one.
 9. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
@@ -84,8 +85,10 @@ Readback format (one line, mandatory, before the plan body):
 
 8. **Run `plan-verify`** (deterministic, grep-checkable rules; now includes `no-stop-language` rule):
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json [--ui-target <target>]
    ```
+   Pass `--ui-target <target>` whenever `uiTarget != null`; this activates the
+   deterministic UI Container Contract check. Omit it for non-UI plans.
    - Exit 0 → proceed to step 9.
    - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.

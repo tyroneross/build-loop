@@ -81,11 +81,20 @@ Test every criterion from Assess with evidence.
 
 **Share presentation validation** (every build): follow `references/share-presentation.md` and run `share_presentation_check.py` against the applicability record. For applicable surfaces, validate actual fetched metadata/assets and native outgoing payloads plus available mobile/desktop recipient previews. Fix confirmed defects; report missing receiver/device evidence as unverified, separately from structural passes. This applies even when `uiTarget == null`.
 
-**UI validation — build-loop-owned route** (`uiTarget != null`): dispatch `ui-validator` first, then run the static design-rule scanner and UI input/output contract check. Build-loop does not auto-route to IBR for validation. If the user explicitly requested IBR, treat that as a manual auxiliary validator and keep its findings out of the default gate order.
+**UI validation — build-loop-owned route** (`uiTarget != null`): dispatch `ui-validator` first, then run the static design-rule scanner and UI input/output contract check. For a renderable UI change, use targeted headless IBR when installed, following `references/ibr-ui-verification-policy.md`; a user request for IBR makes that pass required. IBR findings enter the same Validate/Iterate record as other rendered evidence. When unavailable, use the documented platform screenshot/AX fallback and name the coverage gap.
 
 **UI validation fallback**: paste `fallbacks.md#web-ui` into the validation subagent prompt when `ui-validator` cannot render the route. The fallback contains 10 specific grep checks (Gestalt violations, touch targets, missing handlers, missing aria-labels, status-pill anti-patterns, off-token colors, non-8pt spacing, console leftovers, mock data) plus a file-check matrix for landmarks, focus styles, and viewport tags. Findings get `⚠️ static-analysis only — browser/simulator evidence unavailable` in the Review-G report. This is the standalone UI validation path — degraded vs rendered validation, but not silent.
 
 **UI input/output contract validation** (`uiTarget != null`): read the plan's `## UI Input/Output Contract` section and compare it to changed UI files before visual validation. Confirm every user input and system output in the changed surface has a data taxonomy, operation/domain verb, component mapping, state coverage, modality fallback when relevant, validation/security layer, and schema/API/design-system trace. Missing coverage is a Validate failure unless the change is copy-only and the contract explicitly says no data surface changed.
+
+**UI container validation** (`uiTarget != null`): compare the rendered changed
+surface with the plan's `## UI Container Contract`. Require one constrained
+probe of the actual parent container and representative long text; check
+wrapping, clipping, overlap, and whether the last control remains reachable.
+Record the measured size, text state, and screenshot or AX evidence path. If
+IBR cannot inspect the running surface, use a platform screenshot/AX fallback
+and report what remained unverified. A build or source inspection is not a
+visual pass.
 
 **Calm Precision core-consideration validation** (`uiTarget != null`): check `.build-loop/app-contract/ui.md` or the implementer return envelope for the relevant Calm Precision principles, foundations, and implementation effects. Missing consideration is a Validate failure for non-trivial UI work, because Calm Precision is a design gate, not a passive reference.
 

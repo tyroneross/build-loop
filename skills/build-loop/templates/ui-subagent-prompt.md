@@ -36,6 +36,17 @@ For every changed screen/component, apply the contract exactly:
 
 If you need to deviate from the contract, report `CONTRACT DEVIATION: <surface> — <reason> — <replacement>`.
 
+## UI container and text fit
+
+Read the plan's `## UI Container Contract` before editing copy or typography.
+Inspect the real parent surface, safe areas, padding, neighboring controls,
+and fixed footer. Keep headings, labels, and explanatory text within the
+planned line and overflow behavior. Render the named constrained case with
+realistic long content and large text where relevant; inspect the screenshot
+or AX bounds for wrapping, clipping, overlap, and scroll reachability. Return
+the measured container/constraint and a durable evidence path. A compile or
+source-level string check does not establish text fit.
+
 ## Mockup-vs-rule conflict policy
 
 Mockups are **intent**. Design rules are **law**. When they conflict, the rule wins. No exceptions, no judgment calls — replicate the rule, not the pixel.
@@ -113,6 +124,8 @@ Mandatory pre-return steps:
 
 4. **Visual validation (REQUIRED for UI work; enforced gate, not prose).** The scanner catches static anti-patterns. It cannot catch rendering bugs — an upside-down arc, an invisible track, a clipped row, a chip that wraps. **If you touched a Views/ file, you must render the actual screen and look at it.** The orchestrator runs `scanners/require-visual-evidence.mjs` (BL-1 gate) at chunk-close and at Phase 4-B Validate: symbol/string-only evidence (`nm`, `strings`, `git grep`, "identifier present", "compiles cleanly") is automatically rejected with exit 2 and the chunk is routed back to Iterate. Required artifacts are a screenshot path anchored to the running app's pid, an AX-tree dump, or a scan/SSIM/ui-validator result.
 
+   Return `layout_probe: { container, constraint, content, capture_target, evidence_path, inspection, outcome: "pass" }` for the constrained case in the UI Container Contract. `evidence_path` must point to a real PNG screenshot; `capture_target` names the running app/session or URL and screen; `inspection` records what the screenshot showed about wrapping, clipping, overlap, and reachability. The scanner verifies the artifact shape, and the reviewer must inspect the pixels before accepting the result.
+
    - **macOS (`uiTarget: "macos"`)**: macOS has no simulator. Prefer the built-in `native-ax-driver` against the running `.app` (pid-anchored AX-tree dump + element actions) OR — if the IBR plugin is installed in this project — IBR `scan_macos`. Capture a screenshot via `screencapture -l <window-id>` or the AX driver's screenshot helper; do NOT use `xcrun simctl` (it does not target macOS). If neither verifier is reachable, return `status: blocked` naming the unreachable tool — do NOT fall back to `nm`/`strings`.
    - **iOS / watchOS (`uiTarget: "mobile"`)**: install on simulator, launch, capture via `xcrun simctl io booted screenshot` or `idb ui` for interaction. If your change is in a returning-user code path, seed test data first (see "DebugSeeder pattern" below).
    - **Web (`uiTarget: "web"`)**: open the changed route with the host's available browser/screenshot tooling against the dev server URL — `ui-validator` is the primary surface; Playwright/Puppeteer/showcase capture are acceptable alternatives.
@@ -171,6 +184,7 @@ Your output to the orchestrator must include:
 - Files created / modified
 - Build result (✅ / ❌)
 - UI input/output contract result: covered surfaces, deviations, and any N/A entries
+- UI container contract result and the `layout_probe` object with measured constraint and durable evidence path
 - Scanner result on changed files: must-fix count (must be 0), warn count
 - Every `RULE BEATS MOCKUP:` decision (one line each)
 - Every `CONTRACT DEVIATION:` decision (one line each)
