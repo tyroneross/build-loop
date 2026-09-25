@@ -281,10 +281,54 @@ the doc; the command layer handles host-specific launch.
 |------|--------------|-------------------|
 | Claude Code | `claude --print` with doc as initial prompt prefix | Inline in opening message |
 | Codex | `codex` with `--context` flag or stdin | Depends on Codex version |
+| Easy Terminal (ptyd) | `ptyd agent start <name> -- <cmd...>`, verified via `ptyd agent read <name>` | Seeded prompt (bookmark + brief) passed as the launched command's own opening argument/stdin |
 | Unknown / unsupported | Emit doc + print instructions, exit 0 | Manual paste |
 
 The `--launch` path always writes `.build-loop/handoff-latest.md` regardless of host
 support — the doc is the primary deliverable; launch is a convenience.
+
+**Easy Terminal (ptyd) host row — detail.** At the 75% context threshold, launch a
+seeded SUCCESSOR pair — a lead and a reviewer, each its own pane — rather than one
+session, so the reviewer can check the lead's work against the same handoff instead
+of trusting a self-report:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handoff --workdir "$PWD" --output .build-loop/handoff-latest.md
+ptyd agent start successor-lead     -- claude "$(cat .build-loop/handoff-latest.md)"
+ptyd agent start successor-reviewer -- claude "$(cat .build-loop/handoff-latest.md)
+
+You are the REVIEWER, not the lead. Read the brief above, then verify successor-lead's
+work against it rather than repeating it."
+ptyd agent read successor-lead
+ptyd agent read successor-reviewer
+```
+
+`claude "<prompt>"` starts an interactive session seeded with the brief (verified against `claude --help`: interactive by default; `-p/--print` would answer once and exit, which is wrong for a successor). The CLI resolves its daemon through `$PTYD_SOCKET_PATH` (default `~/.config/ptyd/ptyd.sock`, `daemon/ptyd/src/main.rs:71-74`); export it explicitly so a test launch never lands in the user's live instance.
+
+`ptyd agent start <name> [--cwd P] [--workspace ID] [--tab ID] [--session-id ID]
+[--identity ID] [--force] [--focus|--no-focus] -- <argv...>` and
+`ptyd agent read <name> [--source visible|recent] [--lines N]` are both defined in
+`daemon/ptyd/src/agent.rs` in the easy-terminal repo (`cli_agent` dispatch at
+`agent.rs:100-110`; `agent_start` at `agent.rs:121`; `agent_read` at `agent.rs:387`),
+with a worked `agent start` example at `daemon/ptyd/docs/CLIENT-API.md:533`. `ptyd` is
+not installed on PATH by default — resolve the binary path in that checkout before
+using this row, and never run an untried `--help` invocation speculatively (a stray
+`ptyd workspace create --help` has been observed to actually create a workspace as a
+side effect).
+
+The brief seeded into each pane's opening prompt must name: every file the outgoing
+session owns (so the successor doesn't re-claim or collide on them), every open
+review/PR the outgoing session started, and the current branch heads (local + any
+pushed remote) — the same three facts a cold-read handoff needs per the seven content
+classes above, condensed for a pane that has no scrollback before this prompt.
+
+**Gotcha — default socket may be the user's live instance.** `ptyd`'s CLI resolves its
+control socket from `$PTYD_SOCKET_PATH`, defaulting to `~/.config/ptyd/ptyd.sock`
+(`daemon/ptyd/src/main.rs:71-74`) when that env var is unset. That default likely
+addresses the user's own running Easy Terminal, not a disposable test instance. Any
+test or verification of this row must export `PTYD_SOCKET_PATH` to an explicit,
+throwaway socket first — there is no `--socket` CLI flag, only the env var — so a test
+run never sends `agent start`/`agent read` at the user's live session.
 
 **Important:** launch always targets the STABLE checkout (`git worktree list` → the
 `[bare]` or main entry), not the current worktree. Worktrees may be GC'd before the
