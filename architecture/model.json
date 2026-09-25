@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e544ede69ceca15be1a260872a64f6b09c9d90850a459609a426a3fbe9ada654"
+    "content_sha256": "e84812801729e8ee1724e8a2a0faebcd7802017c5f151393e31ef883d3a28ac8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1206,7 +1206,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-09-23"
+          "date": "2026-09-24"
         }
       },
       "building-with-deepagents": {
@@ -1390,7 +1390,7 @@
         "file": "skills/plan-verify/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-09"
+          "date": "2026-09-24"
         }
       },
       "plugin-builder": {
@@ -1864,6 +1864,7 @@
       "scripts/regenerate_knowledge_index.py": "Regenerate `.episodic/decisions/INDEX.md` and `.episodic/issues/INDEX.md`.",
       "scripts/registry_lag.py": "Detect the failure mode \"a release was cut and the registry never got it\".",
       "scripts/release_staleness.py": "Detect the failure mode \"a week passed with merged commits and no release was cut\".",
+      "scripts/release_surface_scan.py": "release_surface_scan.py — advisory scan for developer/owner surfaces that ship in Release.",
       "scripts/report_lint.py": "User-facing output style lint for build-loop's Phase 4 Review-G draft.",
       "scripts/rerank.py": "Cross-encoder rerank for hybrid retrieval (Phase A chunk 4).",
       "scripts/research_packet.py": "research_packet.py — Research packet generation for build-loop.",
