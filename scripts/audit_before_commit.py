@@ -90,6 +90,26 @@ ANTI_BIAS_BLOCK = (
     "Challenge your first impression before emitting a verdict. "
     "Cite the specific intent or research-context entry your verdict turns on."
 )
+# Stranger test (incident 2026-09-25): an owner/admin panel gated by client-side
+# trust-on-first-use shipped because both reviewers checked "no takeover of an
+# existing anchor" and never modeled a stranger's fresh install. Emitted in the
+# verdict request whenever the diff touches an auth/admin/owner/debug/gated
+# surface. `agents/independent-auditor.md` and `agents/security-reviewer.md`
+# carry the same question.
+STRANGER_TEST_BLOCK = (
+    "This diff touches an auth/admin/owner/debug/gated surface. Before any verdict, answer the "
+    "STRANGER TEST: what can a person who installs the Release build fresh, with their own account "
+    "or Apple ID, reach? Treat as high severity: client-side first-come/trust-on-first-use "
+    "ownership or authorization on consumer-distributed software; developer/owner tooling that "
+    "compiles into Release/production; a gate whose only secret is a gesture, tap count, or hidden "
+    "URL. Checking that an EXISTING owner cannot be displaced does not answer this. Default fix: "
+    "compile it out of Release (#if DEBUG / build flag) plus an automated release-binary surface "
+    "check; if it must ship, gate by an identity pinned at build time or verified server-side."
+)
+_CODE_SUFFIXES = (
+    ".swift", ".m", ".mm", ".kt", ".java", ".ts", ".tsx", ".js", ".jsx", ".vue",
+    ".py", ".go", ".rs", ".dart", ".rb", ".php", ".cs",
+)
 SECRET_FILENAME_PATTERNS = (
     # `.env` and its real variants (.env.local, .env.production, …) — but NOT
     # the committed TEMPLATES. `.env.example` / `.sample` / `.template` /
@@ -393,6 +413,27 @@ def _find_new_ui_surface_files(
     return hits
 
 
+def _find_gated_surface_files(files: list[str], diff_sections: dict[str, str]) -> list[str]:
+    """Code files whose ADDED lines touch an admin/owner/debug/gesture-gated surface.
+
+    Markers come from `release_surface_scan.GATED_SURFACE_PATTERNS` (one source
+    of truth). Docs and tests are excluded: prose that names the pattern is not
+    a surface.
+    """
+    try:
+        import release_surface_scan as _rss
+    except Exception:
+        return []
+    hits: list[str] = []
+    for f in files:
+        if not f.endswith(_CODE_SUFFIXES) or _is_test_path(f) or _rss.is_excluded_path(f):
+            continue
+        added = _added_lines(diff_sections.get(f, ""))
+        if any(rx.search(added) for _, rx in _rss.GATED_SURFACE_PATTERNS):
+            hits.append(f)
+    return hits
+
+
 def _classify_risk(files: list[str], diff_body: str) -> dict:
     """Classify the staged diff as high | medium | low risk.
 
@@ -427,6 +468,14 @@ def _classify_risk(files: list[str], diff_body: str) -> dict:
         )
         risky.update(ui_new)
 
+    gated = _find_gated_surface_files(files, diff_sections)
+    if gated:
+        reasons.append(
+            f"touches an auth/admin/owner/gated surface ({len(gated)} file(s)) — stranger test required: "
+            + ", ".join(gated[:10])
+        )
+        risky.update(gated)
+
     if len(files) >= FILE_COUNT_RISK_THRESHOLD:
         reasons.append(
             f"large changeset: {len(files)} files staged (threshold {FILE_COUNT_RISK_THRESHOLD})"
@@ -441,7 +490,8 @@ def _classify_risk(files: list[str], diff_body: str) -> dict:
     if reasons:
         if not risky:
             risky.update(files[:20])
-        return {"level": "high", "reasons": reasons, "risky_files": sorted(risky)[:20]}
+        return {"level": "high", "reasons": reasons, "risky_files": sorted(risky)[:20],
+                "stranger_test_files": gated}
 
     # Medium tier — reuse the existing constitution/generic keyword detector
     # instead of re-deriving keyword risk logic here.
@@ -459,9 +509,9 @@ def _classify_risk(files: list[str], diff_body: str) -> dict:
         pass
 
     if medium_reasons:
-        return {"level": "medium", "reasons": medium_reasons, "risky_files": []}
+        return {"level": "medium", "reasons": medium_reasons, "risky_files": [], "stranger_test_files": []}
 
-    return {"level": "low", "reasons": [], "risky_files": []}
+    return {"level": "low", "reasons": [], "risky_files": [], "stranger_test_files": []}
 
 
 def _enforce_risk_audit_enabled(root: Path) -> bool:
@@ -1243,6 +1293,8 @@ def _emit_packet(root: Path) -> int:
         for f in risk["risky_files"]:
             out(f"- `{f}`\n")
         out("\n")
+    if risk.get("stranger_test_files"):
+        out("**Stranger test (required):** " + STRANGER_TEST_BLOCK + "\n\n")
     out("Render ONE of the four verdicts in your next assistant message, naming the verdict explicitly:\n\n")
     out("- **yay (approve)** — packet aligns with intent + constitution; the commit ships as-is.\n")
     out("- **nay (reject)** — packet contradicts intent or trips a constitution rule; the commit should not land.\n")

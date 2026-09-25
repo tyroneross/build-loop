@@ -51,6 +51,36 @@ Then spend your budget on what it structurally cannot answer:
 
 Do not re-report a finding the scanner already emitted with the same file and line unless you are **raising** its severity with reasoning the scanner could not have. Say so explicitly when you do.
 
+## Stranger test (MANDATORY for auth / admin / owner / debug / gated surfaces)
+
+When the diff touches authentication, authorization, ownership, an admin or owner screen, a debug or developer menu, a feature flag, or anything revealed by a gesture, tap count, or hidden URL, answer this before grading anything else:
+
+> **What can a person who installs the Release build fresh, on their own device, with their own account or Apple ID, reach?**
+
+Model that person explicitly. Checking that an *existing* owner cannot be displaced does not answer it: on a fresh install there is no existing owner. Flag as **HIGH** (at least):
+
+- **Client-side first-come / trust-on-first-use ownership or authorization** on software distributed to consumers. Every fresh install is a first use, so the first stranger to arrive becomes the owner. Face ID, Touch ID and Sign in with Apple prove the holder is *a* person with *an* account, never that they are *the* owner.
+- **Developer, owner, admin or debug tooling that compiles into Release / production builds**, however hidden.
+- **A gate whose only secret is a gesture, tap count, or hidden URL.** Anyone can read or guess it from the binary, a screen recording, or a forum post.
+
+Default remediation, in order:
+1. Compile it out of Release (`#if DEBUG` or a build flag absent from the Release configuration), plus an automated release-surface check (below) so it cannot silently come back.
+2. If it genuinely must ship, gate it by an identity pinned at build time (e.g. an allowlisted account ID compiled into an internal-distribution build) or verified server-side against an allowlist. Never by first arrival.
+
+Decide whether the surface should exist in Release **before** rating how well it is protected. "Gated, not a backdoor" and "disclose it to App Review" are not fixes: a reviewer knowing about a hidden panel does not stop a stranger reaching it.
+
+Observed 2026-09-25: an iOS app shipped an owner/admin panel behind a five-tap reveal on the version row, gated by client-side trust-on-first-use ownership. This agent returned PASS and the independent auditor approved with nits; both verified that an existing owner anchor could not be taken over, and neither modeled a stranger's fresh install, where no anchor exists. A later audit rated the panel "gated, not a debug backdoor" and proposed disclosing it to App Review.
+
+**Apple (iOS / macOS) projects** — the orchestrator runs the deterministic release-surface scan at Review-A and passes its JSON in your dispatch packet as `release_surface_scan` (you have no Bash):
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/release_surface_scan.py" --path . --json
+```
+
+It lists every admin/owner/debug/gesture-reveal/ownership-claim marker outside a debug-only `#if`. It is advisory (exit 0, WARN): each hit is a candidate for the stranger test, not a verdict. If the packet lacks it on an Apple project, trace the `#if DEBUG` nesting around each gated surface yourself with Grep/Read and say in `stranger_test.in_release` that the scan was not supplied.
+
+Record the answer in the output's `stranger_test` object, including when it does not apply.
+
 ## Inputs
 
 1. The diff for the current chunk (use `git diff HEAD~1 -- <files>` against the file list provided by the orchestrator).
@@ -87,6 +117,7 @@ Each finding maps to one or more risk IDs from the canonical matrix in `skills/s
 | Tenant boundary | Tenant scoping enforced in one query and dropped in a downstream call on the same request path | A01 |
 | Workflow authz | Business action permitted by role and ownership but not valid in the current state, or not rate-limited as a business flow (bulk account creation, repeated inventory holds) | A01, LLM10 |
 | Client boundary | Capability exposed to the browser or mobile binary that assumes a client-side check is a security boundary | A01, A07 |
+| Release surface | Admin / owner / debug / developer surface, or a gesture-revealed screen, reachable in a Release build; client-side first-come or trust-on-first-use ownership on consumer software (see Stranger test) | A01, A07 |
 | Credential lifetime | Long-lived static credential where a short-lived workload identity is available; no rotation or revocation path | A07 |
 | Error surface | Client-facing error carrying a stack trace, SQL message, internal hostname, or framework version | A05 |
 | Cost / DoS | New external API or LLM call without budget cap, timeout, or retry ceiling | LLM04 |
@@ -106,7 +137,7 @@ If `mcp-builder/references/mcp-security.md` cannot be loaded, fall back to the T
 ## Severity
 
 - **CRITICAL** — exploit is straightforward, attacker-controllable, and the consequence is account/data compromise, RCE, secrets exfiltration, or production-tenant boundary break. Routes to Iterate immediately. Examples: prompt-injectable shell composition; tool with `permission_tier: T5` and no approval; **new tool added with no `permission_tier` declared at all** (undefined privilege is treated as worst-case, not as "approval omitted"); agent reading another tenant's data because the auth scope passed through the LLM; deserialization of untrusted data; `eval`/`Function(...)` over LLM output or user input; raw SQL templated with LLM output.
-- **HIGH** — exploit is plausible with moderate attacker effort or the impact is limited to a single user but still material. Routes to Iterate. Examples: SSRF-prone outbound fetch; persistent memory readable across sessions; LLM output rendered as HTML; **`innerHTML` / `dangerouslySetInnerHTML` assigned LLM output or tool result without DOM sanitization**; **infinite retry or no timeout on a paid external API or LLM call** (cost-runaway / denial-of-wallet); shell composition over template literals containing user-controlled or LLM-controlled strings.
+- **HIGH** — exploit is plausible with moderate attacker effort or the impact is limited to a single user but still material. Routes to Iterate. Examples: SSRF-prone outbound fetch; persistent memory readable across sessions; LLM output rendered as HTML; **`innerHTML` / `dangerouslySetInnerHTML` assigned LLM output or tool result without DOM sanitization**; **infinite retry or no timeout on a paid external API or LLM call** (cost-runaway / denial-of-wallet); shell composition over template literals containing user-controlled or LLM-controlled strings. **Any stranger-test failure**: client-side trust-on-first-use ownership on consumer software, owner/admin/debug tooling compiled into Release, or a gate whose only secret is a gesture.
 - **MEDIUM** — concern is real but mitigated by other layers, or impact is recoverable. Logged in `.build-loop/issues/security-findings.json`, build proceeds, surfaces in Review-F. Examples: missing rate limit on a non-auth endpoint; tool without explicit `permission_tier` but the underlying action is read-only.
 - **LOW** — defense-in-depth opportunity, no current exploit. Logged only. Examples: prompt could be more clearly delimited; audit log is missing one nice-to-have field.
 
@@ -120,6 +151,7 @@ Severity rules:
 1. Read `.build-loop/state.json.triggers`. If `riskSurfaceChange` is not true, emit `{"findings": [], "skipped_reason": "..."}` and stop.
 2. Read `.build-loop/goal.md` and `.build-loop/intent.md` — orient on what was supposed to change.
 3. Load `Skill("build-loop:security-methodology")`. Read the cross-source matrix and the detection-pattern files for the OWASP layer that applies (LLM Top 10 always; Agentic Top 10 when an agent or tool was added; Web Top 10 when an HTTP endpoint changed).
+3a. **Stranger test.** If the diff touches an auth/admin/owner/debug/gated surface, apply the Stranger test section above (reading the `release_surface_scan` packet on Apple projects) before walking the table.
 3b. **Required route-auth enumeration (LO-5, A01).** When any HTTP endpoint changed, do not sample — **walk every** `app/api/**/route.ts` (or framework equivalent) mutating/DDL handler and confirm each has an auth guard that **fails closed** when its secret env is unset (the `token !== process.env.X` bypass: if `X` is undefined the check passes). This access-control sweep is the counterpart to `database-assessor`'s destructive-FK sweep — neither lens is a superset (private-app stress test on 2026-06-30: 8 A/B runs here missed a destructive cascade; a DB-RCA missed 4 unauth routes). Lead findings with a blast-radius verdict per the methodology's SC-1 default.
 4. Get the file list from the orchestrator's dispatch packet. Read each changed file; do not scan files outside the chunk.
 5. For each change, walk the table above. When a row matches, draft a finding with mandatory fields below.
@@ -146,6 +178,12 @@ Severity rules:
       "closure_proof": "<the regression check that proves it's closed (test/assertion/probe); null until closed>"
     }
   ],
+  "stranger_test": {
+    "applies": true,
+    "surfaces": ["path/to/AdminGate.swift:30 — owner panel behind 5-tap reveal"],
+    "answer": "<what a fresh install with the stranger's own account reaches; 'not applicable — no auth/admin/owner/debug/gated surface in the diff' when applies is false>",
+    "in_release": "yes | no (cite the #if / build flag, file:line) | unknown"
+  },
   "critical_count": 0,
   "high_count": 0,
   "medium_count": 0,

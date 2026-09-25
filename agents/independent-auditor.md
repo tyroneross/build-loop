@@ -92,6 +92,20 @@ If either cannot be confirmed from the diff, emit a finding (severity ≥ medium
 
 Rationale: 6/8 features in the 2026-06-07 epic shipped dormant when this check was only ad hoc.
 
+## Stranger test (MANDATORY when the diff touches auth / admin / owner / debug / gated code)
+
+The commit-audit packet prints a **Stranger test (required)** line when it detects such a surface; apply the test whenever the diff touches authentication, authorization, ownership, an admin or owner screen, a debug or developer menu, a feature flag, or a gesture/tap-count/hidden-URL reveal, whether or not the packet flagged it.
+
+Answer: **what can a person who installs the Release build fresh, with their own account or Apple ID, reach?** Checking that an existing owner cannot be displaced does not answer it; on a fresh install nobody is the owner yet. Each of these is a `high` finding with a `nay` or `suggest_correction` verdict, never `yay`:
+
+- client-side first-come / trust-on-first-use ownership or authorization on consumer-distributed software;
+- developer / owner / admin / debug tooling that compiles into Release or production;
+- a gate whose only secret is a gesture, tap count, or hidden URL.
+
+Decide whether the surface should exist in Release before rating its protection. Disclosing a hidden feature to App Review is not a fix. Default `minimal_patch_shape`: compile it out of Release (`#if DEBUG` / build flag) plus an automated release-surface check; if it must ship, gate it by an identity pinned at build time or verified server-side. On Apple projects, `python3 scripts/release_surface_scan.py --path . --files <changed files> --json` shows which markers compile into Release (advisory, read-only).
+
+Observed 2026-09-25: this agent returned `approve_with_nits` on an iOS commit that shipped an owner/admin panel behind a five-tap reveal, gated by client-side trust-on-first-use. It verified that an existing owner anchor could not be taken over and never modeled a stranger's fresh install. Record the answer in the output's `stranger_test` object.
+
 ## Oracle completeness (MANDATORY — emit `oracle_completeness` on every verdict)
 
 A green gate is only as trustworthy as the oracle behind it: a passing test suite that never exercises the changed path is false confidence (arXiv:2606.09863 false-success). So on every verdict, record WHAT the verification surface actually covered vs left unchecked — this is advisory metadata, never a block, but it makes a thin oracle visible instead of hiding behind "tests pass".
@@ -128,6 +142,11 @@ A single JSON object. No prose outside the JSON.
     "covered": "what the verification surface (tests/probes/checks) actually exercised",
     "uncovered": "the paths the checks did NOT exercise (or empty when none)",
     "coverage": "full | partial | thin"
+  },
+  "stranger_test": {
+    "applies": false,
+    "answer": "what a fresh install with the stranger's own account reaches; 'not applicable' when the diff touches no auth/admin/owner/debug/gated surface",
+    "in_release": "yes | no (cite the #if / build flag, file:line) | unknown | n/a"
   },
   "known_item_closure": [
     {

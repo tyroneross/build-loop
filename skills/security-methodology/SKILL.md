@@ -94,8 +94,18 @@ Phase 1 Assess sets the flag when any of these are introduced or modified:
 - A lifecycle-hook registration or editor/agent auto-load surface — `.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`, `hooks/*.json`, githooks, launchd/cron plists (ASI02, A06 supply chain).
 - An installer or provisioner path — anything that downloads, chmods, or executes a binary, or builds source, reachable from a hook or startup path (A06, ATLAS supply chain).
 - Code that interpolates stored or descriptor-supplied strings into shell commands or into model context — prompt-to-shell and prompt-to-context render paths (LLM01, ASI05, A03).
+- An admin, owner, debug, or developer surface, a gesture/tap-count/hidden-URL reveal, or any ownership claim — the Release-surface doctrine below applies (A01, A07).
 
 The orchestrator scans the goal text for keywords matching these classes and inspects the planned file set. Either signal flips the trigger; the trigger is sticky for the rest of the build.
+
+## Release-surface doctrine: decide existence before protection
+
+For any hidden, gated, admin, owner, debug, or developer surface, answer two questions in this order:
+
+1. **Should this exist in the Release / production build at all?** Developer and owner tooling almost never needs to reach consumers. Default: compile it out (`#if DEBUG` or a build flag absent from Release) and keep an automated release-surface check (`scripts/release_surface_scan.py` for Apple projects) so it cannot quietly return.
+2. **Only if it must ship: the stranger test.** What can a person who installs it fresh, with their own account or Apple ID, reach? Client-side first-come / trust-on-first-use ownership fails on consumer software because every fresh install is a first use. A gesture or tap count is not a secret. Biometrics and Sign in with Apple prove *an* account holder, never *the* owner. Gate by an identity pinned at build time or verified server-side.
+
+Rating how well a surface is gated ("gated, not a debug backdoor") skips question 1. Disclosing a hidden feature to App Review, or to any reviewer, documents the exposure without removing it; it is not a fix. Incident 2026-09-25: an iOS owner/admin panel behind a five-tap reveal, gated by client-side trust-on-first-use, passed `security-reviewer` and `independent-auditor`, and a later audit proposed disclosing it to App Review instead of removing it from Release.
 
 ## Limitations
 

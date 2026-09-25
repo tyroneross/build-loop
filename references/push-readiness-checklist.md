@@ -56,12 +56,17 @@ Do not phrase advisory findings as hard blockers unless an existing blocking mec
    - For stale architecture data, recommend refreshing the scan before making architecture claims.
    - Confirm new code follows the canonical script/skill/reference surface instead of adding a second ledger, duplicate protocol, or bypass path.
 
-7. **Efficiency**
+7. **Release surface (app / consumer releases)**
+   - Before rating how well a hidden, gated, admin, owner, or debug surface is protected, decide whether it should exist in the Release build at all. Disclosing a hidden feature to App Review or other reviewers is not a fix.
+   - For every such surface that does ship, answer the stranger test: what can a person with a fresh install and their own account or Apple ID reach? Client-side first-come / trust-on-first-use ownership and gesture-only gates are `Hold recommended`.
+   - On Apple projects, run `python3 scripts/release_surface_scan.py --path . --json` (advisory) and account for each reported marker.
+
+8. **Efficiency**
    - Prefer focused tests over exhaustive reruns when the changed surface is narrow.
    - Track any material package-size, runtime, or benchmark change when the diff touches performance-sensitive code.
    - Recommend deeper benchmarking only when the task had an explicit performance target or the diff changes hot-path behavior.
 
-8. **Readout**
+9. **Readout**
    - Start with the recommendation label.
    - Give the shortest useful evidence list: branch state, dry-run result, validation result, dirty-state classification, and caveats.
    - Name the exact command needed for the push only after the recommendation is clear.

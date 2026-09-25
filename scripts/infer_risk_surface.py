@@ -74,6 +74,14 @@ GENERIC_RISK_KEYWORDS = [
     (r"\bvector\s+store\b|\bpersistent\s+agent\s+memory\b", "persistent agent memory or vector store"),
     (r"\bpii\b|\bphi\b|\bfinancial\b|\bhealth\s+data\b|\bregulated\b", "regulated user-data class"),
     (r"\bexternal\s+api\b", "external API call"),
+    # Incident 2026-09-25: a hidden owner/admin panel shipped without the
+    # security reviewer modeling a stranger's fresh install. Any goal that names
+    # a privileged or hidden surface is a risk surface.
+    (r"\b(?:admin|owner)[\s_-]*(?:panel|menu|mode|gate|screen|tools?|console|dashboard|view|access)\b"
+     r"|\b(?:debug|developer|dev)[\s_-]*(?:panel|menu|screen|console)\b"
+     r"|\bclaim(?:ing)?[\s_-]*ownership\b|\bowner[\s_-]*anchor\b|\bbackdoor\b"
+     r"|\bhidden[\s_-]+(?:feature|panel|menu|screen)\b|\btrust[\s_-]?on[\s_-]?first[\s_-]?use\b",
+     "privileged or hidden surface (admin/owner/debug/gated)"),
 ]
 
 

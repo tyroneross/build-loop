@@ -743,5 +743,67 @@ class RegressionTests(_GitRepoCase):
         self.assertNotIn("HIGH-RISK", result.stderr)
 
 
+
+class StrangerTestTests(_GitRepoCase):
+    """Incident 2026-09-25: a TOFU owner gate behind a 5-tap reveal passed review
+    because nobody asked what a stranger's fresh install could reach. A diff that
+    touches such a surface must carry the stranger-test question."""
+
+    INCIDENT_DIFF = (
+        "private let adminUnlockTaps = 5\n"
+        "if versionTapCount >= adminUnlockTaps { showAdmin = true }\n"
+        "static func establishOwnerAnchor(email: String?, userID: String) -> Bool { true }\n"
+    )
+
+    def test_classify_marks_gated_surface_high(self) -> None:
+        files = ["App/Services/AdminGate.swift"]
+        diff = (
+            "diff --git a/App/Services/AdminGate.swift b/App/Services/AdminGate.swift\n"
+            "--- a/App/Services/AdminGate.swift\n+++ b/App/Services/AdminGate.swift\n@@ -1 +1,3 @@\n"
+            + "".join("+" + ln + "\n" for ln in self.INCIDENT_DIFF.splitlines())
+        )
+        risk = abc._classify_risk(files, diff)
+        self.assertEqual(risk["level"], "high")
+        self.assertEqual(risk["stranger_test_files"], files)
+        self.assertTrue(any("stranger test" in r for r in risk["reasons"]), risk["reasons"])
+
+    def test_prose_and_tests_naming_the_pattern_are_not_surfaces(self) -> None:
+        body = "+claimOwnership and AdminPanel are forbidden in Release\n"
+        for f in ("agents/security-reviewer.md", "AppTests/AdminGateTests.swift", "scripts/test_x.py"):
+            diff = f"diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n{body}"
+            self.assertEqual(abc._find_gated_surface_files([f], abc._diff_by_file(diff)), [], f)
+
+    def test_packet_carries_stranger_test_question(self) -> None:
+        self._write_and_stage("App/Services/AdminGate.swift", self.INCIDENT_DIFF)
+        result = self._run_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)  # advisory: never blocks on its own
+        self.assertIn("STRANGER TEST", result.stderr)
+        self.assertIn("fresh", result.stderr)
+
+    def test_ordinary_swift_view_has_no_stranger_test(self) -> None:
+        self._write_and_stage(
+            "App/Views/NewFeatureSheet.swift",
+            'struct NewFeatureSheet: View {\n    var body: some View { Text("hi") }\n}\n',
+        )
+        result = self._run_hook()
+        self.assertNotIn("STRANGER TEST", result.stderr)
+
+
+class InferRiskSurfacePrivilegedSurfaceTests(unittest.TestCase):
+    def test_privileged_surface_goals_flip_the_flag(self) -> None:
+        import infer_risk_surface as irs
+
+        for goal in (
+            "add a hidden owner/admin panel revealed by tapping the version row 5x",
+            "AdminGate: claim ownership with Face ID",
+            "add a debug menu to settings",
+        ):
+            self.assertTrue(irs.evaluate(goal, [], {"x"})["risk_surface_change"], goal)
+
+    def test_mece_file_ownership_does_not_flip_the_flag(self) -> None:
+        import infer_risk_surface as irs
+
+        self.assertFalse(irs.evaluate("MECE file ownership per chunk", [], {"x"})["risk_surface_change"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

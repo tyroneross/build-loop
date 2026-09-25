@@ -163,6 +163,7 @@ Phase 2 Plan output for an Apple-native goal should include, in order:
 8. **Test matrix subset**: which rows are sim-verified vs device-deferred
 9. **Diagnostic logging**: what subsystem/category, what events
 10. **Anti-pattern guard**: explicit "do NOT add UIBackgroundModes audio" if relevant
+11. **Release surface**: every admin/owner/debug/developer or gesture-revealed surface, each wrapped in `#if DEBUG` (or a flag absent from Release). If one must ship, name the identity it is gated by (pinned at build time or verified server-side, never first-come on device) and the stranger-test answer. Verify with `scripts/release_surface_scan.py`.
 11. **Shared SwiftUI modal chrome**: for iOS + macOS sheets, state which controls stay in iOS toolbars and which macOS controls move into persistent top content headers. Verify Done/Close remains visible when content scrolls.
 
 ## When to escalate
