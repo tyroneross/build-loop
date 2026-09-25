@@ -100,6 +100,26 @@ class CmdRunTests(unittest.TestCase):
         ])
         self.assertEqual(rc, 3)
 
+    def test_nested_run_does_not_deadlock_on_the_held_lock(self) -> None:
+        """Auditor f8: an inner `load_gate run` waited on the outer call's lock."""
+        inner = (
+            f"import sys; sys.path.insert(0, {str(Path(load_gate.__file__).parent)!r}); "
+            f"import load_gate; sys.exit(load_gate.main(['run', '--lock', {str(self.lock_path)!r}, "
+            f"'--wait-seconds', '0.5', '--', sys.executable, '-c', 'import sys; sys.exit(4)']))"
+        )
+        rc = load_gate.main([
+            "run", "--lock", str(self.lock_path), "--wait-seconds", "5",
+            "--", sys.executable, "-c", inner,
+        ])
+        self.assertEqual(rc, 4)  # inner child's code, not 75 (lock timeout)
+
+    def test_signal_death_maps_to_128_plus_n(self) -> None:
+        rc = load_gate.main([
+            "run", "--lock", str(self.lock_path), "--wait-seconds", "5",
+            "--", sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
+        ])
+        self.assertEqual(rc, 128 + 15)
+
     def test_missing_command_is_a_usage_error(self) -> None:
         rc = load_gate.main(["run", "--lock", str(self.lock_path)])
         self.assertEqual(rc, 2)

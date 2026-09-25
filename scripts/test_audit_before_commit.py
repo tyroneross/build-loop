@@ -773,6 +773,19 @@ class StrangerTestTests(_GitRepoCase):
             diff = f"diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n{body}"
             self.assertEqual(abc._find_gated_surface_files([f], abc._diff_by_file(diff)), [], f)
 
+    def test_prose_inside_python_strings_comments_docstrings_is_not_a_surface(self) -> None:
+        """Auditor f3: build-loop's own tooling tripped its detector."""
+        body = (
+            '+"""Module doc naming trust-on-first-use and claimOwnership."""\n'
+            "+# an owner anchor is forbidden\n"
+            '+BLOCK = ("never ship an AdminPanel or TOFU gate")\n'
+        )
+        f = "scripts/tool.py"
+        diff = f"diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1,3 @@\n{body}"
+        self.assertEqual(abc._find_gated_surface_files([f], abc._diff_by_file(diff)), [])
+        code = f"diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n+def claimOwnership(user): pass\n"
+        self.assertEqual(abc._find_gated_surface_files([f], abc._diff_by_file(code)), [f])
+
     def test_packet_carries_stranger_test_question(self) -> None:
         self._write_and_stage("App/Services/AdminGate.swift", self.INCIDENT_DIFF)
         result = self._run_hook()

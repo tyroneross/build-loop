@@ -19,12 +19,14 @@ max_iterations:  <hard cap; terminates even if the goal is never reachable>
 report_primary:  <rally | commit | the-content-itself | <named channel>>
 report_backup:   <path other agents already check>
 durable:         <path that survives a clone, or the literal word: none>
-forbidden:       default  # only required if this brief can Write/Edit/Bash/NotebookEdit or
-                           # commit/push/edit; `default` = no persistence beyond the task, no
-                           # owner identity in outbound requests, never ack/override/skip a
-                           # safety gate, commit only your own files
+forbidden:       default
 ---
 ```
+
+`forbidden: default` means: no persistence beyond the task, no owner identity in outbound
+requests, never acknowledge/override/skip a safety gate, commit only your own files. (Keep
+comments out of the YAML block: the lint reads the whole value, so an inline `# ...` would
+turn `default` into an unrecognised custom value.)
 
 `durable: none` is a valid answer. **Omitting the field is not.** The difference matters:
 one is a decision you made, the other is a decision nobody made. `.build-loop/` is

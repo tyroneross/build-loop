@@ -99,6 +99,14 @@ class ScanTextTests(unittest.TestCase):
         self.assertEqual(len(r["allowed"]), 1)
         self.assertIn("read-only", r["allowed"][0]["allow_reason"])
 
+    def test_compound_swiftui_names_are_reported(self) -> None:
+        """Auditor f2: the common View/ViewModel suffixes slipped past a trailing \\b."""
+        for line in ("AdminPanelView()", "DebugMenuView()", "DeveloperSettingsView()",
+                     "let vm = OwnerModeViewModel()", "OwnerSettingsView()",
+                     "if versionTaps >= 5 { reveal() }"):
+            with self.subTest(line=line):
+                self.assertEqual(len(rss.scan_text(line + "\n", "X.swift")["findings"]), 1)
+
     def test_ordinary_code_is_clean(self) -> None:
         text = "struct SettingsView: View {\n  var body: some View { Text(\"Owner of this device\") }\n}\n"
         self.assertEqual(rss.scan_text(text, "X.swift")["findings"], [])
@@ -129,6 +137,15 @@ class ScanRepoTests(unittest.TestCase):
         self.assertEqual(r["verdict"], "warn")
         self.assertTrue(all(f["file"].startswith("App/Views/") for f in r["findings"]))
         self.assertGreaterEqual(r["high_signal_count"], 3)
+
+    def test_build_output_hidden_dirs_and_sdk_names_are_ignored(self) -> None:
+        """Real-data false positives: DerivedData copies under a hidden dir and
+        Apple's DeveloperToolsSupport module in generated asset symbols."""
+        self._write("Package.swift", "")
+        self._write(".assessment/DerivedData-iOS/Build/Intermediates.noindex/X.swift", "struct AdminPanel {}\n")
+        self._write("Build/Y.swift", "struct DebugMenu {}\n")
+        self._write("App/Assets.swift", "import DeveloperToolsSupport\n")
+        self.assertEqual(rss.scan_repo(self.root)["findings"], [])
 
     def test_files_filter_restricts_scan(self) -> None:
         self._write("Package.swift", "")

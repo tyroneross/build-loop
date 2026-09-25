@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,9 +159,9 @@ def check(
             result["errors"].append(f"{branch}: not recorded in ledger")
             continue
         recorded_sha = str(entry["sha"])
-        current_sha = _rev_parse(workdir, f"refs/heads/{branch}")
+        current_sha = _rev_parse(workdir, f"refs/heads/{branch}^{{commit}}")
         if current_sha is None:
-            current_sha = _rev_parse(workdir, branch)
+            current_sha = _rev_parse(workdir, f"{branch}^{{commit}}")
         row = {
             "branch": branch,
             "recorded": recorded_sha,
@@ -212,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
         shas: list[str | None] = list(args.shas) + [None] * max(
             0, len(args.branches) - len(args.shas)
         )
+        if args.from_merge and len(args.branches) > 1:
+            print("--from-merge infers ONE second parent; pass one --branch per call", file=sys.stderr)
+            return 2
         result = record(workdir, args.branches, shas, ledger_path, args.from_merge)
         if args.json_output:
             print(json.dumps(result, indent=2))

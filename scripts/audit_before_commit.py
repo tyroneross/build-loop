@@ -429,9 +429,42 @@ def _find_gated_surface_files(files: list[str], diff_sections: dict[str, str]) -
         if not f.endswith(_CODE_SUFFIXES) or _is_test_path(f) or _rss.is_excluded_path(f):
             continue
         added = _added_lines(diff_sections.get(f, ""))
+        if not f.endswith(_APPLE_SOURCE_SUFFIXES):
+            added = _code_only(added)
         if any(rx.search(added) for _, rx in _rss.GATED_SURFACE_PATTERNS):
             hits.append(f)
     return hits
+
+
+_APPLE_SOURCE_SUFFIXES = (".swift", ".m", ".mm")
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"' + r"|'(?:[^'\\\n]|\\.)*'")
+_TRIPLE_QUOTE_RE = re.compile(r'"""|\'\'\'')
+
+
+def _code_only(added: str) -> str:
+    """Drop comments, docstrings and string literals from added diff lines.
+
+    Tooling that DESCRIBES the gated-surface pattern (this file's own
+    STRANGER_TEST_BLOCK, release_surface_scan's docstring) is prose, not a
+    surface; matching it escalated build-loop's own commits to high risk
+    (independent-auditor f3, 2026-09-25). Swift/ObjC keep their literals
+    because a `Text("Admin Panel")` label is itself a signal.
+    """
+    kept: list[str] = []
+    in_triple = False
+    for raw in added.splitlines():
+        line = raw[1:] if raw.startswith("+") else raw
+        quotes = len(_TRIPLE_QUOTE_RE.findall(line))
+        if in_triple or quotes:
+            if quotes % 2:
+                in_triple = not in_triple
+            continue
+        stripped = line.strip()
+        if stripped.startswith(("#", "//", "*", "/*")):
+            continue
+        code = _STRING_LITERAL_RE.sub('""', line)
+        kept.append(re.split(r"\s#|//", code, maxsplit=1)[0])
+    return "\n".join(kept)
 
 
 def _classify_risk(files: list[str], diff_body: str) -> dict:

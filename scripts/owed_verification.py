@@ -770,10 +770,15 @@ def owed_reason_for_record(
     # vouch for the fix. Evidence (retro f8f4abf6, 2026-09-25): fix commit
     # 45d6e2e2 removed a 64 KiB PEM cap an earlier round had added, and no
     # re-review was owed. The cross-vendor half is already range-strict.
-    strict = _risk_surface_record(record)
+    strict = _risk_surface_record(record, workdir, diff_range)
+    wanted = _wanted_range(workdir, diff_range)
+    if strict and str(wanted or "").strip() in ("", "unknown"):
+        # No resolvable range means the range checks below are skipped, which
+        # would make strict mode a no-op. On a risk run, at least demand a
+        # verdict that names the diff it reviewed.
+        decisions = [d for d in decisions if not isinstance(d, dict) or d.get("diff_range")]
     present, rejections = judge_verdict_rejections(
-        decisions, AUDITOR_JUDGE_MARKER, _wanted_range(workdir, diff_range),
-        require_range=strict,
+        decisions, AUDITOR_JUDGE_MARKER, wanted, require_range=strict,
     )
     if present:
         return None
@@ -790,15 +795,37 @@ def owed_reason_for_record(
     return None
 
 
-def _risk_surface_record(record: dict[str, Any]) -> bool:
-    """True when the run record says Assess flagged a risk-surface change."""
-    values = [record.get("riskSurfaceChange"), record.get("risk_surface_change")]
-    triggers = record.get("triggers")
-    if isinstance(triggers, dict):
-        values += [triggers.get("riskSurfaceChange"), triggers.get("risk_surface_change")]
-    for value in values:
-        if value is True or str(value).strip().lower() in {"true", "1", "yes"}:
-            return True
+def _risk_surface_record(
+    record: dict[str, Any], workdir: Path | None = None, diff_range: str = "unknown"
+) -> bool:
+    """Is this a risk-surface run? Either explicit source suffices.
+
+    1. The run row itself (`riskSurfaceChange` or `triggers.riskSurfaceChange`).
+    2. state.json's top-level / execution `triggers`, where Phase 1 Assess
+       writes the flag. `write_run_entry` does not copy it onto the row, so
+       reading only the row left strict arming dormant on the production path
+       (independent-auditor f1, 2026-09-25: 3 of 146 real rows carried it).
+
+    Deliberately NOT re-derived from `filesTouched`: doing so arms strict mode
+    on every auth-adjacent historical run whose auditor verdict is unstamped
+    (the compatibility case `judge_verdict_rejections` documents). Strictness
+    follows the explicit Assess flag only.
+    """
+    def _truthy(value: Any) -> bool:
+        return value is True or str(value).strip().lower() in {"true", "1", "yes"}
+
+    sources: list[Any] = [record]
+    if workdir is not None:
+        state = _read_json(Path(workdir) / STATE_RELPATH)
+        if isinstance(state, dict):
+            sources += [state, state.get("execution")]
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        triggers = src.get("triggers")
+        for holder in (src, triggers if isinstance(triggers, dict) else {}):
+            if _truthy(holder.get("riskSurfaceChange")) or _truthy(holder.get("risk_surface_change")):
+                return True
     return False
 
 

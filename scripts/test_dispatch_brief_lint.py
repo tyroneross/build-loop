@@ -146,6 +146,30 @@ class ForbiddenActionsForWriteCapableBriefs(unittest.TestCase):
         )
         self.assertEqual(lint.check(_brief(good)), [])
 
+    def test_custom_value_that_permits_the_act_fails(self) -> None:
+        """Auditor f6: naming a keyword is not prohibiting it."""
+        bad = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            "durable: build-loop-memory/projects/navgator/handoffs/\n"
+            "forbidden: we skip nothing; persist nothing; email ok; your own\n"
+            "tools: Read, Write, Bash\n",
+        )
+        problems = lint.check(_brief(bad))
+        self.assertTrue(any("owner identity" in p for p in problems), problems)
+
+    def test_template_default_line_passes_when_write_capable(self) -> None:
+        """Auditor f4: a brief copied from the template's frontmatter must lint clean."""
+        import re as _re
+
+        tpl = (pathlib.Path(__file__).resolve().parents[1] / "templates" / "dispatch-brief.md").read_text()
+        line = next(l for l in tpl.splitlines() if l.startswith("forbidden:"))
+        self.assertEqual(line.split(":", 1)[1].strip(), "default")
+        good = GOOD.replace(
+            "durable: build-loop-memory/projects/navgator/handoffs/\n",
+            f"durable: build-loop-memory/projects/navgator/handoffs/\n{line}\ntools: Write\n",
+        )
+        self.assertEqual(lint.check(_brief(good)), [])
+
     def test_forbidden_placeholder_fails(self) -> None:
         bad = GOOD.replace(
             "durable: build-loop-memory/projects/navgator/handoffs/\n",
@@ -178,6 +202,16 @@ class CodexExecStdinHang(unittest.TestCase):
             "tools: Read, Write, Bash\n",
         ) + "\nRun: codex exec 'do the thing' < /dev/null\n"
         self.assertEqual(lint.check(_brief(good)), [])
+
+    def test_codex_exec_with_piped_or_heredoc_stdin_passes(self) -> None:
+        for cmd in ("cat brief.md | codex exec -", "codex exec - <<'EOF'", "codex exec - < brief.md"):
+            with self.subTest(cmd=cmd):
+                good = GOOD.replace(
+                    "durable: build-loop-memory/projects/navgator/handoffs/\n",
+                    "durable: build-loop-memory/projects/navgator/handoffs/\n"
+                    "forbidden: default\ntools: Read, Write, Bash\n",
+                ) + f"\nRun: {cmd}\n"
+                self.assertEqual(lint.check(_brief(good)), [])
 
     def test_codex_exec_on_read_only_brief_is_not_checked(self) -> None:
         """The codex-exec stdin check only fires once a brief is write-capable."""

@@ -230,5 +230,11 @@ class TestCli:
         assert exit_code == 2
 
 
+    def test_from_merge_with_two_branches_is_a_usage_error(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        exit_code = bhd.main(["record", "--workdir", str(repo), "--branch", "a",
+                              "--branch", "b", "--from-merge", "HEAD"])
+        assert exit_code == 2
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

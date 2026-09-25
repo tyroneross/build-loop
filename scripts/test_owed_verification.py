@@ -1480,6 +1480,25 @@ class TestRiskSurfaceFixCommitsOweReReview(unittest.TestCase):
         record["judge_decisions"] = [{**AUDITOR_VERDICT, "diff_range": "a0..a1"}]
         self.assertIsNotNone(ov.owed_reason_for_record(record, None, "a0..a2"))
 
+    def test_assess_flag_in_state_json_arms_strict_on_the_writer_path(self) -> None:
+        """write_run_entry does not copy Assess's flag onto the row (auditor f1)."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wd = Path(tmp)
+            (wd / ".build-loop").mkdir()
+            (wd / ".build-loop" / "state.json").write_text(
+                json.dumps({"triggers": {"riskSurfaceChange": True}, "runs": []}),
+                encoding="utf-8",
+            )
+            # No resolvable range ('unknown'): strict must still refuse an
+            # unstamped verdict instead of skipping every range check.
+            why = ov.owed_reason_for_record(self._record(), wd, "unknown")
+            self.assertIsNotNone(why)
+            stamped = self._record()
+            stamped["judge_decisions"] = [{**AUDITOR_VERDICT, "diff_range": "x0..x1"}]
+            self.assertIsNone(ov.owed_reason_for_record(stamped, wd, "unknown"))
+
     def test_non_risk_run_keeps_lenient_arming(self) -> None:
         self.assertIsNone(ov.owed_reason_for_record(self._record(), None, "a0..a2"))
 

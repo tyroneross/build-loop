@@ -152,17 +152,30 @@ def _jobs_env(jobs: int) -> dict[str, str]:
 # run
 # ---------------------------------------------------------------------------
 
+HELD_ENV = "LOAD_GATE_HELD"
+
+
+def _returncode(proc: subprocess.CompletedProcess) -> int:
+    """Shell convention for a signal death (128+N), not sys.exit's 256-N wrap."""
+    return 128 - proc.returncode if proc.returncode < 0 else proc.returncode
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     if not args.command:
         print("load_gate run: no command given — pass '-- <cmd...>'", file=sys.stderr)
         return 2
 
+    argv = ["nice", "-n", str(args.nice), *args.command]
+    if os.environ.get(HELD_ENV) == "1":
+        # Nested `load_gate run` inside a gated command: the outer call already
+        # holds the machine-wide lock, so waiting on it would deadlock until the
+        # timeout (independent-auditor f8, 2026-09-25).
+        return _returncode(subprocess.run(argv, env=_jobs_env(args.jobs), shell=False))
     try:
         with BuildLock(args.lock, args.wait_seconds):
             env = _jobs_env(args.jobs)
-            argv = ["nice", "-n", str(args.nice), *args.command]
-            proc = subprocess.run(argv, env=env, shell=False)
-            return proc.returncode
+            env[HELD_ENV] = "1"
+            return _returncode(subprocess.run(argv, env=env, shell=False))
     except TimeoutError as exc:
         print(f"load_gate run: {exc}", file=sys.stderr)
         return EXIT_LOCK_TIMEOUT

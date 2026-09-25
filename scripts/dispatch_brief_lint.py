@@ -132,6 +132,8 @@ STANDARD_PROHIBITIONS = (
 #: fix; a line naming `codex exec` without it is a problem per occurrence.
 CODEX_EXEC_LINE = re.compile(r"codex exec\b")
 DEV_NULL_STDIN = re.compile(r"<\s*/dev/null")
+#: stdin already supplied by a pipe into codex, a heredoc, or a file redirect.
+STDIN_SUPPLIED = re.compile(r"\|\s*codex exec\b|codex exec\b.*(?:<<|<\s*\S)")
 
 _FM = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 
@@ -177,6 +179,21 @@ def prohibitions_block() -> str:
     return "\n".join(f"      {i}. {label}" for i, (label, _) in enumerate(STANDARD_PROHIBITIONS, 1))
 
 
+NEGATION = re.compile(r"\b(?:no|not|never|don't|do not|must not|only|forbid\w*|prohibit\w*)\b")
+
+
+def _negated_mention(text: str, keyword: str) -> bool:
+    """True when `keyword` appears within 40 characters after a negation.
+
+    A keyword alone is not a prohibition: "email ok" names the thing and permits
+    it (independent-auditor f6, 2026-09-25).
+    """
+    for m in re.finditer(re.escape(keyword), text):
+        if NEGATION.search(text[max(0, m.start() - 40):m.start() + len(keyword)]):
+            return True
+    return False
+
+
 def check_forbidden(fm: dict[str, str], path: pathlib.Path) -> list[str]:
     """Validate `forbidden:` on a brief already determined to be write-capable."""
     value = fm.get("forbidden")
@@ -196,7 +213,10 @@ def check_forbidden(fm: dict[str, str], path: pathlib.Path) -> list[str]:
     if value.strip().lower() == "default":
         return []
     lowered = value.lower()
-    missing = [label for label, keywords in STANDARD_PROHIBITIONS if not any(k in lowered for k in keywords)]
+    missing = [
+        label for label, keywords in STANDARD_PROHIBITIONS
+        if not any(_negated_mention(lowered, k) for k in keywords)
+    ]
     if not missing:
         return []
     missing_block = "\n".join(f"      - {label}" for label in missing)
@@ -211,7 +231,9 @@ def check_codex_exec_stdin(text: str, path: pathlib.Path) -> list[str]:
     """`codex exec` without `< /dev/null` hangs waiting on stdin. Per line."""
     problems: list[str] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if CODEX_EXEC_LINE.search(line) and not DEV_NULL_STDIN.search(line):
+        if CODEX_EXEC_LINE.search(line) and not (
+            DEV_NULL_STDIN.search(line) or STDIN_SUPPLIED.search(line)
+        ):
             problems.append(
                 f"{path}:{lineno}: `codex exec` with no `< /dev/null` on the "
                 f"same line. Launched non-interactively it waits on stdin and "

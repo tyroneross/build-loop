@@ -58,20 +58,20 @@ MARKERS: tuple[tuple[str, str, re.Pattern, str], ...] = (
     ("gesture_reveal", "multi-tap reveal",
      re.compile(r"numberOfTapsRequired\s*=\s*(?:[3-9]|\d{2,})\b"), "high"),
     ("gesture_reveal", "tap-counter reveal",
-     re.compile(r"\b\w*taps?(?:Count|Counter)\w*\s*(?:>=|==|>)\s*\w+", re.IGNORECASE), "high"),
+     re.compile(r"\b\w*taps?(?:Count|Counter)\w*\s*(?:>=|==|>)\s*\w+|\b\w*[tT]aps\s*(?:>=|==|>)\s*\w+", re.IGNORECASE), "high"),
     ("gesture_reveal", "tap-count unlock threshold",
      re.compile(r"\b\w*(?:Unlock|Reveal|Secret|Hidden)Taps?\w*\b"), "high"),
     ("gesture_reveal", "shake reveal",
      re.compile(r"\bmotionShake\b|\bdeviceDidShake\w*\b|\bonShake\b"), "high"),
     ("owner_admin_surface", "admin/owner surface",
-     re.compile(r"\b\w*(?:Admin|Owner)(?:Gate|Panel|View|Menu|Mode|Screen|Console|Access|Tools?|Dashboard|Settings)\b"),
+     re.compile(r"\b\w*(?:Admin|Owner)(?:Gate|Panel|View|Menu|Mode|Screen|Console|Access|Tools?|Dashboard|Settings)\w*"),
      "medium"),
     ("owner_admin_surface", "admin/owner/developer flag",
      re.compile(r"\bis(?:Admin|Owner|Developer|Internal)(?:User|Mode)?\b"), "medium"),
     ("debug_surface", "debug surface",
-     re.compile(r"\b\w*Debug(?:View|Panel|Menu|Screen|Console|Tools?|Overlay|Settings)\b"), "medium"),
+     re.compile(r"\b\w*Debug(?:View|Panel|Menu|Screen|Console|Tools?|Overlay|Settings)\w*"), "medium"),
     ("debug_surface", "developer surface",
-     re.compile(r"\b(?:Dev|Developer|Internal)(?:Menu|Mode|Panel|Settings|Tools?|Screen|Options)\b"), "medium"),
+     re.compile(r"\b\w*(?:Dev|Developer|Internal)(?:Menu|Mode|Panel|Settings|Tools?|Screen|Options)\w*"), "medium"),
     ("launch_arg_seam", "launch-argument / environment seam",
      re.compile(r"\bProcessInfo\.processInfo\.(?:arguments|environment)\b|\bCommandLine\.arguments\b"), "low"),
 )
@@ -81,6 +81,10 @@ MARKERS: tuple[tuple[str, str, re.Pattern, str], ...] = (
 GATED_SURFACE_PATTERNS: tuple[tuple[str, re.Pattern], ...] = tuple(
     (label, rx) for cat, label, rx, _ in MARKERS if cat != "launch_arg_seam"
 )
+
+# Apple framework / SDK identifiers that match a marker shape but are not app
+# surfaces. Found by running the scan over TruePace and SpeakSavvy-iOS.
+IGNORED_MATCHES = frozenset({"DeveloperToolsSupport"})
 
 ALLOW_RE = re.compile(r"//\s*release-surface:\s*allow\b(.*)$", re.IGNORECASE)
 DIRECTIVE_RE = re.compile(r"^\s*#(if|elseif|else|endif)\b(.*)$")
@@ -170,7 +174,7 @@ def scan_text(text: str, rel_path: str, debug_flags: tuple[str, ...] = DEFAULT_D
         hits = []
         for category, label, rx, strength in MARKERS:
             mm = rx.search(code)
-            if mm:
+            if mm and mm.group(0) not in IGNORED_MATCHES:
                 hits.append((category, label, strength, mm.group(0)))
         if not hits:
             prev_line = raw
@@ -220,6 +224,18 @@ def is_apple_project(root: Path) -> bool:
     return any(True for _ in _iter_swift(root, limit=1))
 
 
+def _excluded_dir(name: str) -> bool:
+    """Build output, dependencies, and hidden tool directories are not app source."""
+    return (
+        name in EXCLUDED_DIRS
+        or name.lower() == "build"
+        or name.startswith(".")
+        or name.startswith("DerivedData")
+        or name.endswith((".xcassets", ".noindex", ".xcarchive"))
+        or name == "DerivedSources"
+    )
+
+
 def is_excluded_path(rel: str) -> bool:
     return bool(TEST_DIR_RE.search(rel) or TEST_FILE_RE.search(rel))
 
@@ -227,7 +243,7 @@ def is_excluded_path(rel: str) -> bool:
 def _iter_swift(root: Path, limit: int | None = None):
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".xcassets")]
+        dirnames[:] = [d for d in dirnames if not _excluded_dir(d)]
         for name in filenames:
             if not name.endswith(".swift"):
                 continue
