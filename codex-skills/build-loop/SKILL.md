@@ -18,6 +18,10 @@ Load and follow the canonical workflow:
 ../../skills/build-loop/SKILL.md
 ```
 
+For visible text or layout changes, use the canonical workflow's UI Container
+Contract: measure the real parent, plan a constrained content case, and inspect
+the rendered screenshot before claiming fit.
+
 Use internal helper skills only through that workflow. Read their files
 directly from `../../skills/` when the canonical workflow asks for them.
 
