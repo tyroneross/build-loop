@@ -764,8 +764,16 @@ def owed_reason_for_record(
         )
     decisions = _range_scoped(workdir, decisions)
 
+    # Risk-surface runs arm STRICTLY: only a verdict stamped with the current
+    # range counts. The lenient arming rule (an unstamped verdict is accepted,
+    # for historical compatibility) let a verdict rendered BEFORE a fix commit
+    # vouch for the fix. Evidence (retro f8f4abf6, 2026-09-25): fix commit
+    # 45d6e2e2 removed a 64 KiB PEM cap an earlier round had added, and no
+    # re-review was owed. The cross-vendor half is already range-strict.
+    strict = _risk_surface_record(record)
     present, rejections = judge_verdict_rejections(
-        decisions, AUDITOR_JUDGE_MARKER, _wanted_range(workdir, diff_range)
+        decisions, AUDITOR_JUDGE_MARKER, _wanted_range(workdir, diff_range),
+        require_range=strict,
     )
     if present:
         return None
@@ -780,6 +788,18 @@ def owed_reason_for_record(
     if record.get("filesTouched"):
         return "the run touched files and recorded no independent-auditor verdict"
     return None
+
+
+def _risk_surface_record(record: dict[str, Any]) -> bool:
+    """True when the run record says Assess flagged a risk-surface change."""
+    values = [record.get("riskSurfaceChange"), record.get("risk_surface_change")]
+    triggers = record.get("triggers")
+    if isinstance(triggers, dict):
+        values += [triggers.get("riskSurfaceChange"), triggers.get("risk_surface_change")]
+    for value in values:
+        if value is True or str(value).strip().lower() in {"true", "1", "yes"}:
+            return True
+    return False
 
 
 def _explicit_cross_vendor_flag(record: dict[str, Any]) -> bool | None:

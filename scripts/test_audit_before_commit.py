@@ -789,6 +789,44 @@ class StrangerTestTests(_GitRepoCase):
         self.assertNotIn("STRANGER TEST", result.stderr)
 
 
+class AuditorPreflightTests(_GitRepoCase):
+    """Retro f8f4abf6: an auditor judged a security diff at confidence 0.6 with
+    context_seen.intent/goal false. The preflight refuses that dispatch."""
+
+    def _preflight(self):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--preflight", "--json"],
+            cwd=self.repo, capture_output=True, text=True, timeout=30,
+        )
+
+    def test_missing_intent_and_goal_fail_preflight(self) -> None:
+        proc = self._preflight()
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(
+            json.loads(proc.stdout)["missing"], [".build-loop/intent.md", ".build-loop/goal.md"]
+        )
+
+    def test_empty_goal_counts_as_missing(self) -> None:
+        (self.repo / ".build-loop").mkdir()
+        (self.repo / ".build-loop" / "intent.md").write_text("Ship X for Y.\n", encoding="utf-8")
+        (self.repo / ".build-loop" / "goal.md").write_text("  \n", encoding="utf-8")
+        proc = self._preflight()
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(json.loads(proc.stdout)["missing"], [".build-loop/goal.md"])
+
+    def test_present_spec_passes_preflight(self) -> None:
+        (self.repo / ".build-loop").mkdir()
+        (self.repo / ".build-loop" / "intent.md").write_text("Ship X for Y.\n", encoding="utf-8")
+        (self.repo / ".build-loop" / "goal.md").write_text("- criterion\n", encoding="utf-8")
+        self.assertEqual(self._preflight().returncode, 0)
+
+    def test_commit_packet_flags_missing_spec_without_blocking(self) -> None:
+        self._write_and_stage("src/app.py", "x = 1\n")
+        result = self._run_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Preflight: spec inputs missing", result.stderr)
+
+
 class InferRiskSurfacePrivilegedSurfaceTests(unittest.TestCase):
     def test_privileged_surface_goals_flip_the_flag(self) -> None:
         import infer_risk_surface as irs

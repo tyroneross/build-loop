@@ -34,6 +34,10 @@ The brief contains:
 - `context_paths` — optional explicit overrides for intent / goal / PRD / constitution paths (default to repo defaults below)
 - `reason` — why escalation was requested (large diff, architectural boundary crossed, pre-merge gate, manual user request)
 - `known_open_items` — findings, failed acceptance criteria, incomplete source-coverage rows, or other defects already discovered during the run. The orchestrator must pass these when any exist; absence does not erase open items visible in the on-disk run evidence.
+- `test_evidence` — the orchestrator's own run of the relevant suites (command, exit code, pass/fail counts, output tail). You are read-only, so the orchestrator owns running tests; you judge whether that evidence covers the changed paths. Cite it in `oracle_completeness`. When it is absent, say so in `missing_artifacts` rather than inferring green.
+- On a re-review after fix commits, `known_open_items` carries every prior-round finding. Treat each as a regression test: confirm the fix commit did not reopen or undo it (for example, removing a limit an earlier round added).
+
+**Orchestrator contract (not your job, listed so you can flag its absence).** Before dispatch the orchestrator runs `python3 scripts/audit_before_commit.py --preflight --json`; exit 1 means `intent.md` / `goal.md` is missing and it must write them from the plan or refuse the dispatch. After you return, it appends your envelope, stamped with `run_id` and `diff_range`, to `.build-loop/judge-decisions.json` and re-runs `owed_verification.py check`. On `riskSurfaceChange` runs only a range-stamped verdict counts, so every fix commit re-opens the debt for you and the cross-vendor reviewer. If `intent.md` or `goal.md` is missing anyway, your verdict is `look_again`.
 
 If the brief is minimal, default to `HEAD~1..HEAD` against the repo defaults.
 

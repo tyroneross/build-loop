@@ -1451,6 +1451,39 @@ class TestFourthRoundRegressions(_Base):
         )
 
 
+class TestRiskSurfaceFixCommitsOweReReview(unittest.TestCase):
+    """Retro f8f4abf6: a fix commit on a risk-surface build removed a guard an
+    earlier round had added, and the pre-fix, unstamped auditor verdict still
+    vouched for it. Risk-surface records arm range-strict; others stay lenient."""
+
+    def _record(self, **extra):
+        return {
+            "run_id": "run_rs", "filesTouched": ["src/auth/session.ts"],
+            "judge_decisions": [dict(AUDITOR_VERDICT)],  # unstamped: no diff_range
+            **extra,
+        }
+
+    def test_unstamped_verdict_does_not_cover_a_risk_surface_run(self) -> None:
+        for extra in ({"triggers": {"riskSurfaceChange": True}}, {"riskSurfaceChange": "true"}):
+            with self.subTest(extra=extra):
+                why = ov.owed_reason_for_record(self._record(**extra), None, "a0..a2")
+                self.assertIsNotNone(why)
+                self.assertIn("diff_range", why)
+
+    def test_stamped_current_range_verdict_covers_a_risk_surface_run(self) -> None:
+        record = self._record(triggers={"riskSurfaceChange": True})
+        record["judge_decisions"] = [{**AUDITOR_VERDICT, "diff_range": "a0..a2"}]
+        self.assertIsNone(ov.owed_reason_for_record(record, None, "a0..a2"))
+
+    def test_pre_fix_range_verdict_owes_re_review(self) -> None:
+        record = self._record(triggers={"riskSurfaceChange": True})
+        record["judge_decisions"] = [{**AUDITOR_VERDICT, "diff_range": "a0..a1"}]
+        self.assertIsNotNone(ov.owed_reason_for_record(record, None, "a0..a2"))
+
+    def test_non_risk_run_keeps_lenient_arming(self) -> None:
+        self.assertIsNone(ov.owed_reason_for_record(self._record(), None, "a0..a2"))
+
+
 class TestFifthRoundRegressions(_Base):
     """The final pass: two Highs, both 'the fix exists but nothing calls it'."""
 

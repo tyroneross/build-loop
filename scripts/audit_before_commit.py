@@ -1233,6 +1233,15 @@ def _emit_packet(root: Path) -> int:
     out("### Goal\n")
     out((goal or "_(none found)_") + "\n\n")
 
+    missing_spec = [rel for rel, body in zip(PREFLIGHT_REQUIRED, (intent, goal)) if not body.strip()]
+    if missing_spec:
+        out(
+            "### Preflight: spec inputs missing\n"
+            f"{', '.join(missing_spec)} is empty or absent. Without the stated intent and goal "
+            "this packet cannot support yay or nay: render **look again** and name the missing "
+            "file, unless the orchestrator writes it from the approved plan first.\n\n"
+        )
+
     out("### Repo CLAUDE.md (head)\n")
     out((claude_md or "_(none found)_") + "\n\n")
 
@@ -1316,7 +1325,44 @@ def _emit_packet(root: Path) -> int:
 # Entry point
 
 
+PREFLIGHT_REQUIRED = (".build-loop/intent.md", ".build-loop/goal.md")
+
+
+def preflight(root: Path) -> dict:
+    """Are the auditor's required spec inputs on disk?
+
+    Evidence (retro f8f4abf6, 2026-09-25): a round-5 auditor envelope came back
+    at confidence 0.6 with `context_seen.intent: false, goal: false`. It judged
+    a security diff against no stated intent, and nothing stopped the dispatch.
+    The orchestrator runs this before dispatching `independent-auditor`; a
+    non-empty `missing` means write the files from the plan first, or refuse
+    the dispatch and say why. An empty file counts as missing.
+    """
+    missing = [
+        rel for rel in PREFLIGHT_REQUIRED
+        if not _read_optional(root / rel, MAX_TEXT_CHARS).strip()
+    ]
+    return {
+        "ok": not missing,
+        "missing": missing,
+        "remediation": (
+            "" if not missing else
+            "Write " + " and ".join(missing) + " from the approved plan before dispatching "
+            "independent-auditor, or refuse the dispatch and record why. An auditor without "
+            "intent/goal can only return look_again."
+        ),
+    }
+
+
 def main() -> int:
+    if "--preflight" in sys.argv[1:]:
+        result = preflight(_repo_root())
+        if "--json" in sys.argv[1:]:
+            print(json.dumps(result))
+        else:
+            print("preflight: ok" if result["ok"] else f"preflight: MISSING {', '.join(result['missing'])}. {result['remediation']}")
+        return 0 if result["ok"] else 1
+
     if os.environ.get("BUILDLOOP_AUDIT_BYPASS") == "1":
         _log_bypass("BUILDLOOP_AUDIT_BYPASS=1")
         try:
