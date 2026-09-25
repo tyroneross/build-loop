@@ -789,7 +789,10 @@ class StrangerTestTests(_GitRepoCase):
     def test_packet_carries_stranger_test_question(self) -> None:
         self._write_and_stage("App/Services/AdminGate.swift", self.INCIDENT_DIFF)
         result = self._run_hook()
-        self.assertEqual(result.returncode, 0, result.stderr)  # advisory: never blocks on its own
+        # High-strength release surface (owner anchor, tap reveal) on changed Swift
+        # lines now blocks (user instruction 2026-09-25); the question still prints.
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("RELEASE-SURFACE BLOCK", result.stderr)
         self.assertIn("STRANGER TEST", result.stderr)
         self.assertIn("fresh", result.stderr)
 

@@ -1547,6 +1547,21 @@ def evaluate_debt(
     decisions = _range_scoped(workdir, decisions)
     wanted = _wanted_range(workdir, armed_range)
     out["evidence_seen"] = len(decisions)
+    # Stranger test (incident 2026-09-25): on a change that touches an
+    # auth/admin/owner/debug/gated surface, an auditor verdict whose recorded
+    # `stranger_test` is empty is not a review of that surface. Fail-open: an
+    # undeterminable range leaves the decisions untouched.
+    stranger_rejections: list[dict[str, Any]] = []
+    if verifier != CROSS_VENDOR_VERIFIER:
+        try:
+            import stranger_test_check as _stc
+
+            gated = _stc.gated_files_for_range(workdir, wanted)
+            decisions, stranger_rejections = _stc.filter_decisions(
+                decisions, bool(gated), marker=AUDITOR_JUDGE_MARKER
+            )
+        except Exception:  # noqa: BLE001
+            stranger_rejections = []
 
     if verifier == CROSS_VENDOR_VERIFIER:
         ok, rejections = cross_vendor_rejections(
@@ -1566,7 +1581,9 @@ def evaluate_debt(
             decisions, AUDITOR_JUDGE_MARKER, wanted, require_range=True
         )
     out["satisfied"] = bool(ok)
-    out["rejected_evidence"] = rejections
+    out["rejected_evidence"] = list(rejections) + stranger_rejections
+    if not ok and stranger_rejections and "reason" not in out:
+        out["reason"] = "auditor verdict rejected: " + str(stranger_rejections[0]["reason"])
     if ok:
         out["reason"] = "a rendered verdict for this run and range is on record"
     elif not rejections and "reason" not in out:

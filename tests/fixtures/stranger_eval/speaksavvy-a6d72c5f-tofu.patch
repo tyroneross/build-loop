@@ -1,0 +1,331 @@
+commit a6d72c5f
+
+---
+ SpeakSavvy/Services/AdminGate.swift | 133 ++++++++++++++++++++++++++++++++++++
+ SpeakSavvy/Views/ProfileView.swift  | 105 +++++++++++++++++++++-------
+ 2 files changed, 212 insertions(+), 26 deletions(-)
+
+diff --git a/SpeakSavvy/Services/AdminGate.swift b/SpeakSavvy/Services/AdminGate.swift
+index 004a5bb0..dd1cd1d1 100644
+--- a/SpeakSavvy/Services/AdminGate.swift
++++ b/SpeakSavvy/Services/AdminGate.swift
+@@ -56,6 +56,13 @@ final class AdminGate: NSObject {
+ 
+     private var authContinuation: CheckedContinuation<Bool, Never>?
+ 
++    /// True while a Sign-in-with-Apple grant is running in owner-CLAIM mode
++    /// (Trust-On-First-Use) rather than owner-VERIFY mode. In claim mode the
++    /// delegate binds whatever stable id comes back as this device's owner
++    /// anchor instead of denying a non-allowlisted identity. Set immediately
++    /// before `performRequests()` and cleared in the delegate callbacks.
++    private var isClaimingOwnership = false
++
+     override init() {
+         super.init()
+     }
+@@ -124,6 +131,55 @@ final class AdminGate: NSObject {
+         )
+     }
+ 
++    // MARK: - Owner claim (Trust-On-First-Use)
++
++    /// True when NO owner has ever been established on this device (no stable-id
++    /// anchor). ONLY in this state may a non-allowlisted signed-in identity CLAIM
++    /// ownership. Once an anchor exists this stays false for the life of the
++    /// install — no re-claim, no takeover. NOTE: the anchor lives in
++    /// `UserDefaults`, so deleting and reinstalling the app clears it and reopens
++    /// the claim window; that is acceptable here (a reinstall also wipes the
++    /// owner's on-device data, and admin exposes only local/dev settings). A
++    /// future hardening could move the anchor to the Keychain
++    /// (`ThisDeviceOnly`) so it survives reinstall. Pure (keys off the persisted
++    /// anchor) so it is unit-testable and is the single invariant enforced at
++    /// every write site.
++    static var ownerClaimAvailable: Bool {
++        ownerAppleUserID == nil
++    }
++
++    /// Whether to SURFACE the owner-claim entry in the admin UI. True only on a
++    /// real device with no owner yet AND no already-recognized owner identity —
++    /// i.e. the real-device lockout case where the owner's Apple ID (Gmail or a
++    /// "Hide My Email" `@privaterelay` address) can never match
++    /// `Config.adminAppleIDs`. The simulator keeps using the `unlock()`
++    /// short-circuit for QA, so the claim path (which needs a live biometric +
++    /// Sign in with Apple) is never offered there.
++    var canClaimDeviceOwnership: Bool {
++        #if targetEnvironment(simulator)
++        return false
++        #else
++        return Self.ownerClaimAvailable && !ownerIsSignedIn
++        #endif
++    }
++
++    /// Bind this device's durable owner anchor from a claim. Unlike
++    /// `recordSignedInAppleID` (which anchors only an already-authorized owner),
++    /// this establishes the anchor for a NEW owner. Trust-On-First-Use: it
++    /// refuses to overwrite an existing anchor (no takeover) and refuses an empty
++    /// id. Returns whether the anchor was written. The no-overwrite guard is
++    /// defense-in-depth — callers also gate on `ownerClaimAvailable`.
++    @discardableResult
++    static func establishOwnerAnchor(email: String?, userID: String) -> Bool {
++        guard !userID.isEmpty, ownerAppleUserID == nil else { return false }
++        if let normalized = normalize(email) {
++            UserDefaults.standard.set(normalized, forKey: appleEmailKey)
++        }
++        UserDefaults.standard.set(userID, forKey: appleUserKey)
++        UserDefaults.standard.set(userID, forKey: ownerUserKey)
++        return true
++    }
++
+     // MARK: - Unlock (identity + biometric)
+ 
+     /// Unlock the admin panel: verify the owner's Apple ID, then require a live
+@@ -171,6 +227,44 @@ final class AdminGate: NSObject {
+         #endif
+     }
+ 
++    /// Trust-On-First-Use owner claim. Establishes THIS device's owner anchor
++    /// from a live Sign-in-with-Apple credential, but ONLY when no owner has ever
++    /// been established here (`ownerClaimAvailable`). This is the escape hatch for
++    /// the real-device lockout: an owner whose Apple ID is a Gmail / Hide-My-Email
++    /// address that never matches `Config.adminAppleIDs` can still take ownership
++    /// of their own device. Two gates run before the anchor is written: a fresh
++    /// device biometric (here) and an explicit confirmation (in the caller's UI,
++    /// on top of the 5-tap reveal). On success the anchor is durable, so
++    /// thereafter `isOwner` resolves by the stable id — surviving email changes
++    /// and later Hide-My-Email sign-ins. Returns true only when the anchor was
++    /// written AND the panel unlocked. Denies gracefully on any failure.
++    func claimDeviceOwnership() async -> Bool {
++        isAuthenticating = true
++        error = nil
++        defer { isAuthenticating = false }
++
++        // TOFU invariant: never overwrite an existing owner (no takeover).
++        guard Self.ownerClaimAvailable else {
++            error = "This device already has an owner."
++            return false
++        }
++
++        // Gate 1 — liveness. Require a real device biometric before we hand out
++        // ownership (reuses the same passcode-fallback path as `unlock()`).
++        guard await authenticateBiometrics() else {
++            return false   // `error` set inside authenticateBiometrics()
++        }
++
++        // Gate 2 — identity. Bind whatever stable id comes back as the owner
++        // anchor. The delegate writes the anchor in claim mode.
++        guard await claimOwnerViaAppleID() else {
++            return false   // `error` set inside the delegate
++        }
++
++        isUnlocked = true
++        return true
++    }
++
+     /// Re-lock the panel (explicit "Lock Admin"). The next entry requires a
+     /// fresh biometric.
+     func lockPanel() {
+@@ -229,6 +323,24 @@ final class AdminGate: NSObject {
+     private func verifyOwnerViaAppleID() async -> Bool {
+         await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+             self.authContinuation = continuation
++            self.isClaimingOwnership = false
++            let request = ASAuthorizationAppleIDProvider().createRequest()
++            request.requestedScopes = [.email]
++            let controller = ASAuthorizationController(authorizationRequests: [request])
++            controller.delegate = self
++            controller.performRequests()
++        }
++    }
++
++    /// Run Sign in with Apple in CLAIM mode (Trust-On-First-Use): bind whatever
++    /// stable id comes back as this device's owner anchor. Distinct from
++    /// `verifyOwnerViaAppleID`, which DENIES a non-allowlisted, non-anchored
++    /// identity. Only reachable via `claimDeviceOwnership`, which has already
++    /// confirmed `ownerClaimAvailable` and passed a live biometric.
++    private func claimOwnerViaAppleID() async -> Bool {
++        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
++            self.authContinuation = continuation
++            self.isClaimingOwnership = true
+             let request = ASAuthorizationAppleIDProvider().createRequest()
+             request.requestedScopes = [.email]
+             let controller = ASAuthorizationController(authorizationRequests: [request])
+@@ -275,6 +387,7 @@ extension AdminGate: ASAuthorizationControllerDelegate {
+                                  didCompleteWithAuthorization authorization: ASAuthorization) {
+         guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+             error = "Invalid credential type"
++            isClaimingOwnership = false
+             authContinuation?.resume(returning: false)
+             authContinuation = nil
+             return
+@@ -287,6 +400,25 @@ extension AdminGate: ASAuthorizationControllerDelegate {
+         let email = credential.email ?? Self.extractEmail(fromIdentityToken: credential.identityToken)
+         let userID = credential.user
+ 
++        // CLAIM mode (Trust-On-First-Use): bind this identity as the device owner
++        // WITHOUT requiring an allowlist match. Gated upstream by the 5-tap
++        // reveal + explicit confirmation + a live biometric, and here by the
++        // TOFU no-takeover invariant inside `establishOwnerAnchor`.
++        if isClaimingOwnership {
++            isClaimingOwnership = false
++            if Self.establishOwnerAnchor(email: email, userID: userID) {
++                error = nil
++                authContinuation?.resume(returning: true)
++            } else {
++                // Anchor already exists (or empty id) — never overwrite an owner.
++                error = "This device already has an owner."
++                authContinuation?.resume(returning: false)
++            }
++            authContinuation = nil
++            return
++        }
++
++        // VERIFY mode: only an already-authorized owner passes.
+         if Self.isOwner(email: email, userID: userID, knownOwnerUserID: Self.ownerAppleUserID) {
+             // Persist BOTH email and the stable id (anchoring the owner) so a
+             // future "Hide My Email" sign-in still resolves via the id.
+@@ -303,6 +435,7 @@ extension AdminGate: ASAuthorizationControllerDelegate {
+     func authorizationController(controller: ASAuthorizationController,
+                                  didCompleteWithError error: Error) {
+         self.error = error.localizedDescription
++        self.isClaimingOwnership = false
+         authContinuation?.resume(returning: false)
+         authContinuation = nil
+     }
+diff --git a/SpeakSavvy/Views/ProfileView.swift b/SpeakSavvy/Views/ProfileView.swift
+index 5dc98f2c..b22749b5 100644
+--- a/SpeakSavvy/Views/ProfileView.swift
++++ b/SpeakSavvy/Views/ProfileView.swift
+@@ -30,6 +30,11 @@ struct ProfileView: View {
+     @State private var devSectionUnlocked = false
+     private let adminUnlockTaps = 5
+ 
++    // Trust-On-First-Use owner claim confirmation. Shown when this device has no
++    // owner yet and the signed-in Apple ID isn't allowlisted (the real-device
++    // lockout case). Explicit confirm on top of the 5-tap reveal + biometric.
++    @State private var showClaimConfirm = false
++
+     // Live Voice (Beta) enablement, mirrored from LiveVoiceManager's UserDefaults
+     // store so the entry appears/disappears live when the owner flips the admin
+     // toggle (LiveVoiceManager is plain UserDefaults, not @Observable).
+@@ -534,36 +539,66 @@ struct ProfileView: View {
+                     // Owner discoverability (or 5-tap secondary path): show the
+                     // entry point, gated behind a live Face ID / Touch ID on tap.
+                     Section {
+-                        Button {
+-                            // Batch 5 (Swift 6): pin the Task to MainActor so the
+-                            // `adminGate` capture stays on the View's actor.
+-                            // `unlock()` verifies the owner Apple ID then runs a
+-                            // fresh biometric; on success it reveals the panel.
+-                            Task { @MainActor in
+-                                if await adminGate.unlock() {
+-                                    withAnimation { adminExpanded = true }
++                        if adminGate.canClaimDeviceOwnership {
++                            // Trust-On-First-Use: this device has no owner yet and
++                            // the signed-in Apple ID isn't allowlisted (Gmail /
++                            // Hide-My-Email). Offer a one-time owner claim — an
++                            // explicit confirm, then a live biometric, then Sign in
++                            // with Apple binds this device to the stable Apple id.
++                            Button {
++                                showClaimConfirm = true
++                            } label: {
++                                HStack {
++                                    Image(systemName: "person.badge.key.fill")
++                                        .foregroundStyle(Theme.accent)
++                                        .accessibilityLabel("Claim ownership")
++                                    Text("Make this device the owner")
++                                        .foregroundStyle(Theme.textPrimary)
++                                    Spacer()
++                                    if adminGate.isAuthenticating {
++                                        ProgressView().tint(Theme.accent).scaleEffect(0.8)
++                                    } else {
++                                        Image(systemName: "lock.open.fill")
++                                            .font(Theme.fontCaption)
++                                            .foregroundStyle(Theme.textMuted)
++                                            .accessibilityHidden(true)
++                                    }
+                                 }
+                             }
+-                        } label: {
+-                            HStack {
+-                                Image(systemName: "faceid")
+-                                    .foregroundStyle(Theme.accent)
+-                                    .accessibilityLabel("Face ID")
+-                                Text("Unlock Admin")
+-                                    .foregroundStyle(Theme.textPrimary)
+-                                Spacer()
+-                                if adminGate.isAuthenticating {
+-                                    ProgressView().tint(Theme.accent).scaleEffect(0.8)
+-                                } else {
+-                                    Image(systemName: "lock.fill")
+-                                        .font(Theme.fontCaption)
+-                                        .foregroundStyle(Theme.textMuted)
+-                                        .accessibilityHidden(true)
++                            .disabled(adminGate.isAuthenticating)
++                            .listRowBackground(Theme.surfacePrimary)
++                        } else {
++                            Button {
++                                // Batch 5 (Swift 6): pin the Task to MainActor so the
++                                // `adminGate` capture stays on the View's actor.
++                                // `unlock()` verifies the owner Apple ID then runs a
++                                // fresh biometric; on success it reveals the panel.
++                                Task { @MainActor in
++                                    if await adminGate.unlock() {
++                                        withAnimation { adminExpanded = true }
++                                    }
++                                }
++                            } label: {
++                                HStack {
++                                    Image(systemName: "faceid")
++                                        .foregroundStyle(Theme.accent)
++                                        .accessibilityLabel("Face ID")
++                                    Text("Unlock Admin")
++                                        .foregroundStyle(Theme.textPrimary)
++                                    Spacer()
++                                    if adminGate.isAuthenticating {
++                                        ProgressView().tint(Theme.accent).scaleEffect(0.8)
++                                    } else {
++                                        Image(systemName: "lock.fill")
++                                            .font(Theme.fontCaption)
++                                            .foregroundStyle(Theme.textMuted)
++                                            .accessibilityHidden(true)
++                                    }
+                                 }
+                             }
++                            .disabled(adminGate.isAuthenticating)
++                            .listRowBackground(Theme.surfacePrimary)
+                         }
+-                        .disabled(adminGate.isAuthenticating)
+-                        .listRowBackground(Theme.surfacePrimary)
+ 
+                         if let error = adminGate.error {
+                             Text(error)
+@@ -577,10 +612,28 @@ struct ProfileView: View {
+                             .kerning(0.6)
+                             .foregroundStyle(Theme.textMuted)
+                     } footer: {
+-                        Text("Owner-only. Unlocking requires Face ID or Touch ID each time.")
++                        Text(adminGate.canClaimDeviceOwnership
++                            ? "This device has no owner yet. Claiming it unlocks developer tools on this device only, after Face ID or Touch ID."
++                            : "Owner-only. Unlocking requires Face ID or Touch ID each time.")
+                             .foregroundStyle(Theme.textMuted)
+                     }
+                     .id(ScrollTarget.developer)
++                    .confirmationDialog(
++                        "Make this device the owner?",
++                        isPresented: $showClaimConfirm,
++                        titleVisibility: .visible
++                    ) {
++                        Button("Make This Device the Owner") {
++                            Task { @MainActor in
++                                if await adminGate.claimDeviceOwnership() {
++                                    withAnimation { adminExpanded = true }
++                                }
++                            }
++                        }
++                        Button("Cancel", role: .cancel) { }
++                    } message: {
++                        Text("This unlocks developer tools on this device. You'll confirm with Face ID, Touch ID, or your device passcode, then sign in with Apple to bind this device to your Apple ID.")
++                    }
+                 }
+ 
+                 // MARK: Footer / Version

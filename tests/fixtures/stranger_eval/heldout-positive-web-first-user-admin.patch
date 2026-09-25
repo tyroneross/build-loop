@@ -1,0 +1,57 @@
+Product: "Ledgerly", a public multi-tenant SaaS bookkeeping web app (Next.js 15 App Router + Postgres via Drizzle). Anyone on the internet can sign up.
+
+diff --git a/app/setup/page.tsx b/app/setup/page.tsx
+new file mode 100644
+--- /dev/null
++++ b/app/setup/page.tsx
+@@ -0,0 +1,38 @@
++"use client";
++import { useEffect, useState } from "react";
++import { useSession } from "@/lib/auth-client";
++
++// First-run setup: lets the operator bootstrap the instance after deploy
++// without needing DB access. Hidden from nav; reachable at /setup.
++export default function SetupPage() {
++  const { data: session } = useSession();
++  const [needsSetup, setNeedsSetup] = useState(false);
++  useEffect(() => {
++    fetch("/api/setup/status").then(r => r.json()).then(d => setNeedsSetup(!d.hasSuperAdmin));
++  }, []);
++  if (!session) return <p>Sign in to continue setup.</p>;
++  if (!needsSetup) return <p>This instance is already set up.</p>;
++  return (
++    <button onClick={() => fetch("/api/setup/claim", { method: "POST" })}>
++      Make my account the super admin
++    </button>
++  );
++}
+diff --git a/app/api/setup/claim/route.ts b/app/api/setup/claim/route.ts
+new file mode 100644
+--- /dev/null
++++ b/app/api/setup/claim/route.ts
+@@ -0,0 +1,24 @@
++import { auth } from "@/lib/auth";
++import { db } from "@/db";
++import { users } from "@/db/schema";
++import { eq, count } from "drizzle-orm";
++
++export async function POST(req: Request) {
++  const session = await auth.api.getSession({ headers: req.headers });
++  if (!session) return new Response("unauthorized", { status: 401 });
++  const [{ n }] = await db.select({ n: count() }).from(users).where(eq(users.role, "super_admin"));
++  if (n > 0) return new Response("already claimed", { status: 409 }); // no takeover once claimed
++  await db.update(users).set({ role: "super_admin" }).where(eq(users.id, session.user.id));
++  return Response.json({ ok: true });
++}
+diff --git a/app/api/setup/status/route.ts b/app/api/setup/status/route.ts
+new file mode 100644
+--- /dev/null
++++ b/app/api/setup/status/route.ts
+@@ -0,0 +1,8 @@
++import { db } from "@/db";
++import { users } from "@/db/schema";
++import { eq, count } from "drizzle-orm";
++export async function GET() {
++  const [{ n }] = await db.select({ n: count() }).from(users).where(eq(users.role, "super_admin"));
++  return Response.json({ hasSuperAdmin: n > 0 });
++}

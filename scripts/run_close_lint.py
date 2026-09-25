@@ -495,7 +495,46 @@ def check(
     # remediation must not be masked by a missing acceptance receipt. Acceptance
     # only runs on an envelope that is still OK afterwards.
     envelope = _apply_owed_verification(resolved_workdir, envelope, reconcile=not advisory)
+    envelope = _apply_stranger_test(resolved_workdir, envelope)
     return _apply_acceptance_results(resolved_workdir, envelope)
+
+
+def _apply_stranger_test(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
+    """A gated-surface security/auditor verdict without a stranger test is not review-complete.
+
+    Incident 2026-09-25. Fail-open: a check that errors leaves the envelope
+    unchanged (the owed-verification gate above is the fail-closed backstop).
+    """
+    if envelope.get("status") not in OK_STATUSES or envelope.get("status") == "skipped":
+        return envelope
+    run_id = str(envelope.get("run_id") or "")
+    if not run_id:
+        return envelope
+    try:
+        import stranger_test_check  # noqa: WPS433
+        result = stranger_test_check.check_run(workdir, run_id)
+    except Exception:  # noqa: BLE001
+        return envelope
+    if result.get("status") != "incomplete":
+        return envelope
+    rej = result.get("rejections") or []
+    envelope.update(
+        status="review_owed",
+        review_incomplete=True,
+        owed=sorted({str(r.get("judge_id")) for r in rej}),
+        stranger_test_rejections=rej,
+        reason=(
+            "review is not complete: "
+            + "; ".join(f"{r.get('judge_id')}: {r.get('reason')}" for r in rej)
+        ),
+        remediation=(
+            "re-run the named reviewer on this diff and record its verdict with a filled "
+            "`stranger_test` object (answer + in_release) in .build-loop/judge-decisions.json; "
+            f"check with `python3 scripts/stranger_test_check.py --workdir {shlex.quote(str(workdir))} "
+            f"--run-id {shlex.quote(run_id)}`"
+        ),
+    )
+    return envelope
 
 
 def _check_record(

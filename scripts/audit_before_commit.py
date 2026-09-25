@@ -467,6 +467,185 @@ def _code_only(added: str) -> str:
     return "\n".join(kept)
 
 
+# ---------------------------------------------------------------------------
+# Release-surface scan on staged Swift (incident 2026-09-25 enforcement)
+#
+# HIGH-strength markers (ownership claim / trust-on-first-use / owner anchor /
+# multi-tap or shake reveal) on ADDED lines that compile into Release BLOCK the
+# commit (exit 2). Medium/low markers are WARN-only. Clean diffs print nothing.
+# Accepted remedies: compile it out (`#if DEBUG`), or gate by an identity pinned
+# at build time / verified server-side and mark the line
+# `// release-surface: allow <reason>` so the exception is visible in review.
+# Bypass: BUILDLOOP_RELEASE_SURFACE_BYPASS="<reason>" (a reason is required;
+# "1"/"true" is not one). Every bypass is logged to
+# `.build-loop/release-surface-bypass.jsonl` and printed as a user-facing notice.
+
+RELEASE_SURFACE_BYPASS_VAR = "BUILDLOOP_RELEASE_SURFACE_BYPASS"
+RELEASE_SURFACE_BYPASS_LOG = Path(".build-loop") / "release-surface-bypass.jsonl"
+_BYPASS_NON_REASONS = frozenset({"", "1", "0", "true", "yes", "y", "on", "bypass", "skip"})
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _added_line_numbers(section: str) -> set[int]:
+    """Post-image line numbers of `+` lines in one file's diff section."""
+    added: set[int] = set()
+    lineno = 0
+    in_hunk = False
+    for line in section.splitlines():
+        m = _HUNK_RE.match(line)
+        if m:
+            lineno = int(m.group(1))
+            in_hunk = True
+            continue
+        if not in_hunk:
+            continue
+        if line.startswith("+"):
+            added.add(lineno)
+            lineno += 1
+        elif line.startswith("-"):
+            continue
+        elif line.startswith("\\"):
+            continue
+        else:
+            lineno += 1
+    return added
+
+
+def release_surface_findings(files: list[str], diff_body: str, read_text) -> dict:
+    """Scan staged Swift files; keep findings on added lines only.
+
+    `read_text(path) -> str | None` returns the post-image (staged) text, so the
+    whole file's `#if` nesting is known while only changed lines are reported.
+    Returns {"applicable", "block": [...high...], "warn": [...medium/low...]}.
+    """
+    result: dict = {"applicable": False, "block": [], "warn": [], "files_scanned": 0}
+    swift = [f for f in files if f.endswith(".swift")]
+    if not swift:
+        return result
+    try:
+        import release_surface_scan as _rss
+    except Exception:
+        return result
+    sections = _diff_by_file(diff_body)
+    for f in swift:
+        if _rss.is_excluded_path(f) or f not in sections:
+            continue
+        added = _added_line_numbers(sections[f])
+        if not added:
+            continue
+        text = read_text(f)
+        if text is None:
+            continue
+        result["applicable"] = True
+        result["files_scanned"] += 1
+        scan = _rss.scan_text(text, f)
+        for rec in scan["findings"]:
+            if rec["line"] not in added:
+                continue
+            (result["block"] if rec["strength"] == "high" else result["warn"]).append(rec)
+    return result
+
+
+def _staged_blob(path: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "show", f":{path}"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _release_surface_bypass(cmd: str) -> tuple[str | None, str]:
+    """(reason, source). reason is None when no bypass was requested.
+
+    Read from the environment (git pre-commit path) or from the command string
+    (PreToolUse path, where an agent writes `VAR=... git commit`). A request
+    without a real reason is returned as "" so the caller can refuse it.
+    """
+    env_val = os.environ.get(RELEASE_SURFACE_BYPASS_VAR)
+    if env_val is not None:
+        return env_val.strip(), "environment"
+    m = re.search(
+        RELEASE_SURFACE_BYPASS_VAR + r"""=(?:"([^"]*)"|'([^']*)'|(\S+))""", cmd or ""
+    )
+    if m:
+        return (m.group(1) or m.group(2) or m.group(3) or "").strip(), "command (agent-issued)"
+    return None, ""
+
+
+def _log_release_surface_bypass(root: Path, reason: str, source: str, block: list[dict]) -> None:
+    entry = {
+        "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "reason": reason,
+        "source": source,
+        "findings": [f"{b['file']}:{b['line']} {b['signal']}" for b in block],
+    }
+    try:
+        path = root / RELEASE_SURFACE_BYPASS_LOG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+    _log_bypass(f"{RELEASE_SURFACE_BYPASS_VAR} ({source}): {reason}")
+
+
+def _release_surface_section(rs: dict, bypass_reason: str | None, bypass_source: str,
+                             blocked: bool) -> str:
+    if not rs["block"] and not rs["warn"]:
+        return ""
+    lines: list[str] = []
+    if rs["block"]:
+        head = "### RELEASE-SURFACE BLOCK\n" if blocked else "### RELEASE-SURFACE BLOCK BYPASSED\n"
+        lines.append(head)
+        lines.append(
+            "High-strength developer/owner surface on changed lines compiles into the Release "
+            "build (stranger test: a fresh install with the stranger's own account reaches it):\n"
+        )
+        for b in rs["block"]:
+            lines.append(f"- `{b['file']}:{b['line']}` {b['signal']} — `{b['snippet']}`\n")
+        lines.append(
+            "\nAccepted remedies: (1) compile it out of Release with `#if DEBUG` (or a declared "
+            "debug-only build flag); (2) if it must ship, gate it by an identity pinned at build "
+            "time or verified server-side, and mark the line `// release-surface: allow <reason>`.\n"
+        )
+        if blocked:
+            lines.append(
+                f"Bypass (logged, surfaced to the user): {RELEASE_SURFACE_BYPASS_VAR}=\"<reason>\" "
+                "git commit ... A bare 1/true is refused.\n"
+            )
+            if bypass_reason == "":
+                lines.append(f"{RELEASE_SURFACE_BYPASS_VAR} was set without a reason, so it was refused.\n")
+        else:
+            lines.append(
+                f"**Bypassed via {bypass_source}: \"{bypass_reason}\".** Logged to "
+                f"`{RELEASE_SURFACE_BYPASS_LOG}`. An agent that set this bypass MUST report it, "
+                "with the reason and the findings above, in its final message to the user.\n"
+            )
+        lines.append("\n")
+    if rs["warn"]:
+        lines.append("### Release-surface scan (advisory)\n")
+        for w in rs["warn"]:
+            lines.append(f"- [{w['strength']}] `{w['file']}:{w['line']}` {w['signal']} — `{w['snippet']}`\n")
+        lines.append("Apply the stranger test to each; wrap in `#if DEBUG` if it is developer tooling.\n\n")
+    return "".join(lines)
+
+
+# Author self-assessments in commit subjects ("security-reviewer PASS",
+# "auditor approved") anchored the July 2026 reviewer. The packet shows history
+# for trajectory, not for verdicts, so those claims are removed before a judge
+# reads them.
+_SELF_ASSESSMENT_RE = re.compile(
+    r"\b(?:security[- ]review(?:er)?|independent[- ]audit(?:or)?|auditor|review(?:ed)?|audit(?:ed)?)"
+    r"\s*[:=]?\s*(?:PASS(?:ED)?|approved?|clean|LGTM|yay|green|OK)\b"
+    r"|\bLGTM\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_self_assessment(text: str) -> str:
+    return _SELF_ASSESSMENT_RE.sub("[author self-assessment removed]", text or "")
+
+
 def _classify_risk(files: list[str], diff_body: str) -> dict:
     """Classify the staged diff as high | medium | low risk.
 
@@ -1150,7 +1329,7 @@ def _record_receipt_observation(
         return
 
 
-def _emit_packet(root: Path) -> int:
+def _emit_packet(root: Path, cmd: str = "") -> int:
     files = _staged_files()
     diff_body = _staged_diff()
     diff_stat = _staged_stat()
@@ -1161,6 +1340,18 @@ def _emit_packet(root: Path) -> int:
 
     # Deterministic block first (zero-judgment hard fails)
     blocked, reason = _deterministic_block(files, diff_body)
+
+    # Release-surface scan on staged Swift (high → block unless bypassed with a reason).
+    try:
+        release_scan = release_surface_findings(files, diff_body, _staged_blob)
+    except Exception:  # noqa: BLE001 — a scan failure never blocks
+        release_scan = {"applicable": False, "block": [], "warn": []}
+    bypass_reason, bypass_source = _release_surface_bypass(cmd)
+    release_blocked = bool(release_scan["block"]) and (
+        not bypass_reason or bypass_reason.lower() in _BYPASS_NON_REASONS
+    )
+    if release_scan["block"] and not release_blocked:
+        _log_release_surface_bypass(root, bypass_reason or "", bypass_source, release_scan["block"])
 
     # Risk classification (learn/risk-gated-commit-audit) — always computed so
     # the packet, the recorded runs[] entry, and the opt-in hard block below
@@ -1193,7 +1384,7 @@ def _emit_packet(root: Path) -> int:
     readme_head = "\n".join(_read_optional(root / "README.md").splitlines()[:README_HEAD_LINES])
     prd_path, prd_body = _find_prd(root)
     constitution = _read_optional(Path.home() / ".build-loop" / "memory" / "constitution.md")
-    trajectory = _run(["git", "log", "--oneline", "-5"]).strip()
+    trajectory = _strip_self_assessment(_run(["git", "log", "--oneline", "-5"]).strip())
 
     rule_ids = _constitution_rule_ids(constitution, files, diff_body)
 
@@ -1212,6 +1403,10 @@ def _emit_packet(root: Path) -> int:
         out("### MEMORY RECEIPT BLOCK\n")
         out("This diff changes durable knowledge but no memory read/write is recorded "
             "for it. Read the store, write what changed, then commit.\n\n")
+
+    out(_release_surface_section(
+        release_scan, bypass_reason if release_scan["block"] else None, bypass_source, release_blocked
+    ))
 
     if risk_blocked:
         out(f"### RISK GATE BLOCK\n{risk_block_reason}\n\n")
@@ -1316,6 +1511,8 @@ def _emit_packet(root: Path) -> int:
         status = "risk_block"
     elif memory_blocked:
         status = "memory_receipt_block"
+    elif release_blocked:
+        status = "release_surface_block"
     else:
         status = "packet_emitted"
     _record_runs_judge_entry(
@@ -1351,7 +1548,7 @@ def _emit_packet(root: Path) -> int:
         "a green gate with a thin oracle is false confidence (arXiv:2606.09863); recording coverage makes it visible. The flag is optional and never blocks.\n\n")
     out("This audit packet is independent of any orchestrator dispatch. The hook fires at the git-commit boundary on every commit.\n\n")
 
-    return 2 if (blocked or risk_blocked or memory_blocked) else 0
+    return 2 if (blocked or risk_blocked or memory_blocked or release_blocked) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1411,6 +1608,20 @@ def main() -> int:
         except Exception:  # noqa: BLE001 — never crash a commit
             pass
         sys.stderr.write("[independent-commit-auditor] BYPASS active (BUILDLOOP_AUDIT_BYPASS=1) — logged.\n")
+        # The blanket bypass carries no reason, so it does not waive a
+        # high-strength release surface; only the scoped, reasoned bypass does.
+        try:
+            files = _staged_files()
+            rs = release_surface_findings(files, _staged_diff(), _staged_blob)
+            if rs["block"]:
+                reason_txt, source = _release_surface_bypass("")
+                if not reason_txt or reason_txt.lower() in _BYPASS_NON_REASONS:
+                    sys.stderr.write(_release_surface_section(rs, reason_txt, source, True))
+                    return 2
+                _log_release_surface_bypass(_repo_root(), reason_txt, source, rs["block"])
+                sys.stderr.write(_release_surface_section(rs, reason_txt, source, False))
+        except Exception:  # noqa: BLE001 — bypass path never crashes
+            pass
         return 0
 
     # Read tool input from stdin (PreToolUse hook contract); tolerate absence.
@@ -1423,6 +1634,7 @@ def main() -> int:
 
     # The hook matcher already filtered to Bash + git commit, but defensively
     # check the command if we received structured JSON.
+    cmd = ""
     if raw:
         try:
             payload = json.loads(raw)
@@ -1437,7 +1649,7 @@ def main() -> int:
 
     root = _repo_root()
     try:
-        return _emit_packet(root)
+        return _emit_packet(root, cmd=cmd)
     except Exception as exc:  # noqa: BLE001
         # Never crash a commit. Log and proceed.
         sys.stderr.write(f"[independent-commit-auditor] internal error: {exc!r} — proceeding without packet.\n")

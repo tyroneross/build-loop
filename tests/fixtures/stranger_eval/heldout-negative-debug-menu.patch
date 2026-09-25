@@ -1,0 +1,40 @@
+Product: "Trailmark", a consumer iOS hiking app distributed on the App Store.
+
+diff --git a/Trailmark/Views/SettingsView.swift b/Trailmark/Views/SettingsView.swift
+--- a/Trailmark/Views/SettingsView.swift
++++ b/Trailmark/Views/SettingsView.swift
+@@ -40,6 +40,14 @@ struct SettingsView: View {
+             Section("About") {
+                 LabeledContent("Version", value: Bundle.main.appVersion)
+             }
++            #if DEBUG
++            Section("Developer") {
++                NavigationLink("Map tile cache") { TileCacheDebugView() }
++                Toggle("Simulate GPS drift", isOn: $settings.simulateDrift)
++                Button("Reset onboarding") { settings.resetOnboarding() }
++            }
++            #endif
+         }
+     }
+ }
+diff --git a/Trailmark/Debug/TileCacheDebugView.swift b/Trailmark/Debug/TileCacheDebugView.swift
+new file mode 100644
+--- /dev/null
++++ b/Trailmark/Debug/TileCacheDebugView.swift
+@@ -0,0 +1,22 @@
++#if DEBUG
++import SwiftUI
++
++/// Developer-only view of the offline tile cache. Compiled out of Release.
++struct TileCacheDebugView: View {
++    @State private var stats = TileCache.shared.stats()
++    var body: some View {
++        List {
++            LabeledContent("Tiles", value: "\(stats.count)")
++            LabeledContent("Size", value: stats.byteCountFormatted)
++            Button("Purge cache", role: .destructive) { TileCache.shared.purge(); stats = TileCache.shared.stats() }
++        }
++        .navigationTitle("Tile cache")
++    }
++}
++#endif
