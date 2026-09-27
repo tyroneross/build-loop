@@ -51,6 +51,8 @@ high-consequence judgment. An explicit model choice, existing role floor and
 verification requirement still govern. One live task, changing source folders,
 and missing comparable Sol total-token and elapsed-time receipts do not prove
 equal quality, faster execution, lower total cost or a durable routing winner.
+The Build Loop orchestrator makes and records the effort choice for each
+subagent assignment; medium here describes one task shape, not every subagent.
 Do not alter resolver defaults or auto-promote a rule from this pilot. A route
 change needs matched frozen cases, actual model/effort and total-use receipts,
 independent acceptance, and repair cost for the same task family.

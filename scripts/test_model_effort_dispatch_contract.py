@@ -6,6 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 ORCHESTRATOR = ROOT / "agents" / "build-orchestrator.md"
+MAPPING = ROOT / "references" / "model-tier-mapping.md"
 EXECUTE = ROOT / "skills" / "build-loop" / "references" / "phase-3-execute.md"
 
 
@@ -22,6 +23,15 @@ class ModelEffortDispatchContractTests(unittest.TestCase):
         self.assertIn("xhigh` only after a verifier establishes a quality miss", text)
         self.assertIn("max` only after a controlled comparison", text)
         self.assertIn("Haiku has no effort control", text)
+
+    def test_orchestrator_owns_each_subagent_effort_and_reports_delivery(self) -> None:
+        orchestrator = ORCHESTRATOR.read_text(encoding="utf-8")
+        mapping = MAPPING.read_text(encoding="utf-8")
+        self.assertIn("orchestrator chooses requested effort for every subagent dispatch", orchestrator)
+        self.assertIn("unsupported/not-applied", orchestrator)
+        self.assertIn("reasoning_effort", mapping)
+        self.assertIn("Claude Code subagent definitions accept `effort`", mapping)
+        self.assertIn("Record actual model and effort separately", mapping)
 
 
 if __name__ == "__main__":
