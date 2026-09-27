@@ -108,6 +108,20 @@ def run_case(case: dict[str, Any], workdir: Path, timeout: float) -> dict[str, A
         for required in case.get("required_ids", []):
             if required not in ids:
                 errors.append(f"required id missing: {required}")
+        for requirement in case.get("required_evidence", []):
+            if not isinstance(requirement, dict) or not isinstance(requirement.get("id"), str):
+                raise ValueError("required_evidence entries need an id")
+            terms = requirement.get("contains", [])
+            if not isinstance(terms, list) or not terms or not all(isinstance(term, str) and term for term in terms):
+                raise ValueError("required_evidence contains must be a nonempty string array")
+            matching = [hit for hit in payload["hits"] if hit.get("id", hit.get("page_id")) == requirement["id"]]
+            if not matching:
+                errors.append(f"required evidence id missing: {requirement['id']}")
+                continue
+            evidence = " ".join(str(matching[0].get(field, "")) for field in ("title", "heading", "snippet")).casefold()
+            for term in terms:
+                if term.casefold() not in evidence:
+                    errors.append(f"required evidence term missing for {requirement['id']}: {term}")
         for forbidden in case.get("forbidden_ids", []):
             if forbidden in ids:
                 errors.append(f"forbidden id returned: {forbidden}")
@@ -134,7 +148,7 @@ def run_spec(spec: dict[str, Any], workdir: Path, timeout: float) -> dict[str, A
         if not isinstance(pair, list) or len(pair) != 2 or any(item not in by_id for item in pair):
             raise ValueError(f"invalid distinct_top_pairs entry: {pair!r}")
         left, right = (by_id[item] for item in pair)
-        if left["top_id"] is None or left["top_id"] == right["top_id"]:
+        if left["top_id"] is None or right["top_id"] is None or left["top_id"] == right["top_id"]:
             pair_failures.append(f"{pair[0]} and {pair[1]} did not produce distinct top ids")
     return {"pass": all(result["pass"] for result in results) and not pair_failures,
             "cases": results, "pair_failures": pair_failures}

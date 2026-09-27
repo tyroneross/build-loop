@@ -120,7 +120,9 @@ returns evidence):** At Assess, write a small JSON probe spec using
 and constrained variants with a named entity, role, date, or different task
 verb that could wrongly enter the same shortcut. Assert `expected_route`,
 `top_id` or `required_ids`, and `forbidden_ids` where the intended evidence is
-known; use `distinct_top_pairs` when two constrained queries must lead to
+known. For an answer-bearing section, set `required_evidence` to entries such
+as `{"id":"source-page","contains":["model name"]}` so a correct page with
+an irrelevant snippet cannot pass. Use `distinct_top_pairs` when two constrained queries must lead to
 different evidence. For a claimed read-only SQLite path, set `no_write_paths`
 to the database or an alias. The probe compares database and WAL/SHM sidecar
 metadata plus the parent directory before and after each real query. Run:

@@ -55,3 +55,21 @@ def test_missing_expected_evidence_fails(tmp_path: Path) -> None:
     result = run_spec({"cases": [case]}, tmp_path, 5)
     assert not result["pass"]
     assert len(result["cases"][0]["errors"]) == 2
+
+
+def test_distinct_pair_rejects_empty_second_result(tmp_path: Path) -> None:
+    left = _case("left", "source-a")
+    right = _case("right", "source-b")
+    right["argv"][-1] = "import json; print(json.dumps({'route':'hybrid','hits':[]}))"
+    result = run_spec({"cases": [left, right],
+                       "distinct_top_pairs": [["left", "right"]]}, tmp_path, 5)
+    assert not result["pass"]
+    assert result["pair_failures"]
+
+
+def test_required_evidence_rejects_right_page_wrong_section(tmp_path: Path) -> None:
+    case = _case("models", "project-a")
+    case["required_evidence"] = [{"id": "project-a", "contains": ["gpt-4o"]}]
+    result = run_spec({"cases": [case]}, tmp_path, 5)
+    assert not result["pass"]
+    assert "required evidence term missing for project-a: gpt-4o" in result["cases"][0]["errors"]
