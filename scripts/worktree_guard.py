@@ -99,6 +99,9 @@ def create_guarded_worktree(
     record: bool = True,
     purpose: str | None = None,
     close_criteria: list[str] | None = None,
+    run_id: str | None = None,
+    success_criteria: list[str] | None = None,
+    goal_source: str | None = None,
 ) -> dict[str, Any]:
     """Create a git worktree under the canonical root and optionally record it.
 
@@ -127,10 +130,22 @@ def create_guarded_worktree(
         path    : str   — absolute path to the created worktree
         branch  : str   — branch name
         created : bool  — True if git worktree add succeeded
-        error   : str | None — error message if git failed, else None
+        error   : str | None — Git or goal-recording failure, else None
     """
     wt_path = canonical_worktree_path(workdir, slug)
     wt_branch = branch or canonical_branch_name(slug, chunk)
+
+    goal_recorded = False
+    if success_criteria is not None or goal_source is not None or run_id is not None:
+        if not record or not run_id or not purpose or not success_criteria or not goal_source:
+            return {"path": str(wt_path), "branch": wt_branch, "created": False,
+                    "error": "goal recording requires run_id, purpose, success_criteria, goal_source and record=True"}
+        from ref_goals import contract_error
+        validation = contract_error({"goal_history": [{"revision": 1, "goal": purpose,
+            "success_criteria": success_criteria, "source": goal_source,
+            "reason": "initial goal", "recorded_at": "pending creation"}]})
+        if validation:
+            return {"path": str(wt_path), "branch": wt_branch, "created": False, "error": validation}
 
     # Guard: ensure path is under canonical root (should always pass here, but
     # be defensive in case caller passed an explicit branch that altered path).
@@ -165,7 +180,18 @@ def create_guarded_worktree(
         error_msg = result.stderr.strip() or f"git worktree add exited with code {result.returncode}"
         return {"path": str(wt_path), "branch": wt_branch, "created": False, "error": error_msg}
 
-    if record:
+    if success_criteria is not None:
+        from ref_goals import record as record_goal
+        try:
+            record_goal(workdir, {"run_id": run_id, "branch": wt_branch, "path": str(wt_path),
+                        "expected_revision": 0, "goal": purpose, "success_criteria": success_criteria,
+                        "source": goal_source, "reason": "initial goal", "close_criteria": close_criteria})
+            goal_recorded = True
+        except (ValueError, OSError, TimeoutError) as exc:
+            return {"path": str(wt_path), "branch": wt_branch, "created": True,
+                    "goal_status": "missing_goal", "error": f"worktree retained; goal recording failed: {exc}"}
+
+    if record and not goal_recorded:
         # Import here to avoid circular dependency issues and keep this module stdlib-only
         # at the import level (log_decision is also stdlib-only).
         import importlib.util
@@ -195,7 +221,8 @@ def create_guarded_worktree(
                 # log failure is non-fatal; worktree was already created
                 print(f"warning: log_created_ref failed: {exc}", file=sys.stderr)
 
-    return {"path": str(wt_path), "branch": wt_branch, "created": True, "error": None}
+    return {"path": str(wt_path), "branch": wt_branch, "created": True, "error": None,
+            "goal_status": "recorded" if goal_recorded else "missing_goal"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Output result as JSON (default: human-readable)",
     )
+    parser.add_argument("--run-id")
+    parser.add_argument("--success-criterion", action="append")
+    parser.add_argument("--goal-source")
     args = parser.parse_args(argv)
 
     workdir = Path(args.workdir).resolve()
@@ -236,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         record=not args.no_record,
         purpose=args.purpose,
         close_criteria=args.close_criterion,
+        run_id=args.run_id, success_criteria=args.success_criterion, goal_source=args.goal_source,
     )
 
     if args.json:
@@ -243,11 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if result["created"]:
             print(f"created worktree: {result['path']} (branch: {result['branch']})")
-        else:
+        if result.get("error"):
             print(f"error: {result['error']}", file=sys.stderr)
-            return 1
 
-    return 0
+    return 1 if result.get("error") or not result["created"] else 0
 
 
 if __name__ == "__main__":

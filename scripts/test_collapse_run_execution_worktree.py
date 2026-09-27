@@ -284,6 +284,8 @@ def _commit_run_work(wt_path: Path, name: str = "work.txt") -> None:
 
 
 def _strict_close(repo: Path, run_id: str, branch: str, **kwargs) -> dict:
+    from test_ref_goals import seed_closeout_goal
+    seed_closeout_goal(repo, run_id, branch)
     return collapse_run.collapse(
         repo,
         run_id=run_id,
@@ -562,6 +564,9 @@ def test_strict_close_requires_positive_owner_release(tmp_path: Path) -> None:
         wt_branch,
         run_entry={"run_id": run_id, "createdRefs": []},
     )
+
+    from test_ref_goals import seed_closeout_goal
+    seed_closeout_goal(repo, run_id, wt_branch)
 
     result = collapse_run.collapse(
         repo,

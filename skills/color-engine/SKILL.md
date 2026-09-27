@@ -1,6 +1,6 @@
 ---
 name: color-engine
-description: Generate accessible color systems and solve contrast, instead of guessing hex values. Use when picking or fixing colors for any UI, chart, diagram, doc, or artifact — "what colors should this use", "is this readable", "this text fails contrast", "make a dark theme", "pick an accent". Also use before shipping any palette, to PROVE contrast rather than assert it. NOT for choosing layout, typography, or component structure.
+description: Use when choosing or fixing accessible colors for UI, charts, diagrams, documents, or artifacts. NOT for choosing layout, typography, or component structure. Generate color systems and verify contrast, including dark themes and accent colors.
 user-invocable: false
 ---
 

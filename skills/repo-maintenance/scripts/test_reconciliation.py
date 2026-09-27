@@ -45,6 +45,17 @@ class ReconciliationTests(unittest.TestCase):
         return result.returncode, json.loads(result.stdout)
 
     def draft(self):
+        # Every positive fixture has an originating goal; individual tests can
+        # call the CLI directly to exercise an unknown legacy ref.
+        state_dir = self.repo / ".build-loop"
+        state_dir.mkdir(exist_ok=True)
+        (self.repo / ".git/info/exclude").write_text(".build-loop/\n")
+        branches = self.git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines()
+        refs = [{"branch": branch, "status": "open", "goal_history": [{
+            "revision": 1, "goal": "Exercise fixture behavior", "source": "test fixture setup",
+            "reason": "initial goal", "recorded_at": "2026-09-27T00:00:00Z",
+            "success_criteria": ["Fixture behavior is retained on the target"]}]} for branch in branches]
+        (state_dir / "state.json").write_text(json.dumps({"runs": [{"run_id": "fixture", "createdRefs": refs}]}))
         return self.cli("--reconcile")[1]
 
     def reviewed(self, packet):
@@ -216,6 +227,14 @@ class ReconciliationTests(unittest.TestCase):
         result = self.check(self.reviewed(self.draft()))[1]
         self.assertFalse(result["review_complete"])
         self.assertEqual(result["whole_branch_steps"]["already-present"], "preserve")
+
+    def test_legacy_branch_with_no_goal_cannot_progress(self):
+        self.branch("legacy")
+        packet = self.cli("--reconcile")[1]
+        result = self.check(self.reviewed(packet))[1]
+        self.assertFalse(result["review_complete"])
+        self.assertEqual(result["whole_branch_steps"]["legacy"], "preserve")
+        self.assertIn("missing_goal", [g["reason"] for g in result["goals"]])
 
     def test_remote_only_branch_exclusion_is_explicit(self):
         self.git("update-ref", "refs/remotes/origin/remote-only", "HEAD")

@@ -1504,6 +1504,20 @@ def reconcile_terminal_execution(workdir: Path, run_id: str) -> dict[str, Any]:
 # Core collapse logic
 # ---------------------------------------------------------------------------
 
+def _goal_close_error(workdir: Path, branch: str, source_head: str | None, target: str) -> str | None:
+    from ref_goals import inventory, closure_error
+    worktrees, error = _worktree_records(workdir)
+    if error:
+        return f"goal worktree inventory unavailable: {error}"
+    try:
+        item = inventory(workdir, [{"name": branch, "head": source_head}], list(worktrees.values()))[0]
+        if item["goal_status"] != "recorded":
+            return item["reason"]
+        return closure_error(item["records"][0]["contract"], source_head, _branch_oid(workdir, target))
+    except (ValueError, OSError, RecursionError) as exc:
+        return f"goal inventory unavailable: {exc}"
+
+
 def collapse(
     workdir: Path,
     run_id: str = "latest",
@@ -1788,6 +1802,13 @@ def collapse(
             result["errors"].append(reason)
             continue
 
+        if strict:
+            goal_error = _goal_close_error(workdir, ref_branch, expected_oid, merge_target)
+            if goal_error:
+                result["errors"].append(f"{ref_branch}: {goal_error}")
+                result["retained"].append({"branch": ref_branch, "path": path, "reason": goal_error})
+                continue
+
         if dry_run:
             # The preview is where approval is granted, so it owes the same
             # contents evidence the acting path prints. This is a read-only
@@ -2069,6 +2090,15 @@ def collapse(
             except (OSError, ValueError, TimeoutError) as exc:
                 result["errors"].append(f"error projection failed: {exc}")
             continue
+
+        if strict:
+            goal_error = _goal_close_error(workdir, ref_branch, current_oid, merge_target)
+            if goal_error:
+                result["errors"].append(f"{ref_branch}: {goal_error}")
+                result["retained"].append({"branch": ref_branch, "path": path, "reason": goal_error})
+                _upsert_receipt_ref(receipt, ref, status="error", reason=goal_error)
+                _write_receipt(receipt_path, receipt)
+                continue
 
         if require_run_root and not _approved_run_worktree_path(workdir, path):
             reason = f"worktree path moved outside .build-loop/worktrees: {path}"

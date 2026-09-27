@@ -67,3 +67,13 @@ created N · closed M · retained R: [<branch-name>, ...]
 `contents-checked` is not optional decoration. A removal deletes the whole directory including gitignored files, so a worktree whose inventory refuses the caches-only claim must name what it holds before anyone approves the deletion — counts alone cannot support that approval. Fields: `safety[].inventory.characterization`, `.non_reproducible_ignored`, `.uninspected_ignored_directories`, `.caches_only_claim_supported` (produced by `scripts/worktree_inventory.py`).
 
 When collapse reports `retained` or `surfaced_unmerged` entries, surface them and require an explicit later disposition. When a run created zero refs (typical solo-on-main run), emit one line: `Branch hygiene: clean — no run-created branches/worktrees; on main.` Do not derive the run-wide `closeout_status` solely from branch cleanup; `runs[N].branch_closeout` and its receipt are the branch-hygiene projection.
+
+## Outcome evidence before strict closeout
+
+Require a current `createdRefs.goal_history` and `goal_assessment` before strict
+branch/worktree removal. Follow `skills/repo-maintenance/references/reconciliation.md`
+for recording, revising and assessing the goal through `scripts/ref_goals.py`.
+Success means the target satisfies the criteria; merge ancestry alone is insufficient.
+Keep unknown legacy intent or unmet outcomes open. Record the original goal result
+and alternative implementation explicitly. Recovery/ownership/cleanliness gates
+still apply. Use strict mode; legacy non-strict compatibility is not the workflow.

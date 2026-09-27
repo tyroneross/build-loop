@@ -5,6 +5,52 @@ changes, or prune stale branches/worktrees. It uses the maintenance inventory,
 merge-risk scorer, recovery protocol and closeout tools already in this plugin.
 No scheduled or background integration is implied.
 
+## Preserve the goal across approaches
+
+Every branch and worktree needs a goal and observable success criteria. Store
+these in the existing `.build-loop/state.json` `runs[].createdRefs[]` ledger,
+including adopted older refs. A branch and its attached worktree share a goal;
+a detached worktree is identified by canonical path. Retain the originating run. Reusing a closed branch name requires a new run;
+the earlier closed record remains unchanged.
+Do not infer a fulfilled goal from a branch name, age, merge or patch equivalence.
+The inventory's `goals` lists every local branch and worktree, including the base.
+Missing, corrupt or conflicting records stay visible and hold reconciliation.
+
+Use `scripts/ref_goals.py --workdir <ledger-repo> --payload-json <private.json>`
+from the resolved Build Loop plugin root. The payload names an exact existing
+`run_id`, `branch` (or null plus `path` for detached work), and `expected_revision`.
+For an initial record set revision expectation to 0 and supply:
+
+```json
+{"run_id":"origin-run","branch":"feature/search","expected_revision":0,
+ "goal":"Users can find saved notes", "success_criteria":["A saved note is found by its title"],
+ "source":"Originating user request or accepted plan path", "reason":"Initial goal"}
+```
+
+For revisions, read the current revision, then supply the new goal/criteria,
+source and reason with that `expected_revision`. Earlier revisions remain intact;
+old assessments are invalidated. An implementation change alone need not revise
+outcome criteria. Recover older goals from originating requests, plans, code and
+tests with provenance; label missing evidence instead of inventing intent. Do not
+edit a peer's live goal without ownership and scope authorization.
+
+For closure, the same writer accepts `assessment` with the current `revision`,
+exact `source_head` and `target_head`, and one `results` item per current criterion
+in recorded order: `criterion`, `met_on_target` and nonempty `evidence` references.
+Also record `approach` describing the implemented behavior and any alternative
+approach, plus `original_goal: {status, evidence}`. Status is `met`, `unmet`,
+`unknown` or `superseded`; superseded requires a sourced goal revision. The record
+must say whether the ORIGINAL goal was met, even after revisions. Any unmet or
+unverified current criterion holds closure. Evidence is reviewer-authored and
+requires independent inspection; JSON completeness is not proof of success.
+
+Use strict `collapse_run.py` closeout: it rechecks the same goal assessment before
+mutation along with existing recovery and ownership checks. Historical non-strict
+API compatibility does not satisfy this workflow. Detached work remains retained
+until an executor supports its safe closure. If behavior was achieved through a
+different approach, retirement can proceed through the existing gates without
+merging obsolete implementation merely to produce an ancestry marker.
+
 ## Compare before deciding
 
 1. Run the normal maintenance inventory. Include active ownership, processes,

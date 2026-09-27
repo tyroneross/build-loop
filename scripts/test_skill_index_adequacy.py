@@ -159,7 +159,7 @@ DISAMBIGUATOR_MUST_START_BY = 300
 #: the threshold. root-cause-analysis (312) and color-engine (364) still bury
 #: theirs — both need their opening trigger sentence tightened, not just
 #: resequenced, because the trigger clause itself is wordy.
-BURIED_DISAMBIGUATOR_ALLOWLIST = {"color-engine", "root-cause-analysis"}
+BURIED_DISAMBIGUATOR_ALLOWLIST: set[str] = set()
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)

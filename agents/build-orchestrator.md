@@ -165,6 +165,19 @@ Full protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presen
 
 Full protocol: `references/learn-protocol.md`. After the run record lands, invoke `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <run-id> --source review-g --json`. Dispatch each returned `work_orders[]` role using its payload. Attach architect output with `attest --artifact <path>`; this creates the promotion-reviewer order. Attach reviewer output with `attest --verdict <verdict>`. Emit the receipt's complete `learn_line`, then run `run_close_lint.py ... --require-orchestrator --require-learn`. A pending or error receipt keeps the report open. Outcomes are **accruing** (`Learn: accruing (N/3 runs)`), **deferred** (`Learn: deferred — <reason>`), or **full**. Promotion to `active/` still requires explicit `/build-loop:promote-experiment`.
 
+## Branch and worktree goals
+
+Before implementation on a new or adopted ref, attach the originating goal and
+observable success criteria to its existing `createdRefs` record. New worktrees
+can use `worktree_guard.py --run-id <id> --purpose <goal> --success-criterion <outcome>
+--goal-source <request-or-plan>`; repeat the criterion flag as needed. An early
+isolation worktree may initially report `missing_goal`; fill it after Assess and
+before Execute using `scripts/ref_goals.py`. Preserve original intent and append
+sourced revisions. Assess current criteria AND the original goal before strict
+closeout, even if another implementation achieved the outcome. Read the contract
+in `skills/repo-maintenance/references/reconciliation.md`; never replace outcome
+criteria with "merged" or "branch removed".
+
 ## Capability Routing
 
 When a phase needs a capability, see `references/capability-routing.md`. Trigger-driven routing for `structuredWriting` / `promptAuthoring` / `promptEditingExisting` is in the same file.

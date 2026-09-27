@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f52e04c7502708107c001933c8374b133f09ad05c19b7a807e3a648aba072cd9"
+    "content_sha256": "9b4983fd5cb1aee9518b65171cf54fdb0ff7bc43a2d12572d4674089d732df88"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1234,7 +1234,7 @@
         }
       },
       "color-engine": {
-        "description": "Generate accessible color systems and solve contrast, instead of guessing hex values. Use when picking or fixing colors for any UI, chart, diagram, doc, or artifact — \"what colors should this use\", \"is this readable\", \"this text fails contrast\", \"make a dark theme\", \"pick an accent\". Also use before shipping any palette, to PROVE contrast rather than assert it. NOT for choosing layout, typography, or component struc…",
+        "description": "Use when choosing or fixing accessible colors for UI, charts, diagrams, documents, or artifacts. NOT for choosing layout, typography, or component structure. Generate color systems and verify contrast, including dark themes and accent colors. user-invocable: false",
         "file": "skills/color-engine/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1458,7 +1458,7 @@
         }
       },
       "root-cause-analysis": {
-        "description": "Root-cause analysis run AFTER a bug is already fixed — explains why it existed and why it escaped controls, then lands a durable system fix, not a code patch. Use when the user asks \"why did this keep happening\", \"root cause\", wants a postmortem/RCA/\"5 whys\", or after a regression once the immediate fix lands. Not for fixing the bug live (use `debug-loop`) or searching/storing past incidents (use `debugging-memory`)…",
+        "description": "Use after a bug is fixed to explain why it occurred and escaped controls, including recurring failures, postmortems and 5 whys. Not for fixing a live bug (use `debug-loop`) or storing past incidents (use `debugging-memory`). Find and implement a durable system correction. user-invocable: false",
         "file": "skills/root-cause-analysis/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1856,6 +1856,7 @@
       "scripts/recall.py": "Hybrid retrieval entry point for repo-local episodic memory.",
       "scripts/recall_graph.py": "Knowledge-graph leg for hybrid recall (Phase B).",
       "scripts/recall_multipliers.py": "Quality, recency, and combined-score multipliers for hybrid recall.",
+      "scripts/ref_goals.py": "Versioned outcome contracts in the existing runs[].createdRefs ledger.",
       "scripts/reference_activation_audit.py": "Reference activation audit — make \"references are top of mind when needed\" checkable.",
       "scripts/reference_capture/__init__.py": "Reference-capture capability: persist web/doc research findings as",
       "scripts/reference_capture/capture.py": "Capture a research finding as a date-stamped reference file.",

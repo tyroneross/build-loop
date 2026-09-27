@@ -58,7 +58,7 @@ def draft(report: dict[str, Any], git: Callable[..., Any]) -> dict[str, Any]:
         "schema_version": 1, "repo_root": str(repo),
         "target_ref": report["base"], "target_head": target,
         "candidates": candidates, "overlaps": overlaps,
-        "comparison_evidence": "",
+        "comparison_evidence": "", "goals": report["goals"],
         "retained_state": {
             "stashes": report["stashes"],
             "detached_worktrees": [w for w in report["worktrees"] if not w.get("branch")],
@@ -77,7 +77,7 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
     actions: list[dict[str, Any]] = []
     if not isinstance(record, dict):
         return {"review_complete": False, "errors": ["record must be an object"], "actions": []}
-    for key in ("schema_version", "repo_root", "target_ref", "target_head", "overlaps", "retained_state"):
+    for key in ("schema_version", "repo_root", "target_ref", "target_head", "overlaps", "retained_state", "goals"):
         if record.get(key) != current[key]:
             errors.append(f"stale or altered {key}; refresh the comparison")
     rows = record.get("candidates")
@@ -107,6 +107,12 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
                     "tip_difference_paths", "ancestor_of_target"):
             if row.get(key) != fresh[key]:
                 errors.append(f"{ref}: stale or altered {key}")
+        from ref_goals import closure_error
+        goal_rows = [g for g in current["goals"] if g["branch"] == ref and g["path"] is None]
+        goal = goal_rows[0] if len(goal_rows) == 1 else None
+        goal_missing = goal is None or goal["goal_status"] != "recorded"
+        goal_close_error = (goal.get("reason") if goal else "missing_goal") if goal_missing else closure_error(
+            goal["records"][0]["contract"], fresh["source_head"], current["target_head"])
         ownership = row.get("ownership")
         source_worktrees = [w for w in report["worktrees"] if w.get("branch") == ref]
         held = global_hold or ownership != "released" or not _text(row.get("ownership_evidence")) or any(
@@ -140,15 +146,15 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
                 errors.append(f"{label}: cite inspected code/diffs and verification evidence")
             if disposition == "competing" or ui == "competing":
                 action = "needs_user_choice"
-            elif disposition == "unverified" or ui == "unreviewed" or not fresh["merge_base"]:
+            elif goal_missing or disposition == "unverified" or ui == "unreviewed" or not fresh["merge_base"]:
                 action = "needs_review"
             elif held or disposition == "incomplete":
                 action = "preserve"
             elif disposition == "additive":
                 action = "integration_checks" if paths else "needs_review"
             else:
-                action = "retirement_checks"
-            actions.append({"source_ref": ref, "unit": index, "paths": paths, "next_step": action})
+                action = "needs_review" if goal_close_error else "retirement_checks"
+            actions.append({"source_ref": ref, "unit": index, "paths": paths, "next_step": action, "goal_closure_hold": goal_close_error})
         if covered != set(fresh["source_paths"]):
             errors.append(f"{ref}: units must cover every source diff path")
     if errors:
@@ -159,7 +165,7 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
         "review_complete": not errors and all(a["next_step"] != "needs_review" for a in actions),
         "errors": errors, "actions": actions,
         "review_scope": "local branch diffs only; remote-only branches and retained state require separate review",
-        "retained_state": current["retained_state"],
+        "retained_state": current["retained_state"], "goals": current["goals"],
         "whole_branch_steps": {
             ref: ("integration_checks" if steps == {"integration_checks"}
                   else "retirement_checks" if steps == {"retirement_checks"}

@@ -1081,6 +1081,11 @@ def render_text(report: dict[str, Any]) -> str:
         f"archive tags: {len(report['archive_tags'])}",
         f"tracked files: {report['structure']['tracked_file_count']}",
     ]
+    goals = report.get("goals", [])
+    if goals:
+        held = [g for g in goals if g["goal_status"] != "recorded"]
+        lines.append(f"goal contracts: {len(goals) - len(held)} recorded, {len(held)} need review")
+        lines.extend(f"goal hold: {g['path'] or g['branch']}: {g['reason']}" for g in held)
     scan_head = report.get("scan_head") or {}
     if scan_head.get("moved"):
         lines.append(
@@ -1192,6 +1197,9 @@ def main() -> int:
             compare_prefix=args.compare_prefix,
             compare_ref=args.compare_ref,
         )
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+        from ref_goals import inventory
+        report["goals"] = inventory(report["repo_root"], report["branches"], report["worktrees"])
         if args.reconcile or args.review_record:
             from reconciliation import draft, check
 

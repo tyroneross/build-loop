@@ -125,7 +125,9 @@ For branch/worktree reconciliation, follow
 to merge additive work includes reading code and diffs, classifying changed
 behavior, integrating reviewed compatible changes, validating the target and
 closing redundant work with recovery proof. A review-only request ends at the
-comparison. Use the existing audit's `--reconcile` and `--review-record` modes;
+comparison. Every open branch/worktree must retain its goal, success criteria,
+revision history and outcome evidence under that contract. Missing goals hold
+closure; a different implementation may satisfy the same goal. Use the existing audit's `--reconcile` and `--review-record` modes;
 neither mutates Git nor grants authority. Competing product/UI directions stay
 preserved for the user's choice while independent additive work continues.
 

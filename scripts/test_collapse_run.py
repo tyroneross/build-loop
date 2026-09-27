@@ -391,6 +391,8 @@ class TestCLI:
                 "review_hold": False,
             }],
         })
+        from test_ref_goals import seed_closeout_goal
+        seed_closeout_goal(repo, "run_strict_cli", "feat-strict-cli")
         base = [
             sys.executable,
             str(_SCRIPTS / "collapse_run.py"),
