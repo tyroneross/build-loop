@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "abf746ed05c9a897fb744014e3f2199294ab717880f9ed5132ca6b3ddd1d6eac"
+    "content_sha256": "f52e04c7502708107c001933c8374b133f09ad05c19b7a807e3a648aba072cd9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1868,6 +1868,7 @@
       "scripts/registry_lag.py": "Detect the failure mode \"a release was cut and the registry never got it\".",
       "scripts/release_staleness.py": "Detect the failure mode \"a week passed with merged commits and no release was cut\".",
       "scripts/release_surface_scan.py": "release_surface_scan.py — advisory scan for developer/owner surfaces that ship in Release.",
+      "scripts/repo_search.py": "Fast, deterministic repository search with a rebuildable local evidence index.",
       "scripts/report_lint.py": "User-facing output style lint for build-loop's Phase 4 Review-G draft.",
       "scripts/rerank.py": "Cross-encoder rerank for hybrid retrieval (Phase A chunk 4).",
       "scripts/research_packet.py": "research_packet.py — Research packet generation for build-loop.",

@@ -76,6 +76,19 @@ Default behavior: complete Phase 1–6 and required fixes autonomously within a 
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value. `/build-loop:run` applies this same check before it loads this skill, so a skipped task never pays for this file; the check here covers direct skill loads.
 
+## Fast repository search
+
+Scan content with code before broad file reads. Start with
+`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo_search.py query --workdir "$PWD"
+--query "<terms>" --kind content --json`; this searches live files with `rg`
+and reads only selected matches. Narrow to `--kind change|run|decision|structure`
+when the question calls for history or architecture. Metadata queries maintain
+the rebuildable `.build-loop/search/index.json`; the canonical Git, run,
+decision, and architecture sources stay authoritative. An LLM interprets
+selected evidence rather than scanning every file. See
+`references/repo-search.md` for freshness, coverage, and optional annotation
+rules.
+
 ## Keep going until done
 
 Once the user accepts the plan, every phase is authorized scope. The orchestrator does not stop and ask the user between phases. Status updates are fine. Permission requests are not.
