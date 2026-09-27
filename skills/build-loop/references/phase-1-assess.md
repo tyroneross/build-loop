@@ -22,14 +22,28 @@
 
    Helper errors (`grep -v`/`awk` non-zero) are NOT a failure — empty output means clean. Any non-empty line surfaces in the assess report for Phase 2 to reason about.
 
-0a. **Credential preflight** (fail-soft, names only — no values ever surfaced): run
+0a. **Credential preflight** (fail-soft, deterministic, names only): run
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credential_preflight.py" \
      --workdir "$PWD" --json
    ```
 
-   Write the result to `.build-loop/state.json.assess.credentialPreflight`. If `missing[]` is non-empty, surface each name as `[CREDENTIAL REQUIRED] <name>` in the Assess summary and repeat verbatim in the end-of-run readback. A missing credential is a "genuine inability to proceed" under the autonomy policy: log it, continue all work that does not require the key, and surface it in the readback — do NOT stop-and-ask. Script failure (non-zero exit / bad JSON) → log one warning line; never blocks Assess.
+   The script uses a fast ripgrep content prefilter and Python extraction; it
+   excludes tests from the default source scan and example env files from
+   availability claims. Use `--changed-files` when the task's files are already
+   known; this explicit mode scans exactly those files, including tests.
+   `--details` is
+   opt-in for every reference location. Write the compact result to
+   `.build-loop/state.json.assess.credentialPreflight`. `missing[]` lists
+   referenced keys unavailable in this local checkout, not keys proven mandatory
+   for the task. Surface at most five names plus the count as
+   `[CREDENTIAL UNAVAILABLE]`; inspect the actual entrypoint or its validator
+   before labeling one `[CREDENTIAL REQUIRED]` or treating it as a blocker.
+   A confirmed missing credential is logged while independent work continues.
+   Script failure (non-zero exit / bad JSON) → log one warning line; never blocks
+   Assess. Scan file content with code, not an LLM; expand from the fast result
+   only for paths relevant to the task.
 
 0b. **Stale-context triage** (fail-soft, proactive drift notice): run
 

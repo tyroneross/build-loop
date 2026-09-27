@@ -17,6 +17,7 @@ import pytest
 # Make scripts/ importable regardless of cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import credential_preflight as preflight
 from credential_preflight import run_preflight
 
 
@@ -73,6 +74,27 @@ class TestSatisfiedByDotenv:
         assert matching[0]["present"] is True
         # source is "env" if process env has it, "dotenv" if only the file does
         assert matching[0]["source"] in ("env", "dotenv")
+
+    def test_example_and_empty_values_do_not_satisfy_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        _write(tmp_path, "app.ts", "const key = process.env.GROQ_API_KEY;\n")
+        _write(tmp_path, ".env.example", "GROQ_API_KEY=example-value\n")
+        _write(tmp_path, ".env.local", 'GROQ_API_KEY=""\n')
+
+        result = run_preflight(tmp_path, changed_files=None)
+
+        assert result["missing"] == ["GROQ_API_KEY"]
+
+    def test_comment_only_dotenv_value_is_unavailable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        _write(tmp_path, "app.ts", "process.env.GROQ_API_KEY\n")
+        _write(tmp_path, ".env.local", "GROQ_API_KEY= # pending\n")
+
+        assert run_preflight(tmp_path, changed_files=None)["missing"] == ["GROQ_API_KEY"]
 
 
 class TestPythonPatterns:
@@ -182,6 +204,46 @@ class TestNodeModulesSkipped:
             "node_modules was scanned — it should be skipped"
         )
 
+    def test_default_scan_skips_tests_and_accepts_cjs_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("NEXT_RUNTIME", raising=False)
+        _write(tmp_path, "tests/fixture.test.ts", "process.env.OPENAI_API_KEY\n")
+        _write(tmp_path, "scripts/validate-env.cjs", "process.env.GROQ_API_KEY\nprocess.env.NEXT_RUNTIME\nprocess.env.API_URL\n")
+
+        result = run_preflight(tmp_path, changed_files=None)
+
+        assert result["missing"] == ["GROQ_API_KEY"]
+        assert result["scanned_files"] == 1
+
+    def test_python_fallback_has_no_arbitrary_500_file_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(preflight.shutil, "which", lambda _name: None)
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        for index in range(501):
+            _write(tmp_path, f"modules/m{index:03}.ts", "export const value = 1;\n")
+        _write(tmp_path, "modules/z.ts", "process.env.GROQ_API_KEY\n")
+
+        result = run_preflight(tmp_path, changed_files=None)
+
+        assert result["scan_method"] == "python"
+        assert result["scanned_files"] == 1
+        assert result["missing"] == ["GROQ_API_KEY"]
+
+    def test_generated_worktrees_are_excluded_in_both_scan_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("BREVO_API_KEY", raising=False)
+        _write(tmp_path, ".rally/worktrees/old/app.ts", "process.env.BREVO_API_KEY\n")
+        _write(tmp_path, ".claude/worktrees/old/app.ts", "process.env.BREVO_API_KEY\n")
+
+        assert run_preflight(tmp_path, changed_files=None)["required"] == []
+        monkeypatch.setattr(preflight.shutil, "which", lambda _name: None)
+        assert run_preflight(tmp_path, changed_files=None)["required"] == []
+
 
 class TestChangedFilesScope:
     def test_only_changed_files_scanned(self, tmp_path: Path) -> None:
@@ -205,6 +267,40 @@ class TestChangedFilesScope:
 
 
 class TestJsTsPatterns:
+    def test_database_urls_are_credentials_but_generic_api_url_is_not(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        names = ("MYSQL_URL", "MONGO_URL", "POSTGRESQL_URL", "DB_URL", "CUSTOM_MYSQL_URL")
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+        _write(tmp_path, "db.ts", "\n".join(f"process.env.{name}" for name in (*names, "API_URL")))
+
+        assert set(run_preflight(tmp_path, changed_files=None)["missing"]) == set(names)
+
+    def test_optional_bracket_deno_and_destructuring_accesses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for key in ("OPENAI_API_KEY", "GROQ_API_KEY", "VITE_API_KEY", "FIREWORKS_API_KEY", "ANTHROPIC_API_KEY"):
+            monkeypatch.delenv(key, raising=False)
+        _write(tmp_path, "runtime.ts", """const { OPENAI_API_KEY, GROQ_API_KEY: groq } = process.env;
+const anthropic = process.env?.ANTHROPIC_API_KEY;
+const vite = import.meta.env['VITE_API_KEY'];
+const fireworks = Deno.env.get('FIREWORKS_API_KEY');
+""")
+        _write(tmp_path, "multiline.ts", """const {
+  DATABASE_URL,
+} = process.env;
+""")
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+
+        result = run_preflight(tmp_path, changed_files=None)
+
+        assert set(result["missing"]) == {
+            "OPENAI_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY",
+            "VITE_API_KEY", "FIREWORKS_API_KEY", "DATABASE_URL",
+        }
+        assert result["scan_method"] in {"ripgrep", "python"}
+
     def test_import_meta_env_detected(self, tmp_path: Path) -> None:
         """import.meta.env.VITE_API_KEY is detected (Vite pattern)."""
         _write(tmp_path, "app.tsx", "const key = import.meta.env.VITE_API_KEY;\n")
@@ -254,3 +350,21 @@ class TestExitCodeAndJson:
         assert isinstance(result["missing"], list)
         assert isinstance(result["scanned_files"], int)
         assert isinstance(result["errors"], list)
+
+    def test_cli_json_is_compact_and_detail_is_opt_in(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        _write(tmp_path, "app.ts", "const key = process.env.GROQ_API_KEY;\n")
+
+        assert preflight.main(["--workdir", str(tmp_path), "--json"]) == 0
+        compact = json.loads(capsys.readouterr().out)
+        assert compact["missing"] == ["GROQ_API_KEY"]
+        assert compact["reference_samples"][0]["key"] == "GROQ_API_KEY"
+        assert "required" not in compact
+
+        assert preflight.main(["--workdir", str(tmp_path), "--json", "--details"]) == 0
+        detailed = json.loads(capsys.readouterr().out)
+        assert detailed["required"][0]["key"] == "GROQ_API_KEY"
+        assert detailed["required"][0]["referenced_in"]

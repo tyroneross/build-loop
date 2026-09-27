@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Credential preflight for build-loop Phase 1.
 
-Scans source files for referenced environment-variable credentials, then
-cross-checks against declared .env files and the live process environment.
-Reports which keys are referenced but not set so build-loop can surface
-[CREDENTIAL REQUIRED] before dispatching implementers.
+Ripgrep first selects files with explicit environment accesses; Python then
+extracts credential-shaped keys from that small set. A Python walk is the
+fallback when ripgrep is unavailable. This is an availability hint, not proof
+that every referenced key is required by the current task or deployment.
 
 CLI
 ---
@@ -22,6 +22,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,11 +32,15 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-MAX_FILES = 500
+SOURCE_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".py"}
 
-SOURCE_EXTS = {".ts", ".tsx", ".js", ".jsx", ".py", ".env.example"}
-
-SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "dist", "build", "__pycache__"}
+SKIP_DIRS = {
+    "node_modules", ".venv", "venv", ".git", ".build-loop", ".next",
+    "dist", "build", ".rally", "__pycache__", "tests", "test", "__tests__",
+    "fixtures", "__fixtures__", "mocks", "__mocks__",
+}
+TEST_FILE_RE = re.compile(r"(?:^test_|[._-](?:test|spec)\.)", re.IGNORECASE)
+CANDIDATE_LITERALS = ("process.env", "import.meta.env", "Deno.env", "os.getenv", "os.environ")
 
 # Well-known credential key names (exact).
 WELL_KNOWN_KEYS: frozenset[str] = frozenset(
@@ -62,9 +68,13 @@ WELL_KNOWN_KEYS: frozenset[str] = frozenset(
         "GITHUB_TOKEN",
         "GITHUB_APP_PRIVATE_KEY",
         "DATABASE_URL",
+        "DB_URL",
         "DATABASE_PASSWORD",
         "POSTGRES_URL",
+        "POSTGRESQL_URL",
         "POSTGRES_PASSWORD",
+        "MYSQL_URL",
+        "MONGO_URL",
         "MONGODB_URI",
         "REDIS_URL",
         "REDIS_PASSWORD",
@@ -88,17 +98,23 @@ WELL_KNOWN_KEYS: frozenset[str] = frozenset(
     ]
 )
 
-# Pattern: anything that looks like a credential by name suffix.
-# Matches: FOO_KEY, FOO_TOKEN, FOO_SECRET, FOO_API_KEY, FOO_PASSWORD, FOO_DSN, FOO_URL
-# Must start with an uppercase letter, then 2+ uppercase-or-digit-or-underscore chars.
+# Pattern: credential-shaped names. Generic API_URL / BASE_URL are configuration,
+# not credentials; only database or Redis URLs are included by suffix.
+# Matches: FOO_KEY, FOO_TOKEN, FOO_SECRET, FOO_PASSWORD, FOO_DSN,
+# ADMIN_DATABASE_URL, BULLMQ_REDIS_URL, MYSQL_URL, and MONGO_URI.
+# Must start with an uppercase letter, then 1+ uppercase-or-digit-or-underscore chars.
 _SUFFIX_RE = re.compile(
-    r'\b([A-Z][A-Z0-9_]{2,}(?:_KEY|_TOKEN|_SECRET|_API_KEY|_PASSWORD|_DSN|_URL))\b'
+    r'\b([A-Z][A-Z0-9_]{1,}(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_DSN|_(?:DATABASE|DB|POSTGRES|POSTGRESQL|MYSQL|MONGO|MONGODB|REDIS)_URL|_(?:DATABASE|DB|POSTGRES|POSTGRESQL|MYSQL|MONGO|MONGODB|REDIS)_URI))\b'
 )
 
-# JS/TS patterns: process.env.X, process.env["X"], import.meta.env.X
-_JS_DOTENV_RE = re.compile(r'process\.env\.([A-Z][A-Z0-9_]+)')
-_JS_BRACKET_RE = re.compile(r'process\.env\[[\'"]([\w]+)[\'"]\]')
-_META_ENV_RE = re.compile(r'import\.meta\.env\.([A-Z][A-Z0-9_]+)')
+# JS/TS patterns: dot, optional-chain, bracket, and destructuring accesses.
+_JS_DOTENV_RE = re.compile(r'process\.env(?:\?\.|\.)([A-Z][A-Z0-9_]+)')
+_JS_BRACKET_RE = re.compile(r'process\.env(?:\?\.)?\[[\'"]([\w]+)[\'"]\]')
+_META_ENV_RE = re.compile(r'import\.meta\.env(?:\?\.|\.)([A-Z][A-Z0-9_]+)')
+_META_BRACKET_RE = re.compile(r'import\.meta\.env(?:\?\.)?\[[\'"]([\w]+)[\'"]\]')
+_DENO_GET_RE = re.compile(r'Deno\.env\.get\([\'"]([\w]+)[\'"]')
+_JS_DESTRUCTURE_RE = re.compile(r'\{([^{}]{0,1000})\}\s*=\s*process\.env\b', re.DOTALL)
+_JS_DESTRUCTURED_KEY_RE = re.compile(r'(?:^|,)\s*([A-Z][A-Z0-9_]+)\s*(?=[:,=]|,|$)')
 
 # Python patterns: os.environ["X"], os.environ.get("X"), os.getenv("X")
 _PY_ENVIRON_RE = re.compile(r'os\.environ\[[\'"]([\w]+)[\'"]\]')
@@ -110,23 +126,31 @@ _PY_GETENV_RE = re.compile(r'os\.getenv\([\'"]([\w]+)[\'"]')
 # Dotenv parsing — keys only, never values
 # ---------------------------------------------------------------------------
 
-_DOTENV_KEY_RE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)(?:\s*=|:)', re.MULTILINE)
+_DOTENV_KEY_RE = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:)\s*(.*)$')
 
 
 def _read_dotenv_keys(path: Path) -> set[str]:
-    """Return set of declared key names from a .env-style file. Never returns values."""
+    """Return keys with nonempty local values. Never return the values."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
-    return set(_DOTENV_KEY_RE.findall(text))
+    keys: set[str] = set()
+    for line in text.splitlines():
+        match = _DOTENV_KEY_RE.match(line)
+        if match and match.group(2).strip() not in {"", "''", '""'} and not match.group(2).lstrip().startswith("#"):
+            keys.add(match.group(1))
+    return keys
 
 
 def _collect_dotenv_keys(workdir: Path) -> set[str]:
-    """Collect all keys declared in any .env* file under workdir (top-level only)."""
+    """Collect available keys from local .env files, never examples/templates."""
     keys: set[str] = set()
     for p in workdir.iterdir():
-        if p.is_file() and (p.name.startswith(".env") or p.suffix == ".example"):
+        if (
+            p.is_file() and p.name.startswith(".env")
+            and not p.name.endswith((".example", ".sample", ".template"))
+        ):
             keys |= _read_dotenv_keys(p)
     return keys
 
@@ -149,6 +173,10 @@ def _extract_keys_from_text(text: str, path: Path) -> list[tuple[str, int]]:
             candidates.add(m.group(1))
         for m in _META_ENV_RE.finditer(line):
             candidates.add(m.group(1))
+        for m in _META_BRACKET_RE.finditer(line):
+            candidates.add(m.group(1))
+        for m in _DENO_GET_RE.finditer(line):
+            candidates.add(m.group(1))
 
         # Python explicit patterns
         for m in _PY_ENVIRON_RE.finditer(line):
@@ -158,47 +186,82 @@ def _extract_keys_from_text(text: str, path: Path) -> list[tuple[str, int]]:
         for m in _PY_GETENV_RE.finditer(line):
             candidates.add(m.group(1))
 
-        # Well-known names appearing anywhere on the line
-        for m in _SUFFIX_RE.finditer(line):
-            name = m.group(1)
-            if name in WELL_KNOWN_KEYS:
-                candidates.add(name)
-
-        # Generic suffix pattern anywhere on the line (catches non-well-known)
-        for m in _SUFFIX_RE.finditer(line):
-            candidates.add(m.group(1))
-
         for key in sorted(candidates):
-            found.append((key, lineno))
+            if key in WELL_KNOWN_KEYS or _SUFFIX_RE.fullmatch(key):
+                found.append((key, lineno))
 
-    return found
+    for match in _JS_DESTRUCTURE_RE.finditer(text):
+        for key_match in _JS_DESTRUCTURED_KEY_RE.finditer(match.group(1)):
+            key = key_match.group(1)
+            if key in WELL_KNOWN_KEYS or _SUFFIX_RE.fullmatch(key):
+                lineno = text.count("\n", 0, match.start(1) + key_match.start(1)) + 1
+                found.append((key, lineno))
+
+    return sorted(set(found), key=lambda item: (item[1], item[0]))
 
 
 def _should_scan(path: Path) -> bool:
     suffix = path.suffix.lower()
-    name = path.name.lower()
-    return suffix in SOURCE_EXTS or name.endswith(".env.example")
+    return suffix in SOURCE_EXTS
 
 
-def _walk_source_files(workdir: Path) -> list[Path]:
-    """Bounded walk of source files; skip SKIP_DIRS; cap at MAX_FILES."""
+def _walk_source_files(workdir: Path, errors: list[str]) -> list[Path]:
+    """Portable fallback: read eligible files once to select env-access candidates."""
     results: list[Path] = []
-    stack = [workdir]
-    while stack and len(results) < MAX_FILES:
-        current = stack.pop()
-        try:
-            entries = sorted(current.iterdir())
-        except PermissionError:
-            continue
-        for entry in entries:
-            if len(results) >= MAX_FILES:
-                break
-            if entry.is_dir():
-                if entry.name not in SKIP_DIRS:
-                    stack.append(entry)
-            elif entry.is_file() and _should_scan(entry):
-                results.append(entry)
+    literals = tuple(literal.encode("ascii") for literal in CANDIDATE_LITERALS)
+    for directory, dirs, files in os.walk(workdir):
+        dirs[:] = sorted(
+            name for name in dirs
+            if name not in SKIP_DIRS
+            and not (name == "worktrees" and Path(directory).name in {".claude", ".codex"})
+        )
+        for name in sorted(files):
+            path = Path(directory) / name
+            if _should_scan(path) and not TEST_FILE_RE.search(name):
+                try:
+                    with path.open("rb") as source:
+                        if any(any(literal in line for literal in literals) for line in source):
+                            results.append(path)
+                except OSError as exc:
+                    errors.append(f"read error {path}: {exc}")
     return results
+
+
+def _candidate_source_files(workdir: Path, errors: list[str]) -> tuple[list[Path], str]:
+    """Use a fast content prefilter, then let Python inspect matching files."""
+    if shutil.which("rg"):
+        command = ["rg", "-l", "-0", "--hidden", "--fixed-strings", "--no-messages"]
+        for literal in CANDIDATE_LITERALS:
+            command.extend(("-e", literal))
+        for suffix in sorted(SOURCE_EXTS):
+            command.extend(("--glob", f"*{suffix}"))
+        for directory in sorted(SKIP_DIRS):
+            command.extend(("--glob", f"!**/{directory}/**"))
+        for tree in (".claude", ".codex"):
+            command.extend(("--glob", f"!**/{tree}/worktrees/**"))
+        for filename_glob in ("!**/*.test.*", "!**/*.spec.*", "!**/test_*"):
+            command.extend(("--glob", filename_glob))
+        command.append(".")
+        try:
+            result = subprocess.run(command, cwd=workdir, capture_output=True, timeout=10)
+            if result.returncode in (0, 1):
+                files = []
+                for raw in result.stdout.split(b"\0"):
+                    if not raw:
+                        continue
+                    path = workdir / os.fsdecode(raw)
+                    relative = path.relative_to(workdir)
+                    if (
+                        path.is_file() and _should_scan(path)
+                        and not any(part in SKIP_DIRS for part in relative.parts[:-1])
+                        and not TEST_FILE_RE.search(path.name)
+                    ):
+                        files.append(path)
+                return sorted(set(files)), "ripgrep"
+            errors.append(f"ripgrep exited {result.returncode}; used Python fallback")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"ripgrep unavailable ({type(exc).__name__}); used Python fallback")
+    return _walk_source_files(workdir, errors), "python"
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +279,18 @@ def run_preflight(
         files_to_scan = [f for f in changed_files if f.is_file() and _should_scan(f)]
     else:
         try:
-            files_to_scan = _walk_source_files(workdir)
+            files_to_scan, scan_method = _candidate_source_files(workdir, errors)
         except Exception as exc:
             errors.append(f"walk error: {exc}")
             files_to_scan = []
+            scan_method = "python"
+
+    if changed_files:
+        scan_method = "explicit"
 
     # Collect satisfied keys
     dotenv_keys = _collect_dotenv_keys(workdir)
-    process_env_keys = set(os.environ.keys())
+    process_env_keys = {key for key, value in os.environ.items() if value}
 
     # Scan files → accumulate references
     # key -> list of "file:line" strings
@@ -266,6 +333,7 @@ def run_preflight(
         "required": required,
         "missing": missing,
         "scanned_files": len(files_to_scan),
+        "scan_method": scan_method,
         "errors": errors,
     }
 
@@ -289,7 +357,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         dest="output_json",
-        help="Emit JSON to stdout.",
+        help="Emit a compact JSON summary to stdout.",
+    )
+    p.add_argument(
+        "--details",
+        action="store_true",
+        help="Include every matched key and source location in JSON output.",
     )
     return p
 
@@ -317,26 +390,22 @@ def main(argv: list[str] | None = None) -> int:
 
     result = run_preflight(workdir, changed_files)
 
-    # Human summary → stderr
+    # Human summary → stderr. Keep the first pass bounded; full evidence is opt-in.
     missing = result["missing"]
     n_scanned = result["scanned_files"]
     if missing:
-        refs_summary = "; ".join(
-            f"{r['key']} (in {r['referenced_in'][0]}" + (
-                f" +{len(r['referenced_in'])-1} more)" if len(r['referenced_in']) > 1 else ")"
-            )
-            for r in result["required"]
-            if not r["present"]
-        )
+        sample = ", ".join(missing[:5])
+        more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
         print(
-            f"[CREDENTIAL REQUIRED] {len(missing)} key(s) referenced but not set: "
-            f"{', '.join(missing)}\n  {refs_summary}\n  ({n_scanned} files scanned)",
+            f"[CREDENTIAL UNAVAILABLE] {len(missing)} referenced key(s): "
+            f"{sample}{more}; {n_scanned} candidate files scanned by "
+            f"{result['scan_method']}. A reference does not prove this task requires the key.",
             file=sys.stderr,
         )
     else:
         print(
-            f"[CREDENTIAL PREFLIGHT] All {len(result['required'])} referenced key(s) satisfied. "
-            f"({n_scanned} files scanned)",
+            f"[CREDENTIAL PREFLIGHT] {len(result['required'])} referenced key(s) "
+            f"available locally; {n_scanned} candidate files scanned by {result['scan_method']}.",
             file=sys.stderr,
         )
 
@@ -345,7 +414,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[CREDENTIAL PREFLIGHT WARNING] {err}", file=sys.stderr)
 
     if args.output_json:
-        print(json.dumps(result, indent=2))
+        compact = {
+            "missing": missing,
+            "missing_count": len(missing),
+            "referenced_count": len(result["required"]),
+            "scanned_files": n_scanned,
+            "scan_method": result["scan_method"],
+            "reference_samples": [
+                {"key": item["key"], "first_reference": item["referenced_in"][0]}
+                for item in result["required"] if not item["present"]
+            ][:5],
+            "errors": result["errors"],
+        }
+        print(json.dumps(result if args.details else compact, indent=2))
 
     return 0
 

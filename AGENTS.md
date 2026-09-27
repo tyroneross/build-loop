@@ -207,7 +207,7 @@ Combines situational awareness with goal definition so Plan has everything it ne
 **Understand state:**
 - Detect project type and tooling (language, framework, test runner, linter, build system)
 - Read deployment policy from `.build-loop/config.json.deploymentPolicy` when present. Default: `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`.
-- **Credential preflight** (fail-soft, names only — no values): scan referenced env keys against `.env`/`env` and surface each gap as `[CREDENTIAL REQUIRED] <name>` in the Assess summary and end-of-run readback. A missing credential is logged, worked around with available tasks, and reported — never a stop-and-ask.
+- **Credential preflight** (fail-soft, names only — no values): use the deterministic `scripts/credential_preflight.py` scanner to check credential-shaped env references against local `.env` and process env. Show a bounded `[CREDENTIAL UNAVAILABLE]` summary. Verify the actual entrypoint or validator before labeling a key `[CREDENTIAL REQUIRED]` for this task. Work around unavailable keys with available tasks and report real blockers in the end-of-run readback.
 - **Stale-context triage** (fail-soft): check handoff/orchestration/continuation docs against git history. Flag each drifted doc as `[STALE CONTEXT] <path>` so the agent does not plan from stale state.
 - **Memory-staleness triage** (fail-soft): compare the project's milestone log against HEAD. When stale, surface `[MEMORY STALE] <slug> N commits behind HEAD` and continue — do not stop.
 - Capture app/repo north star and update intent in `.build-loop/intent.md`: purpose, primary users, core jobs, user value, and non-goals.
