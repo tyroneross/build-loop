@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9b4983fd5cb1aee9518b65171cf54fdb0ff7bc43a2d12572d4674089d732df88"
+    "content_sha256": "354bfdffbde5650ad526491c8be22979cff1c7f8d997dd055249f50503fa0436"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1327,7 +1327,7 @@
     },
     "skills": {
       "agent-rally-point": {
-        "description": "\"Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting handoffs or feedback, validating the embedded Rally Point boundary, or changing the future agent-rally-point spin-out surface.\" user-invocable: false",
+        "description": "\"Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting handoffs or feedback, validating the embedded Rally Point boundary, or changing the future agent-rally-point spin-out surface.\"",
         "file": "skills/agent-rally-point/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1335,7 +1335,7 @@
         }
       },
       "agent-rally-watcher": {
-        "description": "\"Use when listening for Rally Point changes, wiring coordination watchers, debugging watch-loop behavior, or changing the future agent-rally-watcher spin-out surface.\" user-invocable: false",
+        "description": "\"Use when listening for Rally Point changes, wiring coordination watchers, debugging watch-loop behavior, or changing the future agent-rally-watcher spin-out surface.\"",
         "file": "skills/agent-rally-watcher/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1343,7 +1343,7 @@
         }
       },
       "api-registry-bridge": {
-        "description": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to \"register this API\" or \"check the API registry\". Consults api-registry plugin; degrades gracefully if plugin is absent. NOT for PRD strategic grounding (use `prd-bridge`) or UI verification (use `ibr-bridge`). user-invocable: false",
+        "description": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to \"register this API\" or \"check the API registry\". Consults api-registry plugin; degrades gracefully if plugin is absent. NOT for PRD strategic grounding (use `prd-bridge`) or UI verification (use `ibr-bridge`).",
         "file": "skills/api-registry-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1399,7 +1399,7 @@
         }
       },
       "attribution-standard": {
-        "description": "\"Apply the canonical four-layer Apache-2.0 attribution model (NOTICE, per-file SPDX, REUSE.toml, canary markers) to a repo. Triggers on 'stamp attribution', 'add NOTICE', 'license headers', 'attribution layers', a newly public repo, or a repo with .git but no NOTICE / no REUSE.toml / no CONTRIBUTING.md. Build-loop Phase 1 Assess can advise running this when shipped source files lack SPDX headers.\" user-invocable: fa…",
+        "description": "\"Apply the canonical four-layer Apache-2.0 attribution model (NOTICE, per-file SPDX, REUSE.toml, canary markers) to a repo. Triggers on 'stamp attribution', 'add NOTICE', 'license headers', 'attribution layers', a newly public repo, or a repo with .git but no NOTICE / no REUSE.toml / no CONTRIBUTING.md. Build-loop Phase 1 Assess can advise running this when shipped source files lack SPDX headers.\"",
         "file": "skills/attribution-standard/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1407,7 +1407,7 @@
         }
       },
       "authentication": {
-        "description": "Use when wiring auth to a new project, debugging login errors (redirect_uri_mismatch, invalid_grant, session callback, refresh_token), or adding social/magic link flows. Covers Better Auth (Drizzle/Neon), Supabase Auth (SSR), Google OAuth, and Resend transactional email. user-invocable: false",
+        "description": "Use when wiring auth to a new project, debugging login errors (redirect_uri_mismatch, invalid_grant, session callback, refresh_token), or adding social/magic link flows. Covers Better Auth (Drizzle/Neon), Supabase Auth (SSR), Google OAuth, and Resend transactional email.",
         "file": "skills/authentication/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1415,7 +1415,7 @@
         }
       },
       "auto-decision-capture": {
-        "description": "Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`), after-the-fact review (use `recursive-retrospective`), or surfacing an unstated call the user never saw so he can reverse it (use `silent-assumptions`). user-invocable: fa…",
+        "description": "Passively capture a substantive decision the user just made, in real time, into build-loop-memory. Fires automatically when the user confirms a choice or states a constraint — not user-invoked. Not for findings/issues (use `auto-finding-capture`), after-the-fact review (use `recursive-retrospective`), or surfacing an unstated call the user never saw so he can reverse it (use `silent-assumptions`).",
         "file": "skills/auto-decision-capture/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1423,7 +1423,7 @@
         }
       },
       "auto-finding-capture": {
-        "description": "Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`) or for a judgement call the agent made without asking, which is not a defect and does not belong in the backlog (use `silent-assumptions`). user-invocable: false",
+        "description": "Passively capture a concrete, severity-labeled finding or issue into the backlog, in real time. Fires automatically whenever an agent, audit, or critic surfaces one — never gated behind a user selection. Not for decisions (use `auto-decision-capture`) or for a judgement call the agent made without asking, which is not a defect and does not belong in the backlog (use `silent-assumptions`).",
         "file": "skills/auto-finding-capture/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1439,7 +1439,7 @@
         }
       },
       "building-with-deepagents": {
-        "description": "Build or refactor an agent using the OSS `deepagents` framework (SubAgent API, middleware, tool scoping, streaming, checkpointing). Use when the user wants a multi-agent/subagent system built with deepagents, or the code imports it. Not for `.claude/agents/*.md` definitions. user-invocable: false",
+        "description": "Build or refactor an agent using the OSS `deepagents` framework (SubAgent API, middleware, tool scoping, streaming, checkpointing). Use when the user wants a multi-agent/subagent system built with deepagents, or the code imports it. Not for `.claude/agents/*.md` definitions.",
         "file": "skills/building-with-deepagents/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1447,7 +1447,7 @@
         }
       },
       "capabilities": {
-        "description": "Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion. Keeps the orchestrator below the empirical tool-selection ceiling. Not user-callable; orchestrator-internal. user-invocable: false",
+        "description": "Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion. Keeps the orchestrator below the empirical tool-selection ceiling. Not user-callable; orchestrator-internal.",
         "file": "skills/capabilities/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1463,15 +1463,15 @@
         }
       },
       "color-engine": {
-        "description": "Use when choosing or fixing accessible colors for UI, charts, diagrams, documents, or artifacts. NOT for choosing layout, typography, or component structure. Generate color systems and verify contrast, including dark themes and accent colors. user-invocable: false",
+        "description": "Use when choosing or fixing accessible colors for UI, charts, diagrams, documents, or artifacts. NOT for choosing layout, typography, or component structure. Generate color systems and verify contrast, including dark themes and accent colors.",
         "file": "skills/color-engine/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-25"
+          "date": "2026-09-27"
         }
       },
       "cost-rca": {
-        "description": "Quantify what a context/caching/model change did to token spend and dollars, from measured usage data, never estimates. Use when the user asks \"how much did that cost\", \"did caching save money\", \"why did my bill spike\", or \"token delta\". Not for choosing which model to use (use `model-tiering`) or comparing models head-to-head (use `model-bakeoff`). user-invocable: false",
+        "description": "Quantify what a context/caching/model change did to token spend and dollars, from measured usage data, never estimates. Use when the user asks \"how much did that cost\", \"did caching save money\", \"why did my bill spike\", or \"token delta\". Not for choosing which model to use (use `model-tiering`) or comparing models head-to-head (use `model-bakeoff`).",
         "file": "skills/cost-rca/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1527,7 +1527,7 @@
         }
       },
       "drain-proposals": {
-        "description": "Walk the cross-repo proposal backlog interactively, deciding apply/reject/defer on each item; never auto-applies. Use when the user says \"drain proposals\" or \"review the proposal backlog\". user-invocable: false argument-hint: \"[--all] [--scan-only]\"",
+        "description": "Walk the cross-repo proposal backlog interactively, deciding apply/reject/defer on each item; never auto-applies. Use when the user says \"drain proposals\" or \"review the proposal backlog\".",
         "file": "skills/drain-proposals/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1543,7 +1543,7 @@
         }
       },
       "handoff": {
-        "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\" user-invocable: false",
+        "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\"",
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1575,7 +1575,7 @@
         }
       },
       "mcp-builder": {
-        "description": "Build, package, or debug an MCP server and its tools. Use when the user is adding MCP tools, or working on `.mcp.json`, transport, or bundling. Not for scaffolding the plugin around it (use `plugin-builder`; pair the two when a plugin exposes MCP tools). user-invocable: false",
+        "description": "Build, package, or debug an MCP server and its tools. Use when the user is adding MCP tools, or working on `.mcp.json`, transport, or bundling. Not for scaffolding the plugin around it (use `plugin-builder`; pair the two when a plugin exposes MCP tools).",
         "file": "skills/mcp-builder/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1583,7 +1583,7 @@
         }
       },
       "model-bakeoff": {
-        "description": "Run the same bounded change across multiple models in parallel, then deterministically score and merge the best result. Use when the user says \"bake-off\", \"compare models on this task\", \"which model is best at\", or \"A/B test these models\". Not for picking a single model tier for one agent (use `model-tiering`). user-invocable: false",
+        "description": "Run the same bounded change across multiple models in parallel, then deterministically score and merge the best result. Use when the user says \"bake-off\", \"compare models on this task\", \"which model is best at\", or \"A/B test these models\". Not for picking a single model tier for one agent (use `model-tiering`).",
         "file": "skills/model-bakeoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1591,7 +1591,7 @@
         }
       },
       "model-tiering": {
-        "description": "Recommend which model tier (e.g. Opus/Sonnet/Haiku) to use for a subagent or task. Use when the user asks \"which model should I use\", \"is Sonnet enough or do I need Opus\", or sets a segment+tier in agent frontmatter. Not for running multiple models head-to-head and scoring them (use `model-bakeoff`). user-invocable: false",
+        "description": "Recommend which model tier (e.g. Opus/Sonnet/Haiku) to use for a subagent or task. Use when the user asks \"which model should I use\", \"is Sonnet enough or do I need Opus\", or sets a segment+tier in agent frontmatter. Not for running multiple models head-to-head and scoring them (use `model-bakeoff`).",
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1607,7 +1607,7 @@
         }
       },
       "optimize": {
-        "description": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my app\". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables. user-invocable: false",
+        "description": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my app\". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables.",
         "file": "skills/optimize/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1615,7 +1615,7 @@
         }
       },
       "plan-verify": {
-        "description": "Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:verify-plan`, asks to \"verify the plan\" or \"lint the plan\", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON. user-invocable: false",
+        "description": "Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:verify-plan`, asks to \"verify the plan\" or \"lint the plan\", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.",
         "file": "skills/plan-verify/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1623,7 +1623,7 @@
         }
       },
       "plugin-builder": {
-        "description": "Create, scaffold, or migrate a Claude Code plugin — manifest, directory layout, hooks, agents, distribution. Use when the user asks to create/build/scaffold/convert a plugin, or needs plugin.json/layout guidance. Not for building the MCP server itself once the shell exists (use `mcp-builder`; pair the two). user-invocable: false",
+        "description": "Create, scaffold, or migrate a Claude Code plugin — manifest, directory layout, hooks, agents, distribution. Use when the user asks to create/build/scaffold/convert a plugin, or needs plugin.json/layout guidance. Not for building the MCP server itself once the shell exists (use `mcp-builder`; pair the two).",
         "file": "skills/plugin-builder/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1647,7 +1647,7 @@
         }
       },
       "recursive-retrospective": {
-        "description": "Deliberate retrospective on one project's full trajectory — decide preserve/refine/redirect/reset and encode lessons into memory, agents, skills, evals, and gates. Use when the user asks to review a project's history after a substantial build, or convert a session into durable improvement. Not for the automatic cross-run pattern scan (use `self-improve`). user-invocable: false",
+        "description": "Deliberate retrospective on one project's full trajectory — decide preserve/refine/redirect/reset and encode lessons into memory, agents, skills, evals, and gates. Use when the user asks to review a project's history after a substantial build, or convert a session into durable improvement. Not for the automatic cross-run pattern scan (use `self-improve`).",
         "file": "skills/recursive-retrospective/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1655,7 +1655,7 @@
         }
       },
       "repo-closeout": {
-        "description": "\"Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work.\" user-invocable: false",
+        "description": "\"Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work.\"",
         "file": "skills/repo-closeout/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1663,7 +1663,7 @@
         }
       },
       "repo-maintenance": {
-        "description": "\"Audit and evolve repository structure — topology, module boundaries, artifact retention, branch/worktree hygiene, and open-source readiness. Use when the user asks to reconcile branches and worktrees, merge additive work, prune stale work, clean generated artifacts, remove duplicate source, or ready a repo to open-source. Never pushes, deletes unique source, or rewrites history without explicit authorization.\" user…",
+        "description": "\"Audit and evolve repository structure — topology, module boundaries, artifact retention, branch/worktree hygiene, and open-source readiness. Use when the user asks to reconcile branches and worktrees, merge additive work, prune stale work, clean generated artifacts, remove duplicate source, or ready a repo to open-source. Never pushes, deletes unique source, or rewrites history without explicit authorization.\"",
         "file": "skills/repo-maintenance/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1679,7 +1679,7 @@
         }
       },
       "research": {
-        "description": "Generate a repo-grounded pre-decision research packet — risk, best path, confidence, next action — before deciding whether/how to build something in this repo. Use when the user asks to research/investigate/evaluate options for an imminent build decision here. Not for open-ended general research unconnected to a build in this repo — use the separate `research` plugin for that. user-invocable: false",
+        "description": "Generate a repo-grounded pre-decision research packet — risk, best path, confidence, next action — before deciding whether/how to build something in this repo. Use when the user asks to research/investigate/evaluate options for an imminent build decision here. Not for open-ended general research unconnected to a build in this repo — use the separate `research` plugin for that.",
         "file": "skills/research/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1687,11 +1687,11 @@
         }
       },
       "root-cause-analysis": {
-        "description": "Use after a bug is fixed to explain why it occurred and escaped controls, including recurring failures, postmortems and 5 whys. Not for fixing a live bug (use `debug-loop`) or storing past incidents (use `debugging-memory`). Find and implement a durable system correction. user-invocable: false",
+        "description": "Use after a bug is fixed to explain why it occurred and escaped controls, including recurring failures, postmortems and 5 whys. Not for fixing a live bug (use `debug-loop`) or storing past incidents (use `debugging-memory`). Find and implement a durable system correction.",
         "file": "skills/root-cause-analysis/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-18"
+          "date": "2026-09-27"
         }
       },
       "runtime-parity-verification": {
@@ -1759,7 +1759,7 @@
         }
       },
       "ui-design": {
-        "description": "Use when build-loop needs UI design direction, visual style selection, UI guidance inventory, a .build-loop/app-contract/ui.md design contract, or non-trivial web/mobile/native UI planning. Build-loop-owned design route for design-contract-specialist; selects from project tokens, recent structures, UI Guidance, IBR artifacts, Mockup Gallery, and research based on product/workflow/data/platform fit. user-invocable: f…",
+        "description": "Use when build-loop needs UI design direction, visual style selection, UI guidance inventory, a .build-loop/app-contract/ui.md design contract, or non-trivial web/mobile/native UI planning. Build-loop-owned design route for design-contract-specialist; selects from project tokens, recent structures, UI Guidance, IBR artifacts, Mockup Gallery, and research based on product/workflow/data/platform fit.",
         "file": "skills/ui-design/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

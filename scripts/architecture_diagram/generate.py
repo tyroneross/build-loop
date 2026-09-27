@@ -71,7 +71,7 @@ def git_last_updated(repo: Path, relpath: str) -> dict:
 
 def _extract_desc(fm: str) -> str:
     """Pull the human description out of agent/skill frontmatter (drops <example> blocks)."""
-    dm = re.search(r"^description:\s*\|?\s*(.+?)(?=\n[a-z_]+:\s|\Z)", fm, re.DOTALL | re.M)
+    dm = re.search(r"^description:\s*\|?\s*(.+?)(?=\n[a-zA-Z_][a-zA-Z0-9_-]*:\s|\Z)", fm, re.DOTALL | re.M)
     raw = dm.group(1) if dm else ""
     raw = raw.split("<example>")[0].split("<commentary>")[0]
     return _short(raw, 420)
