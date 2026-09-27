@@ -30,6 +30,7 @@ the DEFAULT gate is the fast subset that reproduces 100% of the named escape cla
   4. hook budget + hygiene lints
   5. methodology-drift lint (--strict)
   6. architecture-diagram freshness/drift gate
+  7. checked-in skill-index freshness gate
 
 ``BL_PREPUSH_FULL=1`` swaps gates 1-2 for the full CI pytest invocation (exact parity).
 
@@ -668,6 +669,12 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
     gates.append({
         "name": "methodology-drift-lint",
         "argv": [interp, "scripts/methodology_drift_lint.py", "--strict"],
+        "requires": [],
+        "timeout": 60,
+    })
+    gates.append({
+        "name": "skill-index-freshness",
+        "argv": [interp, "scripts/skill_index.py", "--workdir", str(workdir), "--check"],
         "requires": [],
         "timeout": 60,
     })

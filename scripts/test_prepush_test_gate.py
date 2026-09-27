@@ -193,11 +193,12 @@ def test_default_gates_wire_the_named_escapes():
     assert "tests/test_capability_registry.py" in joined      # test_categories_are_known
     assert "scripts/test_agent_surface_policy.py" in joined    # test_agent_surface_policy
     assert "import_manifest_lint.py" in joined                 # import-lint
+    assert "skill_index.py" in joined                           # skill-index freshness
     assert "architecture_diagram/check.sh" in joined           # artifact-freshness
     names = {s["name"] for s in specs}
     assert {"named-pytest-gates", "pytest-collection", "import-manifest-lint",
             "hook-budget-lint", "hook-hygiene-lint", "methodology-drift-lint",
-            "artifact-freshness"} <= names
+            "artifact-freshness", "skill-index-freshness"} <= names
 
 
 def test_all_default_gates_run_and_pass_on_green_repo():
@@ -214,7 +215,8 @@ def test_all_default_gates_run_and_pass_on_green_repo():
     # These need only pytest (which the test process proves available) -> must PASS,
     # so a mis-pathed gate (which would surface as 'skip', fail-open) is caught here.
     must_pass = {"named-pytest-gates", "import-manifest-lint",
-                 "hook-budget-lint", "hook-hygiene-lint", "methodology-drift-lint"}
+                 "hook-budget-lint", "hook-hygiene-lint", "methodology-drift-lint",
+                 "skill-index-freshness"}
     for name in must_pass:
         assert by_name.get(name) == "pass", f"{name} did not pass: {by_name.get(name)}"
     # collection + freshness hard-require pyyaml; assert PASS when the gate's interp
