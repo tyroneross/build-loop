@@ -32,6 +32,7 @@
     "scripts/blm.py",
     "scripts/blm_api.py",
     "scripts/check_cache_sync.py",
+    "scripts/early_risk_probe.py",
     "scripts/embed_backend.py",
     "scripts/groundwork_exchange.py",
     "scripts/install_memory.py",

@@ -18,6 +18,11 @@ Load and follow the canonical workflow:
 ../../skills/build-loop/SKILL.md
 ```
 
+On Codex, `CLAUDE_PLUGIN_ROOT` may be unset. Resolve the plugin root as the
+directory two levels above this loaded `SKILL.md`, then substitute that
+absolute path for `${CLAUDE_PLUGIN_ROOT}` in canonical shell examples. Do not
+run those examples with an empty variable; that silently points at `/scripts`.
+
 For visible text or layout changes, use the canonical workflow's UI Container
 Contract: measure the real parent, plan a constrained content case, and inspect
 the rendered screenshot before claiming fit.

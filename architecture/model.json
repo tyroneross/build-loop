@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "801c340e93a193756c3ee35eac8b5f23d4dc523ce3cebaad3d4fb95d4b486325"
+    "content_sha256": "5312556f694f62b76cebe90f01663467333a9a6e049688a04544a75407a30c7e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1665,6 +1665,7 @@
       "scripts/dogfood_reload_checkpoint.py": "Dogfood reload checkpoint helper.\"\"\"",
       "scripts/drain_proposals.py": "drain_proposals.py — cross-repo proposal-drain gate (the multiplier).",
       "scripts/drain_self_review_proposals.py": "Consumer for the self-review proposal queue.",
+      "scripts/early_risk_probe.py": "Fast, read-only checks for predictable build and deploy delays.",
       "scripts/embed_backend.py": "Embedding backend abstraction for repo-local episodic memory.",
       "scripts/embed_daemon.py": "Long-running embedder daemon (Phase H).",
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",

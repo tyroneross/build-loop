@@ -49,6 +49,24 @@
 
    Write the result to `.build-loop/state.json.assess.memoryStaleness`. When `stale: true`, surface `[MEMORY STALE] <slug> N commits behind HEAD — append a milestone/decision` in the Assess summary. Log the finding and continue — do NOT stop. The run should append a milestone or decision entry during Phase 6 Learn (or inline if the goal is memory-focused). Script failure → log one warning line; never blocks Assess.
 
+0d. **Early failure probe** (read-only, bounded, fail-soft): run before a full
+    build or deployment planning step:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/early_risk_probe.py" \
+     --workdir "$PWD" --json
+   ```
+
+   Write the result to `.build-loop/state.json.assess.earlyRiskProbe`. The probe
+   detects wrong-revision, dirty, or unpinned NavGator data; an external `node_modules`
+   symlink in a Next.js checkout, a staged Vercel workflow contradicted by
+   agent routing docs, and a database gate ordered after the production build.
+   It also lists available repo preflight commands. Its findings are warnings:
+   verify each against the current code and carry relevant checks into Phase 2
+   in cheapest-first order. Never execute a discovered package script merely
+   because its name contains `preflight`; inspect its body and side effects
+   first. A missing optional graph or a probe error does not block Assess.
+
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / **macos** / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules. **macOS desktop is a first-class `uiTarget`** — distinct from `mobile` — because macOS has no simulator and routes visual-verify to `native-ax-driver` (or IBR `scan_macos` when present), never to `xcrun simctl`. Folding macOS into `mobile` was the routing bug from session-findings 2026-06-04.
@@ -56,10 +74,23 @@
    - **Deployment policy**: read `.build-loop/config.json.deploymentPolicy` if present. Defaults are `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Use `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py --workdir "$PWD" --command "<candidate push/deploy command>"` before any push/deploy. Treat helper errors as `confirm`.
 4a. **Automatic execution profile**: load `references/resource-aware-execution.md`, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/review_trigger.py --context .build-loop/state.json --json`, and persist the envelope at `state.json.execution.resourceProfile`. `skip` exits the full loop after deterministic validation; `standard` uses one independent audit plus signal-triggered heavy checks; `high` keeps the full review path. Recompute after Plan has concrete changed-file and line estimates. Profiles are internal routing data, never user-facing options.
 5. **Map architecture** using best available approach:
-   - If `.navgator/architecture/index.json` exists → invoke `Skill("build-loop:architecture-scan")` to refresh data, then `Skill("build-loop:architecture-impact")` on up to 5 highest-risk components for blast-radius. Output goes to `.build-loop/state.json.architecture.{scan,impact}`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
+   - Consult `state.json.assess.earlyRiskProbe` before using a saved graph.
+     Refresh in this checkout when it reports dirty, wrong-revision,
+     uncommitted-source, unchecked-worktree, or unpinned NavGator data. A clean graph at the
+     same commit with no source edits remains reusable regardless of elapsed
+     time. Verify returned paths in source; an import
+     graph does not establish data-flow semantics.
+   - If `.navgator/architecture/index.json` exists → reuse the current graph,
+     or invoke `Skill("build-loop:architecture-scan")` when the probe calls for
+     refresh. Then run `Skill("build-loop:architecture-impact")` on up to 5
+     highest-risk components for blast-radius. Output goes to
+     `.build-loop/state.json.architecture.{scan,impact}`. Phase 2 Plan consults
+     this for scoping. Flag high-fan-in hotspots, 2-hop dependents,
+     layer-crossing risks, and prompts-in-scope when `triggers.promptAuthoring`
+     is true.
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
-5a. **Architecture portable handoff** (read on resume; write on fresh scan): after the architecture baseline above, the scan result must also be written to `.build-loop/architecture/handoff.md` as a self-contained snapshot — component map, key connections, runtime topology, LLM use-cases, and data flows — that a FRESH session can consume WITHOUT re-scanning. On a resumed or fresh session, Phase 1 reads `.build-loop/architecture/handoff.md` if it exists and its `updated_at` timestamp is within the staleness threshold (default: same as stale-context check), and skips the full re-scan. The format and field schema are specified in `agents/build-orchestrator.md` (architecture-scout section); this step only wires the read/write reference. Write failure → log one warning; never blocks.
+5a. **Architecture portable handoff** (read on resume; write on fresh scan): after the architecture baseline above, the scan result must also be written to `.build-loop/architecture/handoff.md` as a self-contained snapshot — component map, key connections, runtime topology, LLM use-cases, and data flows — that a FRESH session can consume WITHOUT re-scanning. On a resumed or fresh session, Phase 1 may reuse the handoff only when its `updated_at` timestamp is within the staleness threshold (default: same as stale-context check) **and** the early failure probe has no NavGator freshness finding. A dirty, wrong-revision, uncommitted-source, unchecked-worktree, or unpinned graph invalidates handoff reuse even when `updated_at` is recent. The format and field schema are specified in `agents/build-orchestrator.md` (architecture-scout section); this step only wires the read/write reference. Write failure → log one warning; never blocks.
 
 5b. **Reads-from dependency enumeration**: For each component the build will change or add, enumerate every data path, contract, or invariant it reads (config files, state keys, schema fields, API contracts). For each, verify something writes it — grep the repo, check test fixtures, or confirm the schema. Record results in `.build-loop/state.json.assess.readsDependencies[]` as `{path, writer_found: true|false}`. Any path with `writer_found: false` is a BLOCKING unknown that must appear as `unverified` in the plan's `## Depends-on (reads-from)` section and be resolved before Phase 3.
 

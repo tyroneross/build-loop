@@ -136,6 +136,25 @@ def find_codex_surfaces(source: Path, manifest: dict | None = None) -> set[str]:
                 p = Path(root) / name
                 if p.suffix in SEARCH_EXTS:
                     refs.add(str(p.relative_to(source)))
+
+    # The public Codex wrapper loads the canonical workflow outside the
+    # manifest-declared skill root. Include that workflow and the concrete
+    # plugin-root paths it invokes; otherwise a missing runtime script can
+    # produce a false green cache check.
+    public_root = source / skill_root
+    canonical_link = "../../skills/build-loop/SKILL.md"
+    if public_root.is_dir() and any(
+        canonical_link in path.read_text(encoding="utf-8", errors="ignore")
+        for path in public_root.rglob("SKILL.md")
+    ):
+        canonical_root = source / "skills/build-loop"
+        if canonical_root.is_dir():
+            for path in canonical_root.rglob("*"):
+                if not path.is_file() or path.suffix not in SEARCH_EXTS:
+                    continue
+                refs.add(str(path.relative_to(source)))
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                refs.update(match.group(1) for match in REF_RE.finditer(text))
     return refs
 
 

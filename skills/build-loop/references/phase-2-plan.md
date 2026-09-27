@@ -57,6 +57,10 @@
 9. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
 
 **Optimization checklist** (review the plan for these before proceeding):
+- Have Phase 1 early-risk findings been verified and resolved or assigned to a
+  specific first check? Order read-only local gates before builds and full
+  suites. State which repo-owned preflight commands were inspected and which
+  are safe to run; do not infer safety from a script name.
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
 - Does planned fan-out fit `references/resource-aware-execution.md` — token-led for cloud, CPU-led for local, measured usage before T-shirt fallback?
 - Can subagent context be smaller? Shared reads that should be done once?

@@ -128,6 +128,27 @@ class CheckCacheSyncCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("[MISSING IN CACHE] codex-skills/build-loop/SKILL.md", result.stdout)
 
+    def test_codex_wrapper_checks_canonical_workflow_and_runtime_script(self) -> None:
+        source = self.root / "wrapped-source"
+        cache = self.root / "wrapped-cache"
+        write_codex_source(source, skills="./codex-skills")
+        write(source / "codex-skills/build-loop/SKILL.md",
+              "Load ../../skills/build-loop/SKILL.md\n")
+        write(source / "skills/build-loop/references/phase-1-assess.md",
+              'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/early_risk_probe.py"\n')
+        write(source / "scripts/early_risk_probe.py", "print('probe')\n")
+        for rel in (
+            ".codex-plugin/plugin.json", "AGENTS.md", "README.md",
+            "commands/build-loop.md", "codex-skills/build-loop/SKILL.md",
+            "skills/build-loop/SKILL.md",
+        ):
+            write(cache / rel, (source / rel).read_text())
+
+        result = run(["--host", "codex", "--source", str(source), "--cache", str(cache)])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[MISSING IN CACHE] skills/build-loop/references/phase-1-assess.md", result.stdout)
+        self.assertIn("[MISSING IN CACHE] scripts/early_risk_probe.py", result.stdout)
+
     def test_codex_cache_checks_manifest_mcp_reference(self) -> None:
         manifest = json.loads((self.source / ".codex-plugin/plugin.json").read_text())
         manifest["mcpServers"] = "./.mcp.json"
