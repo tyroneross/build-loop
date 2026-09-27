@@ -112,6 +112,9 @@ CATEGORY_KEYWORDS = [
                       # same single-run worktree lifecycle family as worktree-gc.
                       "worktree_inventory", "worktree inventory",
                       "worktree removal",
+                      # Versioned goal contracts for createdRefs are run
+                      # lifecycle metadata, not a new execution capability.
+                      "ref_goals",
                       # Session-start lifecycle hooks (plugin self-heal,
                       # post-push memory-closeout baton drain) and the host
                       # capability resolver (which wakeup/resume primitives a
@@ -146,7 +149,8 @@ CATEGORY_KEYWORDS = [
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
     ("coordination", ("rally", "coordination", "handoff", "presence", "roster",
-                      "inbox", "leadership", "mece", "channel")),
+                      "inbox", "leadership", "mece", "channel",
+                      "session-start-tool-state")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
                       "blast radius", "scout", "scan repo", "component", "graph",
                       "mermaid", "diagram")),
