@@ -1,14 +1,14 @@
 commit a6d72c5f
 
 ---
- SpeakSavvy/Services/AdminGate.swift | 133 ++++++++++++++++++++++++++++++++++++
- SpeakSavvy/Views/ProfileView.swift  | 105 +++++++++++++++++++++-------
+ SampleApp/Services/AdminGate.swift | 133 ++++++++++++++++++++++++++++++++++++
+ SampleApp/Views/ProfileView.swift  | 105 +++++++++++++++++++++-------
  2 files changed, 212 insertions(+), 26 deletions(-)
 
-diff --git a/SpeakSavvy/Services/AdminGate.swift b/SpeakSavvy/Services/AdminGate.swift
+diff --git a/SampleApp/Services/AdminGate.swift b/SampleApp/Services/AdminGate.swift
 index 004a5bb0..dd1cd1d1 100644
---- a/SpeakSavvy/Services/AdminGate.swift
-+++ b/SpeakSavvy/Services/AdminGate.swift
+--- a/SampleApp/Services/AdminGate.swift
++++ b/SampleApp/Services/AdminGate.swift
 @@ -56,6 +56,13 @@ final class AdminGate: NSObject {
  
      private var authContinuation: CheckedContinuation<Bool, Never>?
@@ -191,10 +191,10 @@ index 004a5bb0..dd1cd1d1 100644
          authContinuation?.resume(returning: false)
          authContinuation = nil
      }
-diff --git a/SpeakSavvy/Views/ProfileView.swift b/SpeakSavvy/Views/ProfileView.swift
+diff --git a/SampleApp/Views/ProfileView.swift b/SampleApp/Views/ProfileView.swift
 index 5dc98f2c..b22749b5 100644
---- a/SpeakSavvy/Views/ProfileView.swift
-+++ b/SpeakSavvy/Views/ProfileView.swift
+--- a/SampleApp/Views/ProfileView.swift
++++ b/SampleApp/Views/ProfileView.swift
 @@ -30,6 +30,11 @@ struct ProfileView: View {
      @State private var devSectionUnlocked = false
      private let adminUnlockTaps = 5

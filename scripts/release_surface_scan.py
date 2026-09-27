@@ -83,7 +83,7 @@ GATED_SURFACE_PATTERNS: tuple[tuple[str, re.Pattern], ...] = tuple(
 )
 
 # Apple framework / SDK identifiers that match a marker shape but are not app
-# surfaces. Found by running the scan over TruePace and SpeakSavvy-iOS.
+# surfaces. Found by running the scan over TruePace and SampleApp-iOS.
 IGNORED_MATCHES = frozenset({"DeveloperToolsSupport"})
 
 ALLOW_RE = re.compile(r"//\s*release-surface:\s*allow\b(.*)$", re.IGNORECASE)

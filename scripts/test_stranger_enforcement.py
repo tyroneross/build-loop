@@ -10,7 +10,7 @@ Two controls, each with regression fixtures from the eval:
      verdict on a gated-surface change without a filled `stranger_test` does
      not count as review-complete.
 
-Fixtures (tests/fixtures/stranger_eval/): the SpeakSavvy a6d72c5f TOFU owner
+Fixtures (tests/fixtures/stranger_eval/): the SampleApp a6d72c5f TOFU owner
 gate (must flag `establishOwnerAnchor`) and the held-out `#if DEBUG` developer
 menu (must be clean).
 """
@@ -33,7 +33,7 @@ import stranger_test_check as stc  # noqa: E402
 
 SCRIPT = HERE / "audit_before_commit.py"
 FIXTURES = HERE.parent / "tests" / "fixtures" / "stranger_eval"
-TOFU_PATCH = FIXTURES / "speaksavvy-a6d72c5f-tofu.patch"
+TOFU_PATCH = FIXTURES / "sample-app-a6d72c5f-tofu.patch"
 NEGATIVE_PATCH = FIXTURES / "heldout-negative-debug-menu.patch"
 
 
@@ -129,8 +129,8 @@ class _Repo(unittest.TestCase):
 class CommitHookTests(_Repo):
     def _stage_tofu(self) -> None:
         patch = TOFU_PATCH.read_text(encoding="utf-8")
-        self._stage("SpeakSavvy/Services/AdminGate.swift",
-                    _new_file_text(patch, "SpeakSavvy/Services/AdminGate.swift"))
+        self._stage("SampleApp/Services/AdminGate.swift",
+                    _new_file_text(patch, "SampleApp/Services/AdminGate.swift"))
 
     def test_high_signal_blocks_with_remedies(self) -> None:
         self._stage_tofu()
@@ -254,8 +254,8 @@ class VerdictSchemaIntegrationTests(_Repo):
 
     def test_gated_range_missing_field_is_incomplete(self) -> None:
         patch = TOFU_PATCH.read_text(encoding="utf-8")
-        self._setup_run("SpeakSavvy/Services/AdminGate.swift",
-                        _new_file_text(patch, "SpeakSavvy/Services/AdminGate.swift"),
+        self._setup_run("SampleApp/Services/AdminGate.swift",
+                        _new_file_text(patch, "SampleApp/Services/AdminGate.swift"),
                         {"judge_id": "security-reviewer", "verdict": "pass"})
         res = stc.check_run(self.repo, "r1")
         self.assertEqual(res["status"], "incomplete", res)
@@ -263,8 +263,8 @@ class VerdictSchemaIntegrationTests(_Repo):
 
     def test_gated_range_complete_verdict_ok(self) -> None:
         patch = TOFU_PATCH.read_text(encoding="utf-8")
-        self._setup_run("SpeakSavvy/Services/AdminGate.swift",
-                        _new_file_text(patch, "SpeakSavvy/Services/AdminGate.swift"),
+        self._setup_run("SampleApp/Services/AdminGate.swift",
+                        _new_file_text(patch, "SampleApp/Services/AdminGate.swift"),
                         {"judge_id": "security-reviewer", "verdict": "pass", "stranger_test": GOOD_ST})
         self.assertEqual(stc.check_run(self.repo, "r1")["status"], "complete")
 
@@ -278,8 +278,8 @@ class VerdictSchemaIntegrationTests(_Repo):
 
         env = {"status": "recorded", "run_id": "r1"}
         patch = TOFU_PATCH.read_text(encoding="utf-8")
-        self._setup_run("SpeakSavvy/Services/AdminGate.swift",
-                        _new_file_text(patch, "SpeakSavvy/Services/AdminGate.swift"),
+        self._setup_run("SampleApp/Services/AdminGate.swift",
+                        _new_file_text(patch, "SampleApp/Services/AdminGate.swift"),
                         {"judge_id": "security-reviewer", "verdict": "pass"})
         out = rcl._apply_stranger_test(self.repo, dict(env))
         self.assertEqual(out["status"], "review_owed")
@@ -292,8 +292,8 @@ class VerdictSchemaIntegrationTests(_Repo):
         patch = TOFU_PATCH.read_text(encoding="utf-8")
         empty = {"judge_id": "independent-auditor", "verdict": "yay", "status": "verdict_recorded",
                  "stranger_test": {"applies": True, "answer": "", "in_release": ""}}
-        rng = self._setup_run("SpeakSavvy/Services/AdminGate.swift",
-                              _new_file_text(patch, "SpeakSavvy/Services/AdminGate.swift"), empty)
+        rng = self._setup_run("SampleApp/Services/AdminGate.swift",
+                              _new_file_text(patch, "SampleApp/Services/AdminGate.swift"), empty)
         debt = {"verifier": "independent-auditor", "run_id": "r1", "diff_range": rng}
         res = ov.evaluate_debt(self.repo, debt, record={"run_id": "r1"})
         self.assertFalse(res["satisfied"], res)
