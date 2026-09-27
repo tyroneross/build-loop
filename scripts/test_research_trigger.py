@@ -38,6 +38,23 @@ class ResearchTriggerTests(unittest.TestCase):
             ("Research approaches and implement nothing until I approve", True, "auto", "return_recommendation"),
             ("Compare worktrees and merge later; read-only for now", False, "maintenance", "return_recommendation"),
             ("Compare API libraries for a worktree dashboard", True, "auto", "return_recommendation"),
+            ("Compare our main competitors' onboarding", True, "auto", "return_recommendation"),
+            ("Review the main approaches to caching", False, "auto", "return_recommendation"),
+            ("Compare repository patterns for a compiler", True, "auto", "return_recommendation"),
+            ("Research the SDK and build a recommendation", True, "auto", "return_recommendation"),
+            ("Research why rebases and merge conflicts recur", True, "auto", "return_recommendation"),
+            ("Evaluate the 'research then build' workflow", True, "auto", "return_recommendation"),
+            ('Evaluate the "research then implement it" workflow', True, "auto", "return_recommendation"),
+            ("Compare these worktrees", False, "maintenance", "return_recommendation"),
+            ("Review the branches", False, "maintenance", "return_recommendation"),
+            ("Review the main branch", False, "maintenance", "return_recommendation"),
+            ("Review origin/main", False, "maintenance", "return_recommendation"),
+            ("Merge latest main", False, "maintenance", "resume_requested_workflow"),
+            ("Merge latest main into this branch", False, "maintenance", "resume_requested_workflow"),
+            ("Compare with current main", False, "maintenance", "return_recommendation"),
+            ("Compare these branches against latest main", False, "maintenance", "return_recommendation"),
+            ("Reconcile this repo", False, "maintenance", "resume_requested_workflow"),
+            ("Research SDK options and build it; follow 'do not implement' for now", True, "auto", "return_recommendation"),
         ]
         for task, required, context, continuation in cases:
             with self.subTest(task=task), tempfile.TemporaryDirectory() as td:
@@ -48,6 +65,31 @@ class ResearchTriggerTests(unittest.TestCase):
                 self.assertEqual(payload["request_context"], context)
                 self.assertEqual(payload["continuation"], continuation)
                 self.assertFalse(payload["continuation_is_authorization"])
+
+    def test_maintenance_preserves_external_clauses_without_product_allowlist(self) -> None:
+        for task in [
+            "Reconcile branches and upgrade to the latest React",
+            "merge the worktrees and bump Node to the newest LTS",
+            "Review latest local main and compare the current browser compatibility",
+            "Reconcile branches and research today's browser compatibility",
+        ]:
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as td:
+                result = run_trigger("--workdir", td, "--task", task, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["request_context"], "maintenance")
+                self.assertTrue(payload["research_required"])
+                self.assertIn("current_external", payload["triggers"])
+                self.assertTrue(payload["requires_citations_or_unavailable_note"])
+                self.assertTrue(payload["blocks_final_claims"])
+
+    def test_explicit_maintenance_context_preserves_review_only_stopping_point(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_trigger("--workdir", td, "--task", "Compare these worktrees",
+                                 "--context", "maintenance", "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["continuation"], "return_recommendation")
+            self.assertFalse(payload["continuation_is_authorization"])
 
     def test_explicit_context_preserves_build_but_negation_takes_precedence(self) -> None:
         for task, continuation in [

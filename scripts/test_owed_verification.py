@@ -879,6 +879,21 @@ class TestSecondVendorEvidence(_Base):
         self.assertEqual(manifest["diff_range"], "abc1234..HEAD")
         self.assertNotIn("unknown", json.dumps(manifest["dispatch_commands"]))
 
+    def test_range_precedence_explicit_then_persisted_record_then_legacy(self) -> None:
+        record = self._armed_record(diff_range="run-base..run-end")
+        self._write_state({"preBuildSha": "stale-global", "runs": [record]})
+        # The durable record wins over a thin caller that has no range.
+        thin = {"run_id": record["run_id"]}
+        result = ov.enforce_for_run_record(self.workdir, thin, written_by="test")
+        self.assertEqual(result["diff_range"], "run-base..run-end")
+        result = ov.enforce_for_run_record(self.workdir, thin, written_by="test",
+                                          diff_range="explicit-base..explicit-end")
+        self.assertEqual(result["diff_range"], "explicit-base..explicit-end")
+        record.pop("diff_range")
+        self._write_state({"preBuildSha": "stale-global", "runs": [record]})
+        result = ov.enforce_for_run_record(self.workdir, thin, written_by="test")
+        self.assertEqual(result["diff_range"], "stale-global..HEAD")
+
     def test_a_waiver_is_recorded_against_the_run_that_owed_the_debt(self) -> None:
         """Ownership decides the waiver exactly as it decides the discharge."""
         (self.workdir / ".build-loop" / "state.json").write_text(

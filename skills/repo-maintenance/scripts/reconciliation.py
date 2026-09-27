@@ -145,7 +145,7 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
             elif held or disposition == "incomplete":
                 action = "preserve"
             elif disposition == "additive":
-                action = "integration_checks"
+                action = "integration_checks" if paths else "needs_review"
             else:
                 action = "retirement_checks"
             actions.append({"source_ref": ref, "unit": index, "paths": paths, "next_step": action})
@@ -158,7 +158,7 @@ def check(record: Any, current: dict[str, Any], report: dict[str, Any]) -> dict[
     return {
         "review_complete": not errors and all(a["next_step"] != "needs_review" for a in actions),
         "errors": errors, "actions": actions,
-        "review_scope": "local branch diffs; retained state requires separate review",
+        "review_scope": "local branch diffs only; remote-only branches and retained state require separate review",
         "retained_state": current["retained_state"],
         "whole_branch_steps": {
             ref: ("integration_checks" if steps == {"integration_checks"}

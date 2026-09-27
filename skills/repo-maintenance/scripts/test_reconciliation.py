@@ -173,7 +173,7 @@ class ReconciliationTests(unittest.TestCase):
         result = self.check(self.reviewed(packet))[1]
         self.assertEqual(result["whole_branch_steps"]["feature"], "preserve")
 
-    def test_unique_merge_resolution_survives_patch_equivalence(self):
+    def test_criss_cross_merge_with_unique_resolution_requires_review(self):
         self.branch("left", "core.txt")
         self.branch("right", "core.txt")
         self.git("checkout", "-b", "candidate", "left")
@@ -188,9 +188,48 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(self.git("cherry", "main", "candidate"), "")
         packet = self.draft()
         row = next(r for r in packet["candidates"] if r["source_ref"] == "candidate")
+        self.assertIsNone(row["merge_base"])
         self.assertEqual(row["tip_difference_paths"], ["core.txt"])
         result = self.check(self.reviewed(packet))[1]
         self.assertEqual(result["whole_branch_steps"]["candidate"], "preserve")
+
+    def test_single_base_patch_equivalence_does_not_hide_unique_merge_content(self):
+        self.branch("left", "left.txt")
+        self.branch("right", "right.txt")
+        self.git("checkout", "-b", "candidate", "left")
+        self.git("merge", "--no-commit", "--no-ff", "right")
+        self.commit("unique.txt", "merge-only behavior", "merge with unique behavior")
+        self.git("checkout", "main")
+        self.git("cherry-pick", "left", "right")
+        self.assertTrue(all(line.startswith("-") for line in self.git("cherry", "main", "candidate").splitlines()))
+        packet = self.draft()
+        row = next(r for r in packet["candidates"] if r["source_ref"] == "candidate")
+        self.assertIsNotNone(row["merge_base"])
+        self.assertEqual(row["tip_difference_paths"], ["unique.txt"])
+        self.assertIn("unique.txt", row["source_paths"])
+        result = self.check(packet)[1]
+        self.assertEqual(result["whole_branch_steps"]["candidate"], "preserve")
+        self.assertTrue(all(a["next_step"] == "needs_review" for a in result["actions"] if a["source_ref"] == "candidate"))
+
+    def test_empty_additive_unit_cannot_request_integration(self):
+        self.git("branch", "already-present")
+        result = self.check(self.reviewed(self.draft()))[1]
+        self.assertFalse(result["review_complete"])
+        self.assertEqual(result["whole_branch_steps"]["already-present"], "preserve")
+
+    def test_remote_only_branch_exclusion_is_explicit(self):
+        self.git("update-ref", "refs/remotes/origin/remote-only", "HEAD")
+        result = self.check(self.draft())[1]
+        self.assertIn("remote-only branches", result["review_scope"])
+
+    def test_excessively_nested_record_fails_without_traceback(self):
+        path = self.root / "nested.json"
+        path.write_text("[" * 2000 + "]" * 2000)
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.repo), "--review-record", str(path)], text=True, capture_output=True)
+        self.assertIn(result.returncode, (1, 2))  # Decoder depth limits differ by Python version.
+        if result.returncode == 1:
+            self.assertFalse(json.loads(result.stdout)["review_complete"])
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_stashes_and_detached_work_are_explicitly_retained(self):
         detached = self.root / "detached"

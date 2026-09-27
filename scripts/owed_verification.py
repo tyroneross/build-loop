@@ -1366,6 +1366,11 @@ def enforce_for_run_record(
     try:
         run_id = str(record.get("run_id") or "unknown")
         record = _persisted_record(workdir, run_id) or record
+        # A closing run owns its diff even when another session has moved HEAD
+        # or left a different preBuildSha in shared state. Explicit callers can
+        # still widen/correct it; legacy records retain the historical fallback.
+        if not diff_range or diff_range == "unknown":
+            diff_range = record.get("diff_range") or "unknown"
         diff_range = _resolve_range(workdir, diff_range)
         owed = owed_verifiers_for_record(record, workdir, diff_range)
         for name in _cleared_for_run(workdir, run_id, diff_range):

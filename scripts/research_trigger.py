@@ -45,12 +45,12 @@ EFFORT_MEMORY_DEPTH = {
 }
 
 EXPLICIT_RESEARCH_RE = re.compile(
-    r"\b(research|investigate|evaluate|compare|look\s+up|recommend|"
+    r"\b(research|investigate|evaluate|compare|look\s+up|search\s+(?:for|the\s+web)|recommend|"
     r"recommendation|should\s+i|which\s+.+\s+better)\b",
     re.IGNORECASE,
 )
 CURRENT_EXTERNAL_RE = re.compile(
-    r"\b(latest|current|today|pricing|version|release|changelog|"
+    r"\b(latest|current|newest|lts|today|pricing|version|release|changelog|"
     r"deprecat(?:e|ed|ion)|official\s+docs?|standard|regulation)\b",
     re.IGNORECASE,
 )
@@ -90,20 +90,32 @@ HIGH_RISK_RE = re.compile(
 # Local reconciliation uses code/diff review. "Compare" and "latest main"
 # alone do not create an external research task. Keep explicit research and
 # concrete external/risk signals even when maintenance is the primary owner.
+MAIN_REF_PATTERN = (
+    r"(?:local\s+main|main\s+branch|origin/main|"
+    r"main(?=\s*(?:$|[.;,]|(?:into|onto|against|with|and|then)\b)))"
+)
 MAINTENANCE_RE = re.compile(
-    r"\b(?:compare|review|reconcile|merge|prune|clean(?:\s+up)?|consolidate)\b"
-    r"\s+(?:(?:these|the|all|open|stale|local|current|latest|our|my|recent|active|"
-    r"completed|code|diffs|and|between|both)\s+){0,6}"
-    r"(?:worktrees?|branches|branch|stashes|main|repo(?:sitory)?)\b",
+    r"\b(?P<action>compare|review|reconcile|merge|prune|clean(?:\s+up)?|consolidate)\b"
+    r"\s+(?:(?:this|these|the|all|open|stale|local|current|latest|our|my|recent|active|"
+    r"completed|code|diffs|and|between|both|with|against)\s+){0,6}"
+    r"(?:worktrees?|branches|branch|stashes|" + MAIN_REF_PATTERN + r"|"
+    r"repo(?:sitory)?(?=\s*(?:$|[.;,]|and\b|then\b)))\b",
     re.IGNORECASE,
 )
-DIRECT_RESEARCH_RE = re.compile(r"\b(?:research|look\s+up|search\s+(?:for|the\s+web))\b", re.I)
 EXTERNAL_SUBJECT_RE = re.compile(
     r"\b(?:api|sdk|provider|package|library|libraries|framework|model|pricing|"
     r"regulation|official\s+docs?|external|internet|web|upstream\s+(?:docs?|release))\b", re.I,
 )
 CONTINUE_RE = re.compile(
-    r"\b(?:then|and)\s+(?:implement|build|apply|integrate|merge|fix)\b", re.I,
+    r"\b(?:then|and)\s+(?:implement|build|apply|integrate|merge|fix)\s+"
+    r"(?!(?:(?:a|an|the)\s+)?(?:recommendations?|report|summary|comparison|plan|"
+    r"analysis|proposal|understanding|confidence|evidence)\b)"
+    r"(?:it|them|that|this|the|a|an|additive|compatible|reviewed|approved)\b", re.I,
+)
+QUOTED_RE = re.compile(r'''"[^"\n]*"|(?<!\w)'[^'\n]*'(?!\w)|“[^”\n]*”|‘[^’\n]*’|`[^`\n]*`''')
+LOCAL_CURRENT_RE = re.compile(
+    r"\b(?:latest|current|newest)\s+(?:local\s+)?(?:" + MAIN_REF_PATTERN
+    + r"|worktrees?|branches|branch|stashes)\b", re.I,
 )
 RECOMMEND_ONLY_RE = re.compile(
     r"\b(?:do\s+not|don['’]t|never)\s+(?:implement|build|apply|integrate|merge|change|edit)\b"
@@ -133,6 +145,7 @@ def classify_research(
     context: str = "auto",
 ) -> dict[str, Any]:
     text = task or ""
+    intent_text = QUOTED_RE.sub("", text)
     triggers: list[str] = []
 
     explicit = bool(EXPLICIT_RESEARCH_RE.search(text))
@@ -143,16 +156,18 @@ def classify_research(
     high_risk = bool(HIGH_RISK_RE.search(text))
     deep_requested = bool(DEEP_RE.search(text))
     light_requested = bool(LIGHT_RE.search(text))
-    maintenance = context == "maintenance" or (context == "auto" and bool(MAINTENANCE_RE.search(text)))
-    if maintenance and not EXTERNAL_SUBJECT_RE.search(text):
-        explicit = bool(DIRECT_RESEARCH_RE.search(text))
-        if not explicit:
-            current_external = bool(re.search(
-                r"\b(?:pricing|version|release|changelog|deprecat(?:e|ed|ion)|regulation)\b", text, re.I,
-            ))
+    maintenance_matches = list(MAINTENANCE_RE.finditer(intent_text))
+    maintenance = context == "maintenance" or (context == "auto" and bool(maintenance_matches))
+    if maintenance:
+        # Remove only proven local comparison phrases. An unrelated clause
+        # about React, Node, or another external subject keeps its signals;
+        # recognizing every possible product name is unnecessary.
+        remaining = MAINTENANCE_RE.sub("", intent_text)
+        explicit = bool(EXPLICIT_RESEARCH_RE.search(remaining))
+        current_external = bool(CURRENT_EXTERNAL_RE.search(LOCAL_CURRENT_RE.sub("", remaining)))
         # Local review remains available; deep/recurring comparison alone is
         # not a research deliverable. Risk/architecture signals stay intact.
-        if not explicit:
+        if not explicit and not EXTERNAL_SUBJECT_RE.search(remaining) and not current_external:
             reusable_packet = False
             deep_requested = False
 
@@ -213,7 +228,12 @@ def classify_research(
         "continuation": (
             "resume_requested_workflow"
             if context != "research" and not RECOMMEND_ONLY_RE.search(text) and (
-                context == "build" or maintenance or bool(CONTINUE_RE.search(text))
+                context == "build" or bool(CONTINUE_RE.search(intent_text)) or (
+                    maintenance and (
+                        any(match["action"].lower() not in {"compare", "review"} for match in maintenance_matches)
+                        or bool(re.search(r"\bbefore\s+(?:merging|pruning|integrating)\b", intent_text, re.I))
+                    )
+                )
             ) else "return_recommendation"
         ),
         "continuation_is_authorization": False,

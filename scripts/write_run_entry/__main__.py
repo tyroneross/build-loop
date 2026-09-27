@@ -85,7 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--files-touched-from-git",
         action="store_true",
-        help="Derive from git diff <preBuildSha>..HEAD (preBuildSha read from state.json)",
+        help="Derive from the run's diff range, or legacy state.preBuildSha..HEAD when unpinned",
     )
     p.add_argument(
         "--diagnostic-commands",
@@ -103,6 +103,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated experimental artifact names that triggered this run",
     )
     p.add_argument("--run-id", default=None, help="Override run_id (default: compute from goal + now)")
+    p.add_argument("--diff-range", default=None,
+                   help="Run-owned base..candidate range; validate and pin both commits. "
+                        "Omitting it on an upsert preserves the recorded range.")
     p.add_argument(
         "--security-findings-json",
         default=None,
@@ -205,10 +208,10 @@ def _defaulted_fields(args: argparse.Namespace, git_contributed: bool = False) -
     return defaulted
 
 
-def files_touched_from_git(workdir: Path, pre_sha: str) -> list[str]:
+def files_touched_from_git(workdir: Path, pre_sha: str, head: str = "HEAD") -> list[str]:
     try:
         out = subprocess.check_output(
-            ["git", "-C", str(workdir), "diff", "--name-only", f"{pre_sha}..HEAD"],
+            ["git", "-C", str(workdir), "diff", "--name-only", f"{pre_sha}..{head}"],
             stderr=subprocess.DEVNULL,
             text=True,
         )
@@ -228,6 +231,35 @@ def _head_commit(workdir: Path) -> str | None:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
     return out or None
+
+
+def _run_diff_range(workdir: Path, state_path: Path, run_id: str, supplied: str | None) -> str | None:
+    """Use this run's explicit/persisted range, never another run's HEAD."""
+    value = supplied
+    if value is None:
+        state = read_json(state_path)
+        runs = state.get("runs", []) if isinstance(state, dict) else []
+        for row in reversed(runs if isinstance(runs, list) else []):
+            if isinstance(row, dict) and row.get("run_id") == run_id and row.get("diff_range"):
+                value = row["diff_range"]
+                break
+    if value is None:
+        return None
+    if not isinstance(value, str) or value.count("..") != 1 or "..." in value:
+        raise ValueError("--diff-range must be base..candidate")
+    endpoints = value.split("..")
+    pinned = []
+    for ref in endpoints:
+        if not ref.strip():
+            raise ValueError("--diff-range requires both commit endpoints")
+        try:
+            pinned.append(subprocess.check_output(
+                ["git", "-C", str(workdir), "rev-parse", "--verify", "--end-of-options",
+                 f"{ref.strip()}^{{commit}}"], stderr=subprocess.DEVNULL, text=True,
+            ).strip())
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise ValueError(f"--diff-range endpoint is not a commit: {ref}") from exc
+    return "..".join(pinned)
 
 
 def _load_optional_payloads(args: argparse.Namespace) -> dict:
@@ -271,14 +303,18 @@ def _resolve_files_touched(
     files_touched = _split_csv(args.files_touched or "")
     if not args.files_touched_from_git:
         return files_touched, False
-    state_existing = read_json(state_path) if state_path.exists() else {}
-    pre_sha = state_existing.get("preBuildSha") if isinstance(state_existing, dict) else None
+    head = "HEAD"
+    if getattr(args, "diff_range", None):
+        pre_sha, head = args.diff_range.split("..")
+    else:
+        state_existing = read_json(state_path) if state_path.exists() else {}
+        pre_sha = state_existing.get("preBuildSha") if isinstance(state_existing, dict) else None
     if not pre_sha:
         log("warn: --files-touched-from-git set but state.json has no preBuildSha; skipping git diff")
         return files_touched, False
-    from_git = files_touched_from_git(workdir, pre_sha)
+    from_git = files_touched_from_git(workdir, pre_sha, head)
     if not from_git:
-        log(f"warn: --files-touched-from-git produced no files from {pre_sha}..HEAD; "
+        log(f"warn: --files-touched-from-git produced no files from {pre_sha}..{head}; "
             "treating the file set as not supplied rather than as empty")
         return files_touched, False
     files_touched.extend(f for f in from_git if f not in files_touched)
@@ -307,7 +343,10 @@ def _build_entry(
         "manualInterventions": payloads["manual_interventions"],
         "active_experimental_artifacts": active,
     }
-    commit = _head_commit(Path(args.workdir).resolve())
+    diff_range = getattr(args, "diff_range", None)
+    if diff_range:
+        entry["diff_range"] = diff_range
+    commit = diff_range.split("..")[1] if diff_range else _head_commit(Path(args.workdir).resolve())
     if commit:
         entry["commit"] = commit
     # Optional additive blocks — written only when supplied (never break older readers).
@@ -367,7 +406,9 @@ def main(argv: list[str] | None = None) -> int:
     state_path = workdir / ".build-loop" / "state.json"
     experiments_dir = workdir / ".build-loop" / "experiments"
 
+    run_id = args.run_id or compute_run_id(args.goal)
     try:
+        args.diff_range = _run_diff_range(workdir, state_path, run_id, args.diff_range)
         payloads = _load_optional_payloads(args)
     except (json.JSONDecodeError, ValueError) as e:
         log(f"validation error: {e}")
@@ -383,7 +424,6 @@ def main(argv: list[str] | None = None) -> int:
     # distinguish "not supplied" from "empty" once a default has been applied,
     # so the omission is recorded here, at the only place that still knows.
     defaulted = _defaulted_fields(args, git_contributed)
-    run_id = args.run_id or compute_run_id(args.goal)
     date = iso_utc()
 
     entry = _build_entry(

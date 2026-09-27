@@ -103,6 +103,74 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertEqual(runs[0]["outcome"], "pass")
         self.assertEqual(runs[0]["goal"], "corrected goal")
 
+    def _range_fixture(self) -> list[str]:
+        def git(*args: str) -> str:
+            return subprocess.check_output(["git", "-C", str(self.workdir), *args],
+                                           stderr=subprocess.DEVNULL, text=True).strip()
+        git("init", "-b", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.test")
+        commits = []
+        for name in ("old", "base", "candidate", "peer"):
+            (self.workdir / f"{name}.txt").write_text(name)
+            git("add", f"{name}.txt")
+            git("commit", "-m", name)
+            commits.append(git("rev-parse", "HEAD"))
+        return commits
+
+    def test_run_range_survives_stale_shared_state_peer_head_and_repeated_writes(self) -> None:
+        old, base, candidate, peer = self._range_fixture()
+        self.state.parent.mkdir()
+        self.state.write_text(json.dumps({"preBuildSha": old, "runs": []}))
+        sys.path.insert(0, str(HERE))
+        import owed_verification as ov
+        ov.write_manifest(self.workdir, run_id="other-run", diff_range=f"{old}..{base}",
+                          owed=["independent-auditor"])
+        before_other = [d for d in ov.load_manifest(self.workdir)["debts"]
+                        if d["run_id"] == "other-run"]
+        # HEAD already belongs to a peer. Explicit endpoint still owns commit
+        # and filesTouched; the second write must reuse that pin without flags.
+        common = self._base_args(**{"--run-id": "our-run"}) + ["--files-touched-from-git"]
+        first = run(common + ["--diff-range", f"{base[:12]}..{candidate[:12]}"])
+        self.assertEqual(first.returncode, 0, first.stderr)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "--allow-empty", "-m", "peer later"],
+                       check=True, capture_output=True)
+        peer = subprocess.check_output(["git", "-C", str(self.workdir), "rev-parse", "HEAD"],
+                                       text=True).strip()
+        second = run(common)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        state = json.loads(self.state.read_text())
+        record = next(r for r in state["runs"] if r["run_id"] == "our-run")
+        self.assertEqual(record["diff_range"], f"{base}..{candidate}")
+        self.assertEqual(record["commit"], candidate)
+        self.assertEqual(record["filesTouched"], ["candidate.txt"])
+        self.assertEqual(state["preBuildSha"], old)
+        debts = ov.load_manifest(self.workdir)["debts"]
+        ours = [d for d in debts if d["run_id"] == "our-run"]
+        self.assertTrue(ours)
+        self.assertTrue(all(d["diff_range"] == f"{base}..{candidate}" for d in ours))
+        self.assertEqual([d for d in debts if d["run_id"] == "other-run"], before_other)
+        self.assertEqual(subprocess.check_output(["git", "-C", str(self.workdir),
+                         "rev-parse", "HEAD"], text=True).strip(), peer)
+
+    def test_invalid_diff_range_does_not_write_state(self) -> None:
+        _, base, candidate, _ = self._range_fixture()
+        for value in ("", "HEAD", "..HEAD", "HEAD..", "HEAD...HEAD", "missing..HEAD",
+                      f"{base}..{candidate}:candidate.txt"):
+            with self.subTest(value=value):
+                result = run(self._base_args(**{"--diff-range": value}))
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertFalse(self.state.exists())
+
+    def test_explicit_range_update_replaces_prior_pin(self) -> None:
+        _, base, candidate, peer = self._range_fixture()
+        for endpoint in (candidate, peer):
+            result = run(self._base_args(**{"--run-id": "widen", "--diff-range": f"{base}..{endpoint}"}))
+            self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(self.state.read_text())["runs"][0]
+        self.assertEqual(record["diff_range"], f"{base}..{peer}")
+        self.assertEqual(record["commit"], peer)
+
     def test_upsert_preserves_row_position(self) -> None:
         """The corrected row keeps its index; the ledger does not reshuffle."""
         first = run(self._base_args(**{"--run-id": "run_aaa", "--goal": "first"}))

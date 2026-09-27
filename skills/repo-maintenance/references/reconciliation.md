@@ -21,6 +21,9 @@ No scheduled or background integration is implied.
    record pins the target, every local branch head, merge bases and changed paths.
    It retains stashes and detached/dirty worktrees for separate review. A missing
    or multiple merge base requires investigation. The draft makes no judgment.
+   Remote-only branches are outside this record. When upstream work is in scope,
+   inventory and compare those refs separately before claiming the requested
+   review complete. Refreshing remotes does not add them to this local record.
 3. Read the actual merge-base→source and merge-base→target diffs, the relevant
    implementations, callers and tests. Compare candidate implementations affecting
    the same workflow with each other, even when they change different files.
