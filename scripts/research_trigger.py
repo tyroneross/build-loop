@@ -87,6 +87,32 @@ HIGH_RISK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Local reconciliation uses code/diff review. "Compare" and "latest main"
+# alone do not create an external research task. Keep explicit research and
+# concrete external/risk signals even when maintenance is the primary owner.
+MAINTENANCE_RE = re.compile(
+    r"\b(?:compare|review|reconcile|merge|prune|clean(?:\s+up)?|consolidate)\b"
+    r"\s+(?:(?:these|the|all|open|stale|local|current|latest|our|my|recent|active|"
+    r"completed|code|diffs|and|between|both)\s+){0,6}"
+    r"(?:worktrees?|branches|branch|stashes|main|repo(?:sitory)?)\b",
+    re.IGNORECASE,
+)
+DIRECT_RESEARCH_RE = re.compile(r"\b(?:research|look\s+up|search\s+(?:for|the\s+web))\b", re.I)
+EXTERNAL_SUBJECT_RE = re.compile(
+    r"\b(?:api|sdk|provider|package|library|libraries|framework|model|pricing|"
+    r"regulation|official\s+docs?|external|internet|web|upstream\s+(?:docs?|release))\b", re.I,
+)
+CONTINUE_RE = re.compile(
+    r"\b(?:then|and)\s+(?:implement|build|apply|integrate|merge|fix)\b", re.I,
+)
+RECOMMEND_ONLY_RE = re.compile(
+    r"\b(?:do\s+not|don['’]t|never)\s+(?:implement|build|apply|integrate|merge|change|edit)\b"
+    r"|\b(?:read.only|research\s+only|recommend(?:ations?)?\s+only|before\s+I\s+decide|"
+    r"without\s+(?:implementing|building|merging|changing)|no\s+implementation|"
+    r"(?:implement|build|merge|apply)\s+nothing|until\s+(?:I\s+approve|approved|approval))\b",
+    re.I,
+)
+
 
 def _max_depth(*depths: str) -> str:
     return max(depths, key=lambda value: DEPTH_ORDER[value])
@@ -104,6 +130,7 @@ def classify_research(
     workdir: Path,
     effort: str | None = None,
     today: date | None = None,
+    context: str = "auto",
 ) -> dict[str, Any]:
     text = task or ""
     triggers: list[str] = []
@@ -116,6 +143,18 @@ def classify_research(
     high_risk = bool(HIGH_RISK_RE.search(text))
     deep_requested = bool(DEEP_RE.search(text))
     light_requested = bool(LIGHT_RE.search(text))
+    maintenance = context == "maintenance" or (context == "auto" and bool(MAINTENANCE_RE.search(text)))
+    if maintenance and not EXTERNAL_SUBJECT_RE.search(text):
+        explicit = bool(DIRECT_RESEARCH_RE.search(text))
+        if not explicit:
+            current_external = bool(re.search(
+                r"\b(?:pricing|version|release|changelog|deprecat(?:e|ed|ion)|regulation)\b", text, re.I,
+            ))
+        # Local review remains available; deep/recurring comparison alone is
+        # not a research deliverable. Risk/architecture signals stay intact.
+        if not explicit:
+            reusable_packet = False
+            deep_requested = False
 
     if explicit:
         triggers.append("explicit_research")
@@ -170,6 +209,14 @@ def classify_research(
         memory_depth = "standard"
 
     return {
+        "request_context": "maintenance" if maintenance else context,
+        "continuation": (
+            "resume_requested_workflow"
+            if context != "research" and not RECOMMEND_ONLY_RE.search(text) and (
+                context == "build" or maintenance or bool(CONTINUE_RE.search(text))
+            ) else "return_recommendation"
+        ),
+        "continuation_is_authorization": False,
         "research_required": research_required,
         "depth": depth,
         "mode": DEPTH_MODE[depth],
@@ -216,12 +263,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task", required=True, help="Goal/request text to classify.")
     parser.add_argument("--workdir", default=".")
     parser.add_argument("--effort", choices=["XS", "S", "M", "L", "XL", "xs", "s", "m", "l", "xl"])
+    parser.add_argument("--context", choices=["auto", "maintenance", "build", "research"], default="auto",
+                        help="Primary workflow selected from the user's request; research stays an assist to maintenance/build.")
     parser.add_argument("--cache-into-state", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     workdir = Path(args.workdir)
-    payload = classify_research(task=args.task, workdir=workdir, effort=args.effort)
+    payload = classify_research(task=args.task, workdir=workdir, effort=args.effort, context=args.context)
     if args.cache_into_state:
         payload["state_path"] = str(cache_into_state(workdir, payload))
 

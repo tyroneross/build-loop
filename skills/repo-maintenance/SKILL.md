@@ -1,6 +1,6 @@
 ---
 name: repo-maintenance
-description: "Audit and evolve repository structure — topology, module boundaries, artifact retention, branch/worktree hygiene, and open-source readiness. Use when the user asks how a repo should be structured, why it has duplicate source, wants generated artifacts cleaned, or wants a repo readied to open-source. Never pushes, deletes unique source, or rewrites history without explicit authorization."
+description: "Audit and evolve repository structure — topology, module boundaries, artifact retention, branch/worktree hygiene, and open-source readiness. Use when the user asks to reconcile branches and worktrees, merge additive work, prune stale work, clean generated artifacts, remove duplicate source, or ready a repo to open-source. Never pushes, deletes unique source, or rewrites history without explicit authorization."
 user-invocable: false
 ---
 
@@ -120,10 +120,20 @@ the next commit.
 
 ## Close completed local work
 
+For branch/worktree reconciliation, follow
+[the comparison contract](references/reconciliation.md) automatically. A request
+to merge additive work includes reading code and diffs, classifying changed
+behavior, integrating reviewed compatible changes, validating the target and
+closing redundant work with recovery proof. A review-only request ends at the
+comparison. Use the existing audit's `--reconcile` and `--review-record` modes;
+neither mutates Git nor grants authority. Competing product/UI directions stay
+preserved for the user's choice while independent additive work continues.
+
 Give every worktree, branch, stash, dirty path set, sibling source, and artifact root exactly one disposition:
 
 - `integrate` — unique completed work with review and verification.
-- `redundant` — ancestor of `main` or proven patch-equivalent.
+- `redundant` — behavior already represented on the target, supported by ancestry/tree and code review; patch equivalence alone does not prove unique merge resolutions are retained.
+- `needs-user-choice` — viable competing product/UI directions; preserve both and present a concrete comparison.
 - `retire-sibling` — imported source whose in-tree canonical copy has evolved.
 - `cleanup-candidate` — reproducible, ignored, inactive generated state past retention.
 - `release-artifact` — distributable output requiring an explicit retain, archive, or remove decision.

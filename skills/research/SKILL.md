@@ -8,7 +8,10 @@ user-invocable: false
 
 # Research — Pre-Decision Analysis
 
-Produces a repo-grounded research packet without committing to implementation. Use when evaluating approaches, comparing options, or preparing a handoff.
+Produces a repo-grounded research packet. Use when evaluating approaches,
+comparing options, or preparing a handoff. The canonical routing contract is
+`../build-loop/SKILL.md` § Routing: research-only ends with a recommendation;
+research within an authorized build or maintenance task returns to that owner.
 
 ## When to Use
 
@@ -33,7 +36,18 @@ Produces a repo-grounded research packet without committing to implementation. U
 
 4. **Review and present**: Read the generated packet, verify claims against the actual repo, adjust confidence if needed
 
-5. **Archive**: Save to `.build-loop/research/YYYY-MM-DD-<topic>.md`
+5. **Archive**: Save to `.build-loop/research/YYYY-MM-DD-<topic>.md`. Reuse relevant
+   prior packets after checking freshness and applicability; refresh facts that
+   could change the decision. State unresolved contradictions and what evidence
+   would change the recommendation. Use existing reference capture only within
+   the applicable persistence authority.
+
+6. **Continue the requested workflow**: for research-only, deliver the evidence
+   and recommendation. When the user already requested implementation or
+   maintenance after research, return the packet to that owner and continue.
+   Ask only for an unresolved consequential product choice or an existing
+   confirmation gate. "Research how to build" is research-only. A heuristic
+   continuation field never expands authorization.
 
 ## Output Format
 
@@ -113,9 +127,9 @@ claims.
 ## Integration
 
 - Standalone: `/build-loop:research-run [topic]`
-- From build-loop: orchestrator routes RESEARCH-intent requests here instead of the full loop
+- From build-loop: research-only requests use this packet workflow; combined requests return to their build/maintenance owner afterward.
 - During normal build-loop runs: `scripts/research_trigger.py` decides whether this skill should run, which depth to use, where to persist the packet, and whether current/external claims are blocked until cited. See `references/research-trigger-policy.md`.
-- After packet: user decides — `/build-loop:run` to implement or optimize (say "optimize <target>"), or shelve
+- After packet: preserve the original request's stopping point; no repeated permission question for implementation already authorized.
 
 ## State
 

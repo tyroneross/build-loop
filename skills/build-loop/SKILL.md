@@ -21,7 +21,7 @@ Intent → internal mode:
 - **Build** (default): full 5-phase loop + mandatory Phase 6 Learn — implementation / fix / refactor / migrate / update / "add" / "wire up" language.
 - **Debug**: deep iterative root-cause investigation — symptom language ("broken", "doesn't work", "failing"); also auto-invoked on Review-B failures.
 - **Optimize**: metric-driven optimization loop — "speed up", "reduce", "improve" + a mechanical metric.
-- **Research**: pre-decision analysis, research packet, no commits — "research", "evaluate", "compare", "should I".
+- **Research**: pre-decision analysis and a research packet — "research", "evaluate", "compare", "should I". Research-only requests end with a recommendation. An explicit request to research then implement continues through the authorized build.
 - **Test**: static plugin-test suite — "test plugin", "validate plugin".
 - **Root-cause analysis**: blameless RCA producing durable system levers — "root cause", "why did this fail", "post-mortem" (delegates to the `root-cause-analysis` skill).
 - **Retrospective**: recursive learning retrospective on a build/project — "retrospective", "retro", "what did we learn", "review this project's trajectory" (delegates to `recursive-retrospective`). *Example: "I need a root cause and a retrospective" → run does both.*
@@ -32,6 +32,24 @@ Intent → internal mode:
 - **Drain proposals**: "drain proposals", "review the proposal backlog", "what proposals are open" → the `drain-proposals` skill. Interactive and never auto-applies; every item needs an explicit apply / reject / defer.
 
 **Design intent:** one command for humans, plain-language routing, everything else agent-invoked within build-loop. If a request doesn't match a mode, run treats it as a Build task or asks one clarifying question — it never makes the user pick a command.
+
+**Preserve the requested outcome.** This section is the canonical routing table
+for both host entrypoints and the orchestrator. Classify the operation and its
+object before matching an isolated word: comparing worktrees belongs to
+repository maintenance; comparing external SDKs may need research. A combined
+request retains both steps. Research is an assist to an already authorized build
+or maintenance task, and returns control to that owner when the evidence is ready.
+"Research how to build X" alone does not authorize building X. Read-only and
+explicit negative instructions take precedence.
+
+For a build or maintenance research check, run `scripts/research_trigger.py`
+with `--context build` or `--context maintenance`; use `--context research` for
+a research-only request. Its `continuation` field is advisory and never grants
+authority. The user request and accepted plan determine what executes. Local
+code comparison does not require external research merely because it says
+"compare" or "latest main". Explicit research and concrete external/risk signals
+still receive evidence checks. Do not start a background reconciler from these
+requests.
 
 ### Parallelism config
 

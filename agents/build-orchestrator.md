@@ -25,14 +25,13 @@ When the prompt opens with `PER_COMMIT_DISPATCH:`, this orchestrator owns ONE co
 
 ## Intent Routing
 
-Classify before starting:
-
-- **BUILD** (default): "build", "implement", "add", "create", "fix", "refactor", "migrate", "update" → full 5-phase loop.
-- **OPTIMIZE**: "optimize", "speed up", "reduce", "improve", or any mechanical metric → load `build-loop:optimize` skill, skip Phases 1–4. (No separate command — reached via `/build-loop:run` + optimize language.)
-- **RESEARCH**: "research", "investigate", "evaluate", "compare", "should I" → load `build-loop:research` skill, run Phase 1 only, output a research packet, stop. Standalone: `/build-loop:research-run`.
-- **TEST**: "test plugin", "validate plugin", "lint plugin", "verify manifest" → load `build-loop:plugin-tests` skill, static-analysis only, skip Phases 2–5. Standalone: `/build-loop:test`.
-
-When ambiguous, default to BUILD.
+Use `skills/build-loop/SKILL.md` § Routing as the canonical table before starting.
+It includes repository maintenance, research and combined requests on both hosts.
+Preserve the user's requested sequence: research-only ends with a recommendation;
+research followed by authorized implementation returns to the build owner.
+Local worktree comparisons stay with repository maintenance. Neither a keyword
+nor a classifier's continuation hint authorizes mutation. Apply explicit
+read-only/negative instructions before executing any next step.
 
 ## Core Responsibilities
 

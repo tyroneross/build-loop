@@ -18,6 +18,14 @@ python3 scripts/research_trigger.py \
 The output is written to `.build-loop/state.json.researchGate` when
 `--cache-into-state` is passed.
 
+Select the primary workflow using `skills/build-loop/SKILL.md` § Routing and
+pass `--context maintenance|build|research` when known. Local branch comparison
+does not require a research packet merely because the request says "compare"
+or "latest main". Explicit research and concrete external/risk signals remain.
+The returned `continuation` is advisory, never authorization: return to the
+already authorized owner after research, or deliver the recommendation for a
+research-only request. Explicit negative instructions take precedence.
+
 ## When It Fires
 
 Run the classifier during Phase 1 Assess, after memory load and before the

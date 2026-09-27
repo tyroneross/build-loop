@@ -25,6 +25,56 @@ def run_trigger(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 class ResearchTriggerTests(unittest.TestCase):
+    def test_request_replays_preserve_owner_and_authorization_boundary(self) -> None:
+        cases = [
+            ("Compare these worktrees and merge additive changes", False, "maintenance", "resume_requested_workflow"),
+            ("Review latest local main and prune stale branches", False, "maintenance", "resume_requested_workflow"),
+            ("Compare these worktrees and research the latest SDK before merging", True, "maintenance", "resume_requested_workflow"),
+            ("Research how to build a terminal", True, "auto", "return_recommendation"),
+            ("Research terminal approaches then implement the best option", True, "auto", "resume_requested_workflow"),
+            ("Research terminal approaches and build it", True, "auto", "resume_requested_workflow"),
+            ("Research terminal approaches, do not implement", True, "auto", "return_recommendation"),
+            ("Research terminal approaches without implementing", True, "auto", "return_recommendation"),
+            ("Research approaches and implement nothing until I approve", True, "auto", "return_recommendation"),
+            ("Compare worktrees and merge later; read-only for now", False, "maintenance", "return_recommendation"),
+            ("Compare API libraries for a worktree dashboard", True, "auto", "return_recommendation"),
+        ]
+        for task, required, context, continuation in cases:
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as td:
+                result = run_trigger("--workdir", td, "--task", task, "--effort", "M", "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["research_required"], required)
+                self.assertEqual(payload["request_context"], context)
+                self.assertEqual(payload["continuation"], continuation)
+                self.assertFalse(payload["continuation_is_authorization"])
+
+    def test_explicit_context_preserves_build_but_negation_takes_precedence(self) -> None:
+        for task, continuation in [
+            ("Research current SDK options", "resume_requested_workflow"),
+            ("Research current SDK options; do not implement", "return_recommendation"),
+        ]:
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as td:
+                result = run_trigger("--workdir", td, "--task", task, "--context", "build", "--json")
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["continuation"], continuation)
+                self.assertTrue(payload["requires_citations_or_unavailable_note"])
+
+    def test_research_context_does_not_infer_authority_from_quoted_next_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_trigger("--workdir", td, "--task", "Evaluate the 'research then build' workflow",
+                                 "--context", "research", "--json")
+            self.assertEqual(json.loads(result.stdout)["continuation"], "return_recommendation")
+
+    def test_maintenance_keeps_citations_for_explicit_external_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_trigger("--workdir", td, "--task",
+                                 "Reconcile branches; look up the latest browser compatibility before merging", "--json")
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["requires_citations_or_unavailable_note"])
+            self.assertTrue(payload["blocks_final_claims"])
+            self.assertIn("current_external", payload["triggers"])
+
     def test_novel_integration_records_research_packet_path(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             result = run_trigger(

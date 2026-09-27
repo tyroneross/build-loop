@@ -59,6 +59,16 @@ If `work_orders[]` is empty, emit `learn_line` and close. This path uses no LLM.
 
 The runner owns detection, filtering, deduplication, and the two-pattern cap. Do not repeat these decisions in the caller.
 
+Capture genuine recurring user steering through the existing run record's
+`manualInterventions` field (inline closeout: `append_run.py --manual-intervention
+"<phase>:<correction and expected behavior>"`). Exclude worker briefs, quoted
+instructions and hook output. Before proposing a new rule or skill, inspect
+whether the existing owner was loaded and followed. Prefer repairing that owner
+and replaying the original request with observable acceptance conditions.
+Record the source request and replay evidence with the existing learning object;
+do not create another preference store. Persistence and promotion remain subject
+to the user's authority and the existing gates.
+
 ### 3. Dispatch returned work
 
 Dispatch only roles returned in `work_orders[]`, using the included payload. A `self-improvement-architect` may write `.build-loop/skills/experimental/<name>/SKILL.md` or `.build-loop/agents/experimental/<name>.md`. An `implementer` may realize a returned enforcement specification.

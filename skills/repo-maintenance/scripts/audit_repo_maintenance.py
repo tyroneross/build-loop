@@ -145,6 +145,9 @@ def parse_worktrees(repo: Path) -> list[dict[str, Any]]:
                     parse_status(repo=path) if current["git_available"] else []
                 )
                 current["dirty"] = bool(current["dirty_paths"])
+                current["operations_in_progress"] = (
+                    operation_state(path) if current["git_available"] else []
+                )
                 records.append(current)
                 current = {}
             continue
@@ -1171,6 +1174,8 @@ def main() -> int:
         help="Path inside --base that should represent --compare-repo",
     )
     parser.add_argument("--compare-ref", default="HEAD", help="Source repository ref")
+    parser.add_argument("--reconcile", action="store_true", help="Draft a commit-pinned branch comparison record (JSON)")
+    parser.add_argument("--review-record", type=Path, help="Check an edited reconciliation record against fresh Git state (JSON)")
     parser.add_argument("--json", action="store_true", help="Emit JSON")
     args = parser.parse_args()
     try:
@@ -1187,6 +1192,17 @@ def main() -> int:
             compare_prefix=args.compare_prefix,
             compare_ref=args.compare_ref,
         )
+        if args.reconcile or args.review_record:
+            from reconciliation import draft, check
+
+            comparison = draft(report, run_git)
+            if args.review_record:
+                record = json.loads(args.review_record.read_text(encoding="utf-8"))
+                result = check(record, comparison, report)
+                print(json.dumps(result, indent=2, sort_keys=True))
+                return 0 if result["review_complete"] else 1
+            print(json.dumps(comparison, indent=2, sort_keys=True))
+            return 0
     except (RuntimeError, OSError, ValueError) as error:
         print(f"repository maintenance audit failed: {error}", file=sys.stderr)
         return 2
