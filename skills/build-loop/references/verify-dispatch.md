@@ -54,6 +54,16 @@ npx tsc --noEmit && npx jest --passWithNoTests
 
 Capture and report real pass/fail counts and any error output. "The agent said tests passed" is not a verification; this step is.
 
+### 3a — Machine-check every citation before accepting a fix or finding
+
+Run this before accepting any change, finding, or fact a subagent returns (standing rule, 2026-09-14):
+
+```bash
+python3 scripts/premise_revalidation.py citations --repo <target-repo> --input <lanes.json> --json
+```
+
+`<lanes.json>` is an array of `{"evidence": [{"kind", "ref", "expect"}]}`; convert a facts file line-for-line. Exit 1 means reject the item until the citation is corrected: `expect_not_found` reports the real line in `nearest_line`, and `executed_tag_on_citation` marks a code read claimed as an executed check. A pass proves the quoted text sits at the cited line, not that the claim about it is true; still read the load-bearing claims. Evidence: on 2026-09-14 this caught two lane citations off by 43 and 49 lines and one mis-tagged read that a 5-lane review would otherwise have accepted.
+
 ### 4 — Confirm cross-repo parity fixtures are byte-identical
 
 When the build involves copied or synced artifacts (e.g. native skill copies from a sibling repo, fixture pairs, generated schema files):

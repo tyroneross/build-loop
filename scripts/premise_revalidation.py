@@ -56,6 +56,10 @@ Subcommands::
     premise_revalidation.py validate --item <path> --note "<evidence>"
     premise_revalidation.py stale    [--repo P] [--window-days N]
                                       [--queue issues|backlog|followup|all]
+    premise_revalidation.py citations --repo P --input <lanes.json> [--json]
+        Re-check subagent evidence before accepting it: each `ref` of the form
+        path:line[-end] must exist, and its optional `expect` substring must sit
+        within 3 lines; `kind: executed` must be a command, not a citation.
 
 ``sweep``/``stale`` always exit 0 (a sweep/listing reports; it does not
 gate). ``gate`` exits 1 on ``stale_needs_revalidation``, ``premise_broken``,
@@ -182,6 +186,18 @@ def _freshness_date(fm: dict[str, Any]) -> tuple[str | None, str | None]:
 # ----------------------------------------------------------------------------
 
 _BACKTICK_RE = re.compile(r"`([^`\s]+)`")
+# One-level `{a,b,c}` brace-group placeholder, e.g.
+# `.build-loop/evidence/composition-{400,1000}-before.json`. Used both to
+# keep a brace-group token out of the numeric-segment rejection below (the
+# LITERAL segment "composition-{400,1000}-before.json" is not itself
+# numeric) and, in `_expand_braces`, to fan a cited path out into its
+# alternatives so a broken/exists check can run against each one.
+_BRACE_RE = re.compile(r"\{([^{}]+)\}")
+# A trailing `:N`, `:N-M`, or `:N,M` line locator on an otherwise real path
+# (`docs/observability.md:44`, `Sources/.../WorkStore.swift:4362-4407`) —
+# strip it before the existence check, which must run against the real file,
+# never a path+line composite that can never exist on disk.
+_LINE_SUFFIX_RE = re.compile(r"^(.+):(\d+)(?:[-,]\d+)?$")
 # A negative lookbehind (NOT `\b`) opens this so a leading dot-directory
 # (`.build-loop/...`, `.github/...`, `.claude-plugin/...`) is admitted into
 # the match rather than having its `.` stripped off as a "word boundary" —
@@ -202,14 +218,76 @@ _SHA_CONTEXT_RE = re.compile(
 )
 
 
-def _looks_like_path_token(tok: str) -> bool:
-    """Conservative path-shaped check — a false positive is worse than a miss."""
+def _segment_is_numeric(seg: str) -> bool:
+    """True if the WHOLE segment parses as a number (int or float) — used to
+    reject non-path tokens like `13.6/-28.6` or `hardCeilingBytes/16` that
+    are numeric ratios/params, not filesystem paths."""
+    try:
+        float(seg)
+        return True
+    except ValueError:
+        return False
+
+
+def _strip_line_suffix(tok: str) -> str:
+    """Strip a trailing `:N`, `:N-M`, or `:N,M` line locator (see
+    `_LINE_SUFFIX_RE`) so what's checked for existence is the real path."""
+    m = _LINE_SUFFIX_RE.match(tok)
+    return m.group(1) if m else tok
+
+
+def _expand_braces(path: str) -> list[str]:
+    """Expand ONE `{a,b,c}` brace group into its alternatives
+    (`x-{400,1000}-y` -> `[x-400-y, x-1000-y]`). No path in the examples this
+    module was built against nests brace groups, so only the first group is
+    expanded; a path with none returns unchanged as a 1-element list."""
+    m = _BRACE_RE.search(path)
+    if not m:
+        return [path]
+    alts = [a.strip() for a in m.group(1).split(",")]
+    prefix, suffix = path[: m.start()], path[m.end() :]
+    return [f"{prefix}{alt}{suffix}" for alt in alts]
+
+
+def _is_git_ref(repo: Path, tok: str) -> bool:
+    """True if `tok` resolves as a reachable git ref (local/remote branch or
+    tag) — covers an item citing a working-branch name (`bl/run-899386`)
+    rather than a file path. `.exists()`, not `.is_dir()`: a git WORKTREE's
+    `.git` is a FILE pointing at the real gitdir, not a directory — this
+    module runs from inside one. False (skip, never crash) when there's no
+    git metadata or git isn't on PATH."""
+    if not (repo / ".git").exists():
+        return False
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{tok}^{{commit}}"],
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    return r.returncode == 0
+
+
+def _looks_like_path_token(tok: str, repo: Path | None = None) -> bool:
+    """Conservative path-shaped check — a false positive is worse than a miss.
+
+    ``repo``, when given, is used ONLY to reject an extension-less token
+    whose first segment isn't an existing directory (a git ref/branch name
+    like ``codex/storage-accounting-integration`` looks path-shaped but
+    isn't). Callers that don't have a repo yet (bare unit tests on
+    ``extract_paths``) keep the pre-existing, repo-agnostic behavior.
+    """
     tok = tok.strip()
     if not tok or " " in tok or "\t" in tok:
         return False
     if "://" in tok or tok.startswith("http"):
         return False
     if tok.startswith("-"):
+        return False
+    if "<" in tok or ">" in tok:
+        # `/private/tmp/ambient-core-tests-<uuid>` — a templated placeholder,
+        # never a real filesystem path.
         return False
     if "::" in tok:
         # A pytest node ID (`scripts/test_x.py::TestA::test_b`) is a test
@@ -220,29 +298,101 @@ def _looks_like_path_token(tok: str) -> bool:
         return False
     if "/" not in tok:
         return False
+    segments = [s for s in tok.split("/") if s]
+    if not segments:
+        # `/`, `//` or a prose slash run: nothing path-shaped remains.
+        return False
+    for seg in segments:
+        bare_seg = _BRACE_RE.sub("", seg)  # a brace group isn't itself numeric
+        if bare_seg.startswith("-") or _segment_is_numeric(bare_seg):
+            # `13.6/-28.6`, `hardCeilingBytes/16` — a ratio or bare param,
+            # not a path.
+            return False
     if _PATH_EXT_HINT_RE.search(tok):
         return True
+    if repo is not None and not (repo / segments[0]).is_dir():
+        # No extension AND the first segment isn't a real directory here —
+        # most likely a branch name (`bl/run-899386`) or similar non-path
+        # token. `_is_git_ref` is the mechanism that still rescues a
+        # genuine branch/tag citation from `premise_broken` when it DOES
+        # reach the existence check (first segment happens to be a real
+        # dir); this filter just keeps the common case out of the checked
+        # path list entirely.
+        return False
     return tok.count("/") >= 1 and not tok.endswith("/")
 
 
-def extract_paths(body: str) -> list[str]:
+def extract_paths(body: str, repo: Path | None = None) -> list[str]:
     """Extract plausible repo-relative file paths cited in an item body.
 
     Backtick-quoted tokens (`` `scripts/gone.py` ``) and bare
     extension-bearing paths. Trailing punctuation from prose (``.``, ``,``,
-    ``)``, ``:``) is stripped so a citation at the end of a sentence still
-    matches.
+    ``)``, ``:``) is stripped, then a trailing line locator (``:44``,
+    ``:188,193``, ``:4362-4407``) is stripped, so a citation with a line
+    reference or at the end of a sentence still matches. ``repo``, when
+    given, tightens the extension-less branch-name case (see
+    ``_looks_like_path_token``); omit it to keep the old repo-agnostic
+    behavior.
+    """
+    found: set[str] = set()
+    for m in _BACKTICK_RE.finditer(body):
+        tok = _strip_line_suffix(m.group(1).rstrip(".,;:)"))
+        if _looks_like_path_token(tok, repo):
+            found.add(tok)
+    for m in _BARE_PATH_RE.finditer(body):
+        tok = _strip_line_suffix(m.group(1).rstrip(".,;:)"))
+        if _looks_like_path_token(tok, repo):
+            found.add(tok)
+    return sorted(found)
+
+
+_REF_SHAPE_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$")
+
+
+def extract_ref_candidates(body: str, repo: Path) -> list[str]:
+    """Backtick tokens that look like a branch/tag name, not a path.
+
+    ``extract_paths`` drops extension-less tokens whose first segment is not a
+    repo directory so a live branch (`bl/run-899386`) never convicts an item.
+    Dropping them silently also hid a DELETED branch citation (2026-09-14,
+    `bl/open-items-closeout-20260903`), so they are collected here and the
+    unresolvable ones route to needs_human_recheck.
     """
     found: set[str] = set()
     for m in _BACKTICK_RE.finditer(body):
         tok = m.group(1).rstrip(".,;:)")
-        if _looks_like_path_token(tok):
-            found.add(tok)
-    for m in _BARE_PATH_RE.finditer(body):
-        tok = m.group(1).rstrip(".,;:)")
-        if _looks_like_path_token(tok):
-            found.add(tok)
+        if not _REF_SHAPE_RE.match(tok) or _PATH_EXT_HINT_RE.search(tok):
+            continue
+        segments = tok.split("/")
+        if any(_segment_is_numeric(s) for s in segments):
+            continue
+        if (repo / segments[0]).is_dir():
+            continue
+        found.add(tok)
     return sorted(found)
+
+
+def strip_repo_abs_prefix(body: str, repo: Path) -> str:
+    """Collapse the repo's own absolute path out of ``body`` before
+    extraction — an absolute in-repo citation whose path contains a SPACE
+    (``/Users/.../RossLabs Ambient Agent/.build-loop/...``) otherwise splits
+    at the space (the bare-path regex can't span whitespace) and a bare
+    regex match starts fresh mid-string, extracting a garbage suffix-only
+    token (``Agent/.build-loop/...``) instead of the real repo-relative
+    path. Tries both ``repo.resolve()`` and the as-given ``repo`` (longest
+    first, so a longer literal match wins over a prefix of it)."""
+    prefixes: list[str] = []
+    try:
+        prefixes.append(str(repo.resolve()))
+    except OSError:
+        pass
+    raw = str(repo)
+    if raw not in prefixes:
+        prefixes.append(raw)
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if prefix:
+            body = body.replace(prefix + "/", "")
+    return body
 
 
 def extract_shas(body: str) -> list[str]:
@@ -407,17 +557,42 @@ def classify_item(
             )
             stale = True
 
-    paths = extract_paths(body)
+    paths = extract_paths(strip_repo_abs_prefix(body, repo), repo)
+    if paths and basename_index is None:
+        basename_index = build_basename_index(repo)
+    tracked_files: list[str] = []
+    if basename_index:
+        for lst in basename_index.values():
+            tracked_files.extend(lst)
+
     broken_paths: list[dict[str, Any]] = []
     relocated_paths: list[dict[str, Any]] = []
     for rel in paths:
-        if _anchor_target_exists(repo, rel):
+        if any(_anchor_target_exists(repo, alt) for alt in _expand_braces(rel)):
+            continue
+        # A crate-relative citation (`ambient-store/src/lib.rs` for the real
+        # `engine-rs/crates/ambient-store/src/lib.rs`) is resolved outright
+        # when exactly one tracked file ends with it; 2+ candidates need a
+        # human to pick (needs_human_recheck), same shape as the basename
+        # relocation case below.
+        suffix_hits = sorted(f for f in tracked_files if f.endswith("/" + rel))
+        if len(suffix_hits) == 1:
+            continue
+        if len(suffix_hits) > 1:
+            relocated_paths.append({"path": rel, "candidates": suffix_hits})
+            continue
+        if _is_git_ref(repo, rel):
             continue
         candidates = _relocation_candidates(repo, rel, basename_index)
         if candidates:
             relocated_paths.append({"path": rel, "candidates": candidates})
         else:
             broken_paths.append({"path": rel})
+
+    unresolved_refs = [
+        ref for ref in extract_ref_candidates(strip_repo_abs_prefix(body, repo), repo)
+        if not _is_git_ref(repo, ref)
+    ]
 
     shas = extract_shas(body)
     broken_shas: list[str] = []
@@ -430,7 +605,7 @@ def classify_item(
 
     if broken_paths or broken_shas:
         verdict = "premise_broken"
-    elif relocated_paths:
+    elif relocated_paths or unresolved_refs:
         verdict = "needs_human_recheck"
     elif stale:
         verdict = "stale_needs_revalidation"
@@ -458,6 +633,7 @@ def classify_item(
             "shas_checked": shas,
             "broken_paths": broken_paths,
             "relocated_paths": relocated_paths,
+            "unresolved_refs": unresolved_refs,
             "broken_shas": broken_shas,
         },
     }
@@ -684,6 +860,146 @@ def stale(
 
 
 # ----------------------------------------------------------------------------
+# `citations` — re-check path:line evidence refs from lane-result JSON
+# ----------------------------------------------------------------------------
+
+# `<path>:<line>` or `<path>:<start>-<end>`. Deliberately NOT the `:N,M` form
+# `extract_paths` strips — Part 2's contract (per the brief) only names the
+# single-line and dash-range shapes.
+_CITATION_REF_RE = re.compile(r"^(?P<path>.+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
+
+
+def _parse_citation_ref(ref: Any) -> tuple[str, int, int] | None:
+    """None if `ref` isn't a `<path>:<line>`/`<path>:<start>-<end>` citation
+    (e.g. a plain shell command) — the caller reports `not_a_citation` and
+    skips it rather than treating it as a failure."""
+    if not isinstance(ref, str):
+        return None
+    m = _CITATION_REF_RE.match(ref.strip())
+    if not m or not m.group("path").strip():
+        return None
+    start = int(m.group("start"))
+    end = int(m.group("end")) if m.group("end") else start
+    if start < 1 or end < start:
+        return None
+    return m.group("path").strip(), start, end
+
+
+def _resolve_citation_path(repo: Path, path: str) -> Path:
+    p = Path(path)
+    return p if p.is_absolute() else repo / path
+
+
+def check_citation(repo: Path, evidence: dict[str, Any]) -> dict[str, Any]:
+    """Re-check one evidence item's `ref`. Returns a result dict with an
+    `ok` bool the caller aggregates into the command's exit code."""
+    kind = evidence.get("kind")
+    ref = evidence.get("ref")
+    expect = evidence.get("expect")
+    parsed = _parse_citation_ref(ref)
+
+    if parsed is None:
+        return {
+            "kind": kind, "ref": ref, "status": "not_a_citation",
+            "executed_tag_on_citation": False, "nearest_line": None,
+            "path": None, "ok": True,
+        }
+
+    path, start, end = parsed
+    full = _resolve_citation_path(repo, path)
+    # `executed` evidence is supposed to be a COMMAND, not a file:line
+    # citation — flagged independently of whether the citation itself is
+    # otherwise fine, per the brief ("also flag").
+    executed_flag = kind == "executed"
+
+    if not full.is_file():
+        return {
+            "kind": kind, "ref": ref, "status": "missing_file",
+            "executed_tag_on_citation": executed_flag, "nearest_line": None,
+            "path": str(full), "ok": False,
+        }
+
+    try:
+        lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {
+            "kind": kind, "ref": ref, "status": "missing_file",
+            "executed_tag_on_citation": executed_flag, "nearest_line": None,
+            "path": str(full), "ok": False,
+        }
+
+    total = len(lines)
+    if start > total or end > total:
+        return {
+            "kind": kind, "ref": ref, "status": "line_out_of_range",
+            "executed_tag_on_citation": executed_flag, "nearest_line": None,
+            "path": str(full), "ok": False,
+        }
+
+    status = "ok"
+    nearest_line: int | None = None
+    if expect:
+        window_start = max(1, start - 3)
+        window_end = min(total, end + 3)
+        in_window = any(expect in lines[i - 1] for i in range(window_start, window_end + 1))
+        if not in_window:
+            status = "expect_not_found"
+            best_line: int | None = None
+            best_dist: int | None = None
+            for i, line_text in enumerate(lines, start=1):
+                if expect in line_text:
+                    dist = abs(i - start)
+                    if best_dist is None or dist < best_dist:
+                        best_line, best_dist = i, dist
+            nearest_line = best_line
+
+    if status == "ok" and executed_flag:
+        status = "executed_tag_on_citation"
+    return {
+        "kind": kind, "ref": ref, "status": status,
+        "executed_tag_on_citation": executed_flag, "nearest_line": nearest_line,
+        "path": str(full), "ok": status == "ok" and not executed_flag,
+    }
+
+
+def citations(repo: str | Path, input_path: str | Path) -> dict[str, Any]:
+    """Re-check every path:line evidence ref across all lanes in the JSON
+    array at ``input_path``. Never raises on well-formed input; a
+    non-dict/non-list lane or evidence entry is skipped, not fatal."""
+    repo = Path(repo)
+    data = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("citations --input must be a JSON array of lane results")
+
+    items: list[dict[str, Any]] = []
+    for lane_idx, lane in enumerate(data):
+        if not isinstance(lane, dict):
+            continue
+        lane_name = lane.get("lane", lane_idx)
+        evidence_list = lane.get("evidence")
+        if not isinstance(evidence_list, list):
+            continue
+        for ev_idx, ev in enumerate(evidence_list):
+            if not isinstance(ev, dict):
+                continue
+            result = check_citation(repo, ev)
+            result["lane"] = lane_name
+            result["evidence_index"] = ev_idx
+            items.append(result)
+
+    failed = sum(1 for it in items if not it["ok"])
+    return {
+        "command": "citations",
+        "repo": str(repo),
+        "input": str(input_path),
+        "count": len(items),
+        "failed": failed,
+        "ok": failed == 0,
+        "items": items,
+    }
+
+
+# ----------------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------------
 
@@ -721,6 +1037,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sp_stale.add_argument("--queue", default="all", choices=[*ALL_QUEUES, "all"])
     sp_stale.add_argument("--json", action="store_true", help="no-op; output is always JSON")
 
+    sp_citations = sub.add_parser("citations", help="Re-check path:line evidence refs from lane-result JSON")
+    sp_citations.add_argument("--repo", required=True)
+    sp_citations.add_argument("--input", required=True)
+    sp_citations.add_argument("--json", action="store_true", help="no-op; output is always JSON")
+
     return p
 
 
@@ -752,6 +1073,11 @@ def main(argv: list[str] | None = None) -> int:
         result = stale(args.repo, window_days=window_days, queues=args.queue)
         print(json.dumps(result, indent=2))
         return 0
+
+    if args.command == "citations":
+        result = citations(args.repo, args.input)
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
 
     return 1  # unreachable — argparse enforces `command` is one of the above
 
