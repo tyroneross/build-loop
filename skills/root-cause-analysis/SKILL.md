@@ -1,6 +1,6 @@
 ---
 name: root-cause-analysis
-description: Use after a bug is fixed to explain why it occurred and escaped controls, including recurring failures, postmortems and 5 whys. Not for fixing a live bug (use `debug-loop`) or storing past incidents (use `debugging-memory`). Find and implement a durable system correction.
+description: Use after a bug is fixed for root cause analysis; explain why it occurred and escaped controls, including recurring failures, postmortems and 5 whys. Not for fixing a live bug (use `debug-loop`) or storing past incidents (use `debugging-memory`). Find and implement a durable system correction.
 user-invocable: false
 ---
 

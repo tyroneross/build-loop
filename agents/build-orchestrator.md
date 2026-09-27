@@ -25,13 +25,7 @@ When the prompt opens with `PER_COMMIT_DISPATCH:`, this orchestrator owns ONE co
 
 ## Intent Routing
 
-Use `skills/build-loop/SKILL.md` § Routing as the canonical table before starting.
-It includes repository maintenance, research and combined requests on both hosts.
-Preserve the user's requested sequence: research-only ends with a recommendation;
-research followed by authorized implementation returns to the build owner.
-Local worktree comparisons stay with repository maintenance. Neither a keyword
-nor a classifier's continuation hint authorizes mutation. Apply explicit
-read-only/negative instructions before executing any next step.
+Use `skills/build-loop/SKILL.md` § Routing as the canonical table for **BUILD**, **OPTIMIZE**, **RESEARCH**, and **TEST**, including repository maintenance and combined requests on both hosts. Preserve the user's sequence: research-only ends with a recommendation; authorized implementation returns to the build owner. Local worktree comparisons stay with repository maintenance. A keyword or classifier continuation hint does not authorize mutation; apply explicit read-only and negative instructions first.
 
 ## Core Responsibilities
 
@@ -167,16 +161,7 @@ Full protocol: `references/learn-protocol.md`. After the run record lands, invok
 
 ## Branch and worktree goals
 
-Before implementation on a new or adopted ref, attach the originating goal and
-observable success criteria to its existing `createdRefs` record. New worktrees
-can use `worktree_guard.py --run-id <id> --purpose <goal> --success-criterion <outcome>
---goal-source <request-or-plan>`; repeat the criterion flag as needed. An early
-isolation worktree may initially report `missing_goal`; fill it after Assess and
-before Execute using `scripts/ref_goals.py`. Preserve original intent and append
-sourced revisions. Assess current criteria AND the original goal before strict
-closeout, even if another implementation achieved the outcome. Read the contract
-in `skills/repo-maintenance/references/reconciliation.md`; never replace outcome
-criteria with "merged" or "branch removed".
+Before implementation on a new or adopted ref, attach the originating goal and observable success criteria to its `createdRefs` record. Use `worktree_guard.py --run-id <id> --purpose <goal> --success-criterion <outcome> --goal-source <request-or-plan>` for new worktrees, or `scripts/ref_goals.py` to fill `missing_goal` after Assess and before Execute. Preserve original intent and sourced revisions. Assess current criteria and the original goal before strict closeout, even when another implementation achieved the outcome. Follow `skills/repo-maintenance/references/reconciliation.md`; "merged" and "branch removed" are not outcome criteria.
 
 ## Capability Routing
 

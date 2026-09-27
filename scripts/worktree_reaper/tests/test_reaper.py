@@ -73,23 +73,46 @@ def _write_state(
     *,
     active: bool = False,
     duplicate: bool = False,
+    assessed_goal: bool = False,
 ) -> None:
     execution = {
         "build_loop_id": run_id,
         "run_worktree_branch": branch,
         "run_worktree_path": str(path.resolve()),
     }
+    ref = {
+        "kind": "worktree",
+        "branch": branch,
+        "path": str(path.resolve()),
+        "status": "open",
+    }
+    if assessed_goal:
+        source_head = _git(repo, "rev-parse", branch).stdout.strip()
+        target_head = _git(repo, "rev-parse", "main").stdout.strip()
+        criterion = "README.md remains available on main"
+        ref["goal_history"] = [{
+            "revision": 1,
+            "goal": "Preserve the initial README",
+            "success_criteria": [criterion],
+            "source": "worktree reaper test fixture",
+            "reason": "initial goal",
+            "recorded_at": "2026-09-27T00:00:00Z",
+        }]
+        ref["goal_assessment"] = {
+            "revision": 1,
+            "source_head": source_head,
+            "target_head": target_head,
+            "results": [{"criterion": criterion, "met_on_target": True,
+                         "evidence": ["main includes the initial README.md"]}],
+            "original_goal": {"status": "met", "evidence": ["main includes README.md"]},
+            "approach": "The initial commit is already present on main",
+        }
     row = {
         "run_id": run_id,
         "outcome": "pass",
         "summary": f"Completed {run_id}",
         "filesTouched": ["README.md"],
-        "createdRefs": [{
-            "kind": "worktree",
-            "branch": branch,
-            "path": str(path.resolve()),
-            "status": "open",
-        }],
+        "createdRefs": [ref],
     }
     state = {
         "execution": execution if active else {},
@@ -151,7 +174,7 @@ def test_explicit_owner_released_act_delegates_to_strict_collapse(tmp_path: Path
     repo = _make_repo(tmp_path)
     path, branch, run_id = _make_run_worktree(repo, "333333")
     _age_folder(path)
-    _write_state(repo, run_id, branch, path)
+    _write_state(repo, run_id, branch, path, assessed_goal=True)
 
     result = reap_worktrees(
         repo,

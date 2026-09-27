@@ -38,9 +38,9 @@ ALLOWLIST = {
 
 # Patterns that count as a "legacy reference"
 LEGACY_PATTERNS = [
-    re.compile(r"<repo>/\.build-loop/memory"),
-    re.compile(r"<project>/\.build-loop/memory"),
-    re.compile(r"<workdir>/\.build-loop/memory"),
+    re.compile(r"<repo>/\.build-loop/memory(?![-\w])"),
+    re.compile(r"<project>/\.build-loop/memory(?![-\w])"),
+    re.compile(r"<workdir>/\.build-loop/memory(?![-\w])"),
 ]
 
 # Narrative-context allowance: a line mentioning the legacy path is fine when
