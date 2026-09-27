@@ -114,6 +114,31 @@ design-rule scan     → must-fix=0 pass/fail (uiTarget != null only)
 ui io contract       → pass/fail (uiTarget != null only)
 ```
 
+**Retrieval boundary probe (when a changed path selects, filters, ranks, or
+returns evidence):** At Assess, write a small JSON probe spec using
+`scripts/retrieval_review_probe.py`'s documented schema. Include a broad query
+and constrained variants with a named entity, role, date, or different task
+verb that could wrongly enter the same shortcut. Assert `expected_route`,
+`top_id` or `required_ids`, and `forbidden_ids` where the intended evidence is
+known; use `distinct_top_pairs` when two constrained queries must lead to
+different evidence. For a claimed read-only SQLite path, set `no_write_paths`
+to the database or an alias. The probe compares database and WAL/SHM sidecar
+metadata plus the parent directory before and after each real query. Run:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/retrieval_review_probe.py" \
+  --spec .build-loop/retrieval-probes.json --workdir "$PWD" --json
+```
+
+Exit 1 is a Validate failure and routes to Iterate. Exit 2 means the probe
+itself is invalid and must be repaired. If a changed retrieval boundary has no
+probe spec, record the criterion as unverified; a green unit suite or clean
+architecture graph does not close it. The independent auditor receives the
+spec and result in `test_evidence` and grades oracle completeness against the
+constrained cases, not only broad positives. The probe reports a concurrent
+writer as a changed no-write path; investigate attribution before changing
+the implementation.
+
 **Perturbation spot-check (advisory, WARN-only — outcome-based graders on a risk-surface change)**: an outcome-only grader (a test/assertion whose whole signal is pass/fail) can be Goodharted — a gamed or overfit implementation passes the check without satisfying the rule, and a plain pass/fail oracle cannot see it (arXiv:2606.09863 false-success; RLVR obfuscated-enumeration arXiv:2604.15149). When a grader above is **outcome-based** (test/assertion pass/fail, not a structural/lint check) AND `triggers.riskSurfaceChange` is set, re-run that grader once under an isomorphic perturbation and record whether the pass/fail flips:
 
 ```bash
