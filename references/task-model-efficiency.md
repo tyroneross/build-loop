@@ -27,3 +27,30 @@ A `supervised-pilot` receipt permits the named scope with the specified check on
 When tests support a change, use the existing resolver/config override path and retain evidence and user preference provenance. Verify the resolved concrete model and effort, then obtain an executed task receipt. Do not copy the experimental ledger into Build Loop or auto-write global routing from a DOE winner.
 
 Send one useful failure back to Benchmark Lab with input/source revisions, model identity, actual output/trace, failed requirement, usage and repair. The lab decides whether to revise the prompt, skill, runtime or model assignment. Avoid repeated blind retries and provider-wide conclusions from one case.
+
+## Sol effort pilot: repository maintenance, 2026-09-27
+
+Benchmark Lab ran one read-only review of 15 folders across two local
+repository families with requested GPT-6 Sol low, medium and high effort.
+All three reports reached the same broad preservation plan. Low was first
+available and wrote the fewest words, but misread compact versus expanded
+Git status counts as drift. High added overlap detail but called one
+schema/migration change unique although its content was already on the
+primary branch. Medium gave the clearest concise decision record here.
+Benchmark Lab commit `0d8f75ba2af1148433652788db27f78d9ae993d6`
+retains the frozen brief at
+`prompt-model-benchmark-lab/docs/benchmarks/2026-09-27-folder-consolidation-task.md`;
+raw reports, corrections and independent verdicts are in the adjacent
+`2026-09-27-folder-consolidation/` directory.
+
+Apply this as a **supervised task-shape hypothesis**, after intent routing:
+use low for a read-only first-pass inventory with an independent source check;
+use medium as the provisional default for a cross-repository decision record;
+reserve high for a specific unresolved merge, migration, architecture or
+high-consequence judgment. An explicit model choice, existing role floor and
+verification requirement still govern. One live task, changing source folders,
+and missing comparable Sol total-token and elapsed-time receipts do not prove
+equal quality, faster execution, lower total cost or a durable routing winner.
+Do not alter resolver defaults or auto-promote a rule from this pilot. A route
+change needs matched frozen cases, actual model/effort and total-use receipts,
+independent acceptance, and repair cost for the same task family.
