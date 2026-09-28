@@ -17,6 +17,34 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.47.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.46.0...build-loop-v0.47.0) (2026-09-27)
+
+
+### Features
+
+* **dispatch:** lint dispatch prompts for prohibitions without a fallback ([500d198](https://github.com/tyroneross/build-loop/commit/500d1987b05ef5fa1a0ab62c822aa6c0624766a6))
+* **dispatch:** lint write-capable briefs for a forbidden-actions clause and codex stdin (P2) ([7825a98](https://github.com/tyroneross/build-loop/commit/7825a98839174b4411844b05203f4329c97e8f7a))
+* **execute:** machine-load gate for parallel builds and perf measurements (P4a) ([e7f1a22](https://github.com/tyroneross/build-loop/commit/e7f1a22d353c34dce5398ef1bee65b939e7f08b8))
+* **integration:** branch-head drift check before integration build/smoke/deploy (P3) ([89acc38](https://github.com/tyroneross/build-loop/commit/89acc3889ba9531de29fd99cdd21f8f1624d259f))
+* **review:** auditor preflight, orchestrator-owned test evidence, strict re-review on risk runs (P1) ([1734c55](https://github.com/tyroneross/build-loop/commit/1734c55a56aa0906a035dbc3559305dfd58ed67a))
+* **review:** enforce the stranger test at commit and verdict time ([9e82464](https://github.com/tyroneross/build-loop/commit/9e8246470fffedccc3da048fcb2fdc0fe5ee1535))
+* **review:** require the stranger test for auth/admin/owner/gated surfaces ([c893ecd](https://github.com/tyroneross/build-loop/commit/c893ecde9e946d8a7d5ee46624f1c97ab144c963))
+* **search:** add fast repository evidence search ([d7b2cc9](https://github.com/tyroneross/build-loop/commit/d7b2cc903e52f0a2543cff1a660763e67eb044a0))
+* **security:** add release_surface_scan for dev surfaces compiled into Release ([b63aa48](https://github.com/tyroneross/build-loop/commit/b63aa482e39d9447c23c8e847b8cce7b72e7e3b2))
+
+
+### Bug Fixes
+
+* **ci:** gate generated skill index before push ([70d4888](https://github.com/tyroneross/build-loop/commit/70d48889eb501a1ad622922662e0f0e1bc5a9790))
+* **ci:** restore routing and closeout invariants ([8152773](https://github.com/tyroneross/build-loop/commit/81527737c04e8541dd3aea94747d233265125d99))
+* **closeout,retro:** read canonical judge-decisions.json and detect direct durable lessons ([2aaf2a7](https://github.com/tyroneross/build-loop/commit/2aaf2a7430274e4082dc27aab4490ef9c3ac21f7))
+* **fixtures:** replace private app identifiers with generic examples ([86f9d60](https://github.com/tyroneross/build-loop/commit/86f9d600d55b018a0626e14ee702837ddf7448d6))
+* **hooks:** attribute hook-created tool state instead of calling it pre-existing ([dbb5149](https://github.com/tyroneross/build-loop/commit/dbb514982f22651398b9885773af4c8b6432db24))
+* **memory:** classify the target workdir, not only the process cwd ([3df75cf](https://github.com/tyroneross/build-loop/commit/3df75cf05cff9b159ecb84b06ce7f05e400b8382))
+* **memory:** keep throwaway workdirs out of the canonical memory store ([6635b0c](https://github.com/tyroneross/build-loop/commit/6635b0c442263e899985b1d89e024592e8bca4bb))
+* **package:** ship search dependencies and classify new surfaces ([6e279a5](https://github.com/tyroneross/build-loop/commit/6e279a59aa439cbef69c3b0ce926c2268bdd4142))
+* **review:** close independent-auditor findings on the stranger-test + P1-P4 build ([b9187f9](https://github.com/tyroneross/build-loop/commit/b9187f9fe0d7bee93c2bc9efe0da256ffdf9005a))
+
 ## [0.46.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.45.1...build-loop-v0.46.0) (2026-09-24)
 
 
