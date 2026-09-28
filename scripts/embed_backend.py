@@ -3,46 +3,45 @@
 # SPDX-License-Identifier: Apache-2.0
 """Embedding backend abstraction for repo-local episodic memory.
 
-Default: MLX (`mlx-community/mxbai-embed-large-v1`, 1024-dim). Faster
-per-call once warm (~10ms) and dramatically faster on batches (~2ms
-amortized at batch=10) compared to Ollama HTTP (~15ms warm).
-
-Fallback: Ollama (`bge-m3`, 1024-dim). Hybrid recall Phase A migrated
-the Ollama default from `mxbai-embed-large` to BGE-M3 — same dimension,
-better hybrid retrieval performance, ColBERT-mode-ready for Phase E
-late-interaction. The MLX default stays at mxbai-embed-large-v1 because
-no `mlx-community/bge-m3` weights are cached locally; cross-backend
-vectors are NOT comparable, so callers writing rows must record
-`embedding_model_version` and recall must re-embed when querying rows
+Default: Ollama (`bge-m3`, 1024-dim), the same model stored memory is
+embedded with (scripts/migrate_reembed_to_bgem3.py DEFAULT_TARGET). The
+former MLX default, `mlx-community/mxbai-embed-large-v1`, lives in an
+unrelated vector space (-0.049 cosine on identical text), so it was
+removed. Ollama returns only bge-m3's dense vector; its sparse/ColBERT
+outputs are not available on this path. Callers writing rows must record
+`embedding_model_version`; recall must re-embed when querying rows
 written by a different model. See research entry
 `build-loop-search-architecture` for rationale.
 
 The active backend is chosen on first call. When $EMBED_BACKEND is unset,
-a warm local daemon is preferred; an explicit $EMBED_BACKEND
-({"mlx","ollama"}) bypasses the daemon and selects the requested in-process
-backend. If MLX init fails (import error, model load error, first-call
-failure), the module logs a warning to stderr and falls through to Ollama
-for the rest of the process. Once fallen through, MLX is not retried —
-keeps stop-hook latency predictable.
+a warm local daemon is preferred, but only when it serves the same model
+the in-process default would use; a daemon serving any other model is
+ignored, because its vectors live in a different embedding space. An
+explicit $EMBED_BACKEND ({"ollama","mlx"}) bypasses the daemon and selects
+the requested in-process backend. There is no cross-backend fallback: a
+failed backend raises instead of silently switching embedding spaces
+mid-run.
 
 Public API:
   embed(text)                -> list[float]              (single text)
   embed([t1, t2, ...])       -> list[list[float]]        (batched)
   dimension()                -> int                       (always 1024)
-  active_backend()           -> "mlx" | "ollama"          (after first call)
+  active_backend()           -> "ollama" | "mlx" | "daemon:<name>"
   active_model()             -> model id string           (after first call)
 
 Env vars:
-  EMBED_BACKEND   "mlx" (default) or "ollama"
-  EMBED_MODEL     model id (defaults: mxbai-embed-large-v1 for MLX,
-                  bge-m3 for Ollama)
-  MLX_FORCE_FAIL  any truthy value forces fallback (used by tests)
+  EMBED_BACKEND   "ollama" (default) or "mlx"
+  EMBED_MODEL     model id (default: bge-m3 for Ollama). REQUIRED with
+                  EMBED_BACKEND=mlx: there is no MLX default, because the
+                  stored vectors are bge-m3 and an MLX model must be
+                  chosen to match that space deliberately.
+  MLX_FORCE_FAIL  any truthy value makes MLX init fail (used by tests)
 
 Output format: Python lists of floats. Callers don't need numpy / mlx.
 
-Exit semantics: this module never calls sys.exit. On total backend
-failure (MLX broken AND Ollama unreachable), embed() raises
-RuntimeError. Callers decide policy (write_decision.py logs and
+Exit semantics: this module never calls sys.exit. On backend failure
+(Ollama unreachable, or an explicitly requested MLX that cannot load),
+embed() raises RuntimeError. Callers decide policy (write_decision.py logs and
 swallows; recall.py exits 2).
 """
 from __future__ import annotations
@@ -54,7 +53,6 @@ import urllib.request
 from typing import Sequence
 
 EMBED_DIM = 1024
-MLX_DEFAULT_MODEL = "mlx-community/mxbai-embed-large-v1"
 # Phase A hybrid-recall migration: Ollama default switched from
 # `mxbai-embed-large` to `bge-m3`. Both are 1024-dim, so the pgvector
 # column dimension is unchanged, but the vector spaces are NOT
@@ -168,7 +166,7 @@ class MLXBackend:
     object is cached for the process lifetime.
     """
 
-    def __init__(self, model_id: str = MLX_DEFAULT_MODEL) -> None:
+    def __init__(self, model_id: str) -> None:
         self.model_id = model_id
         self._model = None
         self._tokenizer = None
@@ -369,44 +367,51 @@ def _probe_daemon() -> DaemonBackend | None:
 
 
 def _select_backend():
-    global _BACKEND, _FALLBACK_REASON
+    global _BACKEND
     if _BACKEND is not None:
         return _BACKEND
 
     explicit_backend = "EMBED_BACKEND" in os.environ
-    requested = os.environ.get("EMBED_BACKEND", "mlx").lower().strip()
+    requested = os.environ.get("EMBED_BACKEND", "ollama").lower().strip()
     custom_model = os.environ.get("EMBED_MODEL")
 
     # Phase H: default selection may use the warm daemon. An explicit
     # EMBED_BACKEND is a caller override and must select the requested
-    # in-process backend even when a daemon is already warm.
+    # in-process backend even when a daemon is already warm. A daemon
+    # serving a different model than the default is ignored: its vectors
+    # are in another embedding space (mxbai vs bge-m3 measured -0.049).
     if not explicit_backend:
         daemon = _probe_daemon()
-        if daemon is not None:
+        want = custom_model or OLLAMA_DEFAULT_MODEL
+        if daemon is not None and daemon.model == want:
             _BACKEND = daemon
             return _BACKEND
+        if daemon is not None:
+            _log(
+                f"ignoring embed daemon: it serves model={daemon.model!r}, "
+                f"expected {want!r}; embedding in-process instead"
+            )
 
     if requested == "ollama":
         _BACKEND = OllamaBackend(model=custom_model or OLLAMA_DEFAULT_MODEL)
         return _BACKEND
 
     if requested != "mlx":
-        _log(f"unknown EMBED_BACKEND={requested!r}; using mlx")
+        raise RuntimeError(f"unknown EMBED_BACKEND={requested!r}; use 'ollama' or 'mlx'")
 
-    # Try MLX; fall through to Ollama on any error.
-    candidate = MLXBackend(model_id=custom_model or MLX_DEFAULT_MODEL)
-    try:
-        # Force the lazy load NOW so failure is detected before first
-        # production call. Adds ~220ms one-time cold start; we eat it
-        # here so the first user-facing call is steady-state.
-        candidate._ensure_loaded()
-        _BACKEND = candidate
-        return _BACKEND
-    except Exception as e:  # noqa: BLE001
-        _FALLBACK_REASON = f"MLX init failed: {e!r}"
-        _log(f"falling back to ollama ({_FALLBACK_REASON})")
-        _BACKEND = OllamaBackend(model=OLLAMA_DEFAULT_MODEL)
-        return _BACKEND
+    if not custom_model:
+        raise RuntimeError(
+            "EMBED_BACKEND=mlx requires EMBED_MODEL: stored vectors are "
+            f"{OLLAMA_DEFAULT_MODEL}, and an MLX model in another space would "
+            "make recall compare unrelated vectors"
+        )
+    candidate = MLXBackend(model_id=custom_model)
+    # Force the lazy load NOW so failure surfaces before the first
+    # production call. No fallback to Ollama: that would switch
+    # embedding spaces mid-run.
+    candidate._ensure_loaded()
+    _BACKEND = candidate
+    return _BACKEND
 
 
 def embed(text):  # type: ignore[no-untyped-def]
@@ -445,7 +450,7 @@ def active_model() -> str:
 
 
 def fallback_reason() -> str | None:
-    """Return why we fell through to Ollama, or None if MLX is active."""
+    """Always None: cross-backend fallback was removed. Kept for callers."""
     _select_backend()
     return _FALLBACK_REASON
 
