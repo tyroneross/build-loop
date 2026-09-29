@@ -175,3 +175,46 @@ def test_channel_subpaths(temp_repo: Path, tmp_path: Path, monkeypatch):
     slug = "my-cool-app/workers"
     d = ap.app_channel_dir(slug)
     assert d.parts[-2:] == ("my-cool-app", "workers")
+
+
+def test_pre_edit_runs_git_common_dir_once_per_path(
+    temp_repo: Path, tmp_path: Path, monkeypatch
+):
+    """One ``pre-edit`` invocation must not re-run ``git rev-parse
+    --git-common-dir`` for a path it already resolved (latency regression:
+    the hook fires on every tool call)."""
+    import shutil
+
+    scripts_dir = str(_HERE.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from rally_point import discovery_bridge, hooks
+
+    git_dir = os.path.dirname(shutil.which("git") or "/usr/bin/git")
+    monkeypatch.setenv("PATH", f"{git_dir}:/usr/bin:/bin")  # no native rally
+    monkeypatch.setenv("BUILD_LOOP_DISABLE_SIBLING_RALLY", "1")
+    monkeypatch.setenv("BUILD_LOOP_DISABLE_BINARY_FETCH", "1")
+    monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(tmp_path / "apps"))
+    discovery_bridge.clear_cache()
+
+    calls: list[str] = []
+    real_run = subprocess.run
+
+    def counting_run(cmd, *args, **kwargs):
+        if list(cmd)[:3] == ["git", "rev-parse", "--git-common-dir"]:
+            calls.append(str(kwargs.get("cwd")))
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+    rc = hooks.main(
+        [
+            "pre-edit",
+            "--workdir", str(temp_repo),
+            "--file-path", str(temp_repo / "f.txt"),
+            "--session-id", "regress",
+        ]
+    )
+    assert rc == 0
+    assert calls, "expected at least one git-common-dir lookup"
+    dupes = {c: calls.count(c) for c in set(calls) if calls.count(c) > 1}
+    assert not dupes, f"git rev-parse --git-common-dir repeated per path: {dupes}"

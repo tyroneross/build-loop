@@ -27,57 +27,10 @@ PKG="$SCRIPT_DIR/../scripts/rally_point"
 
 [ -d "$PKG" ] || exit 0
 
-# Read stdin (Claude Code PreToolUse JSON event). Best-effort; an empty
-# or malformed payload simply means "no operative-repo hint" — the legacy
-# revision-stat hint still fires using the workdir's channel.
-# Cap at 64 KB: a pathological Bash command must not exhaust ARG_MAX when
-# the payload is forwarded to Python via the environment.
-STDIN_JSON=""
-if [ ! -t 0 ]; then
-    STDIN_JSON=$(head -c 65536 2>/dev/null || true)
-fi
-
-# Extract file_path (Edit/Write) and command (Bash) from the event JSON.
-# Both are optional; pre-edit treats them as resolution hints, not gates.
-# Print them on two separate lines so the shell does not have to deal
-# with NUL handling across portable awk/read.
-FILE_PATH=""
-TOOL_CMD=""
-EVENT_SESSION_ID=""
-if [ -n "$STDIN_JSON" ]; then
-    EXTRACTED=$(STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
-import json, os, sys
-raw = os.environ.get("STDIN_JSON") or ""
-try:
-    d = json.loads(raw)
-except (ValueError, TypeError):
-    sys.exit(0)
-ti = (d.get("tool_input") or {}) if isinstance(d.get("tool_input"), dict) else {}
-fp = ti.get("file_path") or ti.get("path") or ti.get("filename") or ""
-cmd = ti.get("command") or ""
-session_id = d.get("session_id") or ""
-# Emit fp as base64 (single line, no newlines), then cmd as base64. The
-# bash side decodes; this avoids embedded-newline parsing entirely.
-import base64
-b64 = lambda s: base64.b64encode(s.encode("utf-8", "replace")).decode("ascii") if s else ""
-sys.stdout.write(b64(fp) + "\n" + b64(cmd) + "\n" + b64(session_id) + "\n")
-PYEOF
-)
-    if [ -n "$EXTRACTED" ]; then
-        FILE_PATH_B64=$(printf '%s\n' "$EXTRACTED" | sed -n '1p')
-        TOOL_CMD_B64=$(printf '%s\n' "$EXTRACTED" | sed -n '2p')
-        EVENT_SESSION_ID_B64=$(printf '%s\n' "$EXTRACTED" | sed -n '3p')
-        if [ -n "$FILE_PATH_B64" ]; then
-            FILE_PATH=$(printf '%s' "$FILE_PATH_B64" | base64 --decode 2>/dev/null || true)
-        fi
-        if [ -n "$TOOL_CMD_B64" ]; then
-            TOOL_CMD=$(printf '%s' "$TOOL_CMD_B64" | base64 --decode 2>/dev/null || true)
-        fi
-        if [ -n "$EVENT_SESSION_ID_B64" ]; then
-            EVENT_SESSION_ID=$(printf '%s' "$EVENT_SESSION_ID_B64" | base64 --decode 2>/dev/null || true)
-        fi
-    fi
-fi
+# The PreToolUse JSON event (Edit/Write file_path, Bash command, session_id)
+# is parsed inside hooks.py via --event-stdin (64 KB cap, malformed JSON = no
+# hints), so this wrapper spawns one interpreter instead of two. All fields
+# are optional resolution hints, not gates.
 
 # Single call: pre_edit_hint (legacy, workdir channel) + pre_edit_join
 # (throttled, operative-repo channel). Both are advisory and fail-open.
@@ -88,12 +41,10 @@ fi
 # without polluting the terminal by default.
 if [ "${BUILD_LOOP_RALLY_DEBUG:-0}" = "1" ]; then
     python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
-        --session-id "$EVENT_SESSION_ID" \
-        --file-path "$FILE_PATH" --command "$TOOL_CMD" || exit 0
+        --event-stdin || exit 0
 else
     python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
-        --session-id "$EVENT_SESSION_ID" \
-        --file-path "$FILE_PATH" --command "$TOOL_CMD" 2>/dev/null || exit 0
+        --event-stdin 2>/dev/null || exit 0
 fi
 
 exit 0

@@ -11,6 +11,7 @@ hook scripts.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
@@ -26,7 +27,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from rally_point import actor_identity, channel_paths, checkpoint, presence, revision
+    from rally_point import actor_identity, channel_paths, presence, revision
     from rally_point.backend_adapter import (
         acknowledge,
         audit_next,
@@ -36,7 +37,7 @@ try:
         write_presence as write_backend_presence,
     )
 except ImportError:
-    from . import actor_identity, channel_paths, checkpoint, presence, revision
+    from . import actor_identity, channel_paths, presence, revision
     from .backend_adapter import (
         acknowledge,
         audit_next,
@@ -45,6 +46,28 @@ except ImportError:
         room_snapshot,
         write_presence as write_backend_presence,
     )
+
+
+def _load_checkpoint():
+    """Import ``checkpoint`` on first use.
+
+    It drags in changes -> fact_v1 -> post -> producer_metadata (~100 ms), and
+    only the session-start subcommands need it; the per-tool-use ``pre-edit``
+    hot path never does.
+    """
+    try:
+        from rally_point import checkpoint
+    except ImportError:
+        from . import checkpoint
+    return checkpoint
+
+
+def __getattr__(name: str):
+    # ``hooks.checkpoint`` stays reachable (tests patch through it) without
+    # paying the import at module load.
+    if name == "checkpoint":
+        return _load_checkpoint()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Throttle window — skip presence write when a fresh record for THIS
@@ -327,8 +350,11 @@ def _surface_coordination_refusal(context, operation: str) -> None:
     )
 
 
-def _resolve_existing_channel(workdir: Path) -> tuple[str, Path] | None:
-    context = resolve_context(workdir)
+def _resolve_existing_channel(
+    workdir: Path, *, context=None
+) -> tuple[str, Path] | None:
+    if context is None:
+        context = resolve_context(workdir)
     if context.native or context.envelope.backend != "build-loop-local":
         return None
     channel_dir = context.local_channel_dir
@@ -375,7 +401,7 @@ def session_start_restore(
     if resolved is None:
         return 0
     slug, channel_dir = resolved
-    env = checkpoint.checkpoint_read(
+    env = _load_checkpoint().checkpoint_read(
         channel_dir,
         session_id=_session_start_id(slug),
         my_files=[],
@@ -419,7 +445,7 @@ def session_start_advance(
     if resolved is None:
         return 0
     slug, channel_dir = resolved
-    checkpoint.checkpoint_read(
+    _load_checkpoint().checkpoint_read(
         channel_dir,
         session_id=_session_start_id(slug),
         my_files=[],
@@ -437,8 +463,10 @@ def pre_edit_hint(
     *,
     tool: str = "claude_code",
     session_id: str | None = None,
+    context=None,
 ) -> int:
-    context = resolve_context(workdir)
+    if context is None:
+        context = resolve_context(workdir)
     if context.native:
         native_identity = actor_identity.resolve_identity(tool, session_id)
         result = audit_next(context, tool=native_identity.native_tool)
@@ -452,7 +480,7 @@ def pre_edit_hint(
     if context.envelope.backend != "build-loop-local":
         _surface_coordination_refusal(context, "pre-tool coordination read")
         return 0
-    resolved = _resolve_existing_channel(workdir)
+    resolved = _resolve_existing_channel(workdir, context=context)
     if resolved is None:
         return 0
     slug, channel_dir = resolved
@@ -464,6 +492,13 @@ def pre_edit_hint(
     return 0
 
 
+def _same_path(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def pre_edit_join(
     workdir: Path,
     *,
@@ -473,6 +508,7 @@ def pre_edit_join(
     session_id: str | None = None,
     model: str = "unknown",
     now: float | None = None,
+    context=None,
 ) -> int:
     """Per-tool-use throttled re-join of the operative repo's Rally room.
 
@@ -501,7 +537,10 @@ def pre_edit_join(
     if op is None:
         return 0
     try:
-        context = resolve_context(op)
+        # Reuse the caller's already-resolved workdir context when the
+        # operative repo is the workdir itself (the common case).
+        if context is None or not _same_path(op, workdir):
+            context = resolve_context(op)
         slug = context.envelope.app_slug
     except Exception:
         return 0
@@ -611,6 +650,41 @@ def session_start_safe(
     )
 
 
+_EVENT_STDIN_MAX_BYTES = 65536
+
+
+def read_event_stdin(stream=None) -> dict[str, str]:
+    """Extract ``file_path`` / ``command`` / ``session_id`` from a hook event.
+
+    Reads at most 64 KB of Claude Code PreToolUse JSON. Malformed, empty, or
+    non-object payloads yield empty hints. Never raises.
+    """
+    empty = {"file_path": "", "command": "", "session_id": ""}
+    try:
+        stream = stream if stream is not None else sys.stdin.buffer
+        if getattr(stream, "isatty", lambda: False)():
+            return empty
+        raw = stream.read(_EVENT_STDIN_MAX_BYTES)
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        data = json.loads(raw)
+    except Exception:
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    ti = data.get("tool_input")
+    ti = ti if isinstance(ti, dict) else {}
+
+    def _s(value) -> str:
+        return value if isinstance(value, str) else ""
+
+    return {
+        "file_path": _s(ti.get("file_path") or ti.get("path") or ti.get("filename")),
+        "command": _s(ti.get("command")),
+        "session_id": _s(data.get("session_id")),
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="subcommand", required=True)
@@ -635,6 +709,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             sp.add_argument("--tool", default="claude_code")
             sp.add_argument("--session-id", default=None)
             sp.add_argument("--model", default="unknown")
+            sp.add_argument(
+                "--event-stdin",
+                action="store_true",
+                help="Read the Claude Code event JSON from stdin (64 KB cap); "
+                "explicit --file-path/--command/--session-id win when non-empty.",
+            )
             sp.add_argument(
                 "--skip-join",
                 action="store_true",
@@ -672,12 +752,26 @@ def main(argv: list[str] | None = None) -> int:
                 session_id=args.session_id,
             )
         if args.subcommand == "pre-edit":
+            file_path = args.file_path
+            bash_command = args.bash_command
+            session_id = args.session_id
+            if args.event_stdin:
+                event = read_event_stdin()
+                file_path = file_path or event["file_path"]
+                bash_command = bash_command or event["command"]
+                session_id = session_id or event["session_id"]
+            # Resolve the workdir context ONCE; the hint and the join reuse it.
+            try:
+                context = resolve_context(workdir)
+            except Exception:
+                context = None
             # Legacy revision-advanced hint (workdir's existing channel).
             try:
                 pre_edit_hint(
                     workdir,
                     tool=args.tool,
-                    session_id=args.session_id,
+                    session_id=session_id,
+                    context=context,
                 )
             except Exception:
                 pass
@@ -685,11 +779,12 @@ def main(argv: list[str] | None = None) -> int:
             if not args.skip_join:
                 pre_edit_join(
                     workdir,
-                    file_path=args.file_path,
-                    command=args.bash_command,
+                    file_path=file_path,
+                    command=bash_command,
                     tool=args.tool,
-                    session_id=args.session_id,
+                    session_id=session_id,
                     model=args.model,
+                    context=context,
                 )
             return 0
     except Exception:

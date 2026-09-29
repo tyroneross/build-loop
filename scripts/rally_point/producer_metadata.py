@@ -20,7 +20,7 @@ Returned shape (frozen as part of ``producer_protocol_version = "1.0"``):
     }
 
 Capture policy:
-- Resolved ONCE at module import (process-local cache). The build-loop
+- Resolved ONCE on first use (process-local cache). The build-loop
   cache or source tree does not change mid-process, so re-running git
   rev-parse per write would be pointless overhead.
 - ``producer_commit_sha`` may be ``None`` when neither a ``.git`` nor a
@@ -162,10 +162,18 @@ def _capture() -> dict[str, Any]:
     }
 
 
-# Cached at import time. Re-import in tests after monkeypatching the
-# environment if you need a fresh capture (see test_producer_metadata).
-_CACHED: dict[str, Any] = _capture()
+# Captured lazily on first use (the capture spawns git; hook hot paths that
+# never write a record must not pay for it). Tests call
+# ``reset_cache_for_tests`` after monkeypatching the environment.
+_CACHED: dict[str, Any] | None = None
 _SHA_MISSING_WARNED = False
+
+
+def _cached() -> dict[str, Any]:
+    global _CACHED
+    if _CACHED is None:
+        _CACHED = _capture()
+    return _CACHED
 
 
 def producer_metadata() -> dict[str, Any]:
@@ -180,16 +188,17 @@ def producer_metadata() -> dict[str, Any]:
     silently rides into the channel. Subsequent calls stay silent.
     """
     global _SHA_MISSING_WARNED
-    if _CACHED.get("producer_commit_sha") is None and not _SHA_MISSING_WARNED:
+    cached = _cached()
+    if cached.get("producer_commit_sha") is None and not _SHA_MISSING_WARNED:
         _SHA_MISSING_WARNED = True
         print(
             f"rally-point: producer_commit_sha unavailable for "
             f"{PRODUCER_NAME} runtime at "
-            f"{_CACHED.get('producer_runtime_path')} — cache-vs-source "
+            f"{cached.get('producer_runtime_path')} — cache-vs-source "
             f"skew will not be detectable for this session.",
             file=sys.stderr,
         )
-    return dict(_CACHED)
+    return dict(cached)
 
 
 def reset_cache_for_tests() -> None:

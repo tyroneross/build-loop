@@ -966,6 +966,7 @@ def clear_cache() -> None:
     """
     _CACHE.clear()
     _MIGRATED_THIS_PROCESS.clear()
+    channel_paths.clear_cache()
     try:
         from . import kind_capability
     except ImportError:  # pragma: no cover — flat-module import fallback

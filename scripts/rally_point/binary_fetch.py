@@ -37,8 +37,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 # --- Pin -------------------------------------------------------------------
@@ -113,6 +111,11 @@ def version_matches_pin(binary: Path) -> bool:
 
 
 def _http_get(url: str, timeout: int) -> bytes | None:
+    # Lazy: urllib/http.client cost ~30 ms and the hook hot path only needs
+    # cached_binary_path().
+    import urllib.error
+    import urllib.request
+
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 — https release URL
             if getattr(resp, "status", 200) != 200:

@@ -81,7 +81,37 @@ def _normalize_base(name: str) -> str:
     return base[:64]
 
 
+# Per-process memo. A hook process lives ~100 ms, but resolves the same paths
+# several times; each miss costs a ``git`` subprocess. Bounded so a long-lived
+# caller cannot grow it without limit. Tests that ``git init`` / add a remote
+# mid-process call ``clear_cache()`` (``discovery_bridge.clear_cache`` does).
+_CACHE_MAX_ENTRIES = 64
+_ROOT_CACHE: dict[str, Path | None] = {}
+_REMOTE_CACHE: dict[str, str] = {}
+
+
+def clear_cache() -> None:
+    """Drop the memoised git lookups. Primarily for tests."""
+    _ROOT_CACHE.clear()
+    _REMOTE_CACHE.clear()
+
+
+def _remember(cache: dict, key: str, value) -> None:
+    if len(cache) >= _CACHE_MAX_ENTRIES:
+        cache.pop(next(iter(cache)), None)
+    cache[key] = value
+
+
 def _canonical_repo_root(cwd_path: Path) -> Path | None:
+    key = str(cwd_path)
+    if key in _ROOT_CACHE:
+        return _ROOT_CACHE[key]
+    result = _canonical_repo_root_uncached(cwd_path)
+    _remember(_ROOT_CACHE, key, result)
+    return result
+
+
+def _canonical_repo_root_uncached(cwd_path: Path) -> Path | None:
     """Return the canonical repo root for ``cwd_path`` or ``None``.
 
     Runs ``git rev-parse --git-common-dir`` scoped to ``cwd_path``. A
@@ -213,17 +243,21 @@ def app_channel_dir(slug: str) -> Path:
 def _repo_storage_identity(cwd: Path, slug: str) -> str:
     """Return a stable, non-secret identity for collision-safe local storage."""
     canonical = canonical_workdir(cwd)
-    remote = ""
-    try:
-        remote = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=str(canonical),
-            check=False,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except OSError:
-        remote = ""
+    key = str(canonical)
+    if key in _REMOTE_CACHE:
+        remote = _REMOTE_CACHE[key]
+    else:
+        try:
+            remote = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=key,
+                check=False,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except OSError:
+            remote = ""
+        _remember(_REMOTE_CACHE, key, remote)
     material = f"remote:{remote}" if remote else f"path:{canonical}"
     return f"{material}\x1fcomponent:{slug}"
 
