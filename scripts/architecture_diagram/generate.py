@@ -21,7 +21,6 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -29,7 +28,7 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-GEN_VERSION = "2.0.0"
+GEN_VERSION = "2.0.1"
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.M)
@@ -54,21 +53,6 @@ def _short(text: str, n: int = 110) -> str:
     return text[: n - 1] + "…" if len(text) > n else text
 
 
-def git_last_updated(repo: Path, relpath: str) -> dict:
-    """Last commit that touched a file -> {author, date}. Stable unless the file changes
-    (component files are never modified by the generator), so it doesn't churn model.json."""
-    try:
-        out = subprocess.check_output(
-            ["git", "-C", str(repo), "log", "-1", "--format=%an|%aI", "--", relpath],
-            text=True, stderr=subprocess.DEVNULL).strip()
-        if out and "|" in out:
-            a, d = out.split("|", 1)
-            return {"author": a, "date": d[:10]}
-    except Exception:
-        pass
-    return {"author": "", "date": ""}
-
-
 def _extract_desc(fm: str) -> str:
     """Pull the human description out of agent/skill frontmatter (drops <example> blocks)."""
     dm = re.search(r"^description:\s*\|?\s*(.+?)(?=\n[a-zA-Z_][a-zA-Z0-9_-]*:\s|\Z)", fm, re.DOTALL | re.M)
@@ -80,7 +64,7 @@ def _extract_desc(fm: str) -> str:
 # ---------------- auto-discovered inventories ----------------
 
 def parse_agents(repo: Path) -> dict[str, dict]:
-    """agents/*.md -> {name: {model, description, file, last_updated{author,date}}}.
+    """agents/*.md -> {name: {model, description, file}}.
 
     Rich enough that the diagram is a source of truth for what each agent does.
     """
@@ -99,13 +83,12 @@ def parse_agents(repo: Path) -> dict[str, dict]:
             "model": _strip(mo.group(1)) if mo else "",
             "description": _extract_desc(m.group(1)),
             "file": rel,
-            "last_updated": git_last_updated(repo, rel),
         }
     return out
 
 
 def parse_skills(repo: Path) -> dict[str, dict]:
-    """skills/**/SKILL.md -> {name: {description, file, last_updated{author,date}}}."""
+    """skills/**/SKILL.md -> {name: {description, file}}."""
     out: dict[str, dict] = {}
     sk = repo / "skills"
     if not sk.exists():
@@ -120,7 +103,7 @@ def parse_skills(repo: Path) -> dict[str, dict]:
             desc = _extract_desc(m.group(1))
         name = name or md.parent.name
         rel = str(md.relative_to(repo))
-        out[name] = {"description": desc, "file": rel, "last_updated": git_last_updated(repo, rel)}
+        out[name] = {"description": desc, "file": rel}
     return out
 
 
@@ -173,7 +156,8 @@ def load_flow(repo: Path) -> dict:
 
 
 def _static_provenance() -> dict:
-    # content-derived only (no git sha) so model.json doesn't churn per-commit.
+    # Commit attribution changes after the pre-commit generator runs. Keep
+    # this checked-in graph content-derived so committing cannot make it stale.
     return {
         "generator": f"scripts/architecture_diagram/generate.py@{GEN_VERSION}",
         "source": "architecture/ARCHITECTURE.md",
@@ -271,8 +255,7 @@ def components_md(model: dict) -> str:
         "",
         "<details><summary>agents</summary>",
         "",
-        *[f"- `{n}` — {d.get('model') or '—'} · _updated {d['last_updated']['date']} "
-          f"by {d['last_updated']['author'] or '—'}_ — {d.get('description', '')}"
+        *[f"- `{n}` — {d.get('model') or '—'} — {d.get('description', '')}"
           for n, d in sorted(a.items())],
         "</details>",
         "<details><summary>skills</summary>",
