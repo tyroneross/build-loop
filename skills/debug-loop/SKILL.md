@@ -11,6 +11,8 @@ user-invocable: false
 
 A 7-phase debugging loop: investigate with structured root-cause methods, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures.
 
+Investigation continues automatically into repair and verification for every confirmed issue within the user's authorized goal. Do not report a diagnosis as completion or ask whether to implement the fix. Verify suspected issues first; honor explicit read-only requests and record real blockers while continuing independent repairs. Follow `skills/build-loop/SKILL.md` §"Confirmed issues auto-repair" and its final findings gate.
+
 ## Scope Check
 
 Before entering the loop, assess whether it's warranted. The trigger is the **verdict category**, not a numeric score — research shows LLM-assigned confidence scores are poorly calibrated for open-ended tasks (Tian et al., EMNLP 2023; 49-84% calibration error on open-ended generation).

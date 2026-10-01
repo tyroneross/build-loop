@@ -118,11 +118,11 @@ Required before Phase 2 done:
 ### Sub-step A — Critic
 
 - Dispatch `commit-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`) with full `rubric_criteria_ids` and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. Replaces retired `sonnet-critic` per plan §15.1.
-- **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Major variances + non-auto-fixable + judgment calls go to Sub-step G Report's `## Notes from judges` for user review.
+- **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Verify major variances and non-auto-fixable findings; confirmed issues within the authorized goal route to repair under C-REPAIR. Only unresolved scope decisions or genuine blockers go to Sub-step G Report for user review.
 - **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
-- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 5, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
+- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 5, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json`, verify the finding, and repair confirmed issues within the authorized goal before completion.
 - After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 
 ### Sub-step B — Validate
@@ -220,6 +220,9 @@ Drain non-destructive open items. Run `python3 scripts/autonomy_gate.py` against
 
 ### Sub-step G — Report (final pass only)
 
+**Confirmed-finding exit gate (C-REPAIR).** Apply `skills/build-loop/SKILL.md` §"Confirmed issues auto-repair". Classify every finding in the final reviewer JSON with boolean `confirmed` and `in_scope` (authorized for repair), supporting evidence, and scope rationale. Run `python3 scripts/review_finding_gate.py --findings-json <classified-review.json> --require-classification --json` (repeat the flag for multiple reviewers). Open critical/high findings and confirmed in-scope findings at ANY severity block completion. A fixed/resolved state requires verification proof. A blocker or escalation is not repair proof: continue independent fixes and report partial when the blocked criterion cannot be verified. Missing or non-boolean classification blocks this final gate; classify legacy reviewer JSON before retrying. Without this flag, standalone legacy consumers retain severity blocking.
+
+
 Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
 
 The report markdown sections, in this order:
@@ -232,7 +235,7 @@ The report markdown sections, in this order:
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
 - `## Net LOC` — one line from `scripts/run_loc_delta.py` over the run's diff range: lines added / deleted / net + files changed / created. Pure observability, NO gate — it surfaces growth so the "no additional code" goal is visible and Phase 6 can watch the trend. Compute via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/run_loc_delta.py --workdir "$PWD" --range "<base>..<head>"` (use the run's first commit's parent .. HEAD; fall back to `--working` when no range is known). Fail-open — an unavailable delta renders `_(loc delta unavailable: ...)_` and never blocks the report.
 
-**Flagged-issue disposition (no bare flags).** Every open finding surfaced this run is DISPOSITIONED, not just listed: build-loop's OWN repo → fixed (cite commit) in `## Done`; ANY OTHER repo → filed on the Operations Center queue via `python3 scripts/file_to_operations_center.py --repo <repo> --title <..> --urgency <..> --json` and reported in `## Done` with the returned task id (or the intake blocker in `## Blocked` if the CLI is unavailable); PRODUCTION-class/ambiguous → `## Held`/`## Blocked`. Full policy: `references/keep-going-policy.md` §"Flagged-issue default route".
+**Flagged-issue disposition (no bare flags).** Every open finding surfaced this run is DISPOSITIONED, not just listed: any repo within the authorized goal → repaired and verified (cite commit); build-loop's OWN repo → fixed (cite commit) in `## Done`; ANY OTHER repo outside the authorized goal → filed on the Operations Center queue via `python3 scripts/file_to_operations_center.py --repo <repo> --title <..> --urgency <..> --json` and reported in `## Done` with the returned task id (or the intake blocker in `## Blocked` if the CLI is unavailable); PRODUCTION-class/ambiguous → `## Held`/`## Blocked`. Full policy: `references/keep-going-policy.md` §"Flagged-issue default route".
 
 **Forbidden in the report**:
 

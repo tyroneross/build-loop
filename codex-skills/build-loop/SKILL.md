@@ -35,6 +35,8 @@ resolve relative to `skills/build-loop/` — read them at
 `../../skills/build-loop/references/<name>.md`, falling back to the repo-root
 `../../references/<name>.md` when the skill's own directory has no such file.
 
+Confirmed findings within the authorized goal proceed automatically through repair and verification under the canonical workflow's Confirmed issues auto-repair rule. Do not stop at diagnosis or offer to fix it later. Explicit read-only/stop instructions still prevail.
+
 ## Completion gate
 
 Before declaring a Codex Build Loop run complete:

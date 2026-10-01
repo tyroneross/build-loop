@@ -45,6 +45,39 @@ class ReviewFindingGateTests(unittest.TestCase):
     def test_unknown_severity_fails_conservative(self) -> None:
         self.assertEqual(normalize_severity("surprising"), "high")
 
+    def test_confirmed_authorized_findings_block_at_every_severity(self) -> None:
+        for severity in ("critical", "high", "medium", "low", "info"):
+            with self.subTest(severity=severity):
+                finding = {"severity": severity, "confirmed": True, "in_scope": True}
+                result = evaluate_payloads([[finding]])
+                self.assertFalse(result["pass"])
+                self.assertTrue(result["blocking_findings"][0]["repair_required"])
+
+    def test_unconfirmed_or_unauthorized_low_risk_does_not_require_repair(self) -> None:
+        for metadata in ({"confirmed": False, "in_scope": True},
+                         {"confirmed": True, "in_scope": False},
+                         {"confirmed": "true", "in_scope": "true"}):
+            with self.subTest(metadata=metadata):
+                self.assertTrue(evaluate_payloads([[{"severity": "low", **metadata}]])["pass"])
+
+    def test_confirmed_repair_requires_closure_and_verification(self) -> None:
+        finding = {"severity": "low", "confirmed": True, "in_scope": True}
+        for closure in ({}, {"status": "fixed"}, {"closure_proof": "regression passed"},
+                        {"status": "escalated", "closure_proof": "backlog issue 12"},
+                        {"status": "accepted", "closure_proof": "agent waiver"}):
+            with self.subTest(closure=closure):
+                self.assertFalse(evaluate_payloads([[{**finding, **closure}]])["pass"])
+        finding.update(status="fixed", closure_proof="regression passed on target commit")
+        self.assertTrue(evaluate_payloads([[finding]])["pass"])
+
+    def test_required_classification_cannot_silently_skip_low_finding(self) -> None:
+        for metadata in ({}, {"confirmed": True}, {"confirmed": "true", "in_scope": True}):
+            result = evaluate_payloads([[{"severity": "low", **metadata}]], require_classification=True)
+            self.assertFalse(result["pass"])
+            self.assertTrue(result["blocking_findings"][0]["classification_missing"])
+        self.assertTrue(evaluate_payloads([[{"severity": "low", "confirmed": False,
+                                            "in_scope": True}]], require_classification=True)["pass"])
+
     def test_cli_exit_code_blocks_open_high(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": [{"id": "f1", "severity": "critical"}]}, f)

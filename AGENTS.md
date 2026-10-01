@@ -26,6 +26,10 @@ Action classification: SAFE → execute on main; RISKY → isolate to branch + l
 
 There is NO gate for code size or complexity. Genuine inability to proceed (missing credential, external blocker) is logged, worked around with available tasks, and reported in the readback — not a stop-and-ask. Oversight is the end-of-run readback, not a mid-run halt.
 
+## Confirmed issues auto-repair
+
+A confirmed issue within the user's authorized goal proceeds automatically through root-cause repair, regression verification, and local integration, including findings from scans and diagnostics at any severity. Do not stop at diagnosis or ask whether to fix it. Verify hypotheses first; honor explicit read-only/stop instructions and the existing autonomy gates. Record real external blockers and continue independent work. Full rule: `skills/build-loop/SKILL.md` §"Confirmed issues auto-repair".
+
 ## Privileged commands — always go through the broker
 
 **Never run a command that asks macOS for an administrator password directly.** Route it through the broker so the request is named before the dialog appears, shares one authorization with any identical read-only request already in flight, and lands in a durable record:
