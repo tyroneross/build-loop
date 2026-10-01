@@ -44,10 +44,17 @@ def _proof_present(finding: dict[str, Any]) -> bool:
 
 
 def _closed_state(finding: dict[str, Any], *, repair_required: bool = False) -> bool:
+    if repair_required:
+        # A backlog item can be closed while the underlying defect is waived
+        # or escalated. The explicit status takes priority over summary flags.
+        for field in ("status", "state", "resolution"):
+            value = finding.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower() in CLOSED_STATES - {"accepted"}
+        return finding.get("closed") is True or finding.get("resolved") is True
     for field in ("status", "state", "resolution"):
         value = finding.get(field)
-        if (isinstance(value, str) and value.strip().lower() in CLOSED_STATES
-                and not (repair_required and value.strip().lower() == "accepted")):
+        if isinstance(value, str) and value.strip().lower() in CLOSED_STATES:
             return True
     return finding.get("closed") is True or finding.get("resolved") is True
 

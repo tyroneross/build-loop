@@ -70,6 +70,14 @@ class ReviewFindingGateTests(unittest.TestCase):
         finding.update(status="fixed", closure_proof="regression passed on target commit")
         self.assertTrue(evaluate_payloads([[finding]])["pass"])
 
+    def test_terminal_label_cannot_override_unrepaired_status(self) -> None:
+        for status in ("accepted", "waived", "escalated", "blocked", "open"):
+            with self.subTest(status=status):
+                result = evaluate_payloads([[{"severity": "low", "confirmed": True,
+                    "in_scope": True, "status": status, "closed": True,
+                    "resolved": True, "resolution": "fixed", "closure_proof": "queue receipt"}]])
+                self.assertFalse(result["pass"])
+
     def test_required_classification_cannot_silently_skip_low_finding(self) -> None:
         for metadata in ({}, {"confirmed": True}, {"confirmed": "true", "in_scope": True}):
             result = evaluate_payloads([[{"severity": "low", **metadata}]], require_classification=True)
