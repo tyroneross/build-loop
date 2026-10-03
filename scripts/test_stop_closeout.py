@@ -31,6 +31,15 @@ def _write_state(tmp: Path, state: dict) -> Path:
     bl = tmp / ".build-loop"
     bl.mkdir(parents=True, exist_ok=True)
     (bl / "state.json").write_text(json.dumps(state))
+    run_id = state.get("execution", {}).get("build_loop_id")
+    if run_id:
+        review = bl / "compatibility" / f"{run_id}.json"
+        review.parent.mkdir(exist_ok=True)
+        review.write_text(json.dumps({
+            "schema_version": 1, "run_id": run_id, "disposition": "no-change",
+            "reason": "Closeout fixture has no new compatibility finding.",
+            "evidence": [".build-loop/state.json"],
+        }))
     return bl / "state.json"
 
 
@@ -1078,3 +1087,14 @@ def test_release_preserves_execution_when_ref_has_no_matching_run(tmp_path):
     final = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
     assert final["execution"]["build_loop_id"] == "bl-unmatched"
     assert "historicalExecutions" not in final
+
+
+def test_stop_keeps_missing_compatibility_review_open(tmp_path):
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    bl = tmp_path / '.build-loop'
+    (bl / 'compatibility' / 'bl-test-001.json').unlink()
+    stop_closeout.run_stop(tmp_path, SESSION)
+    receipt = json.loads((bl / 'learn' / 'bl-test-001.json').read_text())
+    assert receipt['status'] == 'error'
+    assert receipt['stages']['compatibility']['status'] == 'error'
+    assert 'closeout_incomplete: true' in (bl / 'closeout-pending' / 'bl-test-001.md').read_text()
