@@ -95,6 +95,14 @@ def _write_state(workdir: Path, count: int, *, cause: str | None = None) -> str:
     state = workdir / ".build-loop" / "state.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({"runs": runs}), encoding="utf-8")
+    review_dir = state.parent / "compatibility"
+    review_dir.mkdir(exist_ok=True)
+    for run in runs:
+        (review_dir / f"{run['run_id']}.json").write_text(json.dumps({
+            "schema_version": 1, "run_id": run['run_id'], "disposition": "no-change",
+            "reason": "Fixture has no new component compatibility lesson.",
+            "evidence": [".build-loop/state.json"],
+        }))
     return runs[-1]["run_id"]
 
 
@@ -1243,3 +1251,19 @@ def test_retro_skip_counters_reach_the_learn_envelope(tmp_path: Path) -> None:
     details = result["stages"]["collect"]
     assert details["retro_placeholder_skipped"] == 2
     assert details["retro_dispositioned_skipped"] == 1
+
+
+def test_compatibility_review_required_and_rechecked(tmp_path):
+    run_id = _write_state(tmp_path, 3)
+    packet = tmp_path / '.build-loop' / 'compatibility' / f'{run_id}.json'
+    saved = packet.read_text()
+    packet.unlink()
+    receipt = _runner().run(tmp_path, run_id=run_id, source='test', accrue=False)
+    assert receipt['status'] == 'error'
+    assert receipt['stages']['compatibility']['status'] == 'error'
+    packet.write_text(saved)
+    receipt = _runner().run(tmp_path, run_id=run_id, source='test', accrue=False)
+    assert receipt['status'] == 'complete'
+    packet.unlink()
+    receipt = _runner().run(tmp_path, run_id=run_id, source='test', accrue=False)
+    assert receipt['status'] == 'error'

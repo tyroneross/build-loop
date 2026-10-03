@@ -17,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
+import compatibility_review
 import consolidate_memory  # noqa: E402
 import enforce_retro_signals  # noqa: E402
 import learn_accruing  # noqa: E402
@@ -106,6 +107,7 @@ def _digest_inputs(
     }
     fixed = [
         workdir / ".build-loop" / "config.json",
+        workdir / ".build-loop" / "compatibility" / f"{run_id}.json",
         workdir / ".build-loop" / "learning-objects.json",
     ]
     dynamic = [
@@ -999,6 +1001,9 @@ def _run_base_stages(
         "record": {"status": "complete" if current else "error", "run_id": run_id}
     }
     errors = [state_error] if state_error else []
+    stages["compatibility"] = compatibility_review.check(root, run_id)
+    if stages["compatibility"]["status"] != "complete":
+        errors.append("compatibility review incomplete: " + stages["compatibility"].get("error", "deferred"))
     if current is None:
         errors.append(f"run_id {run_id!r} is absent from .build-loop/state.json.runs[]")
 
@@ -1093,7 +1098,8 @@ def run(
         )
         if receipt_path.exists():
             existing = _read_json(receipt_path, {})
-            same_inputs = existing.get("input_digest") == digest
+            same_inputs = (existing.get("input_digest") == digest
+                and existing.get("stages", {}).get("compatibility") == compatibility_review.check(root, run_id))
             pending_can_advance = (
                 existing.get("status") == "pending" and (accrue or bool(defer_reason))
             )
@@ -1231,7 +1237,9 @@ def attest(
 
         pending = [item for item in receipt["work_orders"] if item.get("status") == "pending"]
         failed = [item for item in receipt["work_orders"] if item.get("status") == "failed"]
-        receipt["status"] = "error" if failed else ("awaiting_agents" if pending else "complete")
+        receipt["stages"]["compatibility"] = compatibility_review.check(root, run_id)
+        compatibility_open = receipt["stages"]["compatibility"]["status"] != "complete"
+        receipt["status"] = "error" if failed or receipt.get("errors") or compatibility_open else ("awaiting_agents" if pending else "complete")
         receipt["updated_at"] = _now()
         receipt["learn_line"] = _learn_line(
             receipt["outcome"],

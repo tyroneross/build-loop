@@ -7,6 +7,12 @@ _Prompts: <N> · Repeated clusters: <M> · Transcript present: <bool>_
 ## Lessons learned
 <bulleted list — what this run taught us; both content and process>
 
+## Compatibility review
+<Disposition: updated / no-change / not-applicable / deferred; reason and evidence.>
+<For updated: RossLabs LSP record IDs, registry path, local Build Loop memory path,
+component versions, validity scope, regression result, and limitations. Complete
+`.build-loop/compatibility/<run-id>.json`; deferred or missing review leaves Learn open.>
+
 ## Key takeaways
 <bulleted list — the headline points a reader should remember>
 

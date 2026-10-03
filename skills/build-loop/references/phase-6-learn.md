@@ -51,3 +51,52 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 - Modify the build-loop plugin repo
 - Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
 - Run more than once per build
+
+## Required compatibility review (every agent)
+
+At lessons learned and retrospective closeout, examine interactions between two or
+more components: languages, terminal hosts/PTYs, protocols, tools, schemas, builds,
+or runtime environments. Co-occurring language names are leads, not evidence of a
+boundary failure. Reuse existing records and regression fixtures before creating
+another adapter or test system.
+
+Write `.build-loop/compatibility/<run-id>.json` before running Learn:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "example-run",
+  "disposition": "no-change",
+  "reason": "Reviewed the changed interfaces; existing records cover this run.",
+  "evidence": ["path/to/verification.md"]
+}
+```
+
+Choose `updated`, `no-change`, `not-applicable`, or `deferred`. Explain the choice
+and cite evidence; do not copy the example claim without a review. A deferred
+review leaves Learn incomplete. Missing or malformed reviews also block completion.
+This applies to Codex, Claude, Muse, other agents, and native terminal invocations.
+
+For `updated`, also supply `registry`, `record_ids`, and `memory`. Registry and
+memory must be existing local files (absolute or relative to the workspace).
+The check confirms the IDs exist and fingerprints both files; it does not certify
+that evidence proves the claimed compatibility status. Validate the complete
+registry with RossLabs LSP. Any changed registry or memory invalidates cached review
+results. Use an immutable new record ID for revised evidence.
+
+Native terminal workflow:
+
+```sh
+rosslabs-lsp compat record /local/path/registry.json /local/path/record.json
+rosslabs-lsp compat /local/path/registry.json
+python3 "$BUILD_LOOP_ROOT/scripts/memory_writer.py" --memory-dir "$MEMORY_ROOT" write --help
+python3 "$BUILD_LOOP_ROOT/scripts/compatibility_review.py" --workdir . --run-id example-run
+```
+
+Save the research/lesson through the canonical memory writer, then reference its
+actual returned or verified location. Keep private transcript evidence local.
+Attach these references to the existing learning object and retrospective filing
+flow; do not create a competing memory index. Record snapshot, component versions,
+capabilities, environment, test scope, limitations, and regression evidence.
+Transcript reports remain `reported` until reproduced; a schema check alone cannot
+establish runtime compatibility. No remediation commands are executed by this flow.

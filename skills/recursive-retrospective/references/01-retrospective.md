@@ -134,3 +134,17 @@ Table: Pattern | Evidence | Why it matters | Recommended system response. Only p
 
 ## Acceptance Criteria
 Successful only if it: treats the task as recursive learning (not just RCA); uses RCA only where it adds diagnostic value (≤~4 RCAs); compares initial intent / current build / desired outcome and surfaces any drift; classifies maturity before recommending preserve/redesign and does not soften a live defect with a maturity label; identifies behavior+workflow patterns from evidence (clustered, not 1:1); separates explicit from revealed preferences; converts findings into concrete learning objects with ids; assigns each an encoding target; ranks by ordinal priority WITHOUT a multiplied point-score; preserves emergent findings without duplicating id'd ones; calls out hard gates needing approval; includes one from-scratch option; marks unknowns and inferred claims clearly; **rewards density — omits low-signal/conditional sections rather than padding them, and cross-references ids instead of restating findings.**
+
+## Required compatibility review (every agent)
+
+Every retrospective must record an `updated`, `no-change`, `not-applicable`, or
+`deferred` compatibility disposition with evidence. Inspect interactions between
+languages, terminals/PTYs, schemas, tools, and runtime environments. Link new or
+revised RossLabs LSP record IDs to local Build Loop memory and a regression check;
+keep historical transcript reports separate from current runtime proof.
+
+Follow the canonical packet schema and native commands in
+`skills/build-loop/references/phase-6-learn.md` under **Required compatibility
+review**. The executable Learn runner checks that packet; a missing, invalid, or
+deferred review leaves completion blocked. Use the existing learning objects and
+retrospective filing workflow for these links.
