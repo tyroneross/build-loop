@@ -41,7 +41,9 @@ SKIP_FILE_RE = re.compile(r"(?:^\.env(?:\.|$)|\.pem$|\.key$|\.p12$)", re.I)
 LOCAL_DOCS = (
     ".build-loop/goal.md", ".build-loop/intent.md", ".build-loop/plan.md",
     ".build-loop/feedback.md", ".build-loop/architecture/handoff.md",
+    ".build-loop/plans/DECISION-LOG.md",
 )
+LOCAL_DECISION_LOG = Path(".build-loop/plans/DECISION-LOG.md")
 
 
 def _run(argv: list[str], repo: Path, *, timeout: float = 5) -> subprocess.CompletedProcess[bytes] | None:
@@ -242,7 +244,8 @@ def _collect_entries(repo: Path, paths: list[str], decisions: list[Path], memory
     for relative in LOCAL_DOCS:
         path = repo / relative
         if path.is_file():
-            entries.append(_entry("local_doc", relative, _heading(path), source="repo-local"))
+            title = "Private running decision log" if relative == str(LOCAL_DECISION_LOG) else _heading(path)
+            entries.append(_entry("local_doc", relative, title, source="repo-local"))
     coverage["local_docs"] = sum(item["kind"] == "local_doc" for item in entries)
     return entries, coverage
 
@@ -404,7 +407,7 @@ def _content_hits(repo: Path, terms: list[str], max_files: int) -> tuple[list[di
 
 
 def _decision_body_hits(repo: Path, terms: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Search only this project's canonical decisions; never copy their bodies."""
+    """Search canonical decisions and the explicit private local decision log."""
     files, _, _ = _decision_files(repo)
     selected = set(files)
     engine = "python"
@@ -413,17 +416,16 @@ def _decision_body_hits(repo: Path, terms: list[str]) -> tuple[list[dict[str, An
     if selected and shutil.which("rg"):
         engine = "ripgrep"
         folder = files[0].parent
-        for term in sorted(terms, key=lambda item: (-len(item), item)):
-            proc = _run(["rg", "-l", "-0", "--fixed-strings", "--ignore-case",
-                         "--glob", "*.md", "-e", term, str(folder)], repo, timeout=3)
-            if proc is None or proc.returncode not in (0, 1):
-                engine = "python"
-                reasons.append("decision_rg_failed_or_timed_out")
-                selected = set(files)
-                break
+        command = ["rg", "-l", "-0", "--fixed-strings", "--ignore-case", "--glob", "*.md"]
+        for term in terms:
+            command.extend(("-e", term))
+        proc = _run([*command, str(folder)], repo, timeout=3)
+        if proc is None or proc.returncode not in (0, 1):
+            engine = "python"
+            reasons.append("decision_rg_failed_or_timed_out")
+            selected = set(files)
+        else:
             selected &= {Path(os.fsdecode(raw)) for raw in proc.stdout.split(b"\0") if raw}
-            if not selected:
-                break
     if engine == "python":
         selected = set()
         for path in files[:MAX_FALLBACK_FILES]:
@@ -433,19 +435,70 @@ def _decision_body_hits(repo: Path, terms: list[str]) -> tuple[list[dict[str, An
                     reasons.append("oversized_decision_skipped")
                     continue
                 body = path.read_text(encoding="utf-8", errors="replace").casefold()
-                if all(term in body for term in terms):
+                if any(term in body for term in terms):
                     selected.add(path)
             except OSError:
+                complete = False
+                reasons.append("decision_unreadable")
                 continue
         if len(files) > MAX_FALLBACK_FILES:
             complete = False
             reasons.append("decision_fallback_file_limit_reached")
-    hits = [{"kind": "decision", "path": str(path), "title": _heading(path),
-             "summary": "", "score": 24, "matched_terms": len(terms),
-             "source": "canonical-memory-body", "freshness": "live"}
-            for path in sorted(selected)]
+    hits: list[dict[str, Any]] = []
+    for path in sorted(selected):
+        try:
+            if path.stat().st_size > MAX_READ_BYTES:
+                complete = False
+                reasons.append("oversized_decision_skipped")
+                continue
+            body = path.read_text(encoding="utf-8", errors="replace").casefold()
+        except OSError:
+            complete = False
+            reasons.append("decision_unreadable")
+            continue
+        matched = sum(term in body for term in terms)
+        if not matched:
+            continue
+        title = _heading(path)
+        title_matches = sum(term in title.casefold() for term in terms)
+        hits.append({"kind": "decision", "path": str(path), "title": title,
+                     "summary": "", "score": 24 + 6 * matched + 3 * title_matches
+                     + (8 if matched == len(terms) else 0),
+                     "matched_terms": matched,
+                     "source": "canonical-memory-body", "freshness": "live"})
+    local_log = repo / LOCAL_DECISION_LOG
+    local_sections = 0
+    if local_log.is_file():
+        try:
+            if local_log.stat().st_size > MAX_READ_BYTES:
+                complete = False
+                reasons.append("oversized_local_decision_log_skipped")
+            else:
+                lines = local_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                headings = [index for index, line in enumerate(lines) if line.startswith("## ")]
+                local_sections = len(headings)
+                for position, start in enumerate(headings):
+                    end = headings[position + 1] if position + 1 < len(headings) else len(lines)
+                    body = "\n".join(lines[start:end]).casefold()
+                    matched = sum(term in body for term in terms)
+                    if not matched:
+                        continue
+                    title = lines[start][3:].strip()
+                    title_matches = sum(term in title.casefold() for term in terms)
+                    hits.append({
+                        "kind": "decision", "path": str(local_log), "line": start + 1,
+                        "title": title, "summary": "", "matched_terms": matched,
+                        "score": 24 + 6 * matched + 3 * title_matches
+                                 + (8 if matched == len(terms) else 0),
+                        "source": "repo-local-decision-log", "freshness": "live",
+                    })
+        except OSError:
+            complete = False
+            reasons.append("local_decision_log_unreadable")
     return hits, {"engine": engine, "searched_files": min(len(files), MAX_FALLBACK_FILES) if engine == "python" else len(files),
-                  "matched_files": len(selected), "complete": complete, "reasons": list(dict.fromkeys(reasons))}
+                  "matched_files": len(selected), "local_log_present": local_log.is_file(),
+                  "local_sections": local_sections, "complete": complete,
+                  "reasons": list(dict.fromkeys(reasons))}
 
 
 def _select_hits(ordered: list[dict[str, Any]], kind: str, limit: int) -> list[dict[str, Any]]:
@@ -478,8 +531,9 @@ def search(repo: Path, query: str, *, kind: str = "all", limit: int = 10, max_fi
                 "total_ranked": 0, "match_counts": {},
                 "index": {"path": str(repo / INDEX_REL), "used": False, "rebuilt": False},
                 "content": {"engine": "skipped", "complete": True, "reasons": ["query_has_no_search_terms"]},
-                "decisions": {"engine": "skipped", "complete": True, "reasons": []},
-                "complete": True, "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)}
+                "decisions": {"engine": "skipped", "complete": False,
+                              "reasons": ["query_has_no_search_terms"]},
+                "complete": False, "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)}
     index: dict[str, Any] = {}
     rebuilt = False
     if kind != "content":
@@ -501,6 +555,8 @@ def search(repo: Path, query: str, *, kind: str = "all", limit: int = 10, max_fi
         if key not in unique or hit["score"] > unique[key]["score"]:
             unique[key] = hit
     ordered = sorted(unique.values(), key=lambda item: (-item["score"], item["path"], item.get("line", 0)))
+    if kind == "decision" and len(terms) > 1 and any(hit["matched_terms"] >= 2 for hit in ordered):
+        ordered = [hit for hit in ordered if hit["matched_terms"] >= 2]
     match_counts: dict[str, int] = {}
     for hit in ordered:
         match_counts[hit["kind"]] = match_counts.get(hit["kind"], 0) + 1

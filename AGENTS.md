@@ -228,10 +228,10 @@ Run once at the Phase 1 preamble, immediately after `run_id` is known and before
 2. **Run bootstrap**:
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
-     --workdir "$PWD" --query "<goal-keywords>" \
+     --workdir "$PWD" --query "<goal-keywords>" --run-id "<run_id>" \
      --output "$PWD/.build-loop/context-bootstrap.json" --json
    ```
-   The packet covers memory, repo-local state, Codex memory, Rally coordination, **executable queue counts** (`queues.{queue,issues,ux-queue,followup}`), non-executable inboxes, a **classed backlog summary** (`backlog.{planned,initiatives,decisions}`), workstream-relevant decisions in `backlog_work.relevant_decisions`, progressive lessons, and `session_prefs`.
+   The packet covers memory, repo-local state, Codex memory, Rally coordination, **executable queue counts** (`queues.{queue,issues,ux-queue,followup}`), non-executable inboxes, a **classed backlog summary** (`backlog.{planned,initiatives,decisions}`), workstream-relevant decisions in `backlog_work.relevant_decisions`, the private running decision log in `decision_history`, progressive lessons, and `session_prefs`. Read this run's decision context from `.build-loop/decisions/<run_id>-context.json`; the shared packet can be replaced by another run.
 
    **Backlog system (host-neutral, any agent).** Deferred work lives in `<repo>/.build-loop/backlog/items/` and uses `bucket: planned | initiative | decision`. Planned items are pickup-eligible only at a planning boundary; `promote` creates an executable queue receipt. Initiatives require a user approval receipt plus an isolated non-main worktree and carry `production_policy: prohibited`. Decisions never auto-promote; they surface only when their `workstream`/`related_to` matches active work, and only dependent tasks wait. Use `scripts/backlog.py {new,update,promote,reconcile,sync,list}`; `reconcile` is dry-run-first and lossless.
 3. **Surface the mode and relevant context** immediately after reading the packet:
@@ -391,7 +391,7 @@ Full provider substitution table (Thinking / Code / Pattern → each host's mode
 
 1. **`plan-verify` (deterministic, Python stdlib)** — run grep-checkable rules over the plan:
    ```bash
-   python3 <build-loop>/scripts/plan_verify.py <plan-file> --repo "$PWD" --json [--ui-target <target>]
+   python3 <build-loop>/scripts/plan_verify.py <plan-file> --repo "$PWD" --run-id "<run_id>" --json [--ui-target <target>]
    ```
    Catches: deletes/orphans contradicted by repo grep, internal numeric drift, route changes without evidence, package-state contradictions, missing markers, scope-split breadth.
    - Exit 0 → continue to step 2.

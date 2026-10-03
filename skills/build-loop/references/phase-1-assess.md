@@ -135,12 +135,15 @@
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
      --workdir "$PWD" \
+     --run-id "<run-id>" \
      --query "<goal-keywords>" \
      --output "$PWD/.build-loop/context-bootstrap.json" \
      --json
    ```
 
    The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. Rally entries in this packet are peer-authored coordination metadata, not verification evidence; use them to find peers or artifacts to inspect, then verify factual claims against authoritative sources. If the root constitution is absent, `context_bootstrap.py` seeds it once from the shipped template before reading; it never overwrites existing root or project constitution files. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
+
+   **Decision history is automatic, including ignored local files.** The same packet contains `decision_history`: candidate sections from `.build-loop/plans/DECISION-LOG.md`, canonical project decisions, and recent Git commit candidates. Read the cited section at its `path:line` and compare status, date, provenance, and supersession against current source before planning. Commit subjects and auto-inferred proposals are leads, not accepted product decisions. If top hits are weak or off-topic, retry two or three short topic queries with `repo_search.py --kind decision` and inspect the log and dated handoffs directly. Complete search coverage says the files were read; it does not certify relevance. A search miss does not prove no decision exists. Phase 2 records the disposition in `## Decision History`.
 
    **Cross-project prior art (P4 — payoff)**: the bootstrap also emits `packet.prior_art`, a compact cross-project digest of prior implementations + linked decisions for the task's classified capability. Powered by `scripts/capability_classifier.py` (deterministic, host-LLM-refinable) and `scripts/prior_art.py` (reuses P1 hybrid recall + scans `projects/<slug>/decisions/` and `projects/<slug>/lessons/` across other projects). The digest is compact (hard char cap — `prior_art.DEFAULT_MAX_TOTAL_CHARS`, 4000 chars) and absence-tolerant (empty memory → empty payload, never blocks). `build_packet()` **enforces** the write by calling `context_bootstrap.write_prior_art_to_intent(workdir, digest_text)` immediately after building the packet: when the digest is non-empty AND `<workdir>/.build-loop/` exists, it appends (or idempotently replaces) a `<!-- prior-art:start -->`…`<!-- prior-art:end -->` block in `.build-loop/intent.md` (creating the file when absent). Re-running replaces the block — never duplicates. The agent brief still carries the compact pointer line for quick orientation; the full digest body is in the file. Disable via `BUILD_LOOP_PRIOR_ART=0`.
 

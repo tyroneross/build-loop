@@ -27,6 +27,7 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
       ```bash
       python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
         --workdir "$PWD" \
+        --run-id "<run_id>" \
         --query "<goal-keywords>" \
         --output "$PWD/.build-loop/context-bootstrap.json" \
         --json
@@ -107,7 +108,7 @@ Extracted from `agents/build-orchestrator.md` §"Phase 2: Plan". The agent body 
 
 Required before Phase 2 done:
 
-1. **`plan-verify`**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan-file> --repo "$PWD" --json [--ui-target <target>]` (includes `no-stop-language` rule). Pass `--ui-target` whenever `uiTarget != null` so the UI Container Contract check activates. Exit 0 → proceed. Exit 1 → revise or override (`state.json.planVerifyOverride[]`). Exit 2 → log outage, continue with plan-critic alone.
+1. **`plan-verify`**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan-file> --repo "$PWD" --run-id "<run_id>" --json [--ui-target <target>]` (includes `no-stop-language` rule). Pass `--ui-target` whenever `uiTarget != null` so the UI Container Contract check activates. Exit 0 → proceed. Exit 1 → revise or override (`state.json.planVerifyOverride[]`). Exit 2 → log outage, continue with plan-critic alone. The run ID writes the verified decision action receipt used at closeout.
    - Plans that name multiple independent / parallel-safe chunks MUST include `parallel_batch:` or `parallel_skipped_reason:`. `plan_verify.py` enforces this as `parallel-decision-record` so the orchestrator cannot silently serialize work that the plan already proved can fan out.
 2. **`plan-critic`**: dispatch with plan + verify JSON. WARN-only.
 3. **Emit gaps-readback** (mandatory, before presenting the plan): prefix the plan with `✓ Plan gaps-checked (plan-verify + plan-critic): none` when both passes are clean, or `⚠ Plan gaps: <N> — <findings list, each marked resolved/surfaced>` when findings exist. The user should never have to ask "anything missing?" — build-loop always shows the gaps-check result first.

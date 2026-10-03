@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "03b35027d90168f4cc05221bf5bbd3734e180028fc7a803818fe218fb3cf82fc"
+    "content_sha256": "3b4374dad2fba018af082a599c24134127fcecd3c98154574b11f1dd367ef016"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1648,6 +1648,7 @@
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
+      "scripts/decision_log.py": "Append a sourced decision to a project's private running log.\"\"\"",
       "scripts/decision_surface.py": "decision_surface — the shared core behind every decision-surface variant.",
       "scripts/dedupe_run_ledger.py": "dedupe_run_ledger.py — one-shot repair for `.build-loop/state.json.runs[]`.",
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",

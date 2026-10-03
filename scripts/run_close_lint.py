@@ -39,6 +39,8 @@ Statuses (``status`` in the JSON envelope):
     missing     exit 1  state.json is present but runs[] has no qualifying entry
     floor_only  exit 1  only a hook-written floor entry, and --require-orchestrator was set
     learn_missing exit 1 run record exists but --require-learn found no complete receipt
+    decision_update_missing exit 1 Phase 1 retrieved decision history, but Phase 6
+                        did not record a decision update or a reason for none
     review_owed exit 1  the run record landed, but `.build-loop/owed-verification.json`
                         still owes a verifier THIS run owns (a missing independent-auditor
                         verdict, or a cross-vendor round the review profile required). The
@@ -66,7 +68,9 @@ status, not a traceback, so a caller in a hook path stays fail-open.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from decision_log import load_context_packet, context_packet_path
 import shlex
 import sys
 from datetime import datetime, timedelta, timezone
@@ -496,7 +500,93 @@ def check(
     # only runs on an envelope that is still OK afterwards.
     envelope = _apply_owed_verification(resolved_workdir, envelope, reconcile=not advisory)
     envelope = _apply_stranger_test(resolved_workdir, envelope)
-    return _apply_acceptance_results(resolved_workdir, envelope)
+    envelope = _apply_acceptance_results(resolved_workdir, envelope)
+    return _apply_decision_update(resolved_workdir, envelope, require_learn=require_learn)
+
+
+def _apply_decision_update(
+    workdir: Path, envelope: dict[str, Any], *, require_learn: bool
+) -> dict[str, Any]:
+    """Require a per-run decision disposition only for new Phase 1 packets."""
+    if not require_learn or envelope.get("status") not in OK_STATUSES:
+        return envelope
+    run_id = str(envelope.get("run_id") or "")
+    if not run_id or run_id in (".", "..") or any(c in run_id for c in "/\\\0"):
+        return envelope
+    packet_path = context_packet_path(workdir, run_id)
+    shared_packet_path = workdir / ".build-loop" / "context-bootstrap.json"
+    if not packet_path.exists() and not shared_packet_path.exists():
+        return envelope  # runs started before this contract
+    try:
+        packet_path, packet = load_context_packet(workdir, run_id)
+    except (OSError, ValueError) as exc:
+        envelope.update(
+            status="decision_update_missing",
+            reason=f"Phase 1 decision context is unreadable: {exc}",
+            remediation="rerun Phase 1 context bootstrap, then record this run's decision update",
+        )
+        return envelope
+    if ("decision_history" not in packet or packet.get("run_id") != run_id):
+        return envelope  # legacy packets do not opt into this contract
+    plan_receipt_path = workdir / ".build-loop" / "decisions" / f"{run_id}-plan.json"
+    try:
+        plan_receipt = json.loads(plan_receipt_path.read_text(encoding="utf-8"))
+        plan_path = Path(str(plan_receipt["plan_path"]))
+        if not plan_path.resolve().is_relative_to(workdir):
+            raise ValueError("decision plan path escapes this workdir")
+        plan_body = plan_path.read_bytes()
+        plan_valid = (
+            plan_receipt.get("schema") == "build-loop.decision-plan.v1"
+            and plan_receipt.get("run_id") == run_id
+            and plan_receipt.get("action") in {"record", "none"}
+            and hashlib.sha256(plan_body).hexdigest() == plan_receipt.get("plan_sha256")
+        )
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        plan_valid = False
+        plan_receipt = None
+    if not plan_valid:
+        envelope.update(
+            status="decision_update_missing",
+            reason=f"run_id {run_id!r} lacks a current verified decision plan receipt",
+            remediation="rerun plan_verify.py with --repo and --run-id on the current plan",
+        )
+        return envelope
+    receipt_path = workdir / ".build-loop" / "decisions" / f"{run_id}.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        receipt = None
+    valid = (isinstance(receipt, dict)
+             and receipt.get("schema") == "build-loop.decision-update.v1"
+             and receipt.get("run_id") == run_id)
+    if valid and receipt.get("disposition") == "none":
+        valid = bool(receipt.get("reason"))
+    elif valid and receipt.get("disposition") == "recorded":
+        decision_id = receipt.get("decision_id")
+        log_path = workdir / ".build-loop" / "plans" / "DECISION-LOG.md"
+        try:
+            log = log_path.read_text(encoding="utf-8")
+        except OSError:
+            log = ""
+        valid = (isinstance(decision_id, str)
+                 and f"<!-- decision-id:{decision_id} -->" in log)
+    else:
+        valid = False
+    if valid and plan_receipt["action"] == "record" and receipt.get("disposition") != "recorded":
+        valid = False
+    if valid:
+        envelope["decision_update"] = receipt.get("disposition")
+        return envelope
+    envelope.update(
+        status="decision_update_missing",
+        reason=f"run_id {run_id!r} lacks a valid decision update receipt",
+        remediation=(
+            f"python3 scripts/decision_log.py --workdir {shlex.quote(str(workdir))} "
+            f"--run-id {shlex.quote(run_id)} --none-reason '<why no new decision>' "
+            "# or record a sourced decision with --title, --decision, --rationale, --evidence"
+        ),
+    )
+    return envelope
 
 
 def _apply_stranger_test(workdir: Path, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -646,6 +736,7 @@ def _check_record(
             reason=f"run_id {resolved_id!r} present in state.json.runs[]",
             orchestrator_grade=any(is_orchestrator_grade(r) for r in matches),
             files_touched=matches[-1].get("filesTouched", []),
+            run_date=matches[-1].get("date"),
         )
         return envelope
 
@@ -692,6 +783,7 @@ def _check_record(
             ),
             orchestrator_grade=any(is_orchestrator_grade(r) for r in fresh),
             files_touched=fresh[-1].get("filesTouched", []),
+            run_date=fresh[-1].get("date"),
         )
         return envelope
 

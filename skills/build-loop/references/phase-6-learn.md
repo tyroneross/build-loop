@@ -22,6 +22,11 @@ Quick flow:
 4. **Attest** — attach repository-relative artifacts and reviewer verdicts with the CLI. Pending or failed work keeps Phase 6 open.
 5. **Close** — emit `learn_line`, enforce `run_close_lint.py --require-learn`, and leave promotion to explicit `/build-loop:promote-experiment` confirmation.
 
+**Decision update before closeout:** Reconcile the plan's `## Decision History` update action with what the run actually decided. For a substantive product, design, or architecture choice, append an evidence-backed entry to the private local running log with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/decision_log.py" --workdir "$PWD" --run-id "<run-id>" --title "..." --decision "..." --rationale "..." --status decided --evidence "<source>"` (add `--supersedes "<prior heading>"` when reversing one). Set status to `executed` only after implementation is verified, or `deferred` when the choice is postponed. This writer is atomic, idempotent, and preserves old entries. Record a newly discovered decision even if the plan initially said `Update: none`, and correct the plan disposition and rerun `plan_verify.py --run-id`. If no decision was made, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/decision_log.py" --workdir "$PWD" --run-id "<run-id>" --none-reason "<why>"`; do not manufacture an entry. Both paths write a per-run receipt. Final `run_close_lint.py --require-learn` checks the matching Phase 1 packet, verified plan action, and decision update receipt. For decisions that also belong in cross-run canonical memory, use `skills/knowledge/SKILL.md` and link its returned file in the local entry. Never copy private decision text into tracked source or a Git commit message.
+
+Pass `--impacted-file "<path>"` once per affected file when recording a decision;
+for a planning choice with no file yet, omit it and keep status `decided`.
+
 **Always-run + report gating (v0.30.0)**
 
 Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:

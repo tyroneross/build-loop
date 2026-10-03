@@ -39,7 +39,7 @@ content refinement pass.
 | Content | Current repository files | No content copy; `rg` selects, Python reads candidates |
 | Changes | Git commits, most recent 500 | Subject and commit pointer |
 | Runs | `.build-loop/state.json.runs[]` | Goal and run pointer |
-| Decisions | Canonical `build-loop-memory/projects/<project>/decisions/` | Title and path; `--kind decision` also searches live decision bodies |
+| Decisions | Canonical `build-loop-memory/projects/<project>/decisions/` and the project's private `.build-loop/plans/DECISION-LOG.md` | Title and path; `--kind decision` searches live bodies and local log sections with line numbers |
 | Structure | Existing `.build-loop/architecture/index.json` and `annotations.json` | Component purpose, path, and annotation pointer |
 | Local notes | Selected `.build-loop/*.md` and architecture handoff | Heading and path |
 
@@ -53,6 +53,13 @@ index is absent, file paths still provide coarse structure search. Use the
 existing architecture scanner when dependency edges matter. Use
 `memory_locator.py` for cross-project memory; this local index deliberately
 keeps project decisions separate from global memory.
+
+The private running log is read by its exact path even when Git ignores it. Its
+contents stay in the project; the disposable index stores its fingerprint,
+path, and a fixed generic title, never its heading or decision text.
+A missing log or an incomplete search is a coverage gap, not proof that a prior
+decision does not exist. Phase 1's context packet reports that coverage and
+includes decision hits for the current goal.
 
 ## Code annotations
 
