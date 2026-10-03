@@ -52,6 +52,47 @@ class EnvIsolationMixin:
 
 
 class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
+    def test_canonical_phase_one_commands_bind_run_id(self) -> None:
+        root = HERE.parent
+        for relative in (
+            "agents/build-orchestrator.md",
+            "references/phase-gate-checklist.md",
+            "references/memory-systems.md",
+            "skills/build-loop/references/phase-1-assess.md",
+        ):
+            lines = (root / relative).read_text().splitlines()
+            commands = [i for i, line in enumerate(lines)
+                        if "scripts/context_bootstrap.py" in line and "python3" in line]
+            self.assertTrue(commands, relative)
+            for i in commands:
+                self.assertIn("--run-id", " ".join(lines[i:i + 6]), relative)
+
+    def test_phase_one_packet_surfaces_private_decision_history(self) -> None:
+        self.write_repo_local()
+        log = self.workdir / ".build-loop/plans/DECISION-LOG.md"
+        log.parent.mkdir(parents=True)
+        log.write_text(
+            "# Running decision log\n\n"
+            "## 2026-10-03 · Keep release history in expanded view\n"
+            "**Decision.** The brief stays compact.\n",
+            encoding="utf-8",
+        )
+
+        packet = cb.build_packet(
+            workdir=self.workdir, query="release history expanded",
+            run_id="bl-history-1", codex_memory_root=self.codex_root, include_rally=False,
+        )
+
+        self.assertEqual(packet["run_id"], "bl-history-1")
+        history = packet["decision_history"]
+        self.assertTrue(history["checked"])
+        self.assertTrue(history["local_log_present"])
+        self.assertEqual(history["local_log_latest"],
+                         "2026-10-03 · Keep release history in expanded view")
+        self.assertTrue(any(hit["source"] == "repo-local-decision-log"
+                            for hit in history["hits"]))
+        self.assertIn("Decision history: checked", packet["agent_brief"])
+
     def test_ensure_root_constitution_seeds_template_when_missing(self) -> None:
         target = self.memroot / "constitution.md"
         self.assertFalse(target.exists())

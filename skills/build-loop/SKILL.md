@@ -89,6 +89,12 @@ selected evidence rather than scanning every file. See
 `references/repo-search.md` for freshness, coverage, and optional annotation
 rules.
 
+Phase 1 automatically retrieves relevant decisions from canonical memory and
+the project's private `.build-loop/plans/DECISION-LOG.md`, including when Git
+ignores the local log. Phase 2 records which prior decision applies, was
+superseded, or could not be verified. Phase 6 appends substantive new decisions
+with evidence through `scripts/decision_log.py`; do not edit old entries away.
+
 ## Keep going until done
 
 Once the user accepts the plan, every phase is authorized scope. The orchestrator does not stop and ask the user between phases. Status updates are fine. Permission requests are not.
