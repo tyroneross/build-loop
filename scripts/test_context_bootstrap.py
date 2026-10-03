@@ -52,6 +52,13 @@ class EnvIsolationMixin:
 
 
 class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
+    def test_standard_packet_requires_run_id(self) -> None:
+        output = self.workdir / ".build-loop/context-bootstrap.json"
+        with self.assertRaises(SystemExit) as error:
+            cb.main(["--workdir", str(self.workdir), "--output", str(output)])
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(output.exists())
+
     def test_canonical_phase_one_commands_bind_run_id(self) -> None:
         root = HERE.parent
         for relative in (

@@ -1913,8 +1913,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rollout-limit", type=int, default=3)
     args = parser.parse_args(argv)
 
+    workdir = expand_path(args.workdir)
+    if (args.output and not args.run_id and
+            expand_path(args.output) == workdir / ".build-loop/context-bootstrap.json"):
+        parser.error("--run-id is required for the standard Phase 1 context packet")
+
     packet = build_packet(
-        workdir=expand_path(args.workdir),
+        workdir=workdir,
         query=args.query,
         run_id=args.run_id,
         limit=args.limit,
