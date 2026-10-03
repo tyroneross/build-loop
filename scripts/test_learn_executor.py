@@ -99,7 +99,7 @@ def _write_state(workdir: Path, count: int, *, cause: str | None = None) -> str:
     review_dir.mkdir(exist_ok=True)
     for run in runs:
         (review_dir / f"{run['run_id']}.json").write_text(json.dumps({
-            "schema_version": 1, "run_id": run['run_id'], "disposition": "no-change",
+            "schema_version": 1, "run_id": run['run_id'], "disposition": "not-applicable",
             "reason": "Fixture has no new component compatibility lesson.",
             "evidence": [".build-loop/state.json"],
         }))

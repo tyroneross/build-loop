@@ -71,8 +71,8 @@ Write `.build-loop/compatibility/<run-id>.json` before running Learn:
 {
   "schema_version": 1,
   "run_id": "example-run",
-  "disposition": "no-change",
-  "reason": "Reviewed the changed interfaces; existing records cover this run.",
+  "disposition": "not-applicable",
+  "reason": "This run changes prose only and touches no component boundary.",
   "evidence": ["path/to/verification.md"]
 }
 ```
@@ -105,3 +105,19 @@ flow; do not create a competing memory index. Record snapshot, component version
 capabilities, environment, test scope, limitations, and regression evidence.
 Transcript reports remain `reported` until reproduced; a schema check alone cannot
 establish runtime compatibility. No remediation commands are executed by this flow.
+
+
+### RossLabs LSP execution is required for applicable reviews
+
+`updated` and `no-change` reviews must supply an explicit local `registry` file.
+The Learn checker invokes `rosslabs-lsp compat <registry>` from PATH, requires a
+successful validation and matches its registry SHA-256 to the bytes being reviewed.
+A missing executable, timeout, rejection, or stale hash blocks completion. The
+check does not silently replace RossLabs LSP with its own validation. A
+`not-applicable` review needs a reason explaining why no component boundary is
+involved; it must not be used to bypass unavailable tooling.
+
+At assessment, identify the affected producers/consumers and query the relevant
+registry before changing their interface. After verification, update evidence and
+link it to local memory. The automated Learn call enforces the final query;
+pre-edit ordering remains an agent instruction, not an edit interception hook.

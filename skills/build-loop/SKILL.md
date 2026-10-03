@@ -76,6 +76,19 @@ Default behavior: complete Phase 1–6 and required fixes autonomously within a 
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value. `/build-loop:run` applies this same check before it loads this skill, so a skipped task never pays for this file; the check here covers direct skill loads.
 
+## RossLabs LSP at component boundaries
+
+Before changing cross-file symbols, use RossLabs LSP definitions/references rather
+than assume text matches are semantic references. Before changing an interaction
+between languages, terminals/PTYs, protocols, schemas, tools or runtime versions,
+query `rosslabs-lsp compat <registry.json>` using the applicable registry from
+workspace context. Inspect version/snapshot limits; empty coverage is unknown.
+Run diagnostics and targeted behavioral tests after edits. Record new compatibility
+evidence and link local Build Loop memory during Learn. The required Learn checker
+executes RossLabs LSP for `updated` and `no-change` reviews and blocks on unavailable
+or rejected validation. See `references/phase-6-learn.md` for the packet contract.
+In Easy Terminal, `et tools --json` exposes the shared native tool index.
+
 ## Fast repository search
 
 Scan content with code before broad file reads. Start with

@@ -36,7 +36,7 @@ def _write_state(tmp: Path, state: dict) -> Path:
         review = bl / "compatibility" / f"{run_id}.json"
         review.parent.mkdir(exist_ok=True)
         review.write_text(json.dumps({
-            "schema_version": 1, "run_id": run_id, "disposition": "no-change",
+            "schema_version": 1, "run_id": run_id, "disposition": "not-applicable",
             "reason": "Closeout fixture has no new compatibility finding.",
             "evidence": [".build-loop/state.json"],
         }))

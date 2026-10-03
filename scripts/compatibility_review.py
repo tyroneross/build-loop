@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 LIMIT = 1024 * 1024
@@ -19,6 +21,26 @@ def _json(path: Path):
     if len(data) > LIMIT:
         raise ValueError(f'{path}: exceeds 1 MiB')
     return json.loads(data)
+
+
+def validate_with_lsp(path: Path, digest: str) -> dict:
+    executable = shutil.which('rosslabs-lsp')
+    if not executable:
+        raise ValueError('RossLabs LSP is required: rosslabs-lsp is not on PATH')
+    try:
+        process = subprocess.run([executable, 'compat', str(path.resolve())],
+                                 capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError('RossLabs LSP compatibility check timed out') from exc
+    if process.returncode:
+        raise ValueError('RossLabs LSP rejected the registry: ' + process.stderr[:1000])
+    if len(process.stdout) > 4 * LIMIT:
+        raise ValueError('RossLabs LSP response exceeds 4 MiB')
+    response = json.loads(process.stdout)
+    if not isinstance(response, dict) or response.get('validated') is not True or response.get('registry_sha256') != digest:
+        raise ValueError('RossLabs LSP did not validate the current registry bytes')
+    return {'executable': executable, 'registry_sha256': digest, 'validated': True,
+            'live_verified': False}
 
 
 def check(root: Path, run_id: str) -> dict:
@@ -39,12 +61,13 @@ def check(root: Path, run_id: str) -> dict:
         if not isinstance(evidence, list) or not evidence or any(not isinstance(e, str) or not e.strip() for e in evidence):
             raise ValueError('review needs evidence references')
         result = {'status': 'complete', 'disposition': disposition, 'reason': reason, 'evidence': evidence, 'review': str(path)}
-        if disposition == 'updated':
-            ids = packet.get('record_ids')
-            if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or not i.strip() for i in ids):
+        if disposition in {'updated', 'no-change'}:
+            ids = packet.get('record_ids', [])
+            if not isinstance(ids, list) or (disposition == 'updated' and not ids) or any(not isinstance(i, str) or not i.strip() for i in ids):
                 raise ValueError('updated review needs record_ids')
             fingerprints = {}
-            for field in ('registry', 'memory'):
+            fields = ('registry', 'memory') if disposition == 'updated' else ('registry',)
+            for field in fields:
                 value = packet.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f'updated review needs a local {field} file')
@@ -62,6 +85,7 @@ def check(root: Path, run_id: str) -> dict:
                     registry = json.loads(data)
                     if not isinstance(registry, dict) or registry.get('schema_version') != 1 or not isinstance(registry.get('records'), list):
                         raise ValueError('registry must contain schema_version 1 and records')
+                    result['rosslabs_lsp'] = validate_with_lsp(artifact, fingerprints[field])
                     present = {r.get('id') for r in registry['records'] if isinstance(r, dict) and isinstance(r.get('id'), str)}
                     if not set(ids) <= present:
                         raise ValueError('record_ids absent from registry')
