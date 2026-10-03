@@ -63,6 +63,7 @@ class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
         root = HERE.parent
         for relative in (
             "agents/build-orchestrator.md",
+            "AGENTS.md",
             "references/phase-gate-checklist.md",
             "references/memory-systems.md",
             "skills/build-loop/references/phase-1-assess.md",
@@ -99,6 +100,12 @@ class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
         self.assertTrue(any(hit["source"] == "repo-local-decision-log"
                             for hit in history["hits"]))
         self.assertIn("Decision history: checked", packet["agent_brief"])
+
+    def test_stopword_only_goal_marks_decision_history_unverified(self) -> None:
+        history = cb.decision_history_context(self.workdir, "the and for")
+        self.assertFalse(history["checked"])
+        self.assertFalse(history["complete"])
+        self.assertIn("query_has_no_search_terms", history["reasons"])
 
     def test_ensure_root_constitution_seeds_template_when_missing(self) -> None:
         target = self.memroot / "constitution.md"
@@ -253,6 +260,16 @@ class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
         loaded = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(loaded["query"], "memory bootstrap")
         self.assertFalse((out.parent / ".context-bootstrap.json.tmp").exists())
+
+    def test_standard_packets_preserve_each_runs_decision_context(self) -> None:
+        out = self.workdir / ".build-loop/context-bootstrap.json"
+        cb.write_packet({"run_id": "run-a", "decision_history": {"hits": ["A"]}}, out)
+        cb.write_packet({"run_id": "run-b", "decision_history": {"hits": ["B"]}}, out)
+        self.assertEqual(json.loads(out.read_text())["run_id"], "run-b")
+        a = json.loads((self.workdir / ".build-loop/decisions/run-a-context.json").read_text())
+        b = json.loads((self.workdir / ".build-loop/decisions/run-b-context.json").read_text())
+        self.assertEqual(a["decision_history"]["hits"], ["A"])
+        self.assertEqual(b["decision_history"]["hits"], ["B"])
 
 
 class ReferenceFreshnessTests(EnvIsolationMixin, unittest.TestCase):

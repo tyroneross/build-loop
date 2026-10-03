@@ -50,6 +50,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from decision_log import load_context_packet
+
 
 # ---------------------------------------------------------------------------
 # Markdown parsing helpers
@@ -1714,7 +1716,8 @@ def rule_ui_container_contract(
     return out
 
 
-def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) -> list[dict[str, Any]]:
+def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None,
+            run_id: str | None = None) -> list[dict[str, Any]]:
     text = plan_path.read_text(encoding="utf-8")
     lines = strip_fenced_blocks(text)
     findings: list[dict[str, Any]] = []
@@ -1740,7 +1743,7 @@ def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) ->
     findings.extend(rule_reads_from_dependency(plan_path, lines))
     findings.extend(rule_activation_map_required(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
-    findings.extend(rule_decision_history_disposition(plan_path, lines, repo))
+    findings.extend(rule_decision_history_disposition(plan_path, lines, repo, run_id))
     findings.extend(rule_tier_sanity(plan_path, lines))
     findings.extend(rule_ui_container_contract(plan_path, lines, ui_target))
     return findings
@@ -1748,13 +1751,15 @@ def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) ->
 
 def rule_decision_history_disposition(
     plan_path: Path, lines: list[tuple[int, str]], repo: Path | None,
+    run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Require a visible disposition when Phase 1 supplied decision history."""
     if repo is None:
         return []
-    packet_path = repo / ".build-loop/context-bootstrap.json"
+    packet_path = (repo / ".build-loop/decisions" / f"{run_id}-context.json"
+                   if run_id else repo / ".build-loop/context-bootstrap.json")
     try:
-        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet_path, packet = load_context_packet(repo, run_id)
     except FileNotFoundError:
         return []  # Older runs have no decision-history packet.
     except (OSError, ValueError) as exc:
@@ -1851,7 +1856,7 @@ def _decision_update_action(plan_text: str) -> str | None:
 def _write_decision_plan_receipt(repo: Path, run_id: str, plan_path: Path) -> Path:
     if not run_id or run_id in (".", "..") or any(c in run_id for c in "/\\\0"):
         raise ValueError("run_id must be a single safe path component")
-    packet = json.loads((repo / ".build-loop/context-bootstrap.json").read_text(encoding="utf-8"))
+    _, packet = load_context_packet(repo, run_id)
     if packet.get("run_id") != run_id or not isinstance(packet.get("decision_history"), dict):
         raise ValueError("Phase 1 decision packet does not match this run_id")
     body = plan_path.read_text(encoding="utf-8")
@@ -2097,7 +2102,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
 
     try:
-        findings = run_all(plan_path, repo, args.ui_target)
+        findings = run_all(plan_path, repo, args.ui_target, args.run_id)
     except Exception as e:  # noqa: BLE001 — verifier-error -> exit 2
         print(f"plan-verify: error: {e}", file=sys.stderr)
         return 2

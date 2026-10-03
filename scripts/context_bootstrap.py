@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,7 @@ from _paths import (  # type: ignore  # noqa: E402
     project_research_dir,
     top_level_lessons_dir,
 )
+from decision_log import CONTEXT_SCHEMA, context_packet_path  # type: ignore  # noqa: E402
 
 
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
@@ -1589,8 +1591,8 @@ def decision_history_context(workdir: Path, query: str, limit: int = 6) -> dict[
 
     log = workdir / LOCAL_DECISION_LOG
     try:
-        result = search(workdir, query, kind="decision", limit=limit)
-        changes = search(workdir, query, kind="change", limit=3)
+        result = search(workdir, query, kind="decision", limit=limit, persist_index=False)
+        changes = search(workdir, query, kind="change", limit=3, persist_index=False)
         last_entry = None
         if log.is_file():
             for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -1598,7 +1600,7 @@ def decision_history_context(workdir: Path, query: str, limit: int = 6) -> dict[
                     last_entry = line[3:].strip()
                     break
         return {
-            "checked": True, "local_log": str(log),
+            "checked": bool(result["terms_used"]), "local_log": str(log),
             "local_log_present": log.is_file(), "local_log_latest": last_entry,
             "hits": result["hits"], "commit_candidates": changes["hits"],
             "coverage": result["decisions"], "complete": result["complete"],
@@ -1890,10 +1892,24 @@ def write_prior_art_to_intent(workdir: Path, digest_text: str) -> bool:
 
 
 def write_packet(packet: dict[str, Any], output: Path) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output.with_name(f".{output.name}.tmp")
-    tmp.write_text(json.dumps(packet, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-    os.replace(tmp, output)
+    def atomic_write(path: Path, body: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp",
+                                         delete=False) as tmp:
+            json.dump(body, tmp, indent=2, sort_keys=True, default=str)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            temporary = Path(tmp.name)
+        os.replace(temporary, path)
+
+    run_id = packet.get("run_id")
+    if output.name == "context-bootstrap.json" and isinstance(run_id, str) and run_id:
+        marker = context_packet_path(output.parent.parent, run_id)
+        atomic_write(marker, {"schema": CONTEXT_SCHEMA, "run_id": run_id,
+                              "decision_history": packet.get("decision_history")})
+    atomic_write(output, packet)
 
 
 def main(argv: list[str] | None = None) -> int:

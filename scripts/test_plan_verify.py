@@ -17,6 +17,7 @@ FIXTURES = HERE.parent / "skills" / "plan-verify" / "test-fixtures"
 REPO_ROOT = HERE.parent  # build-loop repo root
 sys.path.insert(0, str(HERE))
 import plan_verify as pv  # noqa: E402
+from context_bootstrap import write_packet  # noqa: E402
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess:
@@ -27,6 +28,28 @@ def run(args: list[str]) -> subprocess.CompletedProcess:
 
 
 class DecisionHistoryDispositionTests(unittest.TestCase):
+    def test_run_scoped_context_survives_shared_packet_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            shared = repo / ".build-loop/context-bootstrap.json"
+            write_packet({"run_id": "r1", "decision_history": {"checked": True,
+                         "hits": [{"path": "/private/DECISION-LOG.md", "title": "Choice A"}]}}, shared)
+            write_packet({"run_id": "r2", "decision_history": {"checked": True,
+                         "hits": []}}, shared)
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- No relevant prior decision: checked the log and found none.\n"
+                            "- Update: none — no new product choice.\n")
+            self.assertTrue(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo, "r1"))
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- Applied: /private/DECISION-LOG.md:9 preserves Choice A.\n"
+                            "- Update: none — no new product choice.\n")
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo, "r1"), [])
+            receipt = pv._write_decision_plan_receipt(repo, "r1", plan)
+            self.assertEqual(json.loads(receipt.read_text())["run_id"], "r1")
+
     def test_packet_requires_disposition_and_update_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

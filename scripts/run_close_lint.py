@@ -70,6 +70,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from decision_log import load_context_packet, context_packet_path
 import shlex
 import sys
 from datetime import datetime, timedelta, timezone
@@ -512,20 +513,20 @@ def _apply_decision_update(
     run_id = str(envelope.get("run_id") or "")
     if not run_id or run_id in (".", "..") or any(c in run_id for c in "/\\\0"):
         return envelope
-    packet_path = workdir / ".build-loop" / "context-bootstrap.json"
-    if not packet_path.exists():
+    packet_path = context_packet_path(workdir, run_id)
+    shared_packet_path = workdir / ".build-loop" / "context-bootstrap.json"
+    if not packet_path.exists() and not shared_packet_path.exists():
         return envelope  # runs started before this contract
     try:
-        packet = json.loads(packet_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        packet_path, packet = load_context_packet(workdir, run_id)
+    except (OSError, ValueError) as exc:
         envelope.update(
             status="decision_update_missing",
             reason=f"Phase 1 decision context is unreadable: {exc}",
             remediation="rerun Phase 1 context bootstrap, then record this run's decision update",
         )
         return envelope
-    if (not isinstance(packet, dict) or "decision_history" not in packet
-            or packet.get("run_id") != run_id):
+    if ("decision_history" not in packet or packet.get("run_id") != run_id):
         return envelope  # legacy packets do not opt into this contract
     plan_receipt_path = workdir / ".build-loop" / "decisions" / f"{run_id}-plan.json"
     try:

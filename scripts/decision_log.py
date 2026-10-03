@@ -17,6 +17,7 @@ from pathlib import Path
 LOG_REL = Path(".build-loop/plans/DECISION-LOG.md")
 RECEIPT_DIR = Path(".build-loop/decisions")
 RECEIPT_SCHEMA = "build-loop.decision-update.v1"
+CONTEXT_SCHEMA = "build-loop.decision-context.v1"
 HEADER = (
     "# Running decision log\n\n"
     "New decisions go first. Superseded entries stay in place for history.\n\n---\n\n"
@@ -30,6 +31,26 @@ def _single_line(value: str) -> str:
 def _check_run_id(run_id: str) -> None:
     if not run_id or run_id in (".", "..") or any(c in run_id for c in "/\\\0"):
         raise ValueError("run_id must be a single safe path component")
+
+
+def context_packet_path(workdir: Path, run_id: str) -> Path:
+    _check_run_id(run_id)
+    return workdir.resolve() / RECEIPT_DIR / f"{run_id}-context.json"
+
+
+def load_context_packet(workdir: Path, run_id: str | None = None) -> tuple[Path, dict]:
+    """Prefer the immutable run packet; retain shared-packet support for old runs."""
+    shared = workdir.resolve() / ".build-loop/context-bootstrap.json"
+    scoped = context_packet_path(workdir, run_id) if run_id else None
+    path = scoped if scoped and scoped.exists() else shared
+    packet = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(packet, dict):
+        raise ValueError("decision context must be a JSON object")
+    if scoped and path == scoped and (
+        packet.get("schema") != CONTEXT_SCHEMA or packet.get("run_id") != run_id
+    ):
+        raise ValueError("run-scoped decision context is invalid")
+    return path, packet
 
 
 def _write_receipt(workdir: Path, run_id: str, disposition: str,
