@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import repo_search as searcher
+from _paths import set_memory_workdir
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -47,6 +48,18 @@ def test_stopword_query_does_not_claim_decision_coverage(tmp_path: Path) -> None
     assert result["complete"] is False
     assert result["decisions"]["complete"] is False
     assert "query_has_no_search_terms" in result["decisions"]["reasons"]
+
+
+def test_decision_search_does_not_create_build_loop_state_in_new_repo(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    set_memory_workdir(repo)
+    try:
+        result = searcher.search(repo, "retry queue worker", kind="decision", persist_index=False)
+    finally:
+        set_memory_workdir(None)
+    assert result["index"]["used"] is True
+    assert result["index"]["rebuilt"] is False
+    assert not (repo / ".build-loop").exists()
 
 
 def test_index_unifies_changes_runs_decisions_and_structure_without_annotations(

@@ -1591,8 +1591,8 @@ def decision_history_context(workdir: Path, query: str, limit: int = 6) -> dict[
 
     log = workdir / LOCAL_DECISION_LOG
     try:
-        result = search(workdir, query, kind="decision", limit=limit)
-        changes = search(workdir, query, kind="change", limit=3)
+        result = search(workdir, query, kind="decision", limit=limit, persist_index=False)
+        changes = search(workdir, query, kind="change", limit=3, persist_index=False)
         last_entry = None
         if log.is_file():
             for line in log.read_text(encoding="utf-8", errors="replace").splitlines():

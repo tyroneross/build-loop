@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from _paths import memory_store_root
+from _paths import memory_scope
 from memory_locator import query_terms
 from project_resolver import resolve_project
 
@@ -113,7 +113,7 @@ def _head(repo: Path) -> str | None:
 
 
 def _decision_files(repo: Path) -> tuple[list[Path], Path, str]:
-    root = memory_store_root(repo)
+    root = memory_scope(repo)["root"]  # read-only; sandbox activation writes state
     project = resolve_project(repo)
     files: list[Path] = []
     folder = root / "projects" / project / "decisions"
@@ -250,7 +250,7 @@ def _collect_entries(repo: Path, paths: list[str], decisions: list[Path], memory
     return entries, coverage
 
 
-def build_index(repo: Path) -> dict[str, Any]:
+def build_index(repo: Path, *, persist: bool = True) -> dict[str, Any]:
     repo = repo.resolve()
     state, paths, decisions, memory_root, project = _source_state(repo)
     entries, coverage = _collect_entries(repo, paths, decisions, memory_root)
@@ -259,16 +259,17 @@ def build_index(repo: Path) -> dict[str, Any]:
         "generated_at": int(time.time()), "project": project,
         "source_state": state, "coverage": coverage, "entries": entries,
     }
-    target = repo / INDEX_REL
-    _ignore_local_index(repo)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent,
-                                     prefix="index-", suffix=".tmp", delete=False) as temporary:
-        json.dump(payload, temporary, separators=(",", ":"))
-        temporary.flush()
-        os.fsync(temporary.fileno())
-        temporary_name = temporary.name
-    os.replace(temporary_name, target)
+    if persist:
+        target = repo / INDEX_REL
+        _ignore_local_index(repo)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent,
+                                         prefix="index-", suffix=".tmp", delete=False) as temporary:
+            json.dump(payload, temporary, separators=(",", ":"))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_name = temporary.name
+        os.replace(temporary_name, target)
     return payload
 
 
@@ -279,7 +280,9 @@ def _load_index(repo: Path) -> dict[str, Any]:
     return value
 
 
-def _ensure_index(repo: Path) -> tuple[dict[str, Any], bool]:
+def _ensure_index(repo: Path, *, persist: bool = True) -> tuple[dict[str, Any], bool]:
+    if not persist:
+        return build_index(repo, persist=False), False
     current, *_ = _source_state(repo)
     index = _load_index(repo)
     if index.get("source_state") == current:
@@ -522,7 +525,8 @@ def _select_hits(ordered: list[dict[str, Any]], kind: str, limit: int) -> list[d
     return selected[:limit]
 
 
-def search(repo: Path, query: str, *, kind: str = "all", limit: int = 10, max_files: int = 40) -> dict[str, Any]:
+def search(repo: Path, query: str, *, kind: str = "all", limit: int = 10,
+           max_files: int = 40, persist_index: bool = True) -> dict[str, Any]:
     repo = repo.resolve()
     started = time.perf_counter()
     terms = sorted(query_terms(query), key=lambda term: (-len(term), term))[:MAX_QUERY_TERMS]
@@ -537,7 +541,7 @@ def search(repo: Path, query: str, *, kind: str = "all", limit: int = 10, max_fi
     index: dict[str, Any] = {}
     rebuilt = False
     if kind != "content":
-        index, rebuilt = _ensure_index(repo)
+        index, rebuilt = _ensure_index(repo, persist=persist_index)
     hits = _metadata_hits(index.get("entries", []), terms, kind)
     content_receipt: dict[str, Any] = {"engine": "skipped", "complete": True}
     if kind in {"all", "content"}:
