@@ -47,12 +47,13 @@ Mirrors the write-protocol's executable shape (fenced commands + return-shape ta
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
   --workdir "$PWD" \
+  --run-id "<run_id>" \
   --query "<goal-keywords>" \
   --output "$PWD/.build-loop/context-bootstrap.json" \
   --json
 ```
 
-**Return shape**: JSON packet with `{ generated_at, workdir, project, query, terms, sources, agent_brief }`.
+**Return shape**: JSON packet with `{ generated_at, run_id, workdir, project, query, terms, decision_history, sources, agent_brief }`. The run ID binds Phase 1 retrieval to the verified plan and Phase 6 decision update receipt. A run-scoped copy of `decision_history` is saved first at `.build-loop/decisions/<run_id>-context.json` so concurrent runs cannot replace one another's evidence.
 
 `sources` includes:
 - `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `<memory-root>`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.

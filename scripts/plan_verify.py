@@ -40,12 +40,17 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from decision_log import load_context_packet
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +466,8 @@ def rule_decision_without_falsifier(plan_path: Path, lines: list[tuple[int, str]
     for idx, (lineno, line) in enumerate(lines):
         if not line or not DECISION_HEADING_RE.search(line):
             continue
+        if re.match(r"^\s*##\s+Decision History\s*$", line, re.I):
+            continue  # history disposition is not a new decision to falsify
         hi = min(n, idx + 13)
         has_falsifier = any(FALSIFIER_RE.search(lines[j][1] or "") for j in range(idx, hi))
         if has_falsifier:
@@ -1709,7 +1716,8 @@ def rule_ui_container_contract(
     return out
 
 
-def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) -> list[dict[str, Any]]:
+def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None,
+            run_id: str | None = None) -> list[dict[str, Any]]:
     text = plan_path.read_text(encoding="utf-8")
     lines = strip_fenced_blocks(text)
     findings: list[dict[str, Any]] = []
@@ -1735,9 +1743,140 @@ def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None) ->
     findings.extend(rule_reads_from_dependency(plan_path, lines))
     findings.extend(rule_activation_map_required(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
+    findings.extend(rule_decision_history_disposition(plan_path, lines, repo, run_id))
     findings.extend(rule_tier_sanity(plan_path, lines))
     findings.extend(rule_ui_container_contract(plan_path, lines, ui_target))
     return findings
+
+
+def rule_decision_history_disposition(
+    plan_path: Path, lines: list[tuple[int, str]], repo: Path | None,
+    run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Require a visible disposition when Phase 1 supplied decision history."""
+    if repo is None:
+        return []
+    packet_path = (repo / ".build-loop/decisions" / f"{run_id}-context.json"
+                   if run_id else repo / ".build-loop/context-bootstrap.json")
+    try:
+        packet_path, packet = load_context_packet(repo, run_id)
+    except FileNotFoundError:
+        return []  # Older runs have no decision-history packet.
+    except (OSError, ValueError) as exc:
+        return [_finding(
+            claim_text=f"Phase 1 decision context is unreadable: {exc}",
+            claim_kind="decision_history_unreadable",
+            subject={"path": str(packet_path), "symbol": None, "noun": "decision history"},
+            evidence={"file": str(packet_path), "line": 1, "snippet": ""},
+            result="inconclusive", marker="❌", severity="BLOCKER", confidence="high",
+            rule_id="decision-history-disposition",
+        )]
+    if not isinstance(packet, dict) or not isinstance(packet.get("decision_history"), dict):
+        return []
+
+    start = next((index for index, (_, line) in enumerate(lines)
+                  if re.match(r"^\s*##\s+Decision History\s*$", line, re.I)), None)
+    section: list[tuple[int, str]] = []
+    if start is not None:
+        for item in lines[start + 1:]:
+            if re.match(r"^\s*##\s+", item[1]):
+                break
+            section.append(item)
+    disposition_lines = [line for _, line in section if re.match(
+        r"^\s*-\s*(?:Applied|Superseded|No relevant prior decision|Unverified)\s*:",
+        line, re.I)]
+    disposition_valid = bool(disposition_lines) and all(
+        _decision_disposition_valid(line, packet["decision_history"])
+        for line in disposition_lines)
+    update_actions = [match.group(1).lower() for _, line in section
+                      if (match := re.match(r"^\s*-\s*Update\s*:\s*(record|none)\b",
+                                             line, re.I))]
+    has_update = len(update_actions) == 1
+    if start is not None and disposition_valid and has_update:
+        return []
+    missing = []
+    if start is None:
+        missing.append("`## Decision History` section")
+    if not disposition_valid:
+        missing.append("sourced Applied/Superseded or explained No relevant/Unverified disposition")
+    if not has_update:
+        missing.append("exactly one `- Update: record|none` action")
+    return [_finding(
+        claim_text="Plan must incorporate Phase 1 decision history: missing " + ", ".join(missing) + ".",
+        claim_kind="decision_history_missing",
+        subject={"path": str(packet_path), "symbol": None, "noun": "decision history"},
+        evidence={"file": str(plan_path), "line": lines[start][0] if start is not None else 1,
+                  "snippet": lines[start][1] if start is not None else ""},
+        result="no_match", marker="❌", severity="BLOCKER", confidence="high",
+        rule_id="decision-history-disposition",
+    )]
+
+
+def _decision_disposition_valid(line: str, history: dict[str, Any]) -> bool:
+    match = re.match(r"^\s*-\s*(Applied|Superseded|No relevant prior decision|Unverified)\s*:\s*(.*)",
+                     line, re.I)
+    if not match:
+        return False
+    kind, explanation = match.group(1).lower(), match.group(2).strip()
+    if len(explanation) < 15:
+        return False
+    if kind in {"applied", "superseded"}:
+        return bool(re.search(r"(?:\.md(?::\d+)?|git:[0-9a-f]{7,40})\b", explanation, re.I))
+    hits = history.get("hits")
+    if kind == "no relevant prior decision" and (
+        history.get("checked") is False or history.get("complete") is False
+    ):
+        return False  # incomplete retrieval calls for Unverified, not absence
+    if kind == "no relevant prior decision" and isinstance(hits, list) and hits:
+        return any(isinstance(hit, dict) and (
+            (str(hit.get("path") or "")
+             and Path(str(hit["path"])).name in explanation)
+            or (str(hit.get("title") or "")
+                and str(hit["title"]) in explanation)
+        ) for hit in hits)
+    return True
+
+
+def _decision_update_action(plan_text: str) -> str | None:
+    lines = strip_fenced_blocks(plan_text)
+    start = next((i for i, (_, line) in enumerate(lines)
+                  if re.match(r"^\s*##\s+Decision History\s*$", line, re.I)), None)
+    if start is None:
+        return None
+    section = []
+    for _, line in lines[start + 1:]:
+        if re.match(r"^\s*##\s+", line):
+            break
+        section.append(line)
+    actions = [match.group(1).lower() for line in section
+               if (match := re.match(r"^\s*-\s*Update\s*:\s*(record|none)\b", line, re.I))]
+    return actions[0] if len(actions) == 1 else None
+
+
+def _write_decision_plan_receipt(repo: Path, run_id: str, plan_path: Path) -> Path:
+    if not run_id or run_id in (".", "..") or any(c in run_id for c in "/\\\0"):
+        raise ValueError("run_id must be a single safe path component")
+    _, packet = load_context_packet(repo, run_id)
+    if packet.get("run_id") != run_id or not isinstance(packet.get("decision_history"), dict):
+        raise ValueError("Phase 1 decision packet does not match this run_id")
+    body = plan_path.read_text(encoding="utf-8")
+    action = _decision_update_action(body)
+    if action is None:
+        raise ValueError("verified plan has no single decision update action")
+    target = repo / ".build-loop/decisions" / f"{run_id}-plan.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"schema": "build-loop.decision-plan.v1", "run_id": run_id,
+               "action": action, "plan_path": str(plan_path),
+               "plan_sha256": hashlib.sha256(body.encode()).hexdigest()}
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent,
+                                     prefix="decision-plan-", suffix=".tmp", delete=False) as tmp:
+        json.dump(payload, tmp, sort_keys=True)
+        tmp.write("\n")
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        temporary = Path(tmp.name)
+    os.replace(temporary, target)
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -1951,6 +2090,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("plan", help="Path to plan markdown file")
     p.add_argument("--repo", help="Repo root for grep checks (defaults to plan file's parent's git root)")
     p.add_argument("--ui-target", help="UI target when this plan changes a renderable interface")
+    p.add_argument("--run-id", help="Persist this verified plan's decision action for final closeout.")
     p.add_argument("--json", action="store_true", help="Emit findings as JSON")
     p.add_argument("--quiet", action="store_true", help="Suppress human summary on stdout")
     args = p.parse_args(argv)
@@ -1962,11 +2102,20 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.repo).expanduser().resolve() if args.repo else None
 
     try:
-        findings = run_all(plan_path, repo, args.ui_target)
+        findings = run_all(plan_path, repo, args.ui_target, args.run_id)
     except Exception as e:  # noqa: BLE001 — verifier-error -> exit 2
         print(f"plan-verify: error: {e}", file=sys.stderr)
         return 2
     summary = summarize(findings)
+    if args.run_id and summary["by_severity"]["BLOCKER"] == 0:
+        if repo is None:
+            print("plan-verify: --run-id requires --repo", file=sys.stderr)
+            return 2
+        try:
+            _write_decision_plan_receipt(repo, args.run_id, plan_path)
+        except (OSError, ValueError, AttributeError) as exc:
+            print(f"plan-verify: decision plan receipt failed: {exc}", file=sys.stderr)
+            return 2
 
     if args.json:
         out = {"plan": str(plan_path), "repo": str(repo) if repo else None,

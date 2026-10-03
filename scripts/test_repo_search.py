@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import repo_search as searcher
+from _paths import set_memory_workdir
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -39,6 +40,26 @@ def test_content_query_is_live_and_does_not_require_an_index(tmp_path: Path) -> 
     assert not (repo / searcher.INDEX_REL).exists()
     assert [(hit["path"], hit["line"]) for hit in result["hits"]] == [("worker.py", 2)]
     assert result["content"]["complete"] is True
+
+
+def test_stopword_query_does_not_claim_decision_coverage(tmp_path: Path) -> None:
+    result = searcher.search(_repo(tmp_path), "the and for", kind="decision")
+    assert result["terms_used"] == []
+    assert result["complete"] is False
+    assert result["decisions"]["complete"] is False
+    assert "query_has_no_search_terms" in result["decisions"]["reasons"]
+
+
+def test_decision_search_does_not_create_build_loop_state_in_new_repo(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    set_memory_workdir(repo)
+    try:
+        result = searcher.search(repo, "retry queue worker", kind="decision", persist_index=False)
+    finally:
+        set_memory_workdir(None)
+    assert result["index"]["used"] is True
+    assert result["index"]["rebuilt"] is False
+    assert not (repo / ".build-loop").exists()
 
 
 def test_index_unifies_changes_runs_decisions_and_structure_without_annotations(
@@ -78,6 +99,58 @@ def test_index_unifies_changes_runs_decisions_and_structure_without_annotations(
     assert any(hit["kind"] == "run" for hit in searcher.search(repo, "Ship retry queue", kind="run")["hits"])
     combined = searcher.search(repo, "retry queue", kind="all", limit=4)
     assert {hit["kind"] for hit in combined["hits"]} >= {"content", "decision", "structure"}
+
+
+def test_ignored_running_decision_log_is_searched_by_section_and_refreshed(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text(".build-loop/\n")
+    log = repo / searcher.LOCAL_DECISION_LOG
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "# Private project choice hidden from the index\n\n---\n\n"
+        "## 2026-07-25 · Search intent stays deterministic\n"
+        "**Decision.** Escalate only when rules cannot resolve intent.\n\n"
+        "## 2026-07-27 · Release history belongs in the expanded view\n"
+        "**Decision.** Keep the brief compact; history remains available.\n",
+        encoding="utf-8",
+    )
+    assert subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", str(log)]).returncode == 0
+
+    first = searcher.search(repo, "release history compact", kind="decision")
+    assert first["index"]["coverage"]["local_docs"] == 1
+    index = json.loads((repo / searcher.INDEX_REL).read_text())
+    assert "Private project choice hidden" not in json.dumps(index)
+    assert first["decisions"]["local_log_present"] is True
+    assert first["decisions"]["local_sections"] == 2
+    assert [(hit["line"], hit["title"]) for hit in first["hits"]
+            if hit["source"] == "repo-local-decision-log"] == [
+                (8, "2026-07-27 · Release history belongs in the expanded view")]
+    assert first["hits"][0]["summary"] == ""
+
+    log.write_text(log.read_text() + "\n## 2026-10-03 · Search has one results page\n"
+                   "**Decision.** Search uses one entry point.\n", encoding="utf-8")
+    second = searcher.search(repo, "search results page", kind="decision")
+    assert second["index"]["rebuilt"] is True
+    assert any(hit["title"].endswith("Search has one results page")
+               for hit in second["hits"])
+
+
+def test_decision_search_ranks_partial_body_matches_without_single_term_noise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path)
+    memory = tmp_path / "memory"
+    monkeypatch.setenv("BUILD_LOOP_MEMORY_STORE_ROOT", str(memory))
+    folder = memory / "projects" / repo.name / "decisions"
+    folder.mkdir(parents=True)
+    (folder / "strong.md").write_text("# Adaptive search\nUse shared precompute for search.")
+    (folder / "weak.md").write_text("# Search\nOnly search is discussed here.")
+
+    result = searcher.search(repo, "adaptive search precompute migration", kind="decision")
+
+    assert result["hits"]
+    assert result["hits"][0]["path"].endswith("strong.md")
+    assert all(hit["matched_terms"] >= 2 for hit in result["hits"])
 
 
 def test_source_change_rebuilds_metadata_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

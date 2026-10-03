@@ -28,6 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_close_lint  # noqa: E402
+from decision_log import acknowledge_none, record  # noqa: E402
+from plan_verify import _write_decision_plan_receipt  # noqa: E402
 from acceptance_selector import _change_digest  # noqa: E402
 from learn import runner as learn_runner  # noqa: E402
 
@@ -88,6 +90,70 @@ class RunCloseLintTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state), encoding="utf-8")
         return path
+
+    def test_new_runs_require_decision_update_receipt_at_final_close(self) -> None:
+        run_id = "bl-decision-1"
+        entry = _orchestrator_run(run_id)
+        entry["learn"] = {"receipt": f".build-loop/learn/{run_id}.json", "status": "complete"}
+        self._write_state({"runs": [entry]})
+        _write_learn_receipt(self.workdir, run_id)
+        (self.workdir / ".build-loop/context-bootstrap.json").write_text(
+            json.dumps({"run_id": run_id, "decision_history": {"local_log_present": False}}))
+        missing = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(missing["status"], "decision_update_missing")
+
+        plan = self.workdir / ".build-loop/plan.md"
+        plan.write_text("# Plan\n\n## Decision History\n- Update: none — copy only\n")
+        _write_decision_plan_receipt(self.workdir, run_id, plan)
+
+        acknowledge_none(self.workdir, run_id=run_id, reason="No new product choice")
+        none = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(none["status"], "recorded")
+        self.assertEqual(none["decision_update"], "none")
+
+        record(self.workdir, title="Use shared search", decision="Share retrieval.",
+               rationale="Duplicate work was wasteful.", status="executed",
+               evidence=["git:abc"], run_id=run_id, decision_date="2026-10-03")
+        recorded = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(recorded["status"], "recorded")
+        self.assertEqual(recorded["decision_update"], "recorded")
+
+        plan.write_text("# Plan\n\n## Decision History\n- Update: record — choice made\n")
+        _write_decision_plan_receipt(self.workdir, run_id, plan)
+        (self.workdir / ".build-loop/decisions" / f"{run_id}.json").unlink()
+        acknowledge_none(self.workdir, run_id=run_id, reason="Incorrectly skipped")
+        mismatch = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(mismatch["status"], "decision_update_missing")
+
+    def test_other_run_packet_does_not_gate_legacy_close(self) -> None:
+        run_id = "bl-old"
+        entry = _orchestrator_run(run_id)
+        entry["learn"] = {"receipt": f".build-loop/learn/{run_id}.json", "status": "complete"}
+        self._write_state({"runs": [entry]})
+        _write_learn_receipt(self.workdir, run_id)
+        (self.workdir / ".build-loop/context-bootstrap.json").write_text(
+            json.dumps({"run_id": "bl-new", "decision_history": {"checked": True}}))
+        result = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(result["status"], "recorded")
+
+    def test_other_run_cannot_overwrite_active_runs_decision_gate(self) -> None:
+        run_id = "bl-active"
+        entry = _orchestrator_run(run_id)
+        entry["learn"] = {"receipt": f".build-loop/learn/{run_id}.json", "status": "complete"}
+        self._write_state({"runs": [entry]})
+        _write_learn_receipt(self.workdir, run_id)
+        from context_bootstrap import write_packet
+        shared = self.workdir / ".build-loop/context-bootstrap.json"
+        write_packet({"run_id": run_id, "decision_history": {"checked": True}}, shared)
+        write_packet({"run_id": "bl-later", "decision_history": {"checked": True}}, shared)
+        missing = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(missing["status"], "decision_update_missing")
+        plan = self.workdir / ".build-loop/plan.md"
+        plan.write_text("# Plan\n\n## Decision History\n- Update: none — no new choice\n")
+        _write_decision_plan_receipt(self.workdir, run_id, plan)
+        acknowledge_none(self.workdir, run_id=run_id, reason="No new product choice")
+        closed = run_close_lint.check(self.workdir, run_id=run_id, require_learn=True, now=NOW)
+        self.assertEqual(closed["status"], "recorded")
 
     # ---- the observed failure shapes ------------------------------------------
 

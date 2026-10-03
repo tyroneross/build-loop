@@ -15,6 +15,9 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "plan_verify.py"
 FIXTURES = HERE.parent / "skills" / "plan-verify" / "test-fixtures"
 REPO_ROOT = HERE.parent  # build-loop repo root
+sys.path.insert(0, str(HERE))
+import plan_verify as pv  # noqa: E402
+from context_bootstrap import write_packet  # noqa: E402
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess:
@@ -22,6 +25,99 @@ def run(args: list[str]) -> subprocess.CompletedProcess:
         [sys.executable, str(SCRIPT)] + args,
         capture_output=True, text=True, timeout=30,
     )
+
+
+class DecisionHistoryDispositionTests(unittest.TestCase):
+    def test_run_scoped_context_survives_shared_packet_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            shared = repo / ".build-loop/context-bootstrap.json"
+            write_packet({"run_id": "r1", "decision_history": {"checked": True,
+                         "hits": [{"path": "/private/DECISION-LOG.md", "title": "Choice A"}]}}, shared)
+            write_packet({"run_id": "r2", "decision_history": {"checked": True,
+                         "hits": []}}, shared)
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- No relevant prior decision: checked the log and found none.\n"
+                            "- Update: none — no new product choice.\n")
+            self.assertTrue(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo, "r1"))
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- Applied: /private/DECISION-LOG.md:9 preserves Choice A.\n"
+                            "- Update: none — no new product choice.\n")
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo, "r1"), [])
+            receipt = pv._write_decision_plan_receipt(repo, "r1", plan)
+            self.assertEqual(json.loads(receipt.read_text())["run_id"], "r1")
+
+    def test_packet_requires_disposition_and_update_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            packet = repo / ".build-loop/context-bootstrap.json"
+            packet.parent.mkdir()
+            packet.write_text(json.dumps({"decision_history": {"checked": True, "hits": []}}))
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n")
+            missing = pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo)
+            self.assertEqual([item["rule_id"] for item in missing],
+                             ["decision-history-disposition"])
+
+            plan.write_text(
+                "# Plan\n\n## Decision History\n"
+                "- No relevant prior decision: checked the local log and canonical store.\n"
+                "- Update: none — this run makes no product decision.\n"
+            )
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo), [])
+
+    def test_legacy_plan_without_packet_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n")
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo), [])
+
+    def test_populated_hits_require_source_disposition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            packet = repo / ".build-loop/context-bootstrap.json"
+            packet.parent.mkdir()
+            packet.write_text(json.dumps({"run_id": "r1", "decision_history": {"hits": [
+                {"path": "/private/DECISION-LOG.md", "title": "Keep brief compact"}
+            ]}}))
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- No relevant prior decision: checked but found nothing.\n"
+                            "- Update: none — no choice.\n")
+            self.assertTrue(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo))
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- Applied: /private/DECISION-LOG.md:9 keeps the brief compact.\n"
+                            "- Update: record — navigation choice.\n")
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo), [])
+            receipt = pv._write_decision_plan_receipt(repo, "r1", plan)
+            self.assertEqual(json.loads(receipt.read_text())["action"], "record")
+
+    def test_incomplete_retrieval_cannot_claim_no_prior_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            packet = repo / ".build-loop/context-bootstrap.json"
+            packet.parent.mkdir()
+            packet.write_text(json.dumps({"decision_history": {
+                "checked": False, "complete": False, "hits": [],
+            }}))
+            plan = repo / "plan.md"
+            plan.write_text("# Plan\n\n## Decision History\n"
+                            "- No relevant prior decision: checked local and canonical decisions.\n"
+                            "- Update: none — no new choice.\n")
+            self.assertTrue(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo))
+            plan.write_text(plan.read_text().replace("No relevant prior decision", "Unverified"))
+            self.assertEqual(pv.rule_decision_history_disposition(
+                plan, pv.strip_fenced_blocks(plan.read_text()), repo), [])
 
 
 class ContractShapeTests(unittest.TestCase):

@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 import sys
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-from _paths import derive_slug_from_cwd, memory_store_root  # type: ignore  # noqa: E402
+from _paths import derive_slug_from_cwd, memory_scope, memory_store_root  # type: ignore  # noqa: E402
 import project_registry  # type: ignore  # noqa: E402
 
 DEFAULT_PROJECT_TAG = "_unscoped"
@@ -159,7 +159,13 @@ def resolve_project(cwd: Path | str) -> str:
     candidate = derive_slug_from_cwd(cwd)
 
     # Step 2 — registry lookup + alias walk (returns terminal canonical id).
-    registry = project_registry.load_registry()
+    # Resolution is a read. memory_store_root() announces/creates a sandbox in
+    # throwaway repositories, so use the pure scope path for the registry lookup.
+    root = memory_scope(cwd)["root"]
+    registry_path = root / "config" / "projects.yaml"
+    if not registry_path.exists():
+        registry_path = root / ".config" / "projects.yaml"
+    registry = project_registry.load_registry(registry_path)
     hit = project_registry.resolve(candidate, cwd, registry)
     if hit is not None:
         return hit

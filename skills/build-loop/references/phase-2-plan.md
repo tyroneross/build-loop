@@ -24,6 +24,7 @@
    - If the graph appears parallelizable but execution must serialize, write `parallel_skipped_reason:` with the specific dependency, tool limit, or coordination constraint.
 2a. **Recompute resource profile**: rerun `scripts/review_trigger.py` with every planned `--changed-file` and `--lines-changed <expected-delta>`. Persist the result at `state.json.execution.resourceProfile`; promote to `high` when either Assess or Plan returned `high`. Carry its `review_steps` into Review instead of dispatching every optional reviewer by default.
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
+3d. **Decision History section (every packet-backed plan)**: Read `.build-loop/decisions/<run_id>-context.json` for this run's `decision_history` and inspect relevant source sections. The shared `context-bootstrap.json` can be replaced by another run. Add `## Decision History` with one or more source-backed `- Applied:`, `- Superseded:`, `- No relevant prior decision:`, or `- Unverified:` lines. Add `- Update: record|none — <reason>`. `record` means this run will append a substantive decision at closeout; `none` means it did not make one. Cite local log `path:line`, canonical decision file, dated handoff, or verified commit. A missing or stale local log does not establish absence. `plan_verify.py` blocks a packet-backed plan without this disposition and update action.
 3a. **Approach Lenses section**: For non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, add `## Approach Lenses` before the task list. Use the Phase 1 `.build-loop/state.json.approachLenses` summary and include:
    - **Clean-sheet best approach**: the use-case-first answer if no prior implementation debt or historical decisions constrained the design.
    - **Current-constraints approach**: the best practical answer given the repo's existing code, dependencies, tools, debt, migration risk, and delivery horizon.
@@ -89,7 +90,7 @@ Readback format (one line, mandatory, before the plan body):
 
 8. **Run `plan-verify`** (deterministic, grep-checkable rules; now includes `no-stop-language` rule):
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json [--ui-target <target>]
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --run-id "<run-id>" --json [--ui-target <target>]
    ```
    Pass `--ui-target <target>` whenever `uiTarget != null`; this activates the
    deterministic UI Container Contract check. Omit it for non-UI plans.

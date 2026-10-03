@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,7 @@ from _paths import (  # type: ignore  # noqa: E402
     project_research_dir,
     top_level_lessons_dir,
 )
+from decision_log import CONTEXT_SCHEMA, context_packet_path  # type: ignore  # noqa: E402
 
 
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
@@ -1451,6 +1453,21 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"(packet.decision_quality.text; {dq.get('path')})"
         )
 
+    history = packet.get("decision_history") or {}
+    if history:
+        state = "present" if history.get("local_log_present") else "absent"
+        lines.append(
+            f"- Decision history: {'checked' if history.get('checked') else 'unavailable'}; "
+            f"local log {state} ({history.get('local_log_latest') or 'no entries'}); "
+            f"{len(history.get('hits') or [])} lexical candidates. "
+            f"Inspect sources and retry short topic queries when weak."
+        )
+        for hit in (history.get("hits") or [])[:3]:
+            line = f":{hit['line']}" if hit.get("line") else ""
+            lines.append(f"  - {hit.get('title')} — {hit.get('path')}{line}")
+        if not history.get("complete", True):
+            lines.append(f"- Decision-history coverage incomplete: {history.get('reasons') or []}")
+
     # Operational state — always surfaced when any flag read-site exists.
     # CORRUPT > 0 is a warning: a strict `=== 'true'` reader is being silently
     # inverted by a defective env value (the exact 6-month example-app-ai failure).
@@ -1568,6 +1585,34 @@ def decision_quality_doctrine() -> dict[str, Any]:
                 "text": "", "reason": f"read_error: {exc}"}
 
 
+def decision_history_context(workdir: Path, query: str, limit: int = 6) -> dict[str, Any]:
+    """Read task-relevant decisions, including an ignored running log, in every Assess."""
+    from repo_search import LOCAL_DECISION_LOG, search  # noqa: PLC0415
+
+    log = workdir / LOCAL_DECISION_LOG
+    try:
+        result = search(workdir, query, kind="decision", limit=limit, persist_index=False)
+        changes = search(workdir, query, kind="change", limit=3, persist_index=False)
+        last_entry = None
+        if log.is_file():
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("## "):
+                    last_entry = line[3:].strip()
+                    break
+        return {
+            "checked": bool(result["terms_used"]), "local_log": str(log),
+            "local_log_present": log.is_file(), "local_log_latest": last_entry,
+            "hits": result["hits"], "commit_candidates": changes["hits"],
+            "coverage": result["decisions"], "complete": result["complete"],
+            "reasons": result["decisions"].get("reasons", []),
+        }
+    except Exception as exc:  # noqa: BLE001 — Assess continues with an explicit gap
+        return {"checked": False, "local_log": str(log),
+                "local_log_present": log.is_file(), "local_log_latest": None,
+                "hits": [], "commit_candidates": [], "complete": False,
+                "reasons": [f"decision_history_error: {exc}"]}
+
+
 def emit_read_telemetry(
     packet: dict[str, Any],
     *,
@@ -1651,6 +1696,7 @@ def build_packet(
     include_rally: bool = False,
     max_excerpt_chars: int = DEFAULT_MAX_EXCERPT_CHARS,
     rollout_limit: int = 3,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     workdir = workdir.resolve()
 
@@ -1709,12 +1755,14 @@ def build_packet(
 
     packet: dict[str, Any] = {
         "generated_at": utc_now(),
+        "run_id": run_id,
         "workdir": str(workdir),
         "project": project,
         "query": query,
         "terms": terms,
         "working_context": working_context,
         "decision_quality": decision_quality_doctrine(),
+        "decision_history": decision_history_context(workdir, query),
         "queues": queue_context(workdir),
         "inboxes": inbox_context(workdir),
         "backlog": backlog_summary(workdir),
@@ -1844,16 +1892,31 @@ def write_prior_art_to_intent(workdir: Path, digest_text: str) -> bool:
 
 
 def write_packet(packet: dict[str, Any], output: Path) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output.with_name(f".{output.name}.tmp")
-    tmp.write_text(json.dumps(packet, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-    os.replace(tmp, output)
+    def atomic_write(path: Path, body: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp",
+                                         delete=False) as tmp:
+            json.dump(body, tmp, indent=2, sort_keys=True, default=str)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            temporary = Path(tmp.name)
+        os.replace(temporary, path)
+
+    run_id = packet.get("run_id")
+    if output.name == "context-bootstrap.json" and isinstance(run_id, str) and run_id:
+        marker = context_packet_path(output.parent.parent, run_id)
+        atomic_write(marker, {"schema": CONTEXT_SCHEMA, "run_id": run_id,
+                              "decision_history": packet.get("decision_history")})
+    atomic_write(output, packet)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workdir", default=os.getcwd())
     parser.add_argument("--query", default="")
+    parser.add_argument("--run-id", help="Bind this Phase 1 packet to the current run.")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--codex-memory-root", default=os.environ.get("CODEX_MEMORY_ROOT", str(DEFAULT_CODEX_MEMORY_ROOT)))
     parser.add_argument("--output", default="")
@@ -1866,9 +1929,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rollout-limit", type=int, default=3)
     args = parser.parse_args(argv)
 
+    workdir = expand_path(args.workdir)
+    if (args.output and not args.run_id and
+            expand_path(args.output) == workdir / ".build-loop/context-bootstrap.json"):
+        parser.error("--run-id is required for the standard Phase 1 context packet")
+
     packet = build_packet(
-        workdir=expand_path(args.workdir),
+        workdir=workdir,
         query=args.query,
+        run_id=args.run_id,
         limit=args.limit,
         codex_memory_root=expand_path(args.codex_memory_root),
         include_postgres=args.include_postgres,
