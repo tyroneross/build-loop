@@ -32,7 +32,8 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 ## Scope
 
 - **Scan**: Production code paths and public release/package surfaces.
-- **Exclude**: Test files, fixtures, `__tests__/`, `*.test.*`, `*.spec.*`, dev-only code, seed scripts clearly marked as dev, and clearly synthetic documentation examples that cannot be confused for live private data.
+- **Exclude**: Test files, `__tests__/`, `*.test.*`, `*.spec.*`, dev-only code (inside `#if DEBUG`, `NODE_ENV !== 'production'`, or an explicit dev flag), seed scripts clearly marked as dev, and clearly synthetic documentation examples that cannot be confused for live private data.
+- **Fixtures are excluded only while nothing outside a test or dev-only path loads them.** A fixture, sample, or snapshot file that a production provider, store, loader, or resource bundle reads (for example `Bundle.main.url(forResource: "Sample…")`, `require('./fixtures/…')`, a seed file shipped in an app `Resources/` folder) is IN scope and is a `blocking` finding under category `mock` with context `fixture-seeded-production-surface`. Trace every fixture-looking file (`Sample*`, `Fixture*`, `Mock*`, `Demo*`, `Placeholder*`, `Synthetic*`, ids starting `fixture-`/`sample-`/`mock-`/`demo-`) to its readers before excluding it. Origin: 2026-10-04 RossLabs Ambient Agent finding, where the installed iPhone app's Today tab showed six fixture tasks for 35 days while this scanner reported `clean` because the file was named like a fixture.
 - **Do not halt work**: Findings route back to the orchestrator's Iterate/Auto-Resolve path. The scanner reports what to fix; the orchestrator invokes the right implementer, auditor, or specialist agent to make the needed change and then re-runs validation.
 
 ## What to Detect
@@ -52,7 +53,7 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 
 ## Process
 
-1. Glob for source files (exclude test dirs)
+1. Glob for source files (exclude test dirs); also glob app resource/bundle folders (`Resources/`, `assets/`, `public/`) for fixture-named files and check who loads them
 2. Grep for common mock patterns: `lorem`, `placeholder`, `John Doe`, `test@`, `example.com`, `555-`, `faker`, `Math.random`
 3. Grep for privacy patterns: `sk-`, `api_key`, `access_token`, `secret`, `BEGIN PRIVATE KEY`, `.env`, `/Users/`, `/home/`, `C:\Users\`, `local-agent-mode-sessions`, `.rally/`, `ObsidianVault`, `WorkWiki`, `persona`, `profile`, `resume`, `calendar`, `transcript`
 4. For each hit, check if it's in a production/public package path or test/dev path
