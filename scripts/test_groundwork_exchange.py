@@ -535,6 +535,98 @@ class GroundworkExchangeTests(unittest.TestCase):
         with self.assertRaisesRegex(gx.ExchangeError, "architecture does not match"):
             gx.validate_request(mismatched_request, valid_spec)
 
+    def test_groundwork_050_write_boundary_notes_effects_and_writes_are_optional(self) -> None:
+        component_a = {
+            "id": "component-a", "name": "A", "kind": "service",
+            "featureIds": [], "owner": "app",
+        }
+        component_b = {
+            "id": "component-b", "name": "B", "kind": "ui",
+            "featureIds": [], "owner": "app",
+        }
+        ref_a = {"specId": "spec-demo", "kind": "component", "id": "component-a"}
+        ref_b = {"specId": "spec-demo", "kind": "component", "id": "component-b"}
+        contract_ref = {"specId": "spec-demo", "kind": "contract", "id": "contract-a"}
+        contract = {
+            "id": "contract-a", "name": "A contract", "provider": ref_a,
+            "consumers": [ref_b],
+            "ports": [{"id": "port-a", "name": "Input", "type": "json", "direction": "input"}],
+            "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
+        }
+        exchange = {
+            "id": "exchange-a", "order": 1, "from": ref_a, "to": ref_b,
+            "contractRef": contract_ref, "inputRefs": [], "outputRefs": [],
+            "failurePaths": ["invalid"],
+        }
+        architecture = {
+            "components": [component_a, component_b], "contracts": [contract],
+            "relationships": [],
+            "flows": [{"id": "flow-a", "name": "Plan", "trigger": "Open", "exchanges": [exchange]}],
+            "specDependencies": [],
+        }
+
+        def bound(value: dict) -> tuple[dict, dict]:
+            request = json.loads(json.dumps(self.request))
+            spec = json.loads(json.dumps(self.spec))
+            request["architecture"] = json.loads(json.dumps(value))
+            spec["architecture"] = json.loads(json.dumps(value))
+            request["specDigest"] = gx.digest_normalized(spec)
+            self.rebind_request(request)
+            return request, spec
+
+        omitted_request, omitted_spec = bound(architecture)
+        validated = gx.validate_request(omitted_request, omitted_spec)["architecture"]
+        self.assertNotIn("writeBoundaryNotes", validated["contracts"][0])
+        self.assertNotIn("effects", validated["flows"][0]["exchanges"][0])
+        self.assertNotIn("writes", validated["flows"][0]["exchanges"][0])
+
+        full = json.loads(json.dumps(architecture))
+        full["contracts"][0]["writeBoundaryNotes"] = ["Writes stay inside the planner store"]
+        full["flows"][0]["exchanges"][0]["effects"] = ["Plan persisted"]
+        full["flows"][0]["exchanges"][0]["writes"] = ["Sources/Planner/PlanStore.swift"]
+        full_request, full_spec = bound(full)
+        self.assertEqual(gx.validate_request(full_request, full_spec)["architecture"], full)
+
+        empty = json.loads(json.dumps(full))
+        empty["contracts"][0]["writeBoundaryNotes"] = []
+        empty["flows"][0]["exchanges"][0]["effects"] = []
+        empty["flows"][0]["exchanges"][0]["writes"] = []
+        empty_request, empty_spec = bound(empty)
+        gx.validate_request(empty_request, empty_spec)
+
+        def contract_field(value: object) -> dict:
+            mutated = json.loads(json.dumps(full))
+            mutated["contracts"][0]["writeBoundaryNotes"] = value
+            return mutated
+
+        def exchange_field(key: str, value: object) -> dict:
+            mutated = json.loads(json.dumps(full))
+            mutated["flows"][0]["exchanges"][0][key] = value
+            return mutated
+
+        rejected = [
+            (contract_field("note"), "must be an array"),
+            (contract_field([""]), "writeBoundaryNotes"),
+            (exchange_field("effects", "note"), "must be an array"),
+            (exchange_field("effects", [""]), "effects"),
+            (exchange_field("writes", "note"), "must be an array"),
+            (exchange_field("writes", [""]), "writes"),
+        ]
+        for value, message in rejected:
+            with self.subTest(message=message, value=value):
+                bad_request, bad_spec = bound(value)
+                with self.assertRaisesRegex(gx.ExchangeError, message):
+                    gx.validate_request(bad_request, bad_spec)
+
+        extra_contract = json.loads(json.dumps(full))
+        extra_contract["contracts"][0]["unrelated"] = True
+        extra_exchange = exchange_field("unrelated", True)
+        for value in (extra_contract, extra_exchange):
+            with self.subTest(extra=value):
+                bad_request, bad_spec = bound(value)
+                with self.assertRaisesRegex(gx.ExchangeError, "unsupported fields: unrelated"):
+                    gx.validate_request(bad_request, bad_spec)
+
     def test_verified_map_is_bound_to_real_repository_evidence(self) -> None:
         request = gx.validate_request(self.request, self.spec)
         result = gx.build_implementation_map(

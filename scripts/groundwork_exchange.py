@@ -325,7 +325,7 @@ def _validate_architecture(
     for index, raw in enumerate(architecture["contracts"]):
         label = f"architecture.contracts[{index}]"
         item = _require_object(raw, label)
-        _strict_keys(item, {"id", "name", "provider", "consumers", "ports", "transport", "failureModes", "securityNotes"}, {"provenance", "ownedFiles"}, label)
+        _strict_keys(item, {"id", "name", "provider", "consumers", "ports", "transport", "failureModes", "securityNotes"}, {"provenance", "ownedFiles", "writeBoundaryNotes"}, label)
         contract_ids.append(_architecture_id(item["id"], f"{label}.id"))
         _nonempty(item["name"], f"{label}.name")
         refs.append((_validate_qualified_ref(item["provider"], f"{label}.provider"), f"{label}.provider", "component"))
@@ -356,6 +356,8 @@ def _validate_architecture(
         _nonempty(item["transport"], f"{label}.transport")
         _string_list(item["failureModes"], f"{label}.failureModes", minimum=1)
         _string_list(item["securityNotes"], f"{label}.securityNotes", minimum=1)
+        if "writeBoundaryNotes" in item:
+            _string_list(item["writeBoundaryNotes"], f"{label}.writeBoundaryNotes")
         if "ownedFiles" in item:
             _owned_files(item["ownedFiles"], f"{label}.ownedFiles")
         if "provenance" in item:
@@ -400,7 +402,7 @@ def _validate_architecture(
             _strict_keys(
                 exchange,
                 {"id", "order", "from", "to", "contractRef", "inputRefs", "outputRefs", "failurePaths"},
-                {"stateRefs"},
+                {"stateRefs", "effects", "writes"},
                 exchange_label,
             )
             exchange_ids.append(_architecture_id(exchange["id"], f"{exchange_label}.id"))
@@ -432,6 +434,9 @@ def _validate_architecture(
                     if state not in states:
                         _fail(f"{state_ref_label}.state references unknown state {state} on screen {screen_id}")
             _string_list(exchange["failurePaths"], f"{exchange_label}.failurePaths", minimum=1)
+            for key in ("effects", "writes"):
+                if key in exchange:
+                    _string_list(exchange[key], f"{exchange_label}.{key}")
         _unique(exchange_ids, f"{label} exchange ids")
         if len(orders) != len(set(orders)):
             _fail(f"{label} exchange orders must be unique")

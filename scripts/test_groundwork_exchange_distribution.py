@@ -105,6 +105,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                         "ports": [{"id": "port-plan", "name": "Plan", "type": "json", "direction": "output"}],
                         "transport": "in-process", "failureModes": ["invalid"], "securityNotes": ["local"],
                         "ownedFiles": ["src/app.ts"],
+                        "writeBoundaryNotes": ["Writes stay inside src/app.ts"],
                     }],
                     "relationships": [],
                     "flows": [{
@@ -117,6 +118,7 @@ class GroundworkExchangeDistributionTests(unittest.TestCase):
                             "inputRefs": [], "outputRefs": [],
                             "stateRefs": [{"screenId": "screen-plan", "state": "reviewing"}],
                             "failurePaths": ["invalid"],
+                            "effects": ["Plan rendered"], "writes": ["src/app.ts"],
                         }],
                     }],
                     "specDependencies": [],
