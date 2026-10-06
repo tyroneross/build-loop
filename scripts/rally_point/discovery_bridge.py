@@ -848,6 +848,157 @@ def _cache_put(
     _prune_cache(now)
 
 
+# ---------------------------------------------------------------------------
+# Opt-in cross-process cache for the healthy native-Rally envelope.
+#
+# ``_CACHE`` above is process-local, so it never helps a hook: every
+# PreToolUse / SessionStart hook is a fresh interpreter that re-ran
+# ``rally whoami`` + ``rally status read`` (measured 2026-10-05: ~0.6s each on
+# a busy room) against a 2s hook timeout. Hook entrypoints call
+# ``enable_disk_cache()`` so consecutive hooks in one session reuse the last
+# healthy envelope for ``CACHE_TTL_SECONDS`` -- the same freshness contract the
+# process-local cache already gives long-lived callers.
+#
+# Only a healthy native envelope (``transport == "rally-cli"`` with no
+# refusal) is persisted; refusals and fallbacks are re-probed every time. The
+# key binds the workdir, the validated binary (path + mtime + size), the uid
+# and the identity-bearing environment, so a binary swap or a different
+# session identity never reuses another's entry.
+# ---------------------------------------------------------------------------
+
+_DISK_CACHE_ENABLED = False
+_DISK_CACHE_SCHEMA = "build-loop.rally-discovery-cache.v1"
+_DISK_CACHE_PRUNE_AGE_SECONDS = 24 * 60 * 60
+_DISK_CACHE_IDENTITY_ENV = (
+    "RALLY_SESSION_ID",
+    "RALLY_AGENT_ID",
+    "RALLY_TOOL_ID",
+    "RALLY_OBSERVER_PID",
+    "RALLY_HOME",
+    "BUILD_LOOP_RALLY_SESSION_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_SESSION_ID",
+)
+
+
+def enable_disk_cache(enabled: bool = True) -> bool:
+    """Let ``resolve()`` reuse a healthy native envelope across processes.
+
+    Returns the previous setting so an in-process caller can restore it.
+    """
+    global _DISK_CACHE_ENABLED
+    previous = _DISK_CACHE_ENABLED
+    _DISK_CACHE_ENABLED = bool(enabled)
+    return previous
+
+
+def _disk_cache_dir() -> Path:
+    override = os.environ.get("BUILD_LOOP_RALLY_DISCOVERY_CACHE_DIR")
+    if override:
+        return Path(override).expanduser()
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base).expanduser() / "build-loop" / "rally-discovery"
+
+
+def _disk_cache_key(workdir_key: str, binary: str) -> str | None:
+    try:
+        st = os.stat(binary)
+    except OSError:
+        return None
+    material = {
+        "schema": _DISK_CACHE_SCHEMA,
+        "workdir": workdir_key,
+        "binary": binary,
+        "binary_mtime_ns": st.st_mtime_ns,
+        "binary_size": st.st_size,
+        "uid": os.getuid() if hasattr(os, "getuid") else None,
+        "env": {k: os.environ.get(k) for k in _DISK_CACHE_IDENTITY_ENV},
+    }
+    blob = json.dumps(material, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _disk_cache_get(workdir_key: str, binary: str) -> DiscoveryEnvelope | None:
+    if not _DISK_CACHE_ENABLED:
+        return None
+    key = _disk_cache_key(workdir_key, binary)
+    if key is None:
+        return None
+    try:
+        data = json.loads((_disk_cache_dir() / f"{key}.json").read_text("utf-8"))
+        cached_at = float(data["cached_at"])
+        if data.get("key") != key or data.get("schema") != _DISK_CACHE_SCHEMA:
+            return None
+        if not (0 <= time.time() - cached_at <= CACHE_TTL_SECONDS):
+            return None
+        envelope = _shape_envelope_from_discover(
+            dict(data["raw"]), resolved_via=str(data["resolved_via"])
+        )
+    except Exception:
+        return None
+    if (
+        envelope is None
+        or envelope.coordination_unavailable
+        or envelope.transport != "rally-cli"
+        or envelope.raw.get("rally_binary") != binary
+    ):
+        return None
+    return envelope
+
+
+def _disk_cache_put(
+    workdir_key: str, binary: str, envelope: DiscoveryEnvelope
+) -> None:
+    if not _DISK_CACHE_ENABLED:
+        return
+    if envelope.coordination_unavailable or envelope.transport != "rally-cli":
+        return
+    key = _disk_cache_key(workdir_key, binary)
+    if key is None:
+        return
+    try:
+        directory = _disk_cache_dir()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        payload = json.dumps(
+            {
+                "schema": _DISK_CACHE_SCHEMA,
+                "key": key,
+                "cached_at": time.time(),
+                "resolved_via": envelope.resolved_via,
+                "raw": envelope.raw,
+            }
+        )
+        fd, tmp = tempfile.mkstemp(dir=str(directory), prefix=".tmp-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            os.replace(tmp, directory / f"{key}.json")
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        _disk_cache_prune(directory)
+    except Exception:
+        return
+
+
+def _disk_cache_prune(directory: Path) -> None:
+    cutoff = time.time() - _DISK_CACHE_PRUNE_AGE_SECONDS
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        os.unlink(entry.path)
+                except OSError:
+                    continue
+    except OSError:
+        return
+
+
 def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     """Resolve the active Rally Point channel for ``workdir``.
 
@@ -906,6 +1057,10 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         return cached
     native_binary = repo_local_rally_binary(requested_workdir)
     if native_binary:
+        envelope = _disk_cache_get(native_key, native_binary)
+        if envelope is not None:
+            _cache_put(native_key, "repo-local-rally-cli", envelope)
+            return envelope
         envelope = _resolve_native_rally_channel(
             native_binary,
             requested_workdir,
@@ -914,6 +1069,7 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         )
         if envelope is not None:
             _cache_put(native_key, "repo-local-rally-cli", envelope)
+            _disk_cache_put(native_key, native_binary, envelope)
             return envelope
         fallback = _internal_fallback(workdir_path)
         fallback.raw = {

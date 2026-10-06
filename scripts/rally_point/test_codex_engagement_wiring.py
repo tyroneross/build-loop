@@ -122,6 +122,7 @@ def test_claude_event_session_ids_reach_start_and_pre_edit_without_env(
         {
             "CLAUDE_PROJECT_DIR": str(workdir),
             "BUILD_LOOP_RALLY_POINT_SKIP_WATCH": "1",
+            "BUILD_LOOP_RALLY_SESSION_START_FOREGROUND": "1",
             "_BL_HOOK_CAPTURE": str(capture),
         }
     )

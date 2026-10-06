@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -27,7 +28,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from rally_point import actor_identity, channel_paths, presence, revision
+    from rally_point import actor_identity, channel_paths, discovery_bridge, presence, revision
     from rally_point.backend_adapter import (
         acknowledge,
         audit_next,
@@ -37,7 +38,7 @@ try:
         write_presence as write_backend_presence,
     )
 except ImportError:
-    from . import actor_identity, channel_paths, presence, revision
+    from . import actor_identity, channel_paths, discovery_bridge, presence, revision
     from .backend_adapter import (
         acknowledge,
         audit_next,
@@ -74,6 +75,77 @@ def __getattr__(name: str):
 # session/tool/repo room already exists within this many seconds. Cheap
 # stat+read, no flock. Single env override for tests; 60s default.
 _PRE_EDIT_THROTTLE_SECONDS = 60.0
+
+# Internal wall-clock deadline for the hook subcommands. Claude Code runs the
+# wrappers with ``"timeout": 2`` and, on timeout, kills the hook and discards
+# its output (https://code.claude.com/docs/en/hooks#timeouts). Measured
+# 2026-10-05 the pre-edit path took 1.2-2.9s on a busy room, so ~9k hook runs
+# were cancelled. Finishing ourselves below the host timeout keeps whatever
+# hint was already printed and stops a half-done native write from being
+# killed by the host instead of by us. Env override for tests/other hosts.
+_HOOK_DEADLINE_SECONDS = 1.5
+# The native presence join is a Rally *mutation*; start it only when this
+# much of the deadline is left, so the write normally completes rather than
+# being interrupted into an unknown outcome. A skipped join is retried on the
+# next tool use (the throttle stamp is only touched after a successful write).
+_JOIN_MIN_REMAINING_SECONDS = 0.7
+_DEADLINE_AT: float | None = None
+
+
+class _HookDeadline(BaseException):
+    """Raised by SIGALRM when the hook's internal deadline expires.
+
+    A ``BaseException`` on purpose: the coordination helpers wrap their work
+    in ``except Exception`` fail-open handlers, which must not swallow the
+    deadline and keep going. ``subprocess.run`` kills its child on any
+    exception, so no ``rally`` process outlives the hook.
+    """
+
+
+def _hook_deadline_seconds() -> float:
+    raw = os.environ.get("BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS")
+    if not raw:
+        return _HOOK_DEADLINE_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _HOOK_DEADLINE_SECONDS
+    return value if value >= 0 else _HOOK_DEADLINE_SECONDS
+
+
+def _remaining_seconds() -> float:
+    if _DEADLINE_AT is None:
+        return float("inf")
+    return _DEADLINE_AT - time.monotonic()
+
+
+def _on_deadline(_signum, _frame) -> None:
+    raise _HookDeadline()
+
+
+def _arm_deadline(seconds: float) -> None:
+    """Arm the internal deadline; ``0`` disables it. No-op without SIGALRM."""
+    global _DEADLINE_AT
+    if seconds <= 0 or not hasattr(signal, "setitimer"):
+        _DEADLINE_AT = None
+        return
+    try:
+        signal.signal(signal.SIGALRM, _on_deadline)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+    except (ValueError, OSError):  # not the main thread / unsupported
+        _DEADLINE_AT = None
+        return
+    _DEADLINE_AT = time.monotonic() + seconds
+
+
+def _disarm_deadline() -> None:
+    global _DEADLINE_AT
+    _DEADLINE_AT = None
+    if hasattr(signal, "setitimer"):
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        except (ValueError, OSError):
+            pass
 _NATIVE_THROTTLE_RETENTION_SECONDS = 24 * 60 * 60
 _NATIVE_THROTTLE_MAX_ENTRIES = 128
 
@@ -536,6 +608,19 @@ def pre_edit_join(
     op = resolve_operative_repo(workdir, file_path=file_path, command=command)
     if op is None:
         return 0
+    # Cheap pre-check: a fresh native join stamp for this session in the
+    # operative repo means nothing below would write. Checking it before
+    # ``resolve_context(op)`` skips a full Rally discovery (two ``rally``
+    # spawns) whenever the operative repo differs from the workdir.
+    t = now if now is not None else time.time()
+    try:
+        early_session_id = actor_identity.resolve_identity(tool, session_id).session_id
+        if early_session_id and _fresh_native_throttle(
+            op, early_session_id, throttle_s=_throttle_seconds(), now=t
+        ):
+            return 0
+    except Exception:
+        pass
     try:
         # Reuse the caller's already-resolved workdir context when the
         # operative repo is the workdir itself (the common case).
@@ -549,13 +634,16 @@ def pre_edit_join(
     if context.native:
         native_identity = actor_identity.resolve_identity(tool, session_id)
         resolved_session_id = native_identity.session_id
-        t = now if now is not None else time.time()
         if _fresh_native_throttle(
             op,
             resolved_session_id,
             throttle_s=_throttle_seconds(),
             now=t,
         ):
+            return 0
+        if _remaining_seconds() < _JOIN_MIN_REMAINING_SECONDS:
+            # Not enough budget left to finish a Rally write; retry on the
+            # next tool use rather than risk an interrupted mutation.
             return 0
         try:
             result = write_backend_presence(
@@ -594,7 +682,6 @@ def pre_edit_join(
         channel_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
         return 0
-    t = now if now is not None else time.time()
     if _fresh_presence_exists(
         channel_dir, session_id, throttle_s=_throttle_seconds(), now=t
     ):
@@ -730,6 +817,31 @@ def main(argv: list[str] | None = None) -> int:
     # other subcommands resolve to a canonical absolute path.
     raw_workdir = Path(args.workdir).expanduser()
     workdir = raw_workdir if not raw_workdir.exists() else raw_workdir.resolve()
+    # Every subcommand here runs inside a host hook with a short timeout:
+    # reuse discovery across hook processes and stop before the host kills us.
+    previous_disk_cache = discovery_bridge.enable_disk_cache()
+    # ``session-start-advance`` runs in the SessionStart wrapper's detached
+    # background stage (no host timeout), so it must be allowed to finish.
+    if args.subcommand != "session-start-advance":
+        _arm_deadline(_hook_deadline_seconds())
+    try:
+        return _dispatch(args, workdir)
+    except _HookDeadline:
+        # Fail open exactly like a host timeout, but keep any hint already
+        # printed (the host discards all output when it kills the hook).
+        if os.environ.get("BUILD_LOOP_RALLY_DEBUG") == "1":
+            print(
+                f"rally: {args.subcommand} hook stopped at its "
+                f"{_hook_deadline_seconds():.1f}s internal deadline",
+                file=sys.stderr,
+            )
+        return 0
+    finally:
+        _disarm_deadline()
+        discovery_bridge.enable_disk_cache(previous_disk_cache)
+
+
+def _dispatch(args: argparse.Namespace, workdir: Path) -> int:
     try:
         if args.subcommand == "session-start-restore":
             return session_start_restore(

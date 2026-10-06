@@ -29,6 +29,9 @@ APPS=$(mktemp -d)
 export BUILD_LOOP_APPS_ROOT="$APPS"
 export BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
 export BUILD_LOOP_RALLY_POINT_SKIP_WATCH=1
+# Steps 2-7 normally run detached after the hook returns; run them inline so
+# the cursor advance and stderr WARNs are observable deterministically.
+export BUILD_LOOP_RALLY_SESSION_START_FOREGROUND=1
 
 # ---- Case 1: no channel yet -> SessionStart silent, exit 0 -------------
 OUT=$(CLAUDE_PROJECT_DIR="$REPO" bash "$SS_HOOK" </dev/null 2>/dev/null)

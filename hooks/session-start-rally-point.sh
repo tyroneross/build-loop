@@ -9,6 +9,17 @@
 # (pre-edit-rally-point.sh, also registered on the Bash matcher) joins
 # the OPERATIVE repo's room on the first tool-use, recovering from a
 # cross-repo launch without polluting the home / ``_unscoped`` room.
+#
+# Timeout budget (2026-10-05): Claude Code runs this hook with a 2s timeout
+# and discards ALL output of a hook it cancels. Measured end to end, Steps 1-7
+# took 6-8s on a quiet room and 15-23s on a busy one, so the restore line was
+# never delivered. Only Step 1 prints to stdout (the context the agent sees);
+# Steps 2-7 write side effects or print to stderr, which hooks.json already
+# sends to /dev/null. Step 1 therefore runs in the foreground under an
+# internal deadline below the host timeout, and Steps 2-7 run in a detached
+# background stage, in their original order, after this hook has returned.
+# BUILD_LOOP_RALLY_SESSION_START_FOREGROUND=1 runs them inline (tests, manual
+# diagnosis -- the stderr WARNs of Steps 5-7 are only visible that way).
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$D/_session_start_lib.sh"
 W="${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -57,8 +68,11 @@ fi
 # Step 1: checkpoint_read restore line (verbose: surface delta if any).
 # ``session-start-safe`` no-ops cleanly when the resolved workdir is not a
 # git repo (belt-and-braces — the shell guard above already filters).
-python3 "$PKG/hooks.py" session-start-safe --workdir "$W" --verbose \
+BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS="${BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS:-1.2}" \
+    python3 "$PKG/hooks.py" session-start-safe --workdir "$W" --verbose \
     --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
+
+_rally_session_start_background() {
 
 # Step 2: probe announce + listen (fully detached watcher).
 if [ "${BUILD_LOOP_RALLY_POINT_SKIP_WATCH:-}" = "1" ]; then
@@ -110,5 +124,17 @@ fi
 # It never reaps (Step 3 already does that capability-gated); it only tells the
 # human cleanup is pending. Prints only to stderr; exit 0 preserved.
 [ -f "$PKG/orphan_notice.py" ] && python3 "$PKG/orphan_notice.py" --workdir "$W" 1>/dev/null || true
+}
+
+if [ "${BUILD_LOOP_RALLY_SESSION_START_FOREGROUND:-0}" = "1" ]; then
+    _rally_session_start_background
+else
+    # Fully detached: no inherited stdio (the host waits for its pipes to
+    # close), and SIGHUP ignored so the stage outlives this hook's shell.
+    # ``$PPID`` inside the subshell is still this script's parent, so the
+    # watcher's --watch-parent-pid binding is unchanged.
+    ( trap '' HUP; _rally_session_start_background ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+fi
 
 exit 0
