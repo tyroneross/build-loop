@@ -122,7 +122,7 @@
           {
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_dispatch.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
-            "timeout": 9
+            "timeout": 20
           },
           {
             "type": "command",
