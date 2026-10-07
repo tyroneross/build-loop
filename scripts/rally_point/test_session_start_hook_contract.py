@@ -100,6 +100,17 @@ def test_empty_room_returns_valid_noop(startup):
     assert json.loads(proc.stdout) == {}
 
 
+def test_unavailable_json_runtime_returns_valid_noop(startup):
+    _, _, env = startup
+    modules = Path(env["CLAUDE_PLUGIN_ROOT"]) / "missing-perl-modules"
+    (modules / "JSON").mkdir(parents=True)
+    (modules / "JSON/PP.pm").write_text('die "fixture JSON::PP unavailable";\n')
+    proc, _ = run_startup(startup, PERL5LIB=str(modules))
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout) == {}
+    assert not Path(env["HOOK_TEST_ACTOR_LOG"]).exists()
+
+
 def test_explicit_host_wins_over_inherited_session_environment(startup):
     proc, _ = run_startup(startup, CODEX_THREAD_ID="parent-codex", CLAUDE_SESSION_ID="session-a", BUILD_LOOP_RALLY_TOOL="claude_code")
     assert proc.returncode == 0
@@ -144,6 +155,23 @@ def test_partial_output_from_completed_child_is_discarded(startup):
     assert proc.returncode == 0
     assert elapsed < 2
     assert json.loads(proc.stdout) == {}
+
+
+def test_completed_child_output_is_drained_after_scheduler_pause(startup):
+    _, _, env = startup
+    plugin = Path(env["CLAUDE_PLUGIN_ROOT"])
+    hook = plugin / "hooks/session-start-rally-point.sh"
+    # Model preemption after a select timeout while the child writes and exits.
+    select_call = "my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);"
+    source = hook.read_text()
+    assert select_call in source
+    hook.write_text(source.replace(select_call, select_call + " Time::HiRes::sleep(0.35) if $n == 0;"))
+    helper = plugin / "scripts/rally_point/hooks.py"
+    helper.write_text(helper.read_text().replace("from rally_point import hooks", "time.sleep(0.10)\nfrom rally_point import hooks"))
+    proc, elapsed = run_startup(startup)
+    assert proc.returncode == 0
+    assert elapsed < 2
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"] == "Rally Point: fixture - 1 live peer(s)"
 
 
 def test_stdin_without_eof_is_inside_deadline(startup):

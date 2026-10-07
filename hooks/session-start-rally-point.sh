@@ -23,6 +23,8 @@
 # Bound the entire foreground lifecycle, including stdin, interpreter startup
 # and identity resolution, before the Python helper arms its narrower timer.
 # Buffer stdout so a cancelled child never returns a partial JSON envelope.
+# If startup exhausts its budget or the supervisor runtime is unavailable,
+# return a no-op; the background stage is skipped until a later lifecycle hook.
 if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
     if ! command -v perl >/dev/null 2>&1; then
         printf '{}'
@@ -32,7 +34,7 @@ if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
         use strict;
         use POSIX qw(setsid :sys_wait_h);
         use Time::HiRes qw(time);
-        use JSON::PP qw(decode_json);
+        eval { require JSON::PP; 1 } or do { print "{}"; exit 0; };
         my $host_parent = shift @ARGV;
         my $ms = $ENV{BUILD_LOOP_RALLY_START_DEADLINE_MS} // 1500;
         $ms = 1500 unless $ms =~ /\A[0-9]+\z/ && $ms >= 100 && $ms <= 1600;
@@ -66,8 +68,8 @@ if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
                 $eof = 1 if defined($got) && !$got;
             }
             $reaped = 1 if !$reaped && waitpid($pid, WNOHANG) == $pid;
-            if ($reaped && ($eof || $n == 0)) {
-                my $value = eval { decode_json($buf) };
+            if ($reaped && $eof) {
+                my $value = eval { JSON::PP::decode_json($buf) };
                 print !$@ && ref($value) eq "HASH" ? $buf : "{}";
                 exit 0;
             }
