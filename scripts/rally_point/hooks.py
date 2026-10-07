@@ -435,6 +435,13 @@ def _resolve_existing_channel(
     return context.envelope.app_slug, channel_dir
 
 
+def _emit_session_start_context(message: str) -> None:
+    """Emit one host-valid envelope, including when native Rally supplies data."""
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": message,
+    }}))
+
+
 def session_start_restore(
     workdir: Path,
     *,
@@ -461,7 +468,7 @@ def session_start_restore(
             and item.get("status") == "active"
         ]
         if peers:
-            print(
+            _emit_session_start_context(
                 f"Rally Point: {context.envelope.app_slug} - "
                 f"{len(peers)} live peer(s)"
             )
@@ -491,7 +498,7 @@ def session_start_restore(
         bits.append("arch changed: re-baseline")
     if "soft-claim" in reactions:
         bits.append("peer owns files (warning)")
-    print(f"Rally Point: {slug} - " + "; ".join(bits))
+    _emit_session_start_context(f"Rally Point: {slug} - " + "; ".join(bits))
     return 0
 
 

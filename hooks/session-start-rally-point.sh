@@ -20,11 +20,80 @@
 # background stage, in their original order, after this hook has returned.
 # BUILD_LOOP_RALLY_SESSION_START_FOREGROUND=1 runs them inline (tests, manual
 # diagnosis -- the stderr WARNs of Steps 5-7 are only visible that way).
+# Bound the entire foreground lifecycle, including stdin, interpreter startup
+# and identity resolution, before the Python helper arms its narrower timer.
+# Buffer stdout so a cancelled child never returns a partial JSON envelope.
+if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
+    if ! command -v perl >/dev/null 2>&1; then
+        printf '{}'
+        exit 0
+    fi
+    exec perl -e '
+        use strict;
+        use POSIX qw(setsid :sys_wait_h);
+        use Time::HiRes qw(time);
+        use JSON::PP qw(decode_json);
+        my $host_parent = shift @ARGV;
+        my $ms = $ENV{BUILD_LOOP_RALLY_START_DEADLINE_MS} // 1500;
+        $ms = 1500 unless $ms =~ /\A[0-9]+\z/ && $ms >= 100 && $ms <= 1600;
+        my $deadline = time + $ms / 1000;
+        $ENV{BUILD_LOOP_RALLY_START_CHILD} = "1";
+        $ENV{BUILD_LOOP_RALLY_START_PARENT_PID} = $host_parent;
+        my ($r, $w);
+        pipe($r, $w) or do { print "{}"; exit 0; };
+        my $pid = fork();
+        defined($pid) or do { print "{}"; exit 0; };
+        if (!$pid) {
+            close $r;
+            setsid();
+            open(STDOUT, ">&", $w) or exit 0;
+            close $w;
+            exec @ARGV;
+            exit 0;
+        }
+        close $w;
+        my $stop = sub { kill "TERM", -$pid; kill "TERM", $pid; };
+        $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { $stop->(); exit 0; };
+        my ($buf, $eof, $reaped) = ("", 0, 0);
+        while (time < $deadline) {
+            my $left = $deadline - time;
+            last if $left <= 0;
+            my $rin = "";
+            vec($rin, fileno($r), 1) = 1;
+            my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);
+            if ($n > 0 && !$eof) {
+                my $got = sysread($r, $buf, 65536, length $buf);
+                $eof = 1 if defined($got) && !$got;
+            }
+            $reaped = 1 if !$reaped && waitpid($pid, WNOHANG) == $pid;
+            if ($reaped && ($eof || $n == 0)) {
+                my $value = eval { decode_json($buf) };
+                print !$@ && ref($value) eq "HASH" ? $buf : "{}";
+                exit 0;
+            }
+        }
+        $stop->();
+        print "{}";
+        exit 0;
+    ' "${PPID:-0}" "$BASH" "$0" "$@"
+fi
+unset BUILD_LOOP_RALLY_START_CHILD
+HOST_PARENT_PID="${BUILD_LOOP_RALLY_START_PARENT_PID:-${PPID:-0}}"
+unset BUILD_LOOP_RALLY_START_PARENT_PID
+
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$D/_session_start_lib.sh"
 W="${CLAUDE_PROJECT_DIR:-$PWD}"
 PKG="$(dirname "$D")/scripts/rally_point"
 [ -d "$PKG" ] || exit 0
+HOST_TOOL="${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}"
+if [ -z "$HOST_TOOL" ]; then
+    if [ -n "${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}" ]; then
+        HOST_TOOL=codex
+    else
+        HOST_TOOL=claude_code
+    fi
+fi
 
 # Claude's hook event is the authoritative session identity. Do not depend on
 # CLAUDE_SESSION_ID being exported: plugin hooks receive the same session_id on
@@ -49,12 +118,12 @@ PYEOF
 fi
 RALLY_HOOK_SESSION_ID=""
 if [ -f "$PKG/actor_identity.py" ]; then
-    RALLY_HOOK_SESSION_ID=$(RALLY_OBSERVER_PID="${PPID:-0}" \
-        python3 "$PKG/actor_identity.py" --tool claude_code \
+    RALLY_HOOK_SESSION_ID=$(RALLY_OBSERVER_PID="$HOST_PARENT_PID" \
+        python3 "$PKG/actor_identity.py" --tool "$HOST_TOOL" \
         --session-id "$EVENT_SESSION_ID" --field session-id 2>/dev/null || true)
 fi
 [ -n "$RALLY_HOOK_SESSION_ID" ] || \
-    RALLY_HOOK_SESSION_ID="${EVENT_SESSION_ID:-${BUILD_LOOP_RALLY_SESSION_ID:-${CLAUDE_SESSION_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-claude-${PPID}}}}}}"
+    RALLY_HOOK_SESSION_ID="${EVENT_SESSION_ID:-${BUILD_LOOP_RALLY_SESSION_ID:-${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-${CLAUDE_SESSION_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-${HOST_TOOL}-${HOST_PARENT_PID}}}}}}}}"
 
 # Guard: if CLAUDE_PROJECT_DIR is unset and $PWD is not a git repo, the
 # launch cwd is not a rally room — defer the join to pre-edit (operative
@@ -70,20 +139,20 @@ fi
 # git repo (belt-and-braces — the shell guard above already filters).
 BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS="${BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS:-1.2}" \
     python3 "$PKG/hooks.py" session-start-safe --workdir "$W" --verbose \
-    --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
+    --tool "$HOST_TOOL" --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
 
 _rally_session_start_background() {
 
 # Step 2: probe announce + listen (fully detached watcher).
 if [ "${BUILD_LOOP_RALLY_POINT_SKIP_WATCH:-}" = "1" ]; then
     [ -f "$PKG/session_probe.py" ] && WORKDIR="$W" python3 "$PKG/session_probe.py" \
-        --workdir "$W" --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" \
+        --workdir "$W" --tool "$HOST_TOOL" --session-id "$RALLY_HOOK_SESSION_ID" \
         --mode hook >/dev/null 2>&1 || true
 else
     [ -f "$PKG/session_probe.py" ] && WORKDIR="$W" python3 "$PKG/session_probe.py" \
-        --workdir "$W" --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" \
+        --workdir "$W" --tool "$HOST_TOOL" --session-id "$RALLY_HOOK_SESSION_ID" \
         --mode hook --start-watch \
-        --watch-parent-pid "${PPID}" >/dev/null 2>&1 || true
+        --watch-parent-pid "$HOST_PARENT_PID" >/dev/null 2>&1 || true
 fi
 
 # Step 3: opportunistic reaper sweep — physical cleanup of over-TTL presence/claims/lead.
@@ -92,7 +161,7 @@ fi
 
 # Step 4: advance cursor past probe's own writes (silent; same script, no VERBOSE).
 python3 "$PKG/hooks.py" session-start-advance --workdir "$W" \
-    --tool claude_code --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
+    --tool "$HOST_TOOL" --session-id "$RALLY_HOOK_SESSION_ID" 2>/dev/null || true
 
 # Step 5: on-PATH-vs-pin rally version staleness guard (lane E-a). This is
 # the control that would have caught the rally version-mismatch incident:
@@ -131,8 +200,7 @@ if [ "${BUILD_LOOP_RALLY_SESSION_START_FOREGROUND:-0}" = "1" ]; then
 else
     # Fully detached: no inherited stdio (the host waits for its pipes to
     # close), and SIGHUP ignored so the stage outlives this hook's shell.
-    # ``$PPID`` inside the subshell is still this script's parent, so the
-    # watcher's --watch-parent-pid binding is unchanged.
+    # Preserve the host parent through the supervisor and detached subshell.
     ( trap '' HUP; _rally_session_start_background ) </dev/null >/dev/null 2>&1 &
     disown 2>/dev/null || true
 fi
