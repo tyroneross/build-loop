@@ -100,11 +100,13 @@ def test_empty_room_returns_valid_noop(startup):
     assert json.loads(proc.stdout) == {}
 
 
-def test_unavailable_json_runtime_returns_valid_noop(startup):
+@pytest.mark.parametrize("module", ["JSON/PP", "POSIX", "Time/HiRes"])
+def test_unavailable_supervisor_runtime_returns_valid_noop(startup, module):
     _, _, env = startup
     modules = Path(env["CLAUDE_PLUGIN_ROOT"]) / "missing-perl-modules"
-    (modules / "JSON").mkdir(parents=True)
-    (modules / "JSON/PP.pm").write_text('die "fixture JSON::PP unavailable";\n')
+    shadow = modules / (module + ".pm")
+    shadow.parent.mkdir(parents=True)
+    shadow.write_text('die "fixture runtime unavailable";\n')
     proc, _ = run_startup(startup, PERL5LIB=str(modules))
     assert proc.returncode == 0
     assert json.loads(proc.stdout) == {}
@@ -121,11 +123,26 @@ def test_explicit_host_wins_over_inherited_session_environment(startup):
 def test_supervisor_preserves_parent_for_identity_and_watch(startup):
     command, _, env = startup
     # Exec avoids introducing the registration shell as another parent.
-    proc = subprocess.run(["/bin/bash", "-c", "exec " + command.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=dict(env, BUILD_LOOP_RALLY_SESSION_START_FOREGROUND="1"), timeout=3)
+    proc = subprocess.run(["/bin/bash", "-c", "exec " + command.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
     assert proc.returncode == 0
     assert Path(env["HOOK_TEST_ACTOR_LOG"]).read_text() == f"claude_code:claude_code-proc-{os.getpid()}"
-    args = json.loads(Path(env["HOOK_TEST_PROBE_LOG"]).read_text())
+    probe = Path(env["HOOK_TEST_PROBE_LOG"])
+    deadline = time.monotonic() + 2
+    while not probe.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    args = json.loads(probe.read_text())
     assert args[args.index("--watch-parent-pid") + 1] == str(os.getpid())
+
+
+def test_manual_foreground_diagnosis_retains_inline_background_work(startup):
+    _, _, env = startup
+    probe = Path(env["CLAUDE_PLUGIN_ROOT"]) / "scripts/rally_point/session_probe.py"
+    probe.write_text("import time\ntime.sleep(0.3)\n" + probe.read_text())
+    proc, elapsed = run_startup(startup, BUILD_LOOP_RALLY_SESSION_START_FOREGROUND="1", BUILD_LOOP_RALLY_START_DEADLINE_MS="100")
+    assert proc.returncode == 0
+    assert elapsed >= 0.3
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert Path(env["HOOK_TEST_PROBE_LOG"]).exists()
 
 
 def test_slow_interpreter_startup_is_inside_deadline(startup):

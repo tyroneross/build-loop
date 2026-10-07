@@ -25,20 +25,21 @@
 # Buffer stdout so a cancelled child never returns a partial JSON envelope.
 # If startup exhausts its budget or the supervisor runtime is unavailable,
 # return a no-op; the background stage is skipped until a later lifecycle hook.
-if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
+# Explicit manual foreground diagnosis retains its longer inline background work.
+if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ] && [ "${BUILD_LOOP_RALLY_SESSION_START_FOREGROUND:-0}" != "1" ]; then
     if ! command -v perl >/dev/null 2>&1; then
         printf '{}'
         exit 0
     fi
     exec perl -e '
         use strict;
-        use POSIX qw(setsid :sys_wait_h);
-        use Time::HiRes qw(time);
-        eval { require JSON::PP; 1 } or do { print "{}"; exit 0; };
+        my $started = eval { require Time::HiRes; Time::HiRes::time() }
+            // do { print "{}"; exit 0; };
+        eval { require POSIX; require JSON::PP; 1 } or do { print "{}"; exit 0; };
         my $host_parent = shift @ARGV;
         my $ms = $ENV{BUILD_LOOP_RALLY_START_DEADLINE_MS} // 1500;
         $ms = 1500 unless $ms =~ /\A[0-9]+\z/ && $ms >= 100 && $ms <= 1600;
-        my $deadline = time + $ms / 1000;
+        my $deadline = $started + $ms / 1000;
         $ENV{BUILD_LOOP_RALLY_START_CHILD} = "1";
         $ENV{BUILD_LOOP_RALLY_START_PARENT_PID} = $host_parent;
         my ($r, $w);
@@ -47,7 +48,7 @@ if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
         defined($pid) or do { print "{}"; exit 0; };
         if (!$pid) {
             close $r;
-            setsid();
+            POSIX::setsid();
             open(STDOUT, ">&", $w) or exit 0;
             close $w;
             exec @ARGV;
@@ -57,8 +58,8 @@ if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
         my $stop = sub { kill "TERM", -$pid; kill "TERM", $pid; };
         $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { $stop->(); exit 0; };
         my ($buf, $eof, $reaped) = ("", 0, 0);
-        while (time < $deadline) {
-            my $left = $deadline - time;
+        while (Time::HiRes::time() < $deadline) {
+            my $left = $deadline - Time::HiRes::time();
             last if $left <= 0;
             my $rin = "";
             vec($rin, fileno($r), 1) = 1;
@@ -67,7 +68,7 @@ if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ]; then
                 my $got = sysread($r, $buf, 65536, length $buf);
                 $eof = 1 if defined($got) && !$got;
             }
-            $reaped = 1 if !$reaped && waitpid($pid, WNOHANG) == $pid;
+            $reaped = 1 if !$reaped && waitpid($pid, POSIX::WNOHANG()) == $pid;
             if ($reaped && $eof) {
                 my $value = eval { JSON::PP::decode_json($buf) };
                 print !$@ && ref($value) eq "HASH" ? $buf : "{}";
