@@ -24,7 +24,7 @@ def startup(tmp_path: Path):
     pkg = plugin / "scripts/rally_point"
     hook_dir.mkdir(parents=True)
     pkg.mkdir(parents=True)
-    for name in ["session-start-rally-point.sh", "_session_start_lib.sh"]:
+    for name in ["session-start-rally-point.sh", "_session_start_lib.sh", "_bounded_hook.sh"]:
         shutil.copy2(ROOT / "hooks" / name, hook_dir / name)
     shutil.copy2(ROOT / "scripts/rally_point/actor_identity.py", pkg / "actor_identity.py")
     # Keep real argument parsing, host identity, deadline and native renderer.
@@ -177,7 +177,7 @@ def test_partial_output_from_completed_child_is_discarded(startup):
 def test_completed_child_output_is_drained_after_scheduler_pause(startup):
     _, _, env = startup
     plugin = Path(env["CLAUDE_PLUGIN_ROOT"])
-    hook = plugin / "hooks/session-start-rally-point.sh"
+    hook = plugin / "hooks/_bounded_hook.sh"
     # Model preemption after a select timeout while the child writes and exits.
     select_call = "my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);"
     source = hook.read_text()

@@ -21,11 +21,25 @@
 # outside the repo it actually edits; this re-join recovers presence on
 # the first tool-use without a flock on the hot path.
 
+# Include shell/input/interpreter startup in the host deadline, not only main().
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS:-1500}" 1500 text "$BASH" "$0" "$@"
+
 WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG="$SCRIPT_DIR/../scripts/rally_point"
 
 [ -d "$PKG" ] || exit 0
+
+HOST_TOOL="${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}"
+if [ -z "$HOST_TOOL" ]; then
+    if [ -n "${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}" ]; then
+        HOST_TOOL=codex
+    else
+        HOST_TOOL=claude_code
+    fi
+fi
 
 # The PreToolUse JSON event (Edit/Write file_path, Bash command, session_id)
 # is parsed inside hooks.py via --event-stdin (64 KB cap, malformed JSON = no
@@ -40,10 +54,10 @@ PKG="$SCRIPT_DIR/../scripts/rally_point"
 # when BUILD_LOOP_RALLY_DEBUG=1 so diagnostics are available on demand
 # without polluting the terminal by default.
 if [ "${BUILD_LOOP_RALLY_DEBUG:-0}" = "1" ]; then
-    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool "$HOST_TOOL" \
         --event-stdin || exit 0
 else
-    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool "$HOST_TOOL" \
         --event-stdin 2>/dev/null || exit 0
 fi
 

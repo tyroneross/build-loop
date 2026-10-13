@@ -24,6 +24,9 @@
 
 set -u
 
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_CLOSEOUT_DEADLINE_MS:-5000}" 5000 optional-json "$BASH" "$0" "$@"
+
 MODE="${1:-stop}"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"

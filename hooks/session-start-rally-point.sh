@@ -26,59 +26,9 @@
 # If startup exhausts its budget or the supervisor runtime is unavailable,
 # return a no-op; the background stage is skipped until a later lifecycle hook.
 # Explicit manual foreground diagnosis retains its longer inline background work.
-if [ "${BUILD_LOOP_RALLY_START_CHILD:-0}" != "1" ] && [ "${BUILD_LOOP_RALLY_SESSION_START_FOREGROUND:-0}" != "1" ]; then
-    if ! command -v perl >/dev/null 2>&1; then
-        printf '{}'
-        exit 0
-    fi
-    exec perl -e '
-        use strict;
-        my $started = eval { require Time::HiRes; Time::HiRes::time() }
-            // do { print "{}"; exit 0; };
-        eval { require POSIX; require JSON::PP; 1 } or do { print "{}"; exit 0; };
-        my $host_parent = shift @ARGV;
-        my $ms = $ENV{BUILD_LOOP_RALLY_START_DEADLINE_MS} // 1500;
-        $ms = 1500 unless $ms =~ /\A[0-9]+\z/ && $ms >= 100 && $ms <= 1600;
-        my $deadline = $started + $ms / 1000;
-        $ENV{BUILD_LOOP_RALLY_START_CHILD} = "1";
-        $ENV{BUILD_LOOP_RALLY_START_PARENT_PID} = $host_parent;
-        my ($r, $w);
-        pipe($r, $w) or do { print "{}"; exit 0; };
-        my $pid = fork();
-        defined($pid) or do { print "{}"; exit 0; };
-        if (!$pid) {
-            close $r;
-            POSIX::setsid();
-            open(STDOUT, ">&", $w) or exit 0;
-            close $w;
-            exec @ARGV;
-            exit 0;
-        }
-        close $w;
-        my $stop = sub { kill "TERM", -$pid; kill "TERM", $pid; };
-        $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { $stop->(); exit 0; };
-        my ($buf, $eof, $reaped) = ("", 0, 0);
-        while (Time::HiRes::time() < $deadline) {
-            my $left = $deadline - Time::HiRes::time();
-            last if $left <= 0;
-            my $rin = "";
-            vec($rin, fileno($r), 1) = 1;
-            my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);
-            if ($n > 0 && !$eof) {
-                my $got = sysread($r, $buf, 65536, length $buf);
-                $eof = 1 if defined($got) && !$got;
-            }
-            $reaped = 1 if !$reaped && waitpid($pid, POSIX::WNOHANG()) == $pid;
-            if ($reaped && $eof) {
-                my $value = eval { JSON::PP::decode_json($buf) };
-                print !$@ && ref($value) eq "HASH" ? $buf : "{}";
-                exit 0;
-            }
-        }
-        $stop->();
-        print "{}";
-        exit 0;
-    ' "${PPID:-0}" "$BASH" "$0" "$@"
+if [ "${BUILD_LOOP_RALLY_SESSION_START_FOREGROUND:-0}" != "1" ]; then
+    . "$(dirname "$0")/_bounded_hook.sh"
+    bl_bound_hook "${BUILD_LOOP_RALLY_START_DEADLINE_MS:-1500}" 1600 json "$BASH" "$0" "$@"
 fi
 unset BUILD_LOOP_RALLY_START_CHILD
 HOST_PARENT_PID="${BUILD_LOOP_RALLY_START_PARENT_PID:-${PPID:-0}}"
