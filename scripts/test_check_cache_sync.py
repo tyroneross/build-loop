@@ -10,10 +10,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "check_cache_sync.py"
+
+sys.path.insert(0, str(HERE))
+import check_cache_sync
 
 
 def run(args: list[str], *, home: Path | None = None) -> subprocess.CompletedProcess:
@@ -170,6 +174,55 @@ class CheckCacheSyncCodexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("cache for build-loop@1.0.0 not installed", result.stderr)
         self.assertIn("0.2.0", result.stderr)
+
+
+class RegisteredClaudeCacheTests(unittest.TestCase):
+    def test_registered_install_wins_over_retired_marketplace_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            active = home / ".claude/plugins/cache/build-loop/build-loop/1.0.0"
+            retired = home / ".claude/plugins/cache/rosslabs-ai-toolkit/build-loop/1.0.0"
+            active.mkdir(parents=True)
+            retired.mkdir(parents=True)
+            write(home / ".claude/plugins/installed_plugins.json", json.dumps({"plugins": {
+                "build-loop@build-loop": [{"scope": "user", "version": "1.0.0", "installPath": str(active)}],
+            }}))
+            with patch.object(check_cache_sync.Path, "home", return_value=home):
+                selected, _ = check_cache_sync.default_cache(home / "source", "claude", "build-loop", "1.0.0", None)
+            self.assertEqual(selected, active.resolve())
+
+    def test_explicit_marketplace_still_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with patch.object(check_cache_sync.Path, "home", return_value=home):
+                selected, _ = check_cache_sync.default_cache(home / "source", "claude", "build-loop", "1.0.0", "chosen")
+            self.assertEqual(selected, home / ".claude/plugins/cache/chosen/build-loop/1.0.0")
+
+    def test_registry_cannot_redirect_sync_outside_host_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            write(home / ".claude/plugins/installed_plugins.json", json.dumps({"plugins": {
+                "build-loop@build-loop": [{"scope": "user", "version": "1.0.0", "installPath": str(home / "other/build-loop/1.0.0")}],
+            }}))
+            with patch.object(check_cache_sync.Path, "home", return_value=home):
+                with self.assertRaisesRegex(ValueError, "invalid"):
+                    check_cache_sync.default_cache(home / "source", "claude", "build-loop", "1.0.0", None)
+
+    def test_disabled_registration_does_not_choose_retired_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            active = home / ".claude/plugins/cache/build-loop/build-loop/1.0.0"
+            retired = home / ".claude/plugins/cache/rosslabs-ai-toolkit/build-loop/1.0.0"
+            active.mkdir(parents=True)
+            retired.mkdir(parents=True)
+            write(home / ".claude/settings.json", json.dumps({"enabledPlugins": {"build-loop@rosslabs-ai-toolkit": False}}))
+            write(home / ".claude/plugins/installed_plugins.json", json.dumps({"plugins": {
+                "build-loop@build-loop": [{"scope": "user", "version": "1.0.0", "installPath": str(active)}],
+                "build-loop@rosslabs-ai-toolkit": [{"scope": "user", "version": "1.0.0", "installPath": str(retired)}],
+            }}))
+            with patch.object(check_cache_sync.Path, "home", return_value=home):
+                selected, _ = check_cache_sync.default_cache(home / "source", "claude", "build-loop", "1.0.0", None)
+            self.assertEqual(selected, active.resolve())
 
 
 class CoordinationCacheParityTests(unittest.TestCase):

@@ -202,6 +202,33 @@ def find_installed_versions(cache_root: Path, name: str) -> list[Path]:
 
 def default_cache(source: Path, host: str, name: str, version: str, marketplace: str | None) -> tuple[Path, list[Path]]:
     if host == "claude":
+        # Marketplace fallback can point at a retired cache after a plugin moves.
+        # Prefer the host's registered installation rather than a source heuristic.
+        registry = Path.home() / ".claude/plugins/installed_plugins.json"
+        if not marketplace and registry.exists():
+            data = json.loads(registry.read_text())
+            settings_path = Path.home() / ".claude/settings.json"
+            settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+            enabled = settings.get("enabledPlugins", {})
+            cache_root = (Path.home() / ".claude/plugins/cache").resolve()
+            matches = set()
+            for key, entries in data.get("plugins", {}).items():
+                if key.split("@", 1)[0] != name or enabled.get(key) is False:
+                    continue
+                for entry in entries:
+                    if entry.get("version") != version:
+                        continue
+                    if entry.get("scope") == "project" and entry.get("projectPath") != str(source.resolve()):
+                        continue
+                    path = Path(entry.get("installPath", "")).expanduser().resolve()
+                    if not path.is_relative_to(cache_root) or path.parent.name != name or path.name != version:
+                        raise ValueError("registered Claude cache path is invalid; use --cache explicitly")
+                    if path.is_dir():
+                        matches.add(path)
+            if len(matches) > 1:
+                raise ValueError("multiple registered Claude caches; select --cache or --marketplace explicitly")
+            if matches:
+                return matches.pop(), []
         chosen_marketplace = marketplace or default_marketplace(source)
         return Path.home() / ".claude" / "plugins" / "cache" / chosen_marketplace / name / version, []
 
