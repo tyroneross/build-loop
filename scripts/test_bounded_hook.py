@@ -20,7 +20,8 @@ def plugin(tmp_path):
     (root / "hooks").mkdir(parents=True)
     (root / "scripts/rally_point").mkdir(parents=True)
     (root / ".build-loop").mkdir()
-    for name in ("pre-edit-rally-point.sh", "closeout.sh", "_resolve_python.sh", "_bounded_hook.sh"):
+    for name in ("pre-edit-rally-point.sh", "closeout.sh", "_resolve_python.sh", "_bounded_hook.sh",
+                 "session-start-git-hooks.sh", "session-start-tool-state.sh"):
         source = ROOT / "hooks" / name
         if source.exists():
             shutil.copy2(source, root / "hooks" / name)
@@ -39,11 +40,11 @@ def plugin(tmp_path):
     return root, env
 
 
-def run_hook(plugin, name, **overrides):
+def run_hook(plugin, name, *args, **overrides):
     root, env = plugin
     started = time.monotonic()
     proc = subprocess.run(
-        ["/bin/bash", str(root / "hooks" / name)],
+        ["/bin/bash", str(root / "hooks" / name), *args],
         input='{"session_id":"fixture-session"}', text=True, capture_output=True,
         env=dict(env, **overrides), cwd=root, timeout=9,
     )
@@ -176,6 +177,50 @@ def test_registered_bash_dispatcher_bounds_input_read(plugin):
         proc.stdin.flush()
         assert proc.wait(timeout=2) == 0
         assert json.loads(proc.stdout.read())["hookSpecificOutput"]["permissionDecision"] == "ask"
+    finally:
+        proc.stdin.close()
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+        proc.stdout.close()
+        proc.stderr.close()
+
+
+@pytest.mark.parametrize("name", ["session-start-git-hooks.sh", "session-start-tool-state.sh"])
+def test_startup_slow_interpreter_returns_before_host_deadline(plugin, name):
+    root, env = plugin
+    subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+    (root / "scripts/tool_state_paths.py").write_text("print('{}')\n")
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    python = bin_dir / "python3"
+    python.write_text(f'#!/bin/sh\n/bin/sleep 3\nexec "{sys.executable}" "$@"\n')
+    python.chmod(0o755)
+    proc, elapsed = run_hook(plugin, name, PATH=str(bin_dir) + ":" + env["PATH"])
+    assert elapsed < 2, f"{name} exceeded its 2s host deadline: {elapsed:.3f}s"
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout) == {}
+
+
+def test_startup_closeout_uses_its_shorter_host_deadline(plugin):
+    proc, elapsed = run_hook(plugin, "closeout.sh", "session-start",
+                             TEST_HELPER_DELAY="4", BUILD_LOOP_CLOSEOUT_DEADLINE_MS="999999")
+    assert elapsed < 3, f"startup closeout exceeded its 3s host deadline: {elapsed:.3f}s"
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout) == {}
+
+
+def test_tool_state_open_stdin_is_bounded(plugin):
+    root, env = plugin
+    (root / "scripts/tool_state_paths.py").write_text("print('{}')\n")
+    proc = subprocess.Popen(["/bin/bash", str(root / "hooks/session-start-tool-state.sh")],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, cwd=root, env=env)
+    try:
+        proc.stdin.write('{"session_id":')
+        proc.stdin.flush()
+        assert proc.wait(timeout=2) == 0
+        assert json.loads(proc.stdout.read()) == {}
     finally:
         proc.stdin.close()
         if proc.poll() is None:

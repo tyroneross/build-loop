@@ -25,9 +25,11 @@
 set -u
 
 . "$(dirname "$0")/_bounded_hook.sh"
-bl_bound_hook "${BUILD_LOOP_CLOSEOUT_DEADLINE_MS:-5000}" 5000 optional-json "$BASH" "$0" "$@"
-
 MODE="${1:-stop}"
+# SessionStart has a 3s host timeout; Stop has 6s. Keep render/cleanup headroom.
+_deadline_max=5000
+[ "$MODE" = session-start ] && _deadline_max=2500
+bl_bound_hook "${BUILD_LOOP_CLOSEOUT_DEADLINE_MS:-$_deadline_max}" "$_deadline_max" optional-json "$BASH" "$0" "$@"
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PROJECT_DIR}}"
