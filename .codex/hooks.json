@@ -7,22 +7,22 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/session-start-tool-state.sh\" 2>/dev/null || printf '{}'",
-            "timeout": 2000
+            "timeout": 2
           },
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" session-start </dev/null 2>/dev/null || printf '{}'",
-            "timeout": 3000
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; rally_session=\"${BUILD_LOOP_RALLY_SESSION_ID:-${CODEX_THREAD_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-codex-${host_parent}}}}}\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --session-id \"$rally_session\" --mode hook --start-watch --watch-parent-pid \"$host_parent\" >/dev/null 2>&1 || printf '{}'",
-            "timeout": 4000
+            "timeout": 4
           },
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/session-start-git-hooks.sh\" </dev/null >/dev/null 2>&1; printf '{}'",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       }
@@ -33,7 +33,7 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; python3 \"$root/scripts/tool_trace.py\" --workdir \"$root\" ingest >/dev/null 2>&1 || true; printf '{}'",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       },
@@ -42,7 +42,7 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" stop 2>/dev/null || printf '{}'",
-            "timeout": 6000
+            "timeout": 6
           }
         ]
       },
@@ -51,7 +51,7 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; rally_session=\"${BUILD_LOOP_RALLY_SESSION_ID:-${CODEX_THREAD_ID:-${RALLY_AGENT_ID:-${RALLY_SESSION_ID:-codex-${host_parent}}}}}\"; actor=\"$(python3 \"$pkg/actor_identity.py\" --tool codex --session-id \"$rally_session\" 2>/dev/null || true)\"; [ -n \"$actor\" ] && python3 \"$root/scripts/agent_rally.py\" stop --workdir \"$root\" --tool \"$actor\" --session-id \"$rally_session\" --json >/dev/null 2>&1 || true",
-            "timeout": 3000
+            "timeout": 3
           }
         ]
       },
@@ -60,7 +60,7 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; s=\"$root/scripts/hooks/session_end_retro_sweep.py\"; [ -f \"$s\" ] && nohup python3 \"$s\" </dev/null >/dev/null 2>&1 & exit 0",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       },
@@ -69,7 +69,7 @@
           {
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/stop-transcript-sweep.sh\" all 2>/dev/null || printf '{}'",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       }

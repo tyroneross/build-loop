@@ -188,12 +188,7 @@ def main(argv: list[str] | None = None) -> int:
                 message += "\nTracked changes:\n" + details
             print(
                 json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "Stop",
-                            "additionalContext": message,
-                        }
-                    }
+                    {"systemMessage": message}
                 )
             )
         else:

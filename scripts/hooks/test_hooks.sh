@@ -42,7 +42,7 @@ except Exception:
     print('')
 " 2>/dev/null)
 
-if [ "$DECISION" = "allow" ]; then
+if [ "$(printf '%s' "$RESULT" | tr -d ' \n')" = "{}" ]; then
     pass "Case 1: benign command (build-loop cwd) -> allow"
 else
     fail "Case 1: benign command (build-loop cwd) -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"
@@ -103,7 +103,7 @@ except Exception:
 " 2>/dev/null)
 
 # Pre-bash hook doesn't filter by agent_id — it just evaluates the command
-if [ "$DECISION" = "allow" ]; then
+if [ "$(printf '%s' "$RESULT" | tr -d ' \n')" = "{}" ]; then
     pass "Case 3: agent_id present (build-loop cwd) -> allow (no special handling)"
 else
     fail "Case 3: agent_id present (build-loop cwd) -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"

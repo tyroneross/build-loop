@@ -102,8 +102,7 @@ class TestRedirect(HookCase):
         command = ("python3 /p/scripts/privileged_broker.py request --purpose x "
                    "--task-id T --argv sfltool dumpbtm")
         payload = self.run_hook(command)
-        self.assertEqual(self.decision(payload), "allow")
-        self.assertIn("already routed", self.reason(payload))
+        self.assertEqual(payload, {})
 
 
 class TestDegradation(HookCase):
@@ -119,8 +118,7 @@ class TestDegradation(HookCase):
         (broken_root / "scripts" / "privileged_broker.py").write_text(
             "import sys\nsys.exit(3)\n", encoding="utf-8")
         payload = self.run_hook("sfltool dumpbtm", plugin_root=broken_root)
-        self.assertEqual(self.decision(payload), "allow")
-        self.assertIn("UNATTRIBUTED", self.reason(payload))
+        self.assertEqual(payload, {})
         gaps = (self.tmp / "store" / "gaps.jsonl")
         self.assertTrue(gaps.exists(), "a blind spot must leave a receipt")
         record = json.loads(gaps.read_text(encoding="utf-8").splitlines()[0])

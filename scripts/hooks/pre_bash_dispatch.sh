@@ -19,7 +19,7 @@
 #   - dependency cooldown: only when CMD installs/adds packages
 #   - commit auditor: only when CMD contains `commit`
 #
-# Envelopes are merged by permissionDecision precedence: deny > ask > allow.
+# Envelopes are merged by permissionDecision precedence: deny > ask > allow (allow emitted as {}).
 #
 # ALWAYS exits 0 (Claude Code contract: non-zero = hook failure, not deny).
 # Fail-open: any sub-gate error degrades to allow. Minimal-PATH safe: python3
@@ -887,7 +887,7 @@ EOF
     fi
 fi
 
-# Merge by precedence: deny > ask > allow. First matching decision wins.
+# Merge by precedence: deny > ask > allow (allow is emitted as {}). First matching decision wins.
 # Pass the envelopes via argv to a tiny python merge (no shell JSON parsing).
 python3 - "${ENVELOPES[@]}" <<'PY'
 import sys, json
@@ -909,6 +909,9 @@ for raw in sys.argv[1:]:
         best_rank = rank
         best = d
 
+# allow is emitted as {} (Codex rejects allow without updatedInput)
+if best and best["hookSpecificOutput"].get("permissionDecision") == "allow":
+    best = None
 print(json.dumps(best) if best else "{}")
 PY
 

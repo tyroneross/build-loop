@@ -9,10 +9,10 @@ into a second one. This hook is the point where the policy binds.
 
 BEHAVIOUR
   no privileged segment      → ``{}`` (silent pass-through; the common case)
-  already brokered           → allow
+  already brokered           → ``{}`` (passes through; Codex rejects bare allow)
   privileged, broker present → DENY with a redirect: the reason names the exact
                                brokered command to re-issue, with a purpose slot
-  privileged, broker missing → ALLOW + coverage-gap receipt. A hook that cannot
+  privileged, broker missing → ``{}`` + coverage-gap receipt. A hook that cannot
                                coordinate must not block the work; it must say
                                out loud that this invocation went unattributed.
 
@@ -86,7 +86,7 @@ def main() -> None:
         emit()
 
     if any(marker in command for marker in BROKER_MARKERS):
-        decide("allow", "already routed through the privileged-command broker")
+        emit()  # already brokered: pass through
 
     if not BROKER.is_file():
         emit()  # nothing to route to; stay out of the way entirely
@@ -106,8 +106,7 @@ def main() -> None:
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         # The classifier failed. Record the blind spot; never block on it.
         _gap("classifier_unavailable", command)
-        decide("allow", "build-loop could not classify this command for privilege; "
-                        "proceeding UNATTRIBUTED and a coverage-gap receipt was written")
+        emit()  # proceed UNATTRIBUTED; the coverage-gap receipt above records it
 
     if not segments:
         emit()

@@ -246,21 +246,13 @@ if fcrit and blocking:
     }))
 elif fcrit:
     print(json.dumps({
-        'hookSpecificOutput': {
-            'hookEventName': 'Stop',
-            'additionalContext': (
-                f'build-loop run entry {status}; F-criterion {fcrit} failed. '
-                'Advisory only; continue investigation and do not claim done until validation passes.'
-            )
-        }
+        'systemMessage': (
+            f'build-loop run entry {status}; F-criterion {fcrit} failed. '
+            'Advisory only; continue investigation and do not claim done until validation passes.'
+        )
     }))
 else:
-    print(json.dumps({
-        'hookSpecificOutput': {
-            'hookEventName': 'Stop',
-            'additionalContext': f'build-loop run entry {status}; all F-criteria passed'
-        }
-    }))
+    print(json.dumps({'systemMessage': f'build-loop run entry {status}; all F-criteria passed'}))
 PY
 
 exit 0

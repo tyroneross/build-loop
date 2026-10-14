@@ -159,6 +159,10 @@ try:
     reason = json.loads(gate_result).get('reason', '')
 except Exception:
     reason = ''
+if decision == 'allow':
+    # Codex rejects allow without updatedInput; {} is a valid pass-through in both hosts.
+    print('{}')
+    sys.exit(0)
 print(json.dumps({
     'hookSpecificOutput': {
         'hookEventName': 'PreToolUse',

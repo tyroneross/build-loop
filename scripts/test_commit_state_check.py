@@ -99,7 +99,7 @@ class TestModifiedTrackedFile(unittest.TestCase):
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
             data = json.loads(cp.stdout)
-            context = data["hookSpecificOutput"]["additionalContext"]
+            context = data["systemMessage"]
             self.assertIn("Advisory only", context)
             self.assertIn("README", context)
 
@@ -166,7 +166,7 @@ class TestStagedFile(unittest.TestCase):
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
             data = json.loads(cp.stdout)
-            context = data["hookSpecificOutput"]["additionalContext"]
+            context = data["systemMessage"]
             self.assertIn("Advisory only", context)
 
     def test_hook_noop_json_without_run_state(self) -> None:
@@ -186,7 +186,7 @@ class TestStagedFile(unittest.TestCase):
             (root / ".build-loop" / "optimize").mkdir(parents=True)
             (root / "README").write_text("changed\n")
             cp = _run("--hook", workdir=tmp)
-            context = json.loads(cp.stdout)["hookSpecificOutput"]["additionalContext"]
+            context = json.loads(cp.stdout)["systemMessage"]
             self.assertIn("Advisory only", context)
 
 
