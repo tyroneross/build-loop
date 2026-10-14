@@ -197,5 +197,99 @@ class SyncPluginCacheTests(unittest.TestCase):
         )
 
 
+class HookBranchGateTests(unittest.TestCase):
+    SKIP_MSG = "build-loop plugin-cache-sync: skipped"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name).resolve()
+        self.home = root / "home"
+        self.home.mkdir()
+        self.src = root / "src"
+        self.src.mkdir()
+        self.wt = root / "wt"
+        git(self.src, ["init", "-b", "main"])
+        git(self.src, ["config", "user.email", "test@example.com"])
+        git(self.src, ["config", "user.name", "Test User"])
+        write_dual_plugin(self.src)
+        env = self.env()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--source", str(self.src), "--host", "all",
+             "--install-git-hooks", "--json"],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+
+    def env(self, **extra: str) -> dict[str, str]:
+        env = dict(os.environ)
+        env.pop("BUILD_LOOP_PLUGIN_CACHE_SYNC_DISABLE", None)
+        env.pop("BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH", None)
+        env["HOME"] = str(self.home)
+        env.update(extra)
+        return env
+
+    def commit(self, repo: Path, message: str, **extra: str) -> subprocess.CompletedProcess:
+        subprocess.run(["git", "add", "."], cwd=str(repo), check=True, capture_output=True)
+        result = subprocess.run(
+            ["git", "commit", "-m", message], cwd=str(repo), env=self.env(**extra),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        return result
+
+    def cache_files(self, host_dir: str) -> list[Path]:
+        return sorted((self.home / host_dir / "plugins/cache").rglob("README.md"))
+
+    def snapshot(self) -> dict[str, tuple[int, str]]:
+        import hashlib
+        snap = {}
+        for host_dir in (".claude", ".codex"):
+            root = self.home / host_dir / "plugins/cache"
+            for p in root.rglob("*"):
+                if p.is_file():
+                    snap[str(p)] = (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+        return snap
+
+    def seed_main(self) -> None:
+        self.commit(self.src, "initial")
+        self.assertTrue(self.cache_files(".claude"))
+        self.assertTrue(self.cache_files(".codex"))
+
+    def test_main_primary_checkout_syncs(self) -> None:
+        result = self.commit(self.src, "initial")
+        self.assertNotIn(self.SKIP_MSG, result.stderr)
+        self.assertTrue(self.cache_files(".claude"))
+        self.assertTrue(self.cache_files(".codex"))
+
+    def test_linked_worktree_commit_skips(self) -> None:
+        self.seed_main()
+        before = self.snapshot()
+        git(self.src, ["worktree", "add", "-b", "feature", str(self.wt)])
+        write(self.wt / "README.md", "worktree change\n")
+        result = self.commit(self.wt, "wt change")
+        self.assertIn(self.SKIP_MSG, result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_non_main_branch_primary_checkout_skips(self) -> None:
+        self.seed_main()
+        before = self.snapshot()
+        git(self.src, ["checkout", "-b", "feature"])
+        write(self.src / "README.md", "feature change\n")
+        result = self.commit(self.src, "feature change")
+        self.assertIn(self.SKIP_MSG, result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_branch_override_forces_worktree_sync(self) -> None:
+        self.seed_main()
+        git(self.src, ["worktree", "add", "-b", "feature", str(self.wt)])
+        write(self.wt / "README.md", "worktree forced\n")
+        result = self.commit(self.wt, "wt forced", BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH="1")
+        self.assertNotIn(self.SKIP_MSG, result.stderr)
+        contents = [p.read_text(encoding="utf-8") for p in self.cache_files(".claude") + self.cache_files(".codex")]
+        self.assertTrue(contents)
+        self.assertTrue(all(c == "worktree forced\n" for c in contents), contents)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

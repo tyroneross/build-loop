@@ -279,10 +279,20 @@ def repo_toplevel(source: Path) -> Path:
 
 
 def hook_segment(script_path: Path, host: str) -> str:
+    # Sync only from main in the primary checkout: commits on feature branches or
+    # in linked worktrees were overwriting the live plugin caches with unmerged code.
+    # BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH=1 forces a sync anyway.
     return f'''{HOOK_MARKER}
 BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
 if [ -n "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL" ] && [ "${{BUILD_LOOP_PLUGIN_CACHE_SYNC_DISABLE:-}}" != "1" ]; then
-  python3 {str(script_path)!r} --source "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL" --host {host} --quiet >/dev/null 2>&1 || true
+  BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH_NAME="$(git symbolic-ref --short -q HEAD 2>/dev/null)"
+  BUILD_LOOP_PLUGIN_CACHE_SYNC_GITDIR="$(git rev-parse --absolute-git-dir 2>/dev/null)"
+  BUILD_LOOP_PLUGIN_CACHE_SYNC_COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  if [ "${{BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH:-}}" = "1" ] || {{ [ "$BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH_NAME" = "main" ] && [ "$BUILD_LOOP_PLUGIN_CACHE_SYNC_GITDIR" = "$BUILD_LOOP_PLUGIN_CACHE_SYNC_COMMON" ]; }}; then
+    python3 {str(script_path)!r} --source "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL" --host {host} --quiet >/dev/null 2>&1 || true
+  else
+    echo "build-loop plugin-cache-sync: skipped (branch=${{BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH_NAME:-detached}}, toplevel=$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL); syncs only from main in the primary checkout. Set BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH=1 to override." >&2
+  fi
 fi
 {HOOK_MARKER_END}
 '''
