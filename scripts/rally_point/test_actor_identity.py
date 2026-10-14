@@ -7,11 +7,40 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from rally_point import actor_identity
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_rally_tool_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An Easy Terminal pane exports RALLY_TOOL_ID; keep it out of tests that
+    # read the process environment.
+    monkeypatch.delenv("RALLY_TOOL_ID", raising=False)
+
+
+def test_rally_tool_id_wins_unchanged() -> None:
+    identity = actor_identity.resolve_identity(
+        "claude_code:reviewer-01",
+        "event-session",
+        environ={"RALLY_TOOL_ID": "easy-terminal:pane-7", "CLAUDE_SESSION_ID": "s"},
+        observer_pid=42,
+    )
+
+    assert identity.native_tool == "easy-terminal:pane-7"
+    assert identity.session_id == "event-session"
+
+
+def test_blank_rally_tool_id_is_ignored() -> None:
+    actor = actor_identity.native_tool_id(
+        "claude_code", "session-a", environ={"RALLY_TOOL_ID": "  "}
+    )
+
+    assert actor == "claude_code:session-a"
 
 
 def test_host_session_env_precedes_generic_rally_identity() -> None:

@@ -120,6 +120,23 @@ def test_explicit_host_wins_over_inherited_session_environment(startup):
     assert Path(startup[2]["HOOK_TEST_ACTOR_LOG"]).read_text() == "claude_code:session-a"
 
 
+@pytest.mark.parametrize(
+    ("overrides", "actor"),
+    [
+        # RALLY_TOOL_ID wins over every family hint (Easy Terminal pane).
+        ({"RALLY_TOOL_ID": "easy-terminal:pane-7", "RALLY_HOST_FAMILY": "claude_code", "CODEX_THREAD_ID": "parent-codex"}, "easy-terminal:pane-7"),
+        # RALLY_HOST_FAMILY wins over inherited CODEX_* variables.
+        ({"RALLY_HOST_FAMILY": "claude_code", "CODEX_THREAD_ID": "parent-codex"}, "claude_code:session-a"),
+        # Without either, CODEX_* still selects codex.
+        ({"CODEX_THREAD_ID": "parent-codex"}, "codex:session-a"),
+    ],
+)
+def test_host_tool_precedence(startup, overrides, actor):
+    proc, _ = run_startup(startup, **overrides)
+    assert proc.returncode == 0
+    assert Path(startup[2]["HOOK_TEST_ACTOR_LOG"]).read_text() == actor
+
+
 def test_supervisor_preserves_parent_for_identity_and_watch(startup):
     command, _, env = startup
     # Exec avoids introducing the registration shell as another parent.

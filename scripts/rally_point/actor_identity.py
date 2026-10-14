@@ -104,9 +104,15 @@ def native_tool_id(
 ) -> str:
     """Return ``<base-tool>:<session-actor>`` for native Rally.
 
-    A caller-supplied actor id is already an explicit routing identity and is
+    A non-empty ``RALLY_TOOL_ID`` wins and is returned unchanged, matching the
+    Rally CLI hook runtime (a host such as Easy Terminal names the actor).  A
+    caller-supplied actor id is already an explicit routing identity and is
     preserved.  A bare host family receives the resolved session key.
     """
+    env = os.environ if environ is None else environ
+    rally_tool_id = str(env.get("RALLY_TOOL_ID") or "").strip()
+    if rally_tool_id:
+        return rally_tool_id
     family = base_tool(tool)
     actor_budget = MAX_NATIVE_TOOL_BYTES - len(family.encode("ascii")) - 1
     actor = _explicit_actor(tool, max_length=actor_budget)

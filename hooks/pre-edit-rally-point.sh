@@ -32,7 +32,8 @@ PKG="$SCRIPT_DIR/../scripts/rally_point"
 
 [ -d "$PKG" ] || exit 0
 
-HOST_TOOL="${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}"
+# Same precedence as session-start-rally-point.sh: RALLY_TOOL_ID wins.
+HOST_TOOL="${RALLY_TOOL_ID:-${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}}"
 if [ -z "$HOST_TOOL" ]; then
     if [ -n "${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}" ]; then
         HOST_TOOL=codex

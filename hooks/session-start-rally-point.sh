@@ -39,7 +39,9 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 W="${CLAUDE_PROJECT_DIR:-$PWD}"
 PKG="$(dirname "$D")/scripts/rally_point"
 [ -d "$PKG" ] || exit 0
-HOST_TOOL="${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}"
+# RALLY_TOOL_ID (a host-named actor, e.g. Easy Terminal's easy-terminal:<sid>)
+# wins, as in the Rally CLI hook runtime; then the declared host family.
+HOST_TOOL="${RALLY_TOOL_ID:-${BUILD_LOOP_RALLY_TOOL:-${RALLY_HOST_FAMILY:-}}}"
 if [ -z "$HOST_TOOL" ]; then
     if [ -n "${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}" ]; then
         HOST_TOOL=codex
