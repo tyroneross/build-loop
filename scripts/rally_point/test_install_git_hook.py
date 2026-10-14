@@ -323,3 +323,55 @@ class PrivateSlugGuardResilienceTest(unittest.TestCase):
             r = subprocess.run([sys.executable, str(g)], capture_output=True,
                                text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+def _cfg(repo: Path) -> None:
+    _git(["config", "user.email", "t@example.com"], repo)
+    _git(["config", "user.name", "t"], repo)
+
+
+def _porcelain(repo: Path) -> str:
+    return subprocess.run(["git", "status", "--porcelain"], cwd=str(repo),
+                          capture_output=True, text=True, check=True).stdout
+
+
+def test_refuses_tracked_hookspath(repo: Path):
+    _cfg(repo)
+    d = repo / "scripts" / "git-hooks"
+    d.mkdir(parents=True)
+    pc = d / "pre-commit"
+    pc.write_bytes(b"#!/bin/sh\necho mine\n")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "hooks"], repo)
+    _git(["config", "core.hooksPath", "scripts/git-hooks"], repo)
+    before = pc.read_bytes()
+    assert igh.install(repo) is False
+    assert pc.read_bytes() == before
+    assert _porcelain(repo) == ""
+    assert not (d / "post-commit").exists()
+    assert not (d / ".rally-point-capture.py").exists()
+
+
+def test_refuses_untracked_visible_hookspath(repo: Path):
+    d = repo / "tools" / "hooks"
+    d.mkdir(parents=True)
+    _git(["config", "core.hooksPath", "tools/hooks"], repo)
+    assert igh.install(repo) is False
+    assert list(d.iterdir()) == []
+
+
+def test_allows_gitignored_hookspath(repo: Path):
+    _cfg(repo)
+    (repo / ".gitignore").write_text(".githooks-local/\n")
+    _git(["add", ".gitignore"], repo)
+    _git(["commit", "-qm", "ignore"], repo)
+    _git(["config", "core.hooksPath", ".githooks-local"], repo)
+    assert igh.install(repo) is True
+    assert (repo / ".githooks-local" / "post-commit").exists()
+
+
+def test_allows_hookspath_outside_worktree(repo: Path, tmp_path: Path):
+    ext = tmp_path / "ext-hooks"
+    _git(["config", "core.hooksPath", str(ext)], repo)
+    assert igh.install(repo) is True
+    assert (ext / "post-commit").exists()

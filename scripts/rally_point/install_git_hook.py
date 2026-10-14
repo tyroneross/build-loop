@@ -27,6 +27,10 @@ Contract:
   - idempotent: re-running makes no further change (marker-guarded);
   - never clobbers a pre-existing post-commit — the Rally Point segment is
     appended/chained, unrelated content is preserved verbatim;
+  - never writes into a ``core.hooksPath`` dir inside the work tree that git
+    tracks or would show as untracked — refuses and reports instead;
+    chaining via ``.git/hooks`` would be dead code because git ignores it
+    while ``core.hooksPath`` is set;
   - the hook body is fire-and-forget (it backgrounds the capture and
     ``exit 0`` so a commit can never be slowed or failed).
 
@@ -43,6 +47,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 MARKER = "# --- BEGIN rally-point post-commit ---"
@@ -425,15 +430,68 @@ def _install_pre_commit(hooks_dir: Path) -> None:
     _make_executable(hook)
 
 
+def _git_out(repo: Path, args: list[str]) -> str | None:
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=str(repo), capture_output=True, text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _unsafe_hooks_dir_reason(repo: Path, hooks_dir: Path) -> str | None:
+    """Return why writing into ``hooks_dir`` would dirty the repo, else None.
+
+    Safe: outside the work tree, or inside a git dir (``.git/hooks``).
+    Unsafe: inside the work tree with tracked files, or not gitignored
+    (files we create would show up as untracked).
+    """
+    top = _git_out(repo, ["rev-parse", "--show-toplevel"])
+    if not top:
+        return None  # bare repo or unresolvable: no work tree to dirty
+    target = hooks_dir.resolve()
+    if not _is_under(target, Path(top).resolve()):
+        return None
+    for flag in ("--absolute-git-dir", "--git-common-dir"):
+        gd = _git_out(repo, ["rev-parse", flag])
+        if gd:
+            gdp = Path(gd)
+            gdp = gdp if gdp.is_absolute() else Path(repo) / gdp
+            if _is_under(target, gdp.resolve()):
+                return None
+    tracked = _git_out(repo, ["ls-files", "--", str(target)])
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", str(target / ".rally-point-capture.py")],
+        cwd=str(repo), capture_output=True,
+    ).returncode == 0
+    if tracked or not ignored:
+        return (
+            f"core.hooksPath points at a tracked/visible work-tree dir "
+            f"({target}); git does not run .git/hooks while core.hooksPath "
+            f"is set, so the installer refuses rather than edit repo files"
+        )
+    return None
+
+
 def install(repo: Path) -> bool:
     """Install/chain both git hooks in ``repo``. Idempotent.
 
-    Returns True on success, False if ``repo`` is not a git repo.
+    Returns True on success, False if ``repo`` is not a git repo or the
+    hooks dir is a tracked/visible work-tree dir (refused, nothing written).
     """
     repo = Path(repo)
     if not _is_git_repo(repo):
         return False
     hooks_dir = _git_hooks_dir(repo)
+    reason = _unsafe_hooks_dir_reason(repo, hooks_dir)
+    if reason:
+        print(f"rally-point hooks: skipped — {reason}", file=sys.stderr)
+        return False
     hooks_dir.mkdir(parents=True, exist_ok=True)
     _install_post_commit(hooks_dir)
     _install_pre_commit(hooks_dir)
