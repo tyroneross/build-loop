@@ -99,6 +99,17 @@ Single-factor — keep the existing setup. Define:
 7. `metric_samples` — measured benchmark runs per iteration (default 1)
 8. `metric_warmups` — warmup runs discarded before measuring (default 0)
 9. `metric_aggregate` — how to combine samples (`last`, `mean`, `median`, `p95`, etc.)
+10. `protected` — evaluator, test and metric-script globs that must remain unchanged, even inside scope
+11. `min_delta` — optional minimum absolute improvement; default 0 still requires a strictly positive gain
+
+Scope is repository-relative glob data, supplied as a comma-separated string or
+list. `*` matches one path segment and `**` can span directories. Start from a
+clean Git baseline. Name every evaluator/guard file with repeatable
+`--protected <glob>` flags; metric and guard commands must not rewrite them.
+Both `run_iteration` and the agent's `--log --status keep` path reject
+out-of-scope/protected changes, including staged, committed, untracked and
+renamed paths. They do not revert files automatically. Git-ignored generated
+files are not source change evidence; keep evaluators tracked.
 
 Auto-detection: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"` to discover available single-variable targets.
 
@@ -106,6 +117,10 @@ Initialize:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py   --init --workdir "$PWD"   --target "<name>" --scope "<glob>"   --metric-cmd "<cmd>" --guard-cmd "<cmd>"   --budget <N> --direction "<lower|higher>"   --metric-samples <count> --metric-warmups <count>   --metric-aggregate "<last|min|max|mean|median|p95>"
 ```
+
+For example, add `--protected 'tests/**' --protected 'scripts/measure.py'
+--min-delta 0.1` to hold the evaluator fixed and refuse smaller gains. This is
+a deterministic acceptance threshold, not a statistical significance claim.
 
 For latency work such as semantic search, do not optimize on one timer reading. Use a representative query set, run multiple measured samples, discard at least one warmup when cold starts matter, and aggregate with `median` or `p95`.
 
@@ -200,3 +215,5 @@ Reached via `/build-loop:run [target]` + optimize language (no separate command)
 ## Built-in Profiles
 
 See `profiles.md`. The `simplify` profile is always available. For latency-sensitive work, start with `semantic-search-latency` or `optimize-perf` plus explicit sampling settings.
+
+Coverage optimization requires an explicit metric, protected evaluator paths and source scope; it is not auto-detected. `--log` recomputes delta from the current best and advances best/budget counters. A refused keep records one discard and exits non-zero; follow optimize-runner Step 9 to revert the exact iteration commit without logging twice. `experiment.json` is trusted host state, not a containment boundary against its owner. Index visibility flags are refused.

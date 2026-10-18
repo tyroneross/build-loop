@@ -323,9 +323,11 @@ class HandoffToAutoresearchTests(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 0, r.stderr)
             design = json.loads(r.stdout)
-            design_path = tmp / "design.json"
-            results_path = tmp / "results.jsonl"
-            effects_path = tmp / "effects.json"
+            artifacts = tmp / ".build-loop" / "optimize"
+            artifacts.mkdir(parents=True, exist_ok=True)
+            design_path = artifacts / "design.json"
+            results_path = artifacts / "results.jsonl"
+            effects_path = artifacts / "effects.json"
             design_path.write_text(json.dumps(design))
             matrix = np.array(design["matrix"])
             y = 100 - 8 * matrix[:, 0] - 2 * matrix[:, 1]

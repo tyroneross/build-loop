@@ -18,7 +18,10 @@ NOT responsible for:
 """
 
 import argparse
+import fnmatch
+from functools import lru_cache
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -96,6 +99,95 @@ def _current_commit(workdir: Path) -> str:
         return "unknown"
 
 
+def _patterns(value: str | list[str], field: str) -> list[str]:
+    """Only repository-relative glob data; never interpret scope as a command."""
+    values = value.split(",") if isinstance(value, str) else value
+    if not isinstance(values, list) or not values or len(values) > 64:
+        raise ValueError(f"{field} requires 1..64 relative glob patterns")
+    result = []
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError(f"{field} patterns must be strings")
+        pattern = item.strip()
+        if (not pattern or len(pattern) > 512 or "\\" in pattern or
+                pattern.startswith("/") or any(p in {"", ".", ".."} for p in pattern.split("/")) or
+                any(ord(c) < 32 or ord(c) == 127 for c in pattern)):
+            raise ValueError(f"invalid {field} pattern: {item!r}")
+        result.append(pattern)
+    return result
+
+
+def _matches(path: str, pattern: str) -> bool:
+    """Glob segments: * never crosses '/', ** can match zero directories."""
+    parts, glob = path.split("/"), pattern.split("/")
+
+    @lru_cache(maxsize=None)
+    def match(pi: int, gi: int) -> bool:
+        if gi == len(glob):
+            return pi == len(parts)
+        if glob[gi] == "**":
+            return any(match(end, gi + 1) for end in range(pi, len(parts) + 1))
+        return pi < len(parts) and fnmatch.fnmatchcase(parts[pi], glob[gi]) and match(pi + 1, gi + 1)
+
+    return match(0, 0)
+
+
+def _changed_paths(workdir: Path, baseline: str) -> list[str]:
+    if not isinstance(baseline, str) or not baseline or baseline.startswith("-"):
+        raise ValueError("experiment needs a valid baseline commit")
+    flags = subprocess.run(["git", "ls-files", "-v", "-z"], cwd=workdir,
+                           capture_output=True, check=False)
+    if flags.returncode:
+        raise ValueError("cannot establish optimizer index visibility")
+    if any(entry[:1].islower() or entry.startswith(b"S ")
+           for entry in flags.stdout.split(b"\0") if entry):
+        raise ValueError("optimizer refuses assume-unchanged or skip-worktree index entries")
+    paths: set[str] = set()
+    # --no-renames exposes both old and new paths, so a rename cannot hide a
+    # protected deletion. Comparing to the baseline includes committed edits.
+    for args in (["diff", "--name-only", "--no-renames", "-z", baseline, "--"],
+                 ["ls-files", "--others", "--exclude-standard", "-z"]):
+        run = subprocess.run(["git", *args], cwd=workdir, capture_output=True, check=False)
+        if run.returncode:
+            raise ValueError("cannot establish optimizer change scope: " + run.stderr.decode(errors="replace")[:300])
+        paths.update(p for p in run.stdout.decode("utf-8", errors="strict").split("\0") if p)
+    return sorted(p for p in paths if not p.startswith(_LOOP_DIR + "/"))
+
+
+def scope_violation(workdir: Path, experiment: dict) -> str | None:
+    """Check scope before accepting a result; uncertainty refuses acceptance."""
+    try:
+        scope = _patterns(experiment.get("scope", "**/*"), "scope")
+        protected = _patterns(experiment["protected"], "protected") if experiment.get("protected") else []
+        root = workdir.resolve()
+        for path in _changed_paths(workdir, experiment["baseline_commit"]):
+            if any(_matches(path, pat) for pat in protected):
+                return f"protected file changed: {path}"
+            if not any(_matches(path, pat) for pat in scope):
+                return f"out-of-scope file changed: {path}"
+            try:
+                (root / path).resolve().relative_to(root)
+            except ValueError:
+                return f"changed path escapes repository: {path}"
+        return None
+    except (OSError, ValueError, KeyError, UnicodeError) as exc:
+        return str(exc)
+
+
+def _minimum_delta(value: object) -> float:
+    if isinstance(value, bool):
+        raise ValueError("min_delta must be finite and nonnegative")
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError("min_delta must be finite and nonnegative")
+    return number
+
+
+def _improved(delta: float, direction: str, minimum: float) -> bool:
+    gain = delta if direction == "higher" else -delta
+    return math.isfinite(gain) and gain > 0 and gain >= minimum
+
+
 # ---------------------------------------------------------------------------
 # Experiment state
 # ---------------------------------------------------------------------------
@@ -171,7 +263,17 @@ def detect_targets(workdir: Path) -> list[dict]:
     """
     targets: list[dict] = []
 
-    # simplify is always available
+    # Scope is data, not the old shell command. Freeze the recent-file set.
+    recent = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", "HEAD~1", "--"],
+                            cwd=workdir, capture_output=True, check=False)
+    simplify_scope = []
+    if recent.returncode == 0:
+        for name in recent.stdout.decode("utf-8", errors="replace").split("\0"):
+            if name and not any(c in name for c in "*?[],"):
+                try:
+                    simplify_scope.extend(_patterns([name], "scope"))
+                except ValueError:
+                    pass
     targets.append({
         "target": "simplify",
         "description": "Reduce total line count in recently changed files",
@@ -179,7 +281,8 @@ def detect_targets(workdir: Path) -> list[dict]:
         "guard_cmd": None,
         "direction": "lower",
         "budget": 5,
-        "scope": "git diff --name-only HEAD~1",
+        "scope": simplify_scope or ["__no_recent_files__"],
+        "protected": ["tests/**", "**/*.test.*", "**/*.spec.*"],
     })
 
     pkg_json = workdir / "package.json"
@@ -199,16 +302,8 @@ def detect_targets(workdir: Path) -> list[dict]:
                     "scope": "*.config.*,tsconfig*.json",
                 })
 
-            if "test" in scripts:
-                targets.append({
-                    "target": "optimize-tests",
-                    "description": "Increase test coverage",
-                    "metric_cmd": "npm test -- --coverage --coverageReporters=text 2>&1 | grep 'All files' | awk '{print $4}'",
-                    "guard_cmd": "npm test -- --passWithNoTests",
-                    "direction": "higher",
-                    "budget": 5,
-                    "scope": "**/*.test.*,**/*.spec.*",
-                })
+            # Coverage optimization requires an explicitly designed evaluator and
+            # scope; never offer an automatic target that can game its own tests.
         except (json.JSONDecodeError, KeyError):
             pass
 
@@ -257,6 +352,16 @@ def init_experiment(workdir: Path, config: dict) -> Path:
     if missing:
         raise ValueError(f"config missing required keys: {missing}")
 
+    scope = _patterns(config.get("scope", "**/*"), "scope")
+    protected = _patterns(config["protected"], "protected") if config.get("protected") else []
+    minimum_delta = _minimum_delta(config.get("min_delta", 0))
+
+    direction = config.get("direction", "higher")
+    if direction not in ("higher", "lower"):
+        raise ValueError(f"direction must be 'higher' or 'lower', got {direction!r}")
+    baseline_commit = _current_commit(workdir)
+    if _changed_paths(workdir, baseline_commit):
+        raise ValueError("optimizer initialization requires a clean Git baseline")
     loop_dir = _loop_dir(workdir)
     loop_dir.mkdir(parents=True, exist_ok=True)
 
@@ -273,16 +378,15 @@ def init_experiment(workdir: Path, config: dict) -> Path:
             f"Output: {metric_result.raw_output[:500]}"
         )
 
-    baseline_commit = _current_commit(workdir)
+    if _current_commit(workdir) != baseline_commit or _changed_paths(workdir, baseline_commit):
+        raise ValueError("baseline metric changed source files or Git HEAD")
     baseline_value = metric_result.value
-
-    direction = config.get("direction", "higher")
-    if direction not in ("higher", "lower"):
-        raise ValueError(f"direction must be 'higher' or 'lower', got {direction!r}")
 
     experiment = {
         "target": config.get("target", "unnamed"),
-        "scope": config.get("scope", "**/*"),
+        "scope": scope,
+        "protected": protected,
+        "min_delta": minimum_delta,
         "metric_cmd": config["metric_cmd"],
         "guard_cmd": config.get("guard_cmd"),
         "budget": int(config.get("budget", 5)),
@@ -350,6 +454,11 @@ def run_iteration(workdir: Path, iteration: int) -> IterationResult:
 
     commit = _current_commit(workdir)
 
+    violation = scope_violation(workdir, experiment)
+    if violation:
+        _update_experiment_counters(workdir, kept=False, new_value=None)
+        return IterationResult(iteration, commit, 0.0, 0.0, "discard", violation, guard_passed=False)
+
     metric_result = run_metric(
         metric_cmd,
         cwd=str(workdir),
@@ -379,8 +488,14 @@ def run_iteration(workdir: Path, iteration: int) -> IterationResult:
         guard_result = run_guard(guard_cmd, cwd=str(workdir))
         guard_passed = guard_result.passed
 
-    improved = (direction == "higher" and delta > 0) or (direction == "lower" and delta < 0)
-    if not guard_passed:
+    # Metric/guard commands can themselves change files. Recheck before keeping.
+    violation = scope_violation(workdir, experiment)
+    improved = _improved(delta, direction, _minimum_delta(experiment.get("min_delta", 0)))
+    if violation:
+        status = "discard"
+        description = violation
+        guard_passed = False
+    elif not guard_passed:
         status = "discard"
         description = "guard failed"
     elif improved:
@@ -619,6 +734,8 @@ def _cmd_init(args: argparse.Namespace, workdir: Path) -> None:
         "metric_samples": args.metric_samples,
         "metric_warmups": args.metric_warmups,
         "metric_aggregate": args.metric_aggregate,
+        "protected": args.protected,
+        "min_delta": args.min_delta,
     }
     if args.baseline_config:
         config["doe_baseline"] = _load_doe_baseline(args.baseline_config)
@@ -638,6 +755,22 @@ def _cmd_log(args: argparse.Namespace, workdir: Path) -> None:
     for field_name in ("iteration", "commit", "metric", "delta", "status", "description"):
         if getattr(args, field_name) is None:
             _die(f"--{field_name} required for --log")
+    # The real runner commits before logging. A refused keep must leave a
+    # durable discard and count toward the budget before signaling recovery.
+    refusal = None
+    if args.status == "keep":
+        experiment = load_experiment(workdir)
+        refusal = scope_violation(workdir, experiment)
+        measured_delta = args.metric - experiment["best_value"]
+        args.delta = measured_delta  # canonicalize rounded/self-reported deltas
+        if not math.isfinite(args.metric):
+            refusal = refusal or "keep metric must be finite"
+        elif not _improved(measured_delta, experiment.get("direction", "higher"),
+                           _minimum_delta(experiment.get("min_delta", 0))):
+            refusal = refusal or "keep does not meet the configured minimum improvement"
+        if refusal:
+            args.status = "discard"
+            args.description = "keep refused: " + refusal
     result = IterationResult(
         iteration=args.iteration,
         commit=args.commit,
@@ -646,8 +779,15 @@ def _cmd_log(args: argparse.Namespace, workdir: Path) -> None:
         status=args.status,
         description=args.description,
         hypothesis=args.hypothesis,
+        guard_passed=refusal is None,
+        error=refusal,
     )
     log_iteration(workdir, result)
+    if args.status in {"keep", "discard", "error"}:
+        _update_experiment_counters(workdir, kept=args.status == "keep",
+                                    new_value=args.metric if args.status == "keep" else None)
+    if refusal:
+        _die(refusal + "; recorded discard; revert this iteration's commit after verifying its identity; do not re-log")
     print(f"Logged iteration {args.iteration}: {args.status}")
 
 
@@ -678,6 +818,8 @@ def _cli() -> None:
 
     parser.add_argument("--target", help="optimization target name")
     parser.add_argument("--scope", help="file scope glob")
+    parser.add_argument("--protected", action="append", default=[], help="relative evaluator/guard glob; repeatable")
+    parser.add_argument("--min-delta", type=float, default=0.0, help="minimum absolute improvement; positive gain still required")
     parser.add_argument("--metric-cmd", help="metric command")
     parser.add_argument("--guard-cmd", help="guard command")
     parser.add_argument("--budget", type=int, default=5)

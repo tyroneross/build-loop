@@ -90,6 +90,8 @@ Compute `delta = new_metric - best_value` (from experiment.json, NOT the origina
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py   --log   --workdir "$PWD"   --iteration <N>   --commit <sha>   --metric <value>   --delta <delta>   --status <keep|discard|error>   --description "<what changed>"   --hypothesis "<the reasoning from Step 4, condensed to one line>"
 ```
 
+If `--log` exits non-zero for a requested keep, it has already recorded a discard. Verify HEAD is this iteration's recorded commit, then run `git revert HEAD --no-edit`; do not re-log. If HEAD differs, the revert fails, or `git status --porcelain` still shows source changes afterward, stop and report the conflict before continuing. The helper does not mutate Git for you.
+
 Report progress inline:
 `[Iteration N] <hypothesis> → <status> (metric: <value>, delta: <±delta>)`
 

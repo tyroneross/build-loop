@@ -244,9 +244,11 @@ Metric-driven autonomous optimization using Karpathy's autoresearch pattern. Opt
 
 **Load the `build-loop:optimize` skill for the full protocol.**
 
+Commit the build changes before optimizer initialization; `--init` requires a clean source baseline and keeps DOE artifacts under `.build-loop/optimize/`.
+
 1. **Discover targets**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"`.
 2. **`simplify` is always available** when code changed: reduces line count in files changed by Execute. Metric = total lines, direction = lower, guard = build passes.
-3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, test runner → optimize-tests, bundler → optimize-bundle).
+3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, bundler → optimize-bundle; coverage optimization needs an explicit evaluator and scope).
 4. **Budget**: 3-5 iterations (polish, not deep optimization).
 5. **Post-loop**: dispatch `overfitting-reviewer`. Archive to `.build-loop/optimize/experiments/`.
 
