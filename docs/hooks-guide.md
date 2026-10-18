@@ -2,7 +2,24 @@
 
 Use hooks for small, repeatable checks at known execution boundaries. Keep reasoning in the agent workflow, put consequential authorization at the executing boundary, and verify the outcome separately. A hook earns its place when it prevents a demonstrated failure or removes repeated work with acceptable cost.
 
-Checked October 18, 2026. This guide combines the supplied governance image, the [earlier assessment](hook-evidence-assessment.md), current vendor documentation, historical local research and Build Loop source. It is guidance, not a report of installed enforcement. **The specifically requested Oct. 13 webinar was only partially ingested: page metadata was accessible; its recording and transcript were not.** Source details and contradictions appear below.
+Checked October 18, 2026. This guide combines the supplied governance image, the [earlier assessment](hook-evidence-assessment.md), current vendor documentation, historical local research and Build Loop source. It is guidance, not a report of installed enforcement. **The exact Oct. 13 webinar's public publisher captions have now been captured by script.** Its JSON and VTT captions agree after alphanumeric normalization; the audio has not been independently checked. Source details and contradictions appear below.
+
+## What the Oct. 13 webinar adds
+
+The [requested session](https://anthropic.ondemand.goldcast.io/on-demand/26b3d349-9fd9-4fa3-b122-f5b2f07c17a5), presented by Juan Tomas Gomez, supplies these timestamped teaching points. Captions preserve the presenter's explanations and demo narration; they do not reproduce the demonstrated effects locally.
+
+| Caption range | Teaching point | Application in this guide |
+|---|---|---|
+| 47:45–48:54 | Favor consequential, binary checks that must hold during unattended work | Name the failure and choose a verifiable execution boundary |
+| 49:39–52:18 | Choose the event, check mechanism and configuration scope | Keep these three decisions explicit in the hook contract |
+| 53:26–54:46 | Demonstrates privacy and source/dashboard consistency checks; leaves broad tone judgment in the skill | Separate deterministic invariants from editorial judgment |
+| 59:21–59:59 | Prefer granular hooks suited to a particular workflow | Narrow matchers and reuse existing owners |
+| 1:15:03–1:15:49 | Define a trigger, task, success condition and bounded way out | Give unattended work explicit retry and stop conditions |
+| 1:22:23–1:23:02 | Assess cost per achieved task, including token volume and turns | Measure the complete workload rather than unit token price alone |
+
+Two safety claims need narrower interpretation. Around 50:21–50:39, the privacy example describes blocking data before it reaches the model. Check the actual data direction: a pre-tool hook sees a pending call, so it cannot inspect a result that has not arrived. The [current Claude reference](https://code.claude.com/docs/en/hooks#posttooluse-decision-control) distinguishes post-tool feedback from output replacement; replacement does not undo earlier tool effects or exposures. Test the required boundary before claiming prevention.
+
+Around 1:04:20–1:04:32, the presenter reports that the demo agent could not disable its hooks. Treat that as the demo's reported outcome. Protection against configuration changes or alternate writers depends on the actual permissions and coverage; this transcript is not a tamper-proofing test.
 
 ## Start with the required outcome
 
@@ -158,7 +175,7 @@ For new advisory checks, observe false positives and missed cases before conside
 | Source | Contribution | Boundary/status |
 |---|---|---|
 | User image, **Why hooks govern agent work**, labelled Oct. 18 | Readiness, bounded work, evidence, decisions and continuity | Visual source ingested; underlying reported run not independently reproduced |
-| [Requested webinar: (Oct. 13th) Claude Code: Advanced](https://anthropic.ondemand.goldcast.io/on-demand/26b3d349-9fd9-4fa3-b122-f5b2f07c17a5) | Page identifies Juan Tomas Gomez, Anthropic Member of the Technical Staff | Browser metadata observed; no usable media/captions/transcript exposed; teaching content remains un-ingested |
+| [Requested webinar: (Oct. 13th) Claude Code: Advanced](https://anthropic.ondemand.goldcast.io/on-demand/26b3d349-9fd9-4fa3-b122-f5b2f07c17a5) | Timestamped hook selection, design dimensions, demo, scope and bounded-loop guidance above | Script captured publisher VTT and JSON via public links embedded in page HTML; 2,017 cues, from 00:00:30.990 to 01:30:34.490; alphanumeric token streams agree; audio/demo not independently replayed |
 | [Supplement: Claude Code Advanced Patterns](https://anthropic.ondemand.goldcast.io/on-demand/f52c4cc3-7b23-4ab8-93f3-d202706dd62b?t=5.28) | Indexed transcript discusses automatic formatting, tool-call logging, notifications and choosing hooks versus instructions/MCP | Separate webinar, not the requested recording; instructional examples, not a local benchmark |
 | [Supplement: What We Shipped](https://anthropic.ondemand.goldcast.io/on-demand/9e373c2d-26b9-4a37-917d-c355df38c6a1) | Indexed discussion cautions about misconfigured or obsolete hooks and excessive injected context | Qualitative counter-evidence; no transferable numerical effect claimed |
 | [Claude hook guide](https://code.claude.com/docs/en/hooks-guide), [reference](https://code.claude.com/docs/en/hooks) | Current lifecycle and protocol lookup | Publisher documentation; recheck installed version and native path |
@@ -171,6 +188,6 @@ For new advisory checks, observe false positives and missed cases before conside
 
 **Resolved scope distinction:** a supplemental webinar's automatic formatter example describes a useful covered event. It does not establish interception of every writer, permission to format unrelated files or equivalence between hosts.
 
-**Open intake gap:** add timestamped recording/transcript evidence for the exact Oct. 13 URL when it becomes accessible, then revise only the affected claims. The guide can be comprehensive about the accessible material while that recording remains partially ingested.
+**Resolved intake gap:** the initial browser/text fetch exposed metadata only. A bounded IPv4 HTML fetch recovered embedded public caption links, and a script preserved the page, original VTT/JSON, hashes, validation and a timestamped reading copy in research run `agent-hooks-guide-20261018`. The two caption formats are the same publisher source, not independent corroboration. The full video was not downloaded or watched.
 
 **Evidence limit:** this synthesis has source and documentation checks, not a matched runtime experiment. It claims no measured speedup, failure-rate reduction or improvement in audit quality. Sources from the same publisher are not independent corroboration; local recommendations are engineering synthesis informed by the cited failures.

@@ -2,6 +2,8 @@
 
 For the consolidated operating guide, including existing research, host differences, reliability and verification, read [Engineering effective agent hooks](hooks-guide.md). This earlier image assessment remains its source-specific intake record.
 
+Follow-up: the exact Oct. 13 webinar's publisher captions were recovered by script and incorporated into that guide with timestamps. Caption agreement is distinct from independent audio or runtime verification.
+
 Assessment: October 18, 2026. The user supplied the image **Why hooks govern agent work**, labelled “Evidence 18 Oct 2026.” Its original run records were not supplied. Treat its reported successful worker, refusals and approvals as source claims; this assessment does not independently verify that run.
 
 ## What helps
