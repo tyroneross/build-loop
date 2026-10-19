@@ -199,7 +199,7 @@ if __name__ == "__main__":
 
 def test_combined_signals_match_public_extractors_with_one_source_open(tmp_path,monkeypatch):
     import retrospective.sections as sections
-    import builtins
+    import transcript_adapter as adapter
     rows = [_rec('user',[{'type':'text','text':'Please fix parsing'}]),
             _rec('assistant',[_tool_use('one','Skill',{'skill':'build-loop:run'})]),
             _rec('user',[_tool_result('one','Error: broken',True)])]
@@ -209,10 +209,10 @@ def test_combined_signals_match_public_extractors_with_one_source_open(tmp_path,
               'automation':sections.extract_tool_sequences(source),
               'issues':sections.extract_issue_signals(source)}
     opens=[]
-    original=Path.open
+    original=adapter.os.open
     def counted(path,*args,**kwargs):
-        if path==source:opens.append(1)
+        if Path(path)==source:opens.append(1)
         return original(path,*args,**kwargs)
-    monkeypatch.setattr(Path,'open',counted)
+    monkeypatch.setattr(adapter.os,'open',counted)
     assert sections.collect_transcript_signals(source)==expected
     assert len(opens)==1

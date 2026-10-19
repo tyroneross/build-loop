@@ -101,7 +101,7 @@ def test_codex_response_items_are_reconciled(tmp_path: Path) -> None:
 
 def test_trace_summary_streams_without_materializing_file(tmp_path, monkeypatch):
     source = tmp_path / "session.jsonl"
-    source.write_text(_line("assistant", [{"type":"tool_use","id":"id","name":"Bash","input":{"command":"run"}}], "2026-08-10T00:00:00Z"))
+    source.write_text(_line("assistant", [{"type":"tool_use","id":"id","name":"Bash","input":{"command":"run"}}], "2026-08-10T00:00:00Z") + "\n" + _line("user", [{"type":"tool_result","tool_use_id":"id","content":"ok"}], "2026-08-10T00:00:01Z"))
     trace.ingest_transcript(tmp_path,source)
     original = Path.read_text
     def no_trace_read(path,*args,**kwargs):
@@ -142,3 +142,130 @@ def test_named_pipe_summary_is_rejected_without_waiting(tmp_path):
     path=tmp_path/'pipe';os.mkfifo(path)
     with pytest.raises(TranscriptReadError):
         trace.summarize_path(path)
+
+
+
+def test_public_trace_readers_reject_fifo_in_actual_child(tmp_path):
+    import os,subprocess,sys
+    path=tmp_path/'pipe';os.mkfifo(path)
+    for expression in ("t.summarize_path(p)","t.ingest_transcript(p.parent,p)"):
+        code=f"import sys;sys.path.insert(0,{str(Path(__file__).resolve().parent)!r});from pathlib import Path;import tool_trace as t;from transcript_adapter import TranscriptReadError;p=Path({str(path)!r})\ntry:\n {expression}\nexcept TranscriptReadError:\n pass"
+        result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=2)
+        assert result.returncode==0,result.stderr
+
+
+def test_trace_fd_rejects_regular_to_fifo_replacement(tmp_path,monkeypatch):
+    import os,pytest,transcript_adapter as adapter
+    path=tmp_path/'source';path.write_text('{}\n')
+    original=os.open
+    def replacement(source,flags,*args,**kwargs):
+        if Path(source)==path:
+            path.unlink();os.mkfifo(path)
+        return original(source,flags,*args,**kwargs)
+    monkeypatch.setattr(adapter.os,'open',replacement)
+    with pytest.raises(adapter.TranscriptReadError):trace.summarize_path(path)
+
+
+def test_historical_and_peer_calls_do_not_inherit_active_run(tmp_path):
+    state=tmp_path/'.build-loop/state.json';state.parent.mkdir()
+    state.write_text(json.dumps({'execution':{'build_loop_id':'run-B','started_at':'2026-10-19T12:00:00Z','current_session_id':'session-B','started_by_session_id':'session-B'}}))
+    span=trace.record_hook(tmp_path,'start',{'tool_name':'Bash','session_id':'session-A','timestamp':'2026-10-18T12:00:00Z'})
+    assert span['attributes']['session.id']=='session-A'
+    assert span['attributes']['build_loop.run_id'] is None
+
+
+
+def test_run_attachment_requires_exact_session_and_call_time(tmp_path,monkeypatch):
+    import pytest
+    state=tmp_path/'.build-loop/state.json';state.parent.mkdir()
+    execution={'build_loop_id':'run-B','started_at':'2026-10-19T12:00:00Z','current_session_id':'session-B','started_by_session_id':'starter'}
+    for session,timestamp,expected in [
+        ('session-B','2026-10-19T12:00:00Z','run-B'),
+        ('starter','2026-10-19T12:00:01Z','run-B'),
+        ('peer','2026-10-19T12:00:01Z',None),
+        ('session-B','2026-10-19T11:59:59Z',None),
+        ('session-B',None,None),('session-B','bad',None),
+    ]:
+        state.write_text(json.dumps({'execution':execution}))
+        span=trace.record_hook(tmp_path,'start',{'tool_name':'Bash','session_id':session,'timestamp':timestamp})
+        assert span['attributes']['build_loop.run_id']==expected
+    for malformed in [[],{}, {'execution':[]}, {'execution':{**execution,'run_id':'conflict'}},
+                      {'execution':{**execution,'started_at':None}},
+                      {'execution':{**execution,'current_session_id':None,'started_by_session_id':None}},
+                      {'execution':{**execution,'ended_at':'bad'}}]:
+        state.write_text(json.dumps(malformed))
+        span=trace.record_hook(tmp_path,'start',{'tool_name':'Bash','session_id':'session-B','timestamp':'2026-10-19T12:01:00Z'})
+        assert span['attributes']['build_loop.run_id'] is None
+    state.write_text('{broken')
+    assert trace._run_context(tmp_path) is None
+    state.unlink()
+    assert trace._run_context(tmp_path) is None
+
+
+def test_ingestion_resolves_run_once_and_keeps_prestart_calls_unattributed(tmp_path,monkeypatch):
+    state=tmp_path/'.build-loop/state.json';state.parent.mkdir()
+    state.write_text(json.dumps({'execution':{'build_loop_id':'run-B','started_at':'2026-10-19T12:00:00Z','current_session_id':'session-B'}}))
+    source=tmp_path/'source.jsonl'
+    rows=[{'type':'session_meta','payload':{'id':'session-B'}}]
+    for call,timestamp in [('old','2026-10-19T11:59:59Z'),('new','2026-10-19T12:00:00Z')]:
+        rows.append({'type':'response_item','timestamp':timestamp,'payload':{'type':'function_call','call_id':call,'name':'exec','arguments':'{}'}})
+    source.write_text('\n'.join(json.dumps(row) for row in rows))
+    original=trace._run_context;calls=[]
+    def once(workdir):calls.append(workdir);return original(workdir)
+    monkeypatch.setattr(trace,'_run_context',once)
+    assert trace.ingest_transcript(tmp_path,source)=={'seen':2,'written':2}
+    spans=list(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH))
+    assert [row['attributes']['build_loop.run_id'] for row in spans]==[None,'run-B']
+    assert all(row['attributes']['session.id']=='session-B' for row in spans)
+    assert len(calls)==1
+
+
+def test_historical_transcript_retains_session_without_active_run(tmp_path):
+    state=tmp_path/'.build-loop/state.json';state.parent.mkdir()
+    state.write_text(json.dumps({'execution':{'build_loop_id':'run-B','started_at':'2026-10-19T12:00:00Z','current_session_id':'session-B'}}))
+    source=tmp_path/'history.jsonl'
+    source.write_text('\n'.join(json.dumps(row) for row in [
+        {'type':'session_meta','payload':{'id':'session-A'}},
+        {'type':'response_item','timestamp':'2026-10-18T12:00:00Z','payload':{'type':'function_call','call_id':'old','name':'exec','arguments':'{}'}}]))
+    assert trace.ingest_transcript(tmp_path,source)['written']==1
+    span=next(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH))
+    assert span['attributes']['session.id']=='session-A'
+    assert span['attributes']['build_loop.run_id'] is None
+
+
+def test_late_terminal_error_is_recorded_once_after_observed_call(tmp_path):
+    source=tmp_path/'session.jsonl'
+    call=_line('assistant',[{'type':'tool_use','id':'late','name':'Bash','input':{}}],'2026-10-19T12:00:00Z')
+    source.write_text(call+'\n')
+    assert trace.ingest_transcript(tmp_path,source)['written']==1
+    first=next(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH))
+    assert first['event']=='observed'
+    assert first['status']['code']=='UNSET'
+    assert trace.ingest_transcript(tmp_path,source)['written']==0
+    source.write_text(call+'\n'+_line('user',[{'type':'tool_result','tool_use_id':'late','is_error':True,'content':'429 limit'}],'2026-10-19T12:00:01Z')+'\n')
+    assert trace.ingest_transcript(tmp_path,source)['written']==1
+    assert trace.ingest_transcript(tmp_path,source)['written']==0
+    rows=list(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH))
+    assert [row['event'] for row in rows]==['observed','reconciled']
+    assert rows[0]['span_id']==rows[1]['span_id']
+    assert trace.summarize(tmp_path)['tool_calls']==1
+    assert trace.summarize(tmp_path)['tool_errors']==1
+    assert trace.summarize(tmp_path)['provider_429s']==1
+
+
+def test_explicit_empty_terminal_result_is_completed(tmp_path):
+    source=tmp_path/'session.jsonl'
+    source.write_text(_line('assistant',[{'type':'tool_use','id':'empty','name':'Bash','input':{}}],'2026-10-19T12:00:00Z')+'\n'+_line('user',[{'type':'tool_result','tool_use_id':'empty','content':''}],'2026-10-19T12:00:01Z'))
+    trace.ingest_transcript(tmp_path,source)
+    row=next(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH))
+    assert row['event']=='reconciled'
+    assert row['status']['code']=='OK'
+
+
+
+def test_hook_with_fifo_state_stays_unattributed_without_blocking(tmp_path):
+    import os,subprocess,sys
+    state=tmp_path/'.build-loop/state.json';state.parent.mkdir();os.mkfifo(state)
+    code=f"import sys;sys.path.insert(0,{str(Path(__file__).resolve().parent)!r});from pathlib import Path;import tool_trace as t;s=t.record_hook(Path({str(tmp_path)!r}),'start',{{'tool_name':'Bash','session_id':'s','timestamp':'2026-10-19T12:00:00Z'}});assert s['attributes']['build_loop.run_id'] is None"
+    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=2)
+    assert result.returncode==0,result.stderr

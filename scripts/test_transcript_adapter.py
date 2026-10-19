@@ -332,17 +332,21 @@ def test_midstream_read_failure_never_publishes_partial_normalization(tmp_path,m
     import pytest
     src=_write(tmp_path/'source.jsonl',CLAUDE_ROWS)
     content=src.read_bytes()
-    original=Path.open
+    from contextlib import contextmanager
+    original=ta._open_regular_binary
     class BrokenReader(io.BytesIO):
         calls=0
         def readline(self,*args):
             self.calls+=1
             if self.calls>1:raise OSError('injected midstream read failure')
             return super().readline(*args)
-    def failing_open(path,*args,**kwargs):
-        if path==src and args and args[0]=='rb':return BrokenReader(content)
-        return original(path,*args,**kwargs)
-    monkeypatch.setattr(Path,'open',failing_open)
+    @contextmanager
+    def failing_open(path):
+        if path==src:
+            with BrokenReader(content) as reader: yield reader
+        else:
+            with original(path) as reader: yield reader
+    monkeypatch.setattr(ta,'_open_regular_binary',failing_open)
     dest=tmp_path/'normalized.jsonl'
     with pytest.raises(ta.TranscriptReadError):ta.normalize_to_file(src,dest)
     assert not dest.exists()
@@ -374,3 +378,85 @@ def test_named_pipe_is_rejected_before_blocking_open(tmp_path):
     with pytest.raises(adapter.TranscriptReadError):
         list(adapter.iter_events(source,require_complete=True))
     assert adapter.normalize_cached(source,tmp_path/'cache') is None
+
+
+def test_metadata_public_entries_return_promptly_for_fifo_in_child(tmp_path):
+    import os, subprocess, sys
+    source=tmp_path/'pipe';os.mkfifo(source)
+    expressions = [
+        "assert a.session_key(p) == 'pipe'",
+        "assert a.detect_format(p) == a.UNKNOWN",
+        "assert a.session_cwd(p) is None",
+        "assert a.find_codex_transcript('/repo',p.parent) is None",
+        "assert a.normalize_cached(p,p.parent/'cache') is None",
+        "list(a.iter_events(p,require_complete=True))",
+        "a.normalized_cache_path(p,p.parent/'cache')",
+        "a.normalize_to_file(p,p.parent/'normalized.jsonl')",
+    ]
+    # Discovery must encounter the pipe too, not an empty candidate set.
+    (tmp_path/'rollout-pipe.jsonl').symlink_to(source)
+    for index, expression in enumerate(expressions):
+        prefix = f"import sys;sys.path.insert(0,{str(Path(__file__).resolve().parent)!r});from pathlib import Path;import transcript_adapter as a;p=Path({str(source)!r})"
+        code = (prefix + f"\ntry:\n {expression}\nexcept a.TranscriptReadError:\n pass\nelse:\n raise AssertionError('nonregular source was accepted')"
+                if index >= 5 else prefix + "\n" + expression)
+        result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=2)
+        assert result.returncode == 0, (expression,result.stderr)
+
+
+def test_metadata_record_and_source_limits_keep_fallback_contracts(tmp_path,monkeypatch):
+    source=tmp_path/'rollout-too-large.jsonl'
+    source.write_text('{"type":"session_meta","payload":{"id":"wrong","cwd":"/repo"},"padding":"'+'x'*1000+'"}\n')
+    monkeypatch.setattr(ta,'MAX_RECORD_BYTES',128)
+    for check in (lambda:ta.session_key(source)==source.stem,
+                  lambda:ta.detect_format(source)==ta.UNKNOWN,
+                  lambda:ta.session_cwd(source) is None,
+                  lambda:ta.find_codex_transcript('/repo',tmp_path) is None):
+        assert check()
+    monkeypatch.setattr(ta,'MAX_RECORD_BYTES',2000)
+    monkeypatch.setattr(ta,'MAX_SOURCE_BYTES',128)
+    assert ta.session_key(source)==source.stem
+    assert ta.detect_format(source)==ta.UNKNOWN
+    assert ta.session_cwd(source) is None
+    assert ta.find_codex_transcript('/repo',tmp_path) is None
+
+
+def test_descriptor_verification_rejects_replacement_fifo_and_closes_fd(tmp_path,monkeypatch):
+    import os,pytest
+    source=tmp_path/'source.jsonl'
+    source.write_text('{}\n')
+    assert source.is_file()  # The old pathname precheck passes.
+    original_open=os.open
+    descriptors=[]
+    def replace_before_open(path,flags,*args,**kwargs):
+        if Path(path)==source:
+            source.unlink();os.mkfifo(source)
+        descriptor=original_open(path,flags,*args,**kwargs)
+        descriptors.append(descriptor)
+        return descriptor
+    monkeypatch.setattr(ta.os,'open',replace_before_open)
+    with pytest.raises(ta.TranscriptReadError):list(ta.iter_events(source,require_complete=True))
+    with pytest.raises(OSError):os.fstat(descriptors[0])
+
+
+def test_descriptor_is_closed_when_fstat_fails(tmp_path,monkeypatch):
+    import os,pytest
+    source=tmp_path/'source.jsonl';source.write_text('{}\n')
+    original_open=os.open;original_fstat=os.fstat;descriptors=[]
+    def capture(*args,**kwargs):
+        descriptor=original_open(*args,**kwargs);descriptors.append(descriptor);return descriptor
+    def failing_stat(descriptor):raise OSError('injected fstat failure')
+    monkeypatch.setattr(ta.os,'open',capture)
+    monkeypatch.setattr(ta.os,'fstat',failing_stat)
+    with pytest.raises(OSError):
+        with ta._open_regular_binary(source): pass
+    with pytest.raises(OSError):original_fstat(descriptors[0])
+
+
+
+def test_unavailable_nonblocking_support_fails_closed_before_open(tmp_path,monkeypatch):
+    import pytest
+    source=tmp_path/'source';source.write_text('{}\n')
+    monkeypatch.delattr(ta.os,'O_NONBLOCK',raising=False)
+    monkeypatch.setattr(ta.os,'open',lambda *args,**kwargs:pytest.fail('blocking fallback open'))
+    with pytest.raises(ta.TranscriptReadError):
+        with ta._open_regular_binary(source):pass

@@ -47,8 +47,10 @@ import os
 import re
 import hashlib
 import secrets
+import stat
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, BinaryIO, Iterator
 
 CLAUDE = "claude"
 CODEX = "codex"
@@ -69,8 +71,9 @@ def session_key(path: Path) -> str:
     """A safe original session key, independent of a temporary normalized name."""
     identity = path.stem
     try:
-        with path.open(errors="replace") as handle:
-            for _, line in zip(range(40), handle):
+        with _open_regular_binary(path) as handle:
+            for _, raw in zip(range(40), _bounded_lines(handle)):
+                line = raw.decode("utf-8", errors="replace")
                 row = _loads(line)
                 if not row:
                     continue
@@ -81,7 +84,7 @@ def session_key(path: Path) -> str:
                 if isinstance(candidate, str) and candidate.strip():
                     identity = candidate.strip()
                     break
-    except OSError:
+    except (OSError, TranscriptLimitError):
         pass
     if re.fullmatch(r"[a-zA-Z0-9_.-]{1,180}", identity) and identity not in {".", ".."}:
         return identity
@@ -109,8 +112,9 @@ def detect_format(path: Path) -> str:
     be wrong exactly when someone moves a file to inspect it.
     """
     try:
-        with Path(path).open(errors="replace") as fh:
-            for _, line in zip(range(_DETECT_SCAN_LINES), fh):
+        with _open_regular_binary(Path(path)) as fh:
+            for _, raw in zip(range(_DETECT_SCAN_LINES), _bounded_lines(fh)):
+                line = raw.decode("utf-8", errors="replace")
                 obj = _loads(line)
                 if obj is None:
                     continue
@@ -120,7 +124,7 @@ def detect_format(path: Path) -> str:
                         or obj.get("role") in {"user", "assistant"}
                         or obj.get("type") in {"user", "assistant"}):
                     return CLAUDE
-    except OSError:
+    except (OSError, TranscriptLimitError):
         return UNKNOWN
     return UNKNOWN
 
@@ -149,12 +153,12 @@ def session_cwd(path: Path) -> str | None:
     if detect_format(path) != CODEX:
         return None
     try:
-        with Path(path).open(errors="replace") as fh:
-            for line in fh:
-                cwd = _event_cwd(_loads(line))
+        with _open_regular_binary(Path(path)) as fh:
+            for raw in _bounded_lines(fh):
+                cwd = _event_cwd(_loads(raw.decode("utf-8", errors="replace")))
                 if cwd:
                     return cwd
-    except OSError:
+    except (OSError, TranscriptLimitError):
         return None
     return None
 
@@ -196,8 +200,9 @@ def find_codex_transcript(
         return None
     for path in files:
         try:
-            with path.open(errors="replace") as fh:
-                for _, line in zip(range(3), fh):
+            with _open_regular_binary(path) as fh:
+                for _, raw in zip(range(3), _bounded_lines(fh)):
+                    line = raw.decode("utf-8", errors="replace")
                     obj = _loads(line)
                     if obj is None or obj.get("type") != "session_meta":
                         continue
@@ -206,7 +211,7 @@ def find_codex_transcript(
                     if found and str(found).rstrip("/") == target:
                         return path
                     break
-        except OSError:
+        except (OSError, TranscriptLimitError):
             continue
     return None
 
@@ -334,6 +339,41 @@ class TranscriptLimitError(ValueError):
     """Input exceeded an explicit ingestion budget; coverage is unavailable."""
 
 
+@contextmanager
+def _open_regular_binary(path: Path) -> Iterator[BinaryIO]:
+    """Open without waiting for a FIFO writer, then validate the actual fd.
+
+    A pathname stat before open cannot protect against replacement between the
+    check and open. No reader consumes bytes until this descriptor is verified.
+    """
+    nonblocking = getattr(os, "O_NONBLOCK", None)
+    if nonblocking is None:
+        raise TranscriptReadError("platform lacks a safe nonblocking source opener")
+    descriptor = os.open(path, os.O_RDONLY | nonblocking | getattr(os, "O_BINARY", 0))
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise TranscriptReadError("source must be a regular file")
+        if info.st_size > MAX_SOURCE_BYTES:
+            raise TranscriptLimitError("source exceeds source byte budget")
+        handle = os.fdopen(descriptor, "rb")
+        descriptor = None  # fdopen now owns it, including all exceptional exits.
+        with handle:
+            yield handle
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _bounded_lines(handle: BinaryIO) -> Iterator[bytes]:
+    consumed = 0
+    while raw := handle.readline(MAX_RECORD_BYTES + 1):
+        consumed += len(raw)
+        if len(raw) > MAX_RECORD_BYTES or consumed > MAX_SOURCE_BYTES:
+            raise TranscriptLimitError("source exceeds record/source byte budget")
+        yield raw
+
+
 def _codex_event(obj: dict[str, Any]) -> dict[str, Any] | None:
     kind, payload = obj.get("type"), obj.get("payload")
     if not isinstance(payload, dict):
@@ -377,27 +417,17 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
     path = Path(path)
     consumed = 0
     try:
-        if not path.is_file():
-            if path.exists():
-                raise TranscriptReadError("transcript source must be a regular file")
-            if require_complete:
-                raise TranscriptReadError("transcript source is absent")
-            return
-        if path.stat().st_size > MAX_SOURCE_BYTES:
-            raise TranscriptLimitError("transcript exceeds source byte budget")
         fmt = UNKNOWN
         pending = None
         pending_origin = None
         source_session = None
         source_cwd = None
-        with path.open("rb") as handle:
+        with _open_regular_binary(path) as handle:
             line_number = 0
             consumed = 0
-            while raw := handle.readline(MAX_RECORD_BYTES + 1):
+            for raw in _bounded_lines(handle):
                 line_number += 1
                 consumed += len(raw)
-                if len(raw) > MAX_RECORD_BYTES or consumed > MAX_SOURCE_BYTES:
-                    raise TranscriptLimitError("transcript exceeds record/source byte budget")
                 obj = _loads(raw.decode("utf-8", errors="replace"))
                 if obj is None:
                     continue
@@ -526,13 +556,9 @@ def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS, *, keep: Path | None 
 
 
 def _source_revision(source: Path) -> str:
-    if not source.is_file():
-        raise TranscriptReadError("transcript source must be a regular file")
-    if source.stat().st_size > MAX_SOURCE_BYTES:
-        raise TranscriptLimitError("transcript exceeds source byte budget")
     digest = hashlib.sha256()
     consumed = 0
-    with source.open("rb") as handle:
+    with _open_regular_binary(source) as handle:
         while block := handle.read(64 * 1024):
             consumed += len(block)
             if consumed > MAX_SOURCE_BYTES:

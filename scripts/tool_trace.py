@@ -92,13 +92,46 @@ def _content_attributes(prefix: str, value: Any) -> dict[str, Any]:
     return attrs
 
 
-def _run_id(workdir: Path) -> str | None:
-    try:
-        state = json.loads((workdir / ".build-loop/state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+def _run_context(workdir: Path) -> tuple | None:
+    """Read one bounded active-run snapshot; its metadata alone proves no call ownership."""
+    from transcript_adapter import _open_regular_binary, _bounded_lines, TranscriptLimitError
     from rally_point.build_loop_id import resolve_run_identity
-    return resolve_run_identity(state).build_run_id
+    from temporal_membership import parse_ts
+    try:
+        with _open_regular_binary(workdir / ".build-loop/state.json") as handle:
+            state = json.loads(b"".join(_bounded_lines(handle)))
+    except (OSError, ValueError, TranscriptLimitError):
+        return None
+    identity = resolve_run_identity(state)
+    if identity.state != "active" or not identity.build_run_id or not isinstance(state, dict):
+        return None
+    execution = state.get("execution")
+    if not isinstance(execution, dict):
+        return None
+    start = parse_ts(execution.get("started_at"))
+    if start is None:
+        return None
+    sessions = {value.strip() for key in ("current_session_id", "started_by_session_id")
+                if isinstance(value := execution.get(key), str) and value.strip()}
+    if not sessions:
+        return None
+    end_value = execution.get("ended_at")
+    end = parse_ts(end_value)
+    if end_value is not None and (end is None or end < start):
+        return None
+    return identity.build_run_id, start, end, sessions
+
+
+def _attached_run_id(context: tuple | None, session_id: str, timestamp: Any) -> str | None:
+    from temporal_membership import parse_ts, is_member
+    if context is None:
+        return None
+    run_id, start, end, sessions = context
+    call_time = parse_ts(timestamp)
+    if not session_id or session_id not in sessions or call_time is None:
+        return None
+    member, _ = is_member(call_time, call_time, start, end, bound_hours=0)
+    return run_id if member else None
 
 
 def _iso_to_unix_nano(value: Any) -> int | None:
@@ -124,6 +157,7 @@ def build_span(
     timestamp: Any = None,
     end_timestamp: Any = None,
     ordinal: int = 0,
+    run_context: tuple | None = None,
 ) -> dict[str, Any]:
     now_ns = time.time_ns()
     start_ns = _iso_to_unix_nano(timestamp) or now_ns
@@ -132,7 +166,7 @@ def build_span(
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool_name or "unknown",
         "session.id": session_id or "unknown",
-        "build_loop.run_id": _run_id(workdir),
+        "build_loop.run_id": _attached_run_id(run_context, session_id, timestamp),
         "build_loop.tool.phase": phase,
     }
     if tool_input is not None:
@@ -199,6 +233,7 @@ def record_hook(workdir: Path, phase: str, payload: dict[str, Any]) -> dict[str,
     is_error = phase == "error" or bool(payload.get("is_error"))
     span = build_span(
         workdir=workdir,
+        run_context=_run_context(workdir),
         session_id=session_id,
         tool_name=tool_name,
         tool_use_id=tool_use_id,
@@ -282,14 +317,16 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
         for row in _iter_trace_rows(path):
             existing.add((str(row.get("span_id")), str(row.get("event"))))
     written = 0
+    context = _run_context(workdir)
     for tool_use_id, use in uses.items():
         result = results.get(tool_use_id, {})
         span = build_span(
             workdir=workdir,
+            run_context=context,
             session_id=session,
             tool_name=use["name"],
             tool_use_id=tool_use_id,
-            phase="reconciled",
+            phase="reconciled" if tool_use_id in results else "observed",
             tool_input=use.get("input"),
             tool_result=result.get("result"),
             is_error=bool(result.get("is_error")),
@@ -307,20 +344,10 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
 
 def _iter_trace_rows(path: Path):
     """Stream bounded records; resource/IO failures remain explicit, not empty coverage."""
-    from transcript_adapter import MAX_SOURCE_BYTES, MAX_RECORD_BYTES, TranscriptLimitError, TranscriptReadError
+    from transcript_adapter import _open_regular_binary, _bounded_lines
     try:
-        if not path.is_file():
-            if path.exists():
-                raise TranscriptReadError("trace source must be a regular file")
-            return
-        if path.stat().st_size > MAX_SOURCE_BYTES:
-            raise TranscriptLimitError("Trace exceeds source byte budget")
-        with path.open("rb") as handle:
-            consumed = 0
-            while line := handle.readline(MAX_RECORD_BYTES + 1):
-                consumed += len(line)
-                if len(line) > MAX_RECORD_BYTES or consumed > MAX_SOURCE_BYTES:
-                    raise TranscriptLimitError("Trace exceeds read budget")
+        with _open_regular_binary(path) as handle:
+            for line in _bounded_lines(handle):
                 try:
                     row = json.loads(line)
                 except (ValueError, UnicodeError):
