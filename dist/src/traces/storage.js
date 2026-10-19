@@ -112,7 +112,7 @@ async function loadFullTrace(trace_id, config) {
     const paths = (0, config_1.getTracePaths)(config);
     const locator = safeRawPath(trace, paths.raw);
     await assertContained(paths.traces, locator);
-    return await readJson(locator, 64 * 1024 * 1024);
+    return await readJson(locator, 64 * 1024 * 1024, paths.traces);
 }
 /**
  * Load all traces (summaries only)
@@ -226,7 +226,7 @@ async function loadTraceSnapshot(config, options = {}) {
     if (await pathPresent(paths.index)) {
         try {
             await assertContained(paths.traces, paths.index);
-            const legacy = await readJson(paths.index, 64 * 1024 * 1024);
+            const legacy = await readJson(paths.index, 64 * 1024 * 1024, paths.traces);
             if (!legacy || !legacy.traces || typeof legacy.traces !== 'object' || Array.isArray(legacy.traces)) {
                 throw new Error('Invalid legacy trace index');
             }
@@ -278,7 +278,7 @@ async function loadTraceSnapshot(config, options = {}) {
             if (!await pathPresent(file))
                 continue;
             await assertContained(paths.traces, file);
-            const trace = await readJson(file, 1024 * 1024);
+            const trace = await readJson(file, 1024 * 1024, paths.traces);
             validateTrace(trace);
             delete trace.storage_coverage;
             if (trace.trace_id !== id)
@@ -322,7 +322,7 @@ async function loadTraceSnapshot(config, options = {}) {
                         try {
                             validateId(incidentId);
                             await assertContained(paths.traces, file);
-                            const edge = await readJson(file, 1024);
+                            const edge = await readJson(file, 1024, paths.traces);
                             if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId)
                                 throw new Error('Correlation identity mismatch');
                             const entry = entries[traceId];
@@ -375,16 +375,8 @@ async function pathPresent(file) {
     }
 }
 async function validateRawFile(root, file) {
-    await assertContained(root, file);
-    const handle = await promises_1.default.open(file, fs_1.constants.O_RDONLY | fs_1.constants.O_NONBLOCK);
-    try {
-        const stat = await handle.stat();
-        if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
-            throw new Error('Invalid or oversized raw trace file');
-    }
-    finally {
-        await handle.close();
-    }
+    const handle = await openContainedRegular(root, file, 64 * 1024 * 1024);
+    await handle.close();
 }
 /**
  * Create empty index
@@ -476,12 +468,58 @@ async function containedDirectory(root, dir) {
     }
     await assertContained(root, dir);
 }
-async function readJson(file, maxBytes) {
-    const handle = await promises_1.default.open(file, fs_1.constants.O_RDONLY | fs_1.constants.O_NONBLOCK);
-    try {
-        const metadata = await handle.stat();
-        if (!metadata.isFile() || metadata.size > maxBytes)
+/** O_NOFOLLOW protects the final opened component where supported. Directory
+ * and descriptor identity checks detect cooperative/one-shot namespace swaps
+ * before reading bytes, including swap-back races. Public Node APIs provide no
+ * portable openat/RESOLVE_BENEATH guarantee against a same-privilege adversary
+ * continuously changing ancestors between checks; do not claim that boundary. */
+async function openContainedRegular(root, file, maxBytes) {
+    const [realRoot, target] = await Promise.all([promises_1.default.realpath(root), promises_1.default.realpath(file)]);
+    const relative = path_1.default.relative(realRoot, target);
+    if (relative === '..' || relative.startsWith(`..${path_1.default.sep}`) || path_1.default.isAbsolute(relative)) {
+        throw new Error('Storage path escapes trace root');
+    }
+    const capture = async () => {
+        if (await promises_1.default.realpath(root) !== realRoot || await promises_1.default.realpath(target) !== target) {
+            throw new Error('Storage path changed during guarded open');
+        }
+        const identities = [];
+        let directory = realRoot;
+        for (const part of ['', ...path_1.default.dirname(relative).split(path_1.default.sep).filter(p => p && p !== '.')]) {
+            if (part)
+                directory = path_1.default.join(directory, part);
+            const entry = await promises_1.default.lstat(directory, { bigint: true });
+            if (!entry.isDirectory() || entry.isSymbolicLink())
+                throw new Error('Storage ancestor changed during guarded open');
+            identities.push([entry.dev, entry.ino]);
+        }
+        const entry = await promises_1.default.lstat(target, { bigint: true });
+        if (!entry.isFile() || entry.isSymbolicLink())
             throw new Error('Invalid or oversized trace file');
+        return { identities, entry };
+    };
+    const before = await capture();
+    const handle = await promises_1.default.open(target, fs_1.constants.O_RDONLY | fs_1.constants.O_NONBLOCK | (fs_1.constants.O_NOFOLLOW ?? 0));
+    try {
+        const opened = await handle.stat({ bigint: true }), after = await capture();
+        if (!opened.isFile() || opened.size > BigInt(maxBytes))
+            throw new Error('Invalid or oversized trace file');
+        if (before.entry.dev !== opened.dev || before.entry.ino !== opened.ino ||
+            after.entry.dev !== opened.dev || after.entry.ino !== opened.ino ||
+            before.identities.length !== after.identities.length ||
+            before.identities.some((entry, i) => entry[0] !== after.identities[i][0] || entry[1] !== after.identities[i][1])) {
+            throw new Error('Storage identity changed during guarded open');
+        }
+        return handle;
+    }
+    catch (error) {
+        await handle.close();
+        throw error;
+    }
+}
+async function readJson(file, maxBytes, root) {
+    const handle = await openContainedRegular(root, file, maxBytes);
+    try {
         const chunks = [];
         let total = 0;
         while (true) {
@@ -610,7 +648,7 @@ async function loadCollection(collection_id, config) {
     const filepath = path_1.default.join(paths.collections, `${collection_id}.json`);
     try {
         await assertContained(paths.traces, filepath);
-        return await readJson(filepath, 1024 * 1024);
+        return await readJson(filepath, 1024 * 1024, paths.traces);
     }
     catch (error) {
         if (error.code === 'ENOENT') {

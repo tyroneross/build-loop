@@ -207,7 +207,7 @@ test('all retrieval views preserve canonical OTLP summaries in one metadata pass
   assert.ok(parsed.summary.highlights.length);assert.ok(parsed.summary.error);assert.ok(parsed.summary.performance);
   const canonicalSummary=JSON.parse(JSON.stringify(parsed.summary));
   const canonicalTrace={...JSON.parse(JSON.stringify(parsed)),incident_ids:['fidelity-incident']};
-  const metadata=path.join(config.memoryPath,'traces','metadata',parsed.trace_id+'.json');
+  const metadata=await fs.realpath(path.join(config.memoryPath,'traces','metadata',parsed.trace_id+'.json'));
   const originalOpen=fs.open;let reads=0;
   fs.open=async function(file,...args){if(file===metadata)reads++;return originalOpen.call(this,file,...args);};
   t.after(()=>{fs.open=originalOpen;});
@@ -325,4 +325,39 @@ test('orphan correlation records are explicit invalid coverage without blocking 
   assert.match(result.coverage.invalid[0].reason,/absent or invalid trace metadata/);
   assert.equal((await storage.loadTraceSummary('healthy',config)).trace_id,'healthy');
   await assert.rejects(storage.loadTraceSummary('orphan',config),storage.PartialTraceError);
+});
+
+test('guarded reads reject actual leaf, ancestor and restored ancestor swaps before reading bytes',{skip:process.platform==='win32'},async t=>{
+  for(const kind of ['metadata','raw','legacy','collection'])for(const mode of (kind==='metadata'?['leaf','ancestor','ancestor-aba']:['leaf']))await t.test(`${kind}/${mode}`,async t=>{
+    const config=await fixture(t);await storage.storeTrace(trace('race'),{safe:true},config);
+    const root=await fs.realpath(path.join(config.memoryPath,'traces'));
+    let target,call;
+    if(kind==='metadata'){target=path.join(root,'metadata','race.json');call=()=>storage.loadTraceSummary('race',config);}
+    if(kind==='raw'){target=(await storage.loadTraceSummary('race',config)).full_data_path;target=await fs.realpath(target);call=()=>storage.loadFullTrace('race',config);}
+    if(kind==='legacy'){target=path.join(root,'index.json');await fs.writeFile(target,JSON.stringify(await storage.loadTraceIndex(config)));call=async()=>{const result=await storage.loadTraceIndex(config);assert.equal(result.coverage.complete,false);};}
+    if(kind==='collection'){const collection=await storage.createCollection('race',['race'],undefined,config);target=path.join(root,'collections',collection.collection_id+'.json');call=()=>storage.loadCollection(collection.collection_id,config);}
+    const outside=await fs.mkdtemp(path.join(os.tmpdir(),'trace-outside-race-'));t.after(()=>fs.rm(outside,{recursive:true,force:true}));
+    // Outside data is valid and deliberately resembles the requested record.
+    await fs.copyFile(target,path.join(outside,path.basename(target)));
+    const originalOpen=fs.open,parent=path.dirname(target),backup=parent+'.held';let attacked=false,outsideReads=0,swapped=false;
+    fs.open=async function(file,...args){
+      if(file!==target||attacked)return originalOpen.call(this,file,...args);
+      attacked=true;
+      if(mode==='leaf'){await fs.rename(target,target+'.held');await fs.symlink(path.join(outside,path.basename(target)),target);}
+      else{await fs.rename(parent,backup);await fs.symlink(outside,parent);swapped=true;}
+      const handle=await originalOpen.call(this,file,...args);
+      const originalRead=handle.read.bind(handle);handle.read=async(...args)=>{outsideReads++;return originalRead(...args);};
+      if(mode==='ancestor-aba'){await fs.unlink(parent);await fs.rename(backup,parent);swapped=false;}
+      return handle;
+    };
+    try{
+      if(kind==='legacy')await call();else await assert.rejects(call());
+      assert.equal(attacked,true,'replacement must occur at the real open boundary');
+      assert.equal(outsideReads,0,'outside descriptor must be rejected before consuming bytes');
+    }finally{
+      fs.open=originalOpen;
+      if(mode==='leaf'&&attacked){await fs.unlink(target);await fs.rename(target+'.held',target);}
+      if(swapped){await fs.unlink(parent);await fs.rename(backup,parent);}
+    }
+  });
 });
