@@ -734,9 +734,10 @@ def _enforce_risk_audit_enabled(root: Path) -> bool:
     if config_path.is_file():
         try:
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            if (cfg.get("sessionPrefs") or {}).get("enforceRiskAudit") is True:
+            prefs = cfg.get("sessionPrefs") if isinstance(cfg, dict) else None
+            if isinstance(prefs, dict) and prefs.get("enforceRiskAudit") is True:
                 return True
-        except (ValueError, OSError):
+        except (ValueError, OSError, RecursionError):
             pass
     return False
 
@@ -772,7 +773,7 @@ def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
         return False
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+    except (ValueError, OSError, RecursionError):
         return False
 
     current_hash = staged_diff_hash()
@@ -780,30 +781,42 @@ def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
         # Can't verify what's actually staged — fail safe, never match.
         return False
 
-    runs = data.get("runs") or []
+    runs = data.get("runs") if isinstance(data, dict) else None
+    if not isinstance(runs, list):
+        return False
     now = _dt.datetime.now(_dt.timezone.utc)
     staged = set(risky_files)
     for run in runs:
-        for entry in run.get("judge_decisions") or []:
+        decisions = run.get("judge_decisions") if isinstance(run, dict) else None
+        if not isinstance(decisions, list):
+            continue
+        for entry in decisions:
+            if not isinstance(entry, dict):
+                continue
             if entry.get("judge_id") != "independent-auditor-hook":
                 continue
             verdict = entry.get("verdict")
-            if verdict not in _APPROVE_VERDICTS:
+            if not isinstance(verdict, str) or verdict not in _APPROVE_VERDICTS:
                 continue
             entry_hash = entry.get("diff_hash")
             if not entry_hash or entry_hash != current_hash:
                 continue
             vts_raw = entry.get("verdict_ts")
-            if not vts_raw:
+            if not isinstance(vts_raw, str):
                 continue
             try:
                 vts = _dt.datetime.fromisoformat(vts_raw.replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 continue
+            if vts.tzinfo is None:
+                continue
             age_min = (now - vts).total_seconds() / 60
             if age_min > RISK_VERDICT_RECENCY_MIN:
                 continue
-            entry_risky = set(entry.get("risky_files") or [])
+            raw_risky = entry.get("risky_files")
+            if not isinstance(raw_risky, list) or not all(isinstance(f, str) for f in raw_risky):
+                continue
+            entry_risky = set(raw_risky)
             if staged <= entry_risky:
                 return True
     return False
@@ -872,9 +885,10 @@ def _enforce_memory_receipt_enabled(root: Path) -> bool:
     if config_path.is_file():
         try:
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            if (cfg.get("sessionPrefs") or {}).get("enforceMemoryReceipt") is True:
+            prefs = cfg.get("sessionPrefs") if isinstance(cfg, dict) else None
+            if isinstance(prefs, dict) and prefs.get("enforceMemoryReceipt") is True:
                 return True
-        except (ValueError, OSError):
+        except (ValueError, OSError, RecursionError):
             pass
     return False
 
@@ -1040,7 +1054,7 @@ def _library_context(diff_body: str) -> str:
     if API_REGISTRY_STALENESS.is_file():
         try:
             staleness = json.loads(API_REGISTRY_STALENESS.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
+        except (ValueError, OSError, RecursionError):
             staleness = {}
     lines: list[str] = []
     try:
@@ -1187,7 +1201,7 @@ def _recent_trajectory(root: Path) -> str:
         return "_(no active build trajectory)_\n"
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+    except (ValueError, OSError, RecursionError):
         return "_(no active build trajectory)_\n"
     runs = data.get("runs") if isinstance(data, dict) else None
     if not isinstance(runs, list) or not runs or not isinstance(runs[-1], dict):
@@ -1243,9 +1257,13 @@ def _record_runs_judge_entry(
         return
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+    except (ValueError, OSError, RecursionError):
+        return
+    if not isinstance(data, dict):
         return
     runs = data.setdefault("runs", [])
+    if not isinstance(runs, list) or any(not isinstance(run, dict) for run in runs):
+        return
     now_dt = _dt.datetime.now(_dt.timezone.utc)
 
     def _fresh_hook_run() -> dict:
@@ -1277,13 +1295,17 @@ def _record_runs_judge_entry(
         if not attach_to_last:
             runs.append(_fresh_hook_run())
     decisions = runs[-1].setdefault("judge_decisions", [])
+    if not isinstance(decisions, list):
+        return
     for existing in decisions:
+        if not isinstance(existing, dict):
+            continue
         if existing.get("target") == commit_hash and existing.get("status") == status:
             try:
                 ets = _dt.datetime.fromisoformat(existing.get("ts", "").replace("Z", "+00:00"))
                 if (now_dt - ets).total_seconds() < 60:
                     return
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
                 pass
     decisions.append({
         "judge_id": "independent-auditor-hook", "target": commit_hash,
@@ -1342,6 +1364,19 @@ def _record_receipt_observation(
 
 
 def _emit_packet(root: Path, cmd: str = "") -> int:
+    # Advisory rendering/persistence must never revoke an integrity decision.
+    decision = {"exit_code": 0}
+    try:
+        return _build_packet(root, cmd, decision)
+    except Exception as exc:  # advisory failures remain non-blocking
+        sys.stderr.write(
+            f"[independent-commit-auditor] internal error: {exc!r}; "
+            f"retaining integrity exit {decision['exit_code']}.\n"
+        )
+        return decision["exit_code"]
+
+
+def _build_packet(root: Path, cmd: str, decision: dict) -> int:
     files = _staged_files()
     diff_body = _staged_diff()
     diff_stat = _staged_stat()
@@ -1352,6 +1387,7 @@ def _emit_packet(root: Path, cmd: str = "") -> int:
 
     # Deterministic block first (zero-judgment hard fails)
     blocked, reason = _deterministic_block(files, diff_body)
+    decision["exit_code"] = 2 if blocked else 0
 
     # Release-surface scan on staged Swift (high → block unless bypassed with a reason).
     try:
@@ -1362,6 +1398,8 @@ def _emit_packet(root: Path, cmd: str = "") -> int:
     release_blocked = bool(release_scan["block"]) and (
         not bypass_reason or bypass_reason.lower() in _BYPASS_NON_REASONS
     )
+    if release_blocked:
+        decision["exit_code"] = 2
     if release_scan["block"] and not release_blocked:
         _log_release_surface_bypass(root, bypass_reason or "", bypass_source, release_scan["block"])
 
@@ -1369,11 +1407,6 @@ def _emit_packet(root: Path, cmd: str = "") -> int:
     # the packet, the recorded runs[] entry, and the opt-in hard block below
     # all see the same verdict.
     risk = _classify_risk(files, diff_body)
-    memory_receipt = _memory_receipt(root, files, risk)
-    enforce_memory = _enforce_memory_receipt_enabled(root)
-    memory_blocked = (
-        enforce_memory and memory_receipt["required"] and not memory_receipt["satisfied"]
-    )
     enforce_risk_audit = _enforce_risk_audit_enabled(root)
     risk_blocked = False
     risk_block_reason = ""
@@ -1384,10 +1417,19 @@ def _emit_packet(root: Path, cmd: str = "") -> int:
         and not _has_matching_risk_verdict(root, risk["risky_files"])
     ):
         risk_blocked = True
+        decision["exit_code"] = 2
         risk_block_reason = (
             "high-risk commit without a matching independent audit — run the audit on this "
             "diff, record the verdict, then commit"
         )
+
+    memory_receipt = _memory_receipt(root, files, risk)
+    enforce_memory = _enforce_memory_receipt_enabled(root)
+    memory_blocked = (
+        enforce_memory and memory_receipt["required"] and not memory_receipt["satisfied"]
+    )
+    if memory_blocked:
+        decision["exit_code"] = 2
 
     # Gather context (each optional, "(none found)" when missing)
     intent = _read_optional(root / ".build-loop" / "intent.md", MAX_TEXT_CHARS)

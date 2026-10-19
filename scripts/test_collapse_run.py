@@ -467,6 +467,18 @@ class TestWorktreeSafetyInventory:
         (wt / "debug.log").write_text("noise\n")
         return repo, wt, branch
 
+    def test_hidden_untracked_config_cannot_authorize_removal(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+        _git(wt, "config", "status.showUntrackedFiles", "no")
+        safety = collapse_run.inspect_worktree_safety(repo, str(wt), branch, live_cwds=[])
+        assert safety["safe"] is False
+        assert ".env" in safety["inventory"]["ignored"]
+        assert (wt / ".env").read_text() == "API_KEY=synthetic\n"
+        (wt / "notes.local").write_text("unique untracked fixture")
+        safety = collapse_run.inspect_worktree_safety(repo, str(wt), branch, live_cwds=[])
+        assert safety["safe"] is False
+        assert (wt / "notes.local").read_text() == "unique untracked fixture"
+
     def test_clean_git_status_does_not_authorize_ignored_data_loss(self, tmp_path: Path) -> None:
         repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
         assert _git(wt, "status", "--short").stdout.strip() == "", (

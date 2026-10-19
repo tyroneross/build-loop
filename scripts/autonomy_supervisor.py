@@ -31,7 +31,7 @@ from typing import Any, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
 from parallelism import HARD_CEILING, resolve_fanout  # noqa: E402
-from tool_trace import summarize as summarize_tool_traces  # noqa: E402
+from tool_trace import ingestion_incomplete, summarize as summarize_tool_traces  # noqa: E402
 
 AUTONOMY_DIR = Path(".build-loop/autonomy")
 HISTORY_PATH = AUTONOMY_DIR / "task-history.jsonl"
@@ -286,6 +286,7 @@ def record_run(workdir: Path, record: dict[str, Any]) -> dict[str, Any]:
         "repeated_tool_calls": max(0, int(telemetry.get("repeated_calls", 0))),
         "provider_429s": max(0, int(telemetry.get("provider_429s", 0))),
         "p95_tool_duration_ms": telemetry.get("p95_duration_ms"),
+        "telemetry_incomplete": ingestion_incomplete(telemetry),
     }
     _append_jsonl(workdir / HISTORY_PATH, row)
     return row
@@ -811,7 +812,8 @@ def _update_pressure_state(workdir: Path, signals: dict[str, Any]) -> dict[str, 
         latency = float(signals.get("latency_p95_ms", 0))
         baseline = float(state.get("latency_baseline_ms") or 0)
         stable = (
-            int(signals.get("provider_429s", 0)) == 0
+            not signals.get("telemetry_incomplete", False)
+            and int(signals.get("provider_429s", 0)) == 0
             and int(signals.get("error_streak", 0)) == 0
             and float(signals.get("memory_percent", 0)) < 75
             and float(signals.get("disk_free_gb", 999)) >= 5
@@ -883,6 +885,7 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         "trace_tool_error_total": trace.get("tool_errors", 0),
         "latency_p95_ms": trace.get("p95_duration_ms") or 0,
         "telemetry_repeated_calls": trace.get("repeated_calls", 0),
+        "telemetry_incomplete": ingestion_incomplete(trace),
     })
     signals.update(request.get("signals") or {})
     pressure_state = _update_pressure_state(workdir, signals)

@@ -123,6 +123,8 @@ def _status_entries(
         # Traditional mode collapses an ignored directory to `scratch/` unless
         # every file is requested; `--ignored=matching` collapses it either way.
         args.append("--untracked-files=all")
+    else:
+        args.append("--untracked-files=normal")
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, check=False, timeout=_GIT_TIMEOUT_S

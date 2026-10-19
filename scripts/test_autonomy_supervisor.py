@@ -549,3 +549,18 @@ def test_cloud_load_does_not_change_existing_worker_reduction(current, expected)
     })
     assert result["next_concurrency"] == expected
     assert result["action"] == "reduce_concurrency"
+
+
+def test_known_ingestion_failure_does_not_advance_stable_windows(repo):
+    import tool_trace
+    source = repo / 'unknown.jsonl'
+    source.write_text('{"type":"attachment"}')
+    with pytest.raises(OSError):
+        tool_trace.ingest_transcript(repo, source)
+    telemetry = tool_trace.summarize(repo)
+    assert tool_trace.ingestion_incomplete(telemetry)
+    signals = {'thermal_state':'nominal', 'load_ratio':0, 'memory_percent':10,
+               'telemetry_incomplete':tool_trace.ingestion_incomplete(telemetry)}
+    assert supervisor._update_pressure_state(repo, signals)['stable_windows'] == 0
+    record = supervisor.record_run(repo, {'goal':'test observed coverage', 'telemetry':telemetry})
+    assert record['telemetry_incomplete'] is True

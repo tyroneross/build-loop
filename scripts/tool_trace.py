@@ -294,9 +294,13 @@ def _ingest_transcript(workdir: Path, transcript: Path, session_id: str = "", *,
     results: dict[str, dict[str, Any]] = {}
     session = session_id or transcript.stem
     source_sessions: set[str] = set()
+    history_coverage = history_coverage if history_coverage is not None else {}
     from transcript_adapter import iter_events, TranscriptLimitError
     for ordinal, record in enumerate(iter_events(transcript, include_provenance=True, require_complete=True)):
-        original_session = (record.get("_source") or {}).get("session_id")
+        provenance = record.get("_source") or {}
+        if isinstance(provenance.get("path"), str):
+            history_coverage.setdefault("source_locator", provenance["path"])
+        original_session = provenance.get("session_id")
         if isinstance(original_session, str) and original_session.strip():
             source_sessions.add(original_session.strip())
         content = (record.get("message") or {}).get("content")
@@ -340,6 +344,7 @@ def _ingest_transcript(workdir: Path, transcript: Path, session_id: str = "", *,
                              "aggregate_read_budget_bytes": MAX_HISTORY_BYTES,
                              "invalid_records": 0, "legacy_unmatched_records": 0})
     context = _run_context(workdir)
+    history_coverage["run_id"] = context[0] if context else None
     # Retain identities only for this bounded source, never an entire history set.
     incoming = {}
     legacy = {}
@@ -421,15 +426,16 @@ def _read_receipts(path: Path) -> dict[str, Any]:
 
 def _ingestion_receipt(workdir: Path, transcript: Path, session_id: str, *,
                        result: dict | None = None, error: Exception | None = None,
-                       history_coverage: dict | None = None) -> None:
+                       history_coverage: dict | None = None, source_locator: str | None = None) -> None:
     from transcript_adapter import TranscriptLimitError
     target = _coverage_path(workdir / TRACE_PATH)
-    locator = str(transcript.absolute())
+    locator = str(Path(source_locator or (history_coverage or {}).get("source_locator") or transcript).absolute())
     reason = ("input_limit" if isinstance(error, TranscriptLimitError) else
               "identity_or_input_rejected" if isinstance(error, ValueError) else
               "source_or_history_unavailable" if error else None)
     row = {"source_key": _hash(locator), "source_locator": locator[:512],
            "declared_session_id": session_id[:180],
+           "run_id": (history_coverage or {}).get("run_id"),
            "status": "skipped" if error else "ingested", "reason": reason,
            "error_type": type(error).__name__ if error else None,
            "updated_at_unix": int(time.time()), "counts": result, "history": history_coverage}
@@ -453,14 +459,14 @@ def _ingestion_receipt(workdir: Path, transcript: Path, session_id: str, *,
         print("tool_trace: ingestion receipt unavailable", file=sys.stderr)
 
 
-def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> dict[str, int]:
+def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "", *, source_locator: str | None = None) -> dict[str, int]:
     history_coverage = {}
     try:
         result = _ingest_transcript(workdir, transcript, session_id, history_coverage=history_coverage)
     except Exception as error:
-        _ingestion_receipt(workdir, transcript, session_id, error=error, history_coverage=history_coverage)
+        _ingestion_receipt(workdir, transcript, session_id, error=error, history_coverage=history_coverage, source_locator=source_locator)
         raise
-    _ingestion_receipt(workdir, transcript, session_id, result=result, history_coverage=history_coverage)
+    _ingestion_receipt(workdir, transcript, session_id, result=result, history_coverage=history_coverage, source_locator=source_locator)
     return result
 
 
@@ -497,6 +503,26 @@ def _iter_trace_rows(path: Path, *, remaining: list[int] | None = None, diagnost
         return
 
 
+def ingestion_incomplete(summary: dict) -> bool:
+    """Known ingestion failures invalidate a zero-error inference; absence is unknown."""
+    coverage = summary.get("coverage") or {}
+    ingestion = coverage.get("ingestion") or {}
+    if ingestion.get("status") == "unavailable":
+        return True
+    run_id = coverage.get("run_filter")
+    cutoff = coverage.get("recent_cutoff_unix")
+    for receipt in ingestion.get("receipts") or []:
+        if not isinstance(receipt, dict):
+            return True
+        if run_id and receipt.get("run_id") not in (None, run_id):
+            continue
+        if cutoff and isinstance(receipt.get("updated_at_unix"), int) and receipt["updated_at_unix"] < cutoff:
+            continue
+        if receipt.get("status") != "ingested":
+            return True
+    return bool(coverage.get("invalid_trace_records"))
+
+
 def summarize_path(
     path: Path,
     run_id: str | None = None,
@@ -508,7 +534,10 @@ def summarize_path(
     hashes: Counter = Counter()
     durations: list[float] = []
     diagnostics = {"invalid_records": 0}
-    for row in _iter_trace_rows(path, diagnostics=diagnostics):
+    remaining = [MAX_HISTORY_BYTES]
+    retained = [path, *(path.with_suffix(path.suffix + f".{i}") for i in range(1, ROTATED_FILES + 1))]
+    rows = (row for history in retained for row in _iter_trace_rows(history, remaining=remaining, diagnostics=diagnostics))
+    for row in rows:
         attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
         status = row.get("status")
         if (not isinstance(attrs.get("gen_ai.tool.name"), str) or not _valid_span_status(row)
@@ -542,7 +571,9 @@ def summarize_path(
         "p95_duration_ms": p95,
         "tools": dict(tools.most_common(12)),
         "coverage": {"source": "observed_reconciled_spans", "complete_tool_coverage": "unavailable",
-                     "source_available": path.is_file(), "run_filter": run_id,
+                     "source_available": any(history.is_file() for history in retained), "run_filter": run_id,
+                     "retained_rotations": ROTATED_FILES,
+                     "recent_cutoff_unix": int(time.time()) - recent_seconds if recent_seconds is not None else None,
                      "ingestion": _read_receipts(_coverage_path(path)),
                      "invalid_trace_records": diagnostics["invalid_records"]},
     }
@@ -566,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
     ingest = sub.add_parser("ingest")
     ingest.add_argument("--transcript")
     ingest.add_argument("--session-id", default="")
+    ingest.add_argument("--source-locator", help="Original source path when ingesting a normalized lease")
     summary = sub.add_parser("summarize")
     summary.add_argument("--run-id")
     args = parser.parse_args(argv)
@@ -578,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = _payload()
             transcript_value = args.transcript or payload.get("transcript_path") or os.environ.get("CLAUDE_TRANSCRIPT_PATH") or os.environ.get("CODEX_TRANSCRIPT_PATH")
             if transcript_value:
-                ingest_transcript(workdir, Path(transcript_value), args.session_id or str(payload.get("session_id") or ""))
+                ingest_transcript(workdir, Path(transcript_value), args.session_id or str(payload.get("session_id") or ""), source_locator=args.source_locator)
             return 0
         print(json.dumps({"ok": True, **summarize(workdir, args.run_id)}, sort_keys=True))
         return 0

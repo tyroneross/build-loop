@@ -30,7 +30,7 @@ from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Iterable
 
-from tool_trace import summarize_path as summarize_tool_trace
+from tool_trace import ingestion_incomplete, summarize_path as summarize_tool_trace
 
 # ---------------------------------------------------------------------------
 # Transcript reading + user-prompt extraction.
@@ -929,6 +929,8 @@ def build(
             "errored": {},
             "total_uses": trace_summary["tool_calls"],
         }
+    if ingestion_incomplete(trace_summary):
+        issue_signals.append("tool telemetry ingestion is incomplete; zero observed errors cannot establish a clean run")
     if trace_summary.get("tool_errors"):
         issue_signals.append(
             f"tool telemetry recorded {trace_summary['tool_errors']} errors "

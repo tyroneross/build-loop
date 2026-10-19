@@ -216,3 +216,15 @@ def test_combined_signals_match_public_extractors_with_one_source_open(tmp_path,
     monkeypatch.setattr(adapter.os,'open',counted)
     assert sections.collect_transcript_signals(source)==expected
     assert len(opens)==1
+
+
+def test_failed_ingestion_is_visible_in_real_retrospective(tmp_path):
+    import pytest
+    import tool_trace
+    from retrospective.sections import build
+    source = tmp_path / 'unknown.jsonl'
+    source.write_text('{"type":"attachment"}')
+    with pytest.raises(OSError):
+        tool_trace.ingest_transcript(tmp_path, source)
+    result = build(None, {}, '', '', 'session-test', trace_jsonl=tmp_path/tool_trace.TRACE_PATH)
+    assert 'tool telemetry ingestion is incomplete' in json.dumps(result)

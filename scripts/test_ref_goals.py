@@ -276,3 +276,43 @@ def test_symbolic_retention_is_pinned_and_branch_movement_is_visible(repo):
 def test_live_inventory_does_not_claim_complete_when_ledger_is_unreadable(repo):
     (repo/'.build-loop/state.json').write_text('{broken')
     assert goals.local_inventory(repo)['status'] == 'incomplete'
+
+
+def test_raw_commit_is_not_a_retention_root(repo):
+    goals.record(repo, payload())
+    head = git(repo, 'rev-parse', 'HEAD')
+    retention = {'owner':'owner', 'hypothesis':'equivalent parser', 'base_head':head,
+                 'experiment_head':head, 'target_branch':'main', 'recovery_ref':head,
+                 'next_review':'2999-01-01', 'review_trigger':'parser change',
+                 'evidence':['oracle receipt'], 'disposition_criteria':'review before integration'}
+    with pytest.raises(ValueError, match='named Git ref'):
+        goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                           'expected_revision':1, 'retention':retention})
+    git(repo, 'update-ref', 'refs/build-loop/recovery/test', head)
+    retention['recovery_ref'] = 'refs/build-loop/recovery/test'
+    assert goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                              'expected_revision':1, 'retention':retention})['retention']['experiment_head'] == head
+
+
+def test_record_uses_validated_heads_when_branch_moves(repo, monkeypatch):
+    goals.record(repo, payload())
+    original = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'update-ref', 'refs/build-loop/recovery/test', original)
+    git(repo, 'commit', '--allow-empty', '-m', 'future head')
+    future = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'branch', '-f', 'original-approach', original)
+    resolver = goals._resolve_retention
+    def move_after_validation(*args, **kwargs):
+        result = resolver(*args, **kwargs)
+        git(repo, 'branch', '-f', 'original-approach', future)
+        return result
+    monkeypatch.setattr(goals, '_resolve_retention', move_after_validation)
+    retention = {'owner':'owner', 'hypothesis':'equivalent parser', 'base_head':'main',
+                 'experiment_head':'original-approach', 'target_branch':'main',
+                 'recovery_ref':'refs/build-loop/recovery/test', 'next_review':'2999-01-01',
+                 'review_trigger':'parser change', 'evidence':['oracle receipt'],
+                 'disposition_criteria':'review before integration'}
+    entry = goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                               'expected_revision':1, 'retention':retention})
+    assert entry['retention']['experiment_head'] == original
+    assert entry['retention']['experiment_head'] != future

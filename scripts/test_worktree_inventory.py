@@ -45,6 +45,16 @@ class WorktreeInventoryTests(unittest.TestCase):
         git(self.repo, "worktree", "add", "-b", name, str(path))
         return path
 
+    def test_inventory_overrides_config_hiding_untracked_files(self) -> None:
+        wt = self._worktree()
+        git(wt, "config", "status.showUntrackedFiles", "no")
+        (wt / ".env").write_text("unique ignored fixture")
+        (wt / "notes.local").write_text("unique untracked fixture")
+        result = worktree_inventory.inventory(wt)
+        self.assertIn(".env", result["ignored"])
+        self.assertIn("notes.local", result["untracked"])
+        self.assertFalse(result["caches_only_claim_supported"])
+
     def test_inventory_names_a_planted_ignored_file(self) -> None:
         """The defect: `git status --short` omits ignored files, so an operator
         approves a removal on evidence the inventory never showed."""

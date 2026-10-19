@@ -712,7 +712,7 @@ def inspect_worktree_safety(
             "inventory": inventory,
         }
 
-    status = _git(candidate, "status", "--porcelain", check=False)
+    status = _git(candidate, "status", "--porcelain", "--untracked-files=normal", check=False)
     if status.returncode != 0:
         return {
             "safe": False,

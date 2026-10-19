@@ -382,3 +382,54 @@ def test_unknown_reconciled_status_is_not_a_success_or_completed_call(tmp_path):
     path.write_text(json.dumps({'event':'observed','status':{'code':'UNSET'},'attributes':{'gen_ai.tool.name':'Bash'}})+'\n')
     result=trace.summarize_path(path)
     assert result['tool_calls']==0 and result['coverage']['invalid_trace_records']==0
+
+
+def test_normalized_leases_replace_original_source_failure_receipt(tmp_path):
+    import pytest
+    import transcript_adapter as adapter
+    source = tmp_path / 'original.jsonl'
+    source.write_text(json.dumps({'type':'attachment'}))
+    with pytest.raises(adapter.TranscriptReadError):
+        trace.ingest_transcript(tmp_path, source)
+    assert trace.ingestion_incomplete(trace.summarize(tmp_path))
+    source.write_text(_line('assistant', [{'type':'tool_use', 'id':'one', 'name':'Bash', 'input':{}}], '2026-10-19T12:00:01Z'))
+    for index in range(3):
+        lease = tmp_path / f'normalized-lease-{index}.jsonl'
+        adapter.normalize_to_file(source, lease)
+        trace.ingest_transcript(tmp_path, lease)
+    summary = trace.summarize(tmp_path)
+    rows = summary['coverage']['ingestion']['receipts']
+    assert len(rows) == 1
+    assert rows[0]['source_locator'] == str(source)
+    assert rows[0]['status'] == 'ingested'
+    assert not trace.ingestion_incomplete(summary)
+
+
+def test_explicit_source_locator_handles_empty_normalized_stream(tmp_path):
+    normalized = tmp_path / 'empty-normalized.jsonl'
+    normalized.write_text('')
+    original = tmp_path / 'original.jsonl'
+    trace.ingest_transcript(tmp_path, normalized, source_locator=str(original))
+    rows = trace.summarize(tmp_path)['coverage']['ingestion']['receipts']
+    assert rows[0]['source_locator'] == str(original)
+
+
+def test_incomplete_coverage_preserves_run_and_window_boundaries():
+    summary = {'coverage': {'run_filter':'ours', 'recent_cutoff_unix':100,
+                           'ingestion':{'status':'observed_sources_only', 'receipts':[
+                               {'status':'skipped', 'run_id':'peer', 'updated_at_unix':200},
+                               {'status':'skipped', 'run_id':'ours', 'updated_at_unix':50}]}}}
+    assert not trace.ingestion_incomplete(summary)
+    summary['coverage']['ingestion']['receipts'].append({'status':'skipped', 'run_id':'ours', 'updated_at_unix':200})
+    assert trace.ingestion_incomplete(summary)
+
+
+def test_summary_counts_errors_in_retained_rotations(tmp_path):
+    span = trace.build_span(workdir=tmp_path, session_id='s', tool_name='Bash',
+                            tool_use_id='one', phase='reconciled', is_error=True)
+    path = tmp_path / trace.TRACE_PATH
+    path.parent.mkdir(parents=True)
+    path.with_suffix('.jsonl.1').write_text(json.dumps(span) + '\n')
+    summary = trace.summarize(tmp_path)
+    assert summary['tool_calls'] == 1
+    assert summary['tool_errors'] == 1

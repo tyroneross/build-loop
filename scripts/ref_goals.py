@@ -37,39 +37,58 @@ def criteria_error(value):
     return None
 
 
-def retention_error(retention, repo, *, head=None, today=None):
+def _resolve_retention(retention, repo, *, head=None, today=None):
     """Validate the declared recovery contract; this is not owner authority."""
     required = ('owner', 'hypothesis', 'base_head', 'experiment_head', 'target_branch',
                 'recovery_ref', 'next_review', 'review_trigger', 'disposition_criteria')
     if not isinstance(retention, dict) or not all(text(retention.get(k)) for k in required):
-        return 'experiment retention requires ' + ', '.join(required)
+        return 'experiment retention requires ' + ', '.join(required), {}
     if not strings(retention.get('evidence')):
-        return 'experiment retention requires nonempty evidence references'
+        return 'experiment retention requires nonempty evidence references', {}
     try:
         due = date.fromisoformat(retention['next_review'])
         if due.isoformat() != retention['next_review']:
             raise ValueError('noncanonical date')
     except ValueError:
-        return 'experiment retention next_review requires an ISO date (YYYY-MM-DD)'
+        return 'experiment retention next_review requires an ISO date (YYYY-MM-DD)', {}
     resolved = {}
+    try:
+        recovery_ref = subprocess.run(
+            ['git', '-C', str(repo), 'rev-parse', '--symbolic-full-name', '--verify',
+             '--end-of-options', retention['recovery_ref']],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if not recovery_ref.startswith('refs/') or '\n' in recovery_ref:
+            return 'experiment recovery_ref does not resolve to a reachable named Git ref', {}
+        recovery_oid = subprocess.run(
+            ['git', '-C', str(repo), 'show-ref', '--verify', '--hash', recovery_ref],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return 'experiment recovery_ref does not resolve to a reachable named Git ref', {}
     for key in ('base_head', 'experiment_head', 'target_branch', 'recovery_ref'):
         try:
             resolved[key] = subprocess.run(
                 ['git', '-C', str(repo), 'rev-parse', '--verify', '--end-of-options',
-                 retention[key] + '^{commit}'],
+                 (recovery_oid if key == 'recovery_ref' else retention[key]) + '^{commit}'],
                 check=True, capture_output=True, text=True, timeout=5,
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
-            return f'experiment retention {key} does not resolve to a commit'
+            return f'experiment retention {key} does not resolve to a commit', {}
     if resolved['recovery_ref'] != resolved['experiment_head']:
-        return 'experiment recovery_ref does not preserve experiment_head'
+        return 'experiment recovery_ref does not preserve experiment_head', {}
     if head is not None and any(retention[k] != resolved[k] for k in ('base_head', 'experiment_head')):
-        return 'experiment retention requires pinned commit heads; refresh symbolic legacy records'
+        return 'experiment retention requires pinned commit heads; refresh symbolic legacy records', {}
     if head is not None and resolved['experiment_head'] != head:
-        return 'experiment retention head changed; refresh evidence and recovery'
+        return 'experiment retention head changed; refresh evidence and recovery', {}
     if today is not None and due <= today:
-        return 'retained experiment review due on ' + due.isoformat()
-    return None
+        return 'retained experiment review due on ' + due.isoformat(), {}
+    return None, resolved
+
+
+def retention_error(retention, repo, *, head=None, today=None):
+    """Validate recovery using the same resolver as durable recording."""
+    return _resolve_retention(retention, repo, head=head, today=today)[0]
 
 
 def identity(entry):
@@ -271,18 +290,14 @@ def record(workdir, payload):
             if contract_error(entry):
                 raise ValueError('record a valid goal before retaining an experiment')
             retention = payload['retention']
-            error = retention_error(retention, workdir)
+            error, resolved = _resolve_retention(retention, workdir)
             if error:
                 raise ValueError(error)
             # Store immutable observations, not symbolic branches that can
             # move together with their alleged recovery target.
             retention = copy.deepcopy(retention)
             for key in ('base_head', 'experiment_head'):
-                retention[key] = subprocess.run(
-                    ['git', '-C', str(workdir), 'rev-parse', '--verify', '--end-of-options',
-                     retention[key] + '^{commit}'],
-                    check=True, capture_output=True, text=True, timeout=5,
-                ).stdout.strip()
+                retention[key] = resolved[key]
             entry['retention'] = copy.deepcopy(retention)
             entry['review_hold'] = True
             entry['review_hold_reason'] = retention['disposition_criteria']

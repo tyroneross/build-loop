@@ -28,6 +28,53 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+class IntegrityExitTests(unittest.TestCase):
+    def test_real_staged_secret_stays_blocked_with_malformed_advisory_state(self):
+        shapes = [{"runs": "x"}, {"runs": ["x"]},
+                  {"runs": [{"date": _now_iso(), "judge_decisions": ["x"]}]},
+                  {"runs": [{"date": _now_iso(), "judge_decisions": [
+                      {"target": "staged", "status": "deterministic_block", "ts": 5}]}]}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+            (root / "config").mkdir()
+            (root / "config/id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfixture only\n")
+            subprocess.run(["git", "-C", str(root), "add", "config/id_rsa"], check=True)
+            state = root / ".build-loop/state.json"
+            state.parent.mkdir()
+            for shape in shapes:
+                with self.subTest(shape=shape):
+                    state.write_text(json.dumps(shape))
+                    result = subprocess.run([sys.executable, str(HERE / "audit_before_commit.py")],
+                                            cwd=root, input="", capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stderr[-1500:])
+                    self.assertIn("DETERMINISTIC BLOCK", result.stderr)
+
+
+class IntegrityAdvisoryFailureTests(unittest.TestCase):
+    def test_settled_block_survives_arbitrary_advisory_exception(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(abc, '_staged_files', return_value=['config/id_rsa']), \
+                 patch.object(abc, '_staged_diff', return_value='-----BEGIN RSA PRIVATE KEY-----'), \
+                 patch.object(abc, '_staged_stat', return_value=''), \
+                 patch.object(abc, '_memory_receipt', side_effect=RuntimeError('broken advisory')):
+                self.assertEqual(abc._emit_packet(root), 2)
+
+    def test_malformed_risk_state_is_unreviewed(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / '.build-loop/state.json'
+            state.parent.mkdir()
+            for shape in [[], {'runs':'x'}, {'runs':['x']}, {'runs':[{'judge_decisions':['x']}]},
+                          {'runs':[{'judge_decisions':[{'judge_id':'independent-auditor-hook','verdict':[]}]}]}]:
+                state.write_text(json.dumps(shape))
+                with patch.object(abc, 'staged_diff_hash', return_value='fixture-hash'):
+                    self.assertFalse(abc._has_matching_risk_verdict(root, ['schema.sql']))
+
+
 class RecentTrajectoryShapeTests(unittest.TestCase):
     def test_malformed_advisory_rows_never_drop_the_audit_packet(self):
         now = _now_iso()
