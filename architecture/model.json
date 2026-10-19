@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ea34eec4fd0758ba432e3d560bac736c45b06eec8cd9bdfdac227b5c334b5942"
+    "content_sha256": "6eedd86829c6c035de9e9d1d642544edc0b647ae0e0ba54274f4118f9275a145"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1596,7 +1596,7 @@
       "scripts/staged_content_gate.py": "staged_content_gate.py — grade what will actually be committed, not what",
       "scripts/stale_context_check.py": "",
       "scripts/stamp_skill_frontmatter.py": "",
-      "scripts/state_finalize.py": "M4 — Best-effort Stop hook annotation for crash detection.",
+      "scripts/state_finalize.py": "Legacy explicit crash annotation helper; not an ordinary Stop handler.",
       "scripts/status_refresh.py": "status_refresh.py — keep a project's canonical CURRENT.md status file honest.",
       "scripts/stop_closeout.py": "stop_closeout.py — structural run-close for INLINE build-loop runs (f6).",
       "scripts/stranger_test_check.py": "stranger_test_check.py — a gated-surface verdict must carry its stranger test.",

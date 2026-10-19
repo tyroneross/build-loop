@@ -78,6 +78,7 @@ _py=""
 [ -n "$_py" ] || _noop
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 
 # Extract transcript_path + cwd from the payload. The payload is passed through
 # the environment (never interpolated into the python source) so a value
@@ -87,8 +88,10 @@ export _BL_STOP_PAYLOAD
 # Two newline-separated lines: transcript_path, then cwd. Newlines are stripped
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
-    "$_py" - <<'PY' 2>/dev/null
-import json, os
+    _BL_SWEEP_SCRIPTS="${PLUGIN_ROOT}/scripts" \
+    _BL_SWEEP_CACHE="$STATE_DIR/transcript-cache" "$_py" - <<'PY' 2>/dev/null
+import json, os, sys
+from pathlib import Path
 try:
     d = json.loads(os.environ.get("_BL_STOP_PAYLOAD", "") or "{}")
     if not isinstance(d, dict):
@@ -101,7 +104,21 @@ def safe(v):
     return " ".join(str(v or "").split("\n"))
 
 
-print(safe(d.get("transcript_path")))
+transcript = safe(d.get("transcript_path"))
+if transcript:
+    # A native Codex payload already contains its rollout path. Normalize it
+    # here too; the cwd-discovery fallback below only covers a missing path.
+    sys.path.insert(0, os.environ["_BL_SWEEP_SCRIPTS"])
+    try:
+        import transcript_adapter as adapter
+    except ImportError:
+        pass  # Preserve the existing Claude-only path when no adapter ships.
+    else:
+        if adapter.detect_format(Path(transcript)) == adapter.CODEX:
+            transcript = str(adapter.normalize_cached(
+                Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"])
+            ) or "")
+print(transcript)
 print(safe(d.get("cwd")))
 PY
 )" || _parsed=""
@@ -109,8 +126,6 @@ PY
 TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
 CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
 [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
-
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 
 # No transcript in the payload: resolve the host's own session from CWD and
 # normalize it to the Claude shape every sweep below parses. One call does both

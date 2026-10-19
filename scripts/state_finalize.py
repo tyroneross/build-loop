@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""M4 — Best-effort Stop hook annotation for crash detection.
+"""Legacy explicit crash annotation helper; not an ordinary Stop handler.
 
-When invoked from Claude Code's Stop hook, this script atomically annotates
+When explicitly invoked by recovery tooling, this script atomically annotates
 .build-loop/state.json.execution with crashed_at + crash_signal IF the
 execution block exists and phase != 'report'. Otherwise it exits 0
 without touching the file.
 
-This is the SECONDARY crash-detection signal. The primary signal is
-heartbeat staleness checked at next-run start (resume_resolver.py). The
-Stop hook is best-effort: a 529 mid-tool-stream may not flush this hook,
-network drops and SIGKILL won't either. When it fires, it's a cleaner
-signal than heartbeat staleness; when it doesn't, the heartbeat path
-still works.
+Ordinary Stop means a turn ended, not that the process crashed. Its automatic
+registration was removed after it marked an unfinished peer run as crashed.
+Heartbeat staleness at next-run start (resume_resolver.py) owns automatic crash
+detection. This compatibility helper does not validate session ownership;
+explicit callers must establish the affected run before invoking it.
 
 Per build-loop's hook design rules, this script:
   - exits 0 always (never blocks Stop)

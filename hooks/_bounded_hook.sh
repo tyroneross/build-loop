@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Source, then call bl_bound_hook before reading stdin or starting Python.
 # Reuses the SessionStart supervisor contract for whole-invocation deadlines.
-# Advisory hooks return {}; permission gates ask when their checks cannot finish.
+# Advisory hooks return {}; required gates deny when their checks cannot finish.
 bl_bound_hook() {
     local budget="$1" maximum="$2" output="$3"
     shift 3
@@ -11,7 +11,7 @@ bl_bound_hook() {
     fi
     local fallback='{}'
     if [ "$output" = gate ]; then
-        fallback='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Build Loop checks did not finish. Retry the command so its required checks can run."}}'
+        fallback='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Build Loop checks did not finish. Retry the command so its required checks can run."}}'
     fi
     if ! command -v perl >/dev/null 2>&1; then
         printf '%s' "$fallback"

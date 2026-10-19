@@ -120,6 +120,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         (self.root / "hooks").symlink_to(REPO / "hooks")
         scripts = self.root / "scripts"
         scripts.mkdir()
+        (scripts / "transcript_adapter.py").symlink_to(REPO / "scripts" / "transcript_adapter.py")
 
         (scripts / "scan_transcript_for_decisions.py").write_text(
             _RECORDER.format(sweep="decisions", read_stdin=False)
@@ -252,6 +253,31 @@ class StopSweepHostContractTests(unittest.TestCase):
         forwarded = json.loads(rows[0]["stdin"])
         self.assertEqual(forwarded["transcript_path"], str(self.transcript))
         self.assertEqual(forwarded["session_id"], "0fa8e187-e330-403a-97ed-6ad8a2866e98")
+
+    def test_native_codex_path_is_normalized_once_for_text_sweeps(self) -> None:
+        self.transcript.write_text("\n".join(json.dumps(row) for row in [
+            {"type": "session_meta", "payload": {"id": "codex-fixture", "cwd": str(self.workdir)}},
+            {"type": "event_msg", "payload": {"type": "user_message", "message": "Keep the output short."}},
+            {"type": "event_msg", "payload": {"type": "agent_message", "message": "Confirmed issue: missing event path."}},
+        ]) + "\n")
+        cp = self._run("decisions", self._payload())
+        self._assert_hook_contract(cp)
+        normalized_paths = []
+        for sweep in ("decisions", "corrections", "findings"):
+            rows = self._records(sweep)
+            self.assertTrue(rows, msg=f"{sweep} never launched")
+            argv = rows[0]["argv"]
+            normalized_paths.append(Path(argv[argv.index("--transcript") + 1]))
+        self.assertEqual(len(set(normalized_paths)), 1)
+        normalized = normalized_paths[0]
+        self.assertNotEqual(normalized, self.transcript)
+        turns = [json.loads(line) for line in normalized.read_text().splitlines()]
+        self.assertEqual([row["message"]["role"] for row in turns], ["user", "assistant"])
+        self.assertIn("Keep the output short.", normalized.read_text())
+        # Billing attribution must retain the original host path and identity.
+        rows = self._records("cost-ledger")
+        self.assertTrue(rows)
+        self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
 
     # ---- fail-open / never-block contract ------------------------------
 

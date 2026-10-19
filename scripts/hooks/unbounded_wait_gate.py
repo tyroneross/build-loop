@@ -47,8 +47,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
+
+from git_command_classifier import strip_heredoc_bodies
 
 # A loop header that never terminates on its own.
 _INFINITE_HEADER = re.compile(
@@ -164,6 +167,52 @@ def evaluate(command: str, env: dict[str, str] | None = None) -> str | None:
     """
     if not command or "sleep" not in command.lower():
         return None
+
+    # Literal documentation is data. The previous whole-string regex blocked
+    # a source-ingest write containing quoted loop examples. Keep substitutions
+    # conservative, and inspect explicit shell/eval string arguments as code.
+    # This is a lexical filter, not a proof that arbitrary shell code terminates.
+    try:
+        stripped, incomplete = strip_heredoc_bodies(command)
+        # Unquoted heredocs can execute substitutions; retain the original if
+        # there is any expansion syntax rather than concealing a possible wait.
+        shell_stdin = re.search(r"\b(?:sh|bash|zsh|dash|ksh)\b[^;\n]*<<", command)
+        if not incomplete and not shell_stdin and "$(" not in command and "`" not in command:
+            command = stripped
+        lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|()\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+        code = []
+        in_comment = False
+        for i, token in enumerate(tokens):
+            if in_comment:
+                if "\n" in token:
+                    in_comment = False
+                    code.append(";")
+                continue
+            if token.startswith("#"):
+                in_comment = True
+                continue
+            quoted = len(token) >= 2 and token[0] in "\"'" and token[-1] == token[0]
+            shell_string = (i > 0 and tokens[i - 1] == "eval") or (
+                i > 1 and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", tokens[i - 1])
+                and Path(tokens[i - 2]).name in {"sh", "bash", "zsh", "dash", "ksh"})
+            if quoted and shell_string:
+                message = evaluate(token[1:-1], env)
+                if message:
+                    return message
+                code.append("_literal_")
+            elif quoted and not (token[0] == '"' and ("$(" in token or "`" in token)):
+                code.append("_literal_")
+            elif quoted:
+                code.append(token.replace("$(", " ; ").replace("`", " ; "))
+            else:
+                code.append(token)
+        command = " ".join(code)
+    except ValueError:
+        return None  # malformed shell input is not evidence of an infinite wait
 
     message = None
     if (_POLL_HEADER.search(command)
