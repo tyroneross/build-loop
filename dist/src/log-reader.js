@@ -17,6 +17,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readProjectLogs = readProjectLogs;
 const promises_1 = __importDefault(require("fs/promises"));
+const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const config_1 = require("./config");
 // ============================================================================
@@ -192,7 +193,7 @@ async function discoverProjectLogFiles() {
  * Read and parse a log file. Auto-detects format.
  */
 async function* readLogLines(filePath, coverage) {
-    const handle = await promises_1.default.open(filePath, 'r');
+    const handle = await promises_1.default.open(filePath, fs_1.constants.O_RDONLY | fs_1.constants.O_NONBLOCK);
     try {
         if (!(await handle.stat()).isFile())
             throw new Error('Log source must be a regular file');

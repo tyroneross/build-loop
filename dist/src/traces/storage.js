@@ -27,6 +27,7 @@ exports.loadCollection = loadCollection;
 exports.correlateTraceToIncident = correlateTraceToIncident;
 exports.getTraceStats = getTraceStats;
 const promises_1 = __importDefault(require("fs/promises"));
+const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const crypto_1 = require("crypto");
 const config_1 = require("../config");
@@ -161,6 +162,7 @@ async function loadTracesBySeverity(severity, config) {
  * Load traces correlated to an incident
  */
 async function loadTracesForIncident(incident_id, config) {
+    validateId(incident_id);
     const index = await loadTraceIndex(config);
     const traceIds = index.by_incident[incident_id] || [];
     return traceIds
@@ -189,6 +191,9 @@ async function loadTraceIndex(config) {
     for (const entry of Object.values(index.traces)) {
         validateId(entry.trace_id);
         validateSource(entry.source);
+        if (!Array.isArray(entry.incident_ids))
+            throw new Error('Invalid legacy incident IDs');
+        entry.incident_ids.forEach(validateId);
         // Old indexes discarded the locator. Recover only the known contained path.
         const legacyRaw = path_1.default.join(paths.raw, entry.source, `${entry.trace_id}.json`);
         let available = false;
@@ -226,13 +231,41 @@ async function loadTraceIndex(config) {
             else {
                 delete trace.full_data_path;
             }
-            entries[id] = indexEntry(trace);
+            const entry = indexEntry(trace);
+            entry.incident_ids = [...new Set([...(entries[id]?.incident_ids || []), ...entry.incident_ids])];
+            entries[id] = entry;
         }
     }
     catch (error) {
         // Missing metadata directory is the legacy format; missing referenced raw is corruption.
         if (error.code !== 'ENOENT' || await exists(metadata))
             throw error;
+    }
+    // Immutable edges have one publication point each; independent writers never
+    // overwrite another incident's correlation while rebuilding this projection.
+    const correlations = path_1.default.join(paths.traces, 'correlations');
+    if (await exists(correlations)) {
+        await assertContained(paths.traces, correlations);
+        for (const traceId of await promises_1.default.readdir(correlations)) {
+            validateId(traceId);
+            const directory = path_1.default.join(correlations, traceId);
+            await assertContained(paths.traces, directory);
+            for (const filename of await promises_1.default.readdir(directory)) {
+                if (!filename.endsWith('.json'))
+                    continue;
+                const incidentId = filename.slice(0, -5);
+                validateId(incidentId);
+                const file = path_1.default.join(directory, filename);
+                await assertContained(paths.traces, file);
+                const edge = await readJson(file, 1024);
+                if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId) {
+                    throw new Error('Correlation identity mismatch');
+                }
+                const entry = entries[traceId];
+                if (entry && !entry.incident_ids.includes(incidentId))
+                    entry.incident_ids.push(incidentId);
+            }
+        }
     }
     // Derived projection avoids a shared read/modify/write race across processes.
     index = createEmptyIndex();
@@ -271,13 +304,14 @@ function validateTrace(trace) {
         !TRACE_SEVERITIES.has(trace.severity) || !TRACE_CATEGORIES.has(trace.category) ||
         typeof trace.operation !== 'string' || !trace.operation.trim() ||
         !trace.summary || typeof trace.summary.description !== 'string' ||
-        !Array.isArray(trace.summary.highlights) || !trace.summary.highlights.every(v => typeof v === 'string') ||
+        !Array.isArray(trace.summary.highlights) || !trace.summary.highlights.every(v => v && typeof v === 'object' && typeof v.label === 'string' && typeof v.value === 'string') ||
         (trace.incident_ids !== undefined && (!Array.isArray(trace.incident_ids) ||
             !trace.incident_ids.every(v => typeof v === 'string' && v.length > 0))) ||
         !Number.isFinite(trace.tokens_estimated) || trace.tokens_estimated < 0 ||
         (trace.duration_ms !== undefined && (!Number.isFinite(trace.duration_ms) || trace.duration_ms < 0))) {
         throw new Error('Invalid persisted trace shape');
     }
+    trace.incident_ids?.forEach(validateId);
 }
 function validateId(id) {
     if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) ||
@@ -328,7 +362,7 @@ async function containedDirectory(root, dir) {
     await assertContained(root, dir);
 }
 async function readJson(file, maxBytes) {
-    const handle = await promises_1.default.open(file, 'r');
+    const handle = await promises_1.default.open(file, fs_1.constants.O_RDONLY | fs_1.constants.O_NONBLOCK);
     try {
         const metadata = await handle.stat();
         if (!metadata.isFile() || metadata.size > maxBytes)
@@ -445,7 +479,10 @@ async function createCollection(name, traceIds, incident_id, config) {
     // Save collection
     await containedDirectory(paths.traces, paths.collections);
     const filepath = path_1.default.join(paths.collections, `${collection.collection_id}.json`);
-    await promises_1.default.writeFile(filepath, JSON.stringify(collection, null, 2), 'utf-8');
+    const serialized = JSON.stringify(collection, null, 2);
+    if (Buffer.byteLength(serialized) > 1024 * 1024)
+        throw new Error('Collection exceeds 1 MiB');
+    await atomicJson(filepath, serialized);
     return collection;
 }
 /**
@@ -457,8 +494,7 @@ async function loadCollection(collection_id, config) {
     const filepath = path_1.default.join(paths.collections, `${collection_id}.json`);
     try {
         await assertContained(paths.traces, filepath);
-        const content = await promises_1.default.readFile(filepath, 'utf-8');
-        return JSON.parse(content);
+        return await readJson(filepath, 1024 * 1024);
     }
     catch (error) {
         if (error.code === 'ENOENT') {
@@ -519,24 +555,15 @@ function generateCollectionSummary(traces) {
  * Correlate a trace to an incident
  */
 async function correlateTraceToIncident(trace_id, incident_id, config) {
+    validateId(trace_id);
+    validateId(incident_id);
     const index = await loadTraceIndex(config);
-    // Update trace entry
-    const entry = index.traces[trace_id];
-    if (entry) {
-        if (!entry.incident_ids.includes(incident_id)) {
-            entry.incident_ids.push(incident_id);
-        }
-    }
-    // Update by_incident index
-    if (!index.by_incident[incident_id]) {
-        index.by_incident[incident_id] = [];
-    }
-    if (!index.by_incident[incident_id].includes(trace_id)) {
-        index.by_incident[incident_id].push(trace_id);
-    }
-    // Save index
+    if (!index.traces[trace_id])
+        return;
     const paths = (0, config_1.getTracePaths)(config);
-    await promises_1.default.writeFile(paths.index, JSON.stringify(index, null, 2), 'utf-8');
+    const directory = path_1.default.join(paths.traces, 'correlations', trace_id);
+    await containedDirectory(paths.traces, directory);
+    await atomicJson(path_1.default.join(directory, `${incident_id}.json`), JSON.stringify({ trace_id, incident_id }));
 }
 /**
  * Get trace statistics

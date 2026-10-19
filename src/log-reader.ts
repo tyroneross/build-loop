@@ -12,6 +12,7 @@
  */
 
 import fs from 'fs/promises';
+import { constants } from 'fs';
 import path from 'path';
 import { getLogPaths } from './config';
 
@@ -211,7 +212,7 @@ async function discoverProjectLogFiles(): Promise<string[]> {
  * Read and parse a log file. Auto-detects format.
  */
 async function* readLogLines(filePath: string, coverage: { bytes_read: number; max_bytes: number }): AsyncGenerator<string> {
-  const handle = await fs.open(filePath, 'r');
+  const handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
     if (!(await handle.stat()).isFile()) throw new Error('Log source must be a regular file');
     let pending = Buffer.alloc(0);

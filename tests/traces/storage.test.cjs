@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const storage = require('../../dist/src/traces/storage.js');
 const modulePath = path.resolve('dist/src/traces/storage.js');
 const fixture = async t => {
@@ -14,8 +14,10 @@ const fixture = async t => {
 const trace = (id, source='internal') => ({trace_id:id, source,timestamp:1700000000000,severity:'info',category:'custom',operation:'fixture',summary:{description:'test',highlights:[]},has_full_data:false,tokens_estimated:1});
 const child = (code, args) => new Promise((resolve,reject) => {
   const p = spawn(process.execPath,['-e',code,...args],{stdio:['ignore','ignore','pipe']});
-  let error='';p.stderr.on('data',chunk=>error+=chunk);
-  p.on('error',reject);p.on('exit',status=>status===0?resolve():reject(new Error(error)));
+  let error='',timedOut=false;p.stderr.on('data',chunk=>error=(error+chunk).slice(-65536));
+  const timer=setTimeout(()=>{timedOut=true;p.kill('SIGKILL');},5000);
+  p.on('error',e=>{clearTimeout(timer);reject(e);});
+  p.on('close',status=>{clearTimeout(timer);status===0&&!timedOut?resolve():reject(new Error(timedOut?'child timed out':error));});
 });
 test('raw falsy values and summary-only availability survive process restart',async t => {
   const config = await fixture(t);
@@ -98,4 +100,90 @@ test('log scan retains top K and reports incomplete coverage explicitly',async t
   assert.equal(oversized.coverage.complete,false);assert.equal(oversized.truncated,true);
   assert.match(oversized.coverage.skipped_files[0].reason,/1 MiB/);
   await assert.rejects(readProjectLogs({source:'path',path:file,limit:Infinity}),/limit/);
+});
+
+test('canonical OpenTelemetry highlights survive accepted storage and malformed highlights fail',async t=>{
+  const config=await fixture(t);
+  const {OpenTelemetryAdapter}=require('../../dist/src/traces/adapters/opentelemetry.js');
+  const input={resourceSpans:[{resource:{attributes:[{key:'service.name',value:{stringValue:'audit-fixture'}}]},
+    scopeSpans:[{spans:[{name:'GET /health',traceId:'abc',spanId:'def',startTimeUnixNano:'1700000000000000000',
+      endTimeUnixNano:'1700000000001000000',attributes:[]}]}]}]};
+  const [parsed]=await new OpenTelemetryAdapter().parse(input);
+  assert.ok(parsed.summary.highlights.length);
+  assert.ok(parsed.summary.highlights.every(h=>typeof h.label==='string'&&typeof h.value==='string'));
+  await storage.storeTrace(parsed,input,config);
+  assert.equal((await storage.loadTraceSummary(parsed.trace_id,config)).operation,'GET /health');
+  assert.deepEqual(await storage.loadFullTrace(parsed.trace_id,config),input);
+  for(const highlights of [['old string'],[null],[{label:'x',value:2}],[{value:'missing label'}]]){
+    await assert.rejects(storage.storeTrace({...trace('bad-highlight'),summary:{description:'bad',highlights}},undefined,config),/shape/);
+  }
+});
+
+test('public readers reject actual FIFOs without waiting for a writer', {skip:process.platform==='win32'&&'mkfifo is POSIX-only'},async t=>{
+  const logModule=path.resolve('dist/src/log-reader.js');
+  for(const kind of ['log','index','collection','raw']){
+    const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+    await fs.mkdir(path.join(root,'collections'),{recursive:true});
+    let pipe=path.join(root,kind==='index'?'index.json':kind==='collection'?'collections/COL_pipe.json':'pipe');
+    if(kind==='raw'){
+      await storage.storeTrace(trace('pipe-raw'),{ok:true},config);
+      pipe=(await storage.loadTraceSummary('pipe-raw',config)).full_data_path;
+      await fs.unlink(pipe);
+    }
+    execFileSync('mkfifo',[pipe]);
+    const code=`const assert=require('node:assert/strict'),s=require(process.argv[1]),c=JSON.parse(process.argv[2]),kind=process.argv[3];
+      (async()=>{if(kind==='log'){const r=await require(process.argv[5]).readProjectLogs({source:'path',path:process.argv[4]});
+        assert.equal(r.coverage.complete,false);assert.match(r.coverage.skipped_files[0].reason,/regular file/);}
+      else {const operation=kind==='index'?s.loadTraceIndex(c):kind==='collection'?s.loadCollection('COL_pipe',c):s.loadFullTrace('pipe-raw',c);
+        await assert.rejects(operation,/Invalid or oversized trace file/);}})().catch(e=>{console.error(e);process.exitCode=1});`;
+    await child(code,[modulePath,JSON.stringify(config),kind,pipe,logModule]);
+  }
+});
+
+test('collections enforce the same bounded atomic publication and read budget',async t=>{
+  const config=await fixture(t);
+  await assert.rejects(storage.createCollection('x'.repeat(1024*1024),[],undefined,config),/1 MiB/);
+  const directory=path.join(config.memoryPath,'traces','collections');
+  assert.deepEqual(await fs.readdir(directory),[]);
+  await fs.writeFile(path.join(directory,'COL_large.json'),'x'.repeat(1024*1024+1));
+  await assert.rejects(storage.loadCollection('COL_large',config),/oversized/);
+});
+
+test('correlation edges survive reload, trace replacement and competing processes',async t=>{
+  const config=await fixture(t);
+  await storage.storeTrace(trace('correlated'),undefined,config);
+  await storage.correlateTraceToIncident('correlated','first',config);
+  assert.deepEqual((await storage.loadTracesForIncident('first',config)).map(t=>t.trace_id),['correlated']);
+  const code=`const s=require(process.argv[1]),c=JSON.parse(process.argv[2]);
+    s.correlateTraceToIncident('correlated',process.argv[3],c).catch(e=>{console.error(e);process.exitCode=1});`;
+  await Promise.all(Array.from({length:8},(_,i)=>child(code,[modulePath,JSON.stringify(config),'incident'+i])));
+  await storage.storeTrace(trace('correlated'),undefined,config);
+  await storage.correlateTraceToIncident('correlated','first',config);
+  const index=await storage.loadTraceIndex(config);
+  assert.equal(index.traces.correlated.incident_ids.length,9);
+  for(const id of ['first',...Array.from({length:8},(_,i)=>'incident'+i)])assert.deepEqual(index.by_incident[id],['correlated']);
+  assert.equal(index.total_traces,1);
+  await storage.correlateTraceToIncident('unknown','valid',config);
+  assert.equal((await storage.loadTracesForIncident('valid',config)).length,0);
+  for(const id of ['../escape','__proto__']){
+    await assert.rejects(storage.correlateTraceToIncident('correlated',id,config),/Invalid storage ID/);
+    await assert.rejects(storage.correlateTraceToIncident(id,'valid',config),/Invalid storage ID/);
+    await assert.rejects(storage.loadTracesForIncident(id,config),/Invalid storage ID/);
+  }
+});
+
+test('legacy correlations survive metadata projection and escaping correlation directories are rejected',async t=>{
+  const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+  await storage.storeTrace(trace('legacy-correlated'),undefined,config);
+  const index=await storage.loadTraceIndex(config);
+  index.traces['legacy-correlated'].incident_ids=['old-incident'];
+  await fs.writeFile(path.join(root,'index.json'),JSON.stringify(index));
+  await storage.correlateTraceToIncident('legacy-correlated','new-incident',config);
+  assert.deepEqual(new Set((await storage.loadTraceSummary('legacy-correlated',config)).incident_ids),new Set(['old-incident','new-incident']));
+  const outside=await fs.mkdtemp(path.join(os.tmpdir(),'outside-correlations-'));
+  t.after(()=>fs.rm(outside,{recursive:true,force:true}));
+  await fs.rm(path.join(root,'correlations'),{recursive:true});
+  await fs.symlink(outside,path.join(root,'correlations'));
+  await assert.rejects(storage.correlateTraceToIncident('legacy-correlated','escape',config),/escapes/);
+  assert.deepEqual(await fs.readdir(outside),[]);
 });
