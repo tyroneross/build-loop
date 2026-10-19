@@ -95,12 +95,8 @@ export async function loadTraceSummary(
   config?: MemoryConfig
 ): Promise<UnifiedTrace | null> {
   validateId(trace_id);
-  const index = await loadTraceIndex(config);
-  const entry = index.traces[trace_id];
-
-  if (!entry) return null;
-
-  return reconstructTraceFromIndex(entry);
+  const snapshot = await loadTraceSnapshot(config);
+  return snapshot.traces[trace_id] || null;
 }
 
 /**
@@ -131,9 +127,7 @@ export async function loadFullTrace(
  * Load all traces (summaries only)
  */
 export async function loadAllTraces(config?: MemoryConfig): Promise<UnifiedTrace[]> {
-  const index = await loadTraceIndex(config);
-
-  return Object.values(index.traces).map(reconstructTraceFromIndex);
+  return Object.values((await loadTraceSnapshot(config)).traces);
 }
 
 /**
@@ -143,13 +137,11 @@ export async function loadTracesBySource(
   source: TraceSource,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const index = await loadTraceIndex(config);
+  const {index, traces} = await loadTraceSnapshot(config);
   const traceIds = index.by_source[source] || [];
 
   return traceIds
-    .map((id) => index.traces[id])
-    .filter(Boolean)
-    .map(reconstructTraceFromIndex);
+    .map((id) => traces[id]).filter(Boolean);
 }
 
 /**
@@ -159,13 +151,11 @@ export async function loadTracesByCategory(
   category: TraceCategory,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const index = await loadTraceIndex(config);
+  const {index, traces} = await loadTraceSnapshot(config);
   const traceIds = index.by_category[category] || [];
 
   return traceIds
-    .map((id) => index.traces[id])
-    .filter(Boolean)
-    .map(reconstructTraceFromIndex);
+    .map((id) => traces[id]).filter(Boolean);
 }
 
 /**
@@ -175,13 +165,11 @@ export async function loadTracesBySeverity(
   severity: TraceSeverity,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const index = await loadTraceIndex(config);
+  const {index, traces} = await loadTraceSnapshot(config);
   const traceIds = index.by_severity[severity] || [];
 
   return traceIds
-    .map((id) => index.traces[id])
-    .filter(Boolean)
-    .map(reconstructTraceFromIndex);
+    .map((id) => traces[id]).filter(Boolean);
 }
 
 /**
@@ -192,13 +180,11 @@ export async function loadTracesForIncident(
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
   validateId(incident_id);
-  const index = await loadTraceIndex(config);
+  const {index, traces} = await loadTraceSnapshot(config);
   const traceIds = index.by_incident[incident_id] || [];
 
   return traceIds
-    .map((id) => index.traces[id])
-    .filter(Boolean)
-    .map(reconstructTraceFromIndex);
+    .map((id) => traces[id]).filter(Boolean);
 }
 
 // ============================================================================
@@ -209,6 +195,13 @@ export async function loadTracesForIncident(
  * Load or initialize trace index
  */
 export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex> {
+  return (await loadTraceSnapshot(config)).index;
+}
+
+/** Read canonical metadata once and derive every summary/index view together. */
+async function loadTraceSnapshot(config?: MemoryConfig): Promise<{
+  index: TraceIndex; traces: Record<string, UnifiedTrace>;
+}> {
   const paths = getTracePaths(config);
   let index = createEmptyIndex();
   try {
@@ -218,6 +211,7 @@ export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex>
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const entries: Record<string, TraceIndexEntry> = Object.create(null);
+  const traces: Record<string, UnifiedTrace> = Object.create(null);
   for (const entry of Object.values(index.traces)) {
     validateId(entry.trace_id);
     validateSource(entry.source);
@@ -252,6 +246,7 @@ export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex>
       const entry = indexEntry(trace);
       entry.incident_ids = [...new Set([...(entries[id]?.incident_ids || []), ...entry.incident_ids])];
       entries[id] = entry;
+      traces[id] = trace;
     }
   } catch (error) {
     // Missing metadata directory is the legacy format; missing referenced raw is corruption.
@@ -283,8 +278,16 @@ export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex>
   }
   // Derived projection avoids a shared read/modify/write race across processes.
   index = createEmptyIndex();
-  for (const entry of Object.values(entries)) addEntry(index, entry);
-  return index;
+  for (const entry of Object.values(entries)) {
+    addEntry(index, entry);
+    const trace = traces[entry.trace_id] || reconstructTraceFromIndex(entry);
+    trace.incident_ids = [...entry.incident_ids];
+    trace.has_full_data = entry.has_full_data === true;
+    if (entry.full_data_path) trace.full_data_path = entry.full_data_path;
+    else delete trace.full_data_path;
+    traces[entry.trace_id] = trace;
+  }
+  return {index, traces};
 }
 
 /**
@@ -459,10 +462,10 @@ export async function createCollection(
   const paths = getTracePaths(config);
 
   // Load traces to generate summary
-  const index = await loadTraceIndex(config);
+  const snapshot = await loadTraceSnapshot(config);
   const traces = traceIds.map(id => {
     validateId(id);
-    return index.traces[id] ? reconstructTraceFromIndex(index.traces[id]) : null;
+    return snapshot.traces[id] || null;
   });
   const validTraces = traces.filter(Boolean) as UnifiedTrace[];
 

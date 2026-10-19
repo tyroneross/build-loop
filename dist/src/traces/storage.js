@@ -92,11 +92,8 @@ async function storeTrace(trace, rawData, config) {
  */
 async function loadTraceSummary(trace_id, config) {
     validateId(trace_id);
-    const index = await loadTraceIndex(config);
-    const entry = index.traces[trace_id];
-    if (!entry)
-        return null;
-    return reconstructTraceFromIndex(entry);
+    const snapshot = await loadTraceSnapshot(config);
+    return snapshot.traces[trace_id] || null;
 }
 /**
  * Load full trace data (lazy loading)
@@ -122,53 +119,44 @@ async function loadFullTrace(trace_id, config) {
  * Load all traces (summaries only)
  */
 async function loadAllTraces(config) {
-    const index = await loadTraceIndex(config);
-    return Object.values(index.traces).map(reconstructTraceFromIndex);
+    return Object.values((await loadTraceSnapshot(config)).traces);
 }
 /**
  * Load traces by source
  */
 async function loadTracesBySource(source, config) {
-    const index = await loadTraceIndex(config);
+    const { index, traces } = await loadTraceSnapshot(config);
     const traceIds = index.by_source[source] || [];
     return traceIds
-        .map((id) => index.traces[id])
-        .filter(Boolean)
-        .map(reconstructTraceFromIndex);
+        .map((id) => traces[id]).filter(Boolean);
 }
 /**
  * Load traces by category
  */
 async function loadTracesByCategory(category, config) {
-    const index = await loadTraceIndex(config);
+    const { index, traces } = await loadTraceSnapshot(config);
     const traceIds = index.by_category[category] || [];
     return traceIds
-        .map((id) => index.traces[id])
-        .filter(Boolean)
-        .map(reconstructTraceFromIndex);
+        .map((id) => traces[id]).filter(Boolean);
 }
 /**
  * Load traces by severity
  */
 async function loadTracesBySeverity(severity, config) {
-    const index = await loadTraceIndex(config);
+    const { index, traces } = await loadTraceSnapshot(config);
     const traceIds = index.by_severity[severity] || [];
     return traceIds
-        .map((id) => index.traces[id])
-        .filter(Boolean)
-        .map(reconstructTraceFromIndex);
+        .map((id) => traces[id]).filter(Boolean);
 }
 /**
  * Load traces correlated to an incident
  */
 async function loadTracesForIncident(incident_id, config) {
     validateId(incident_id);
-    const index = await loadTraceIndex(config);
+    const { index, traces } = await loadTraceSnapshot(config);
     const traceIds = index.by_incident[incident_id] || [];
     return traceIds
-        .map((id) => index.traces[id])
-        .filter(Boolean)
-        .map(reconstructTraceFromIndex);
+        .map((id) => traces[id]).filter(Boolean);
 }
 // ============================================================================
 // INDEX MANAGEMENT
@@ -177,6 +165,10 @@ async function loadTracesForIncident(incident_id, config) {
  * Load or initialize trace index
  */
 async function loadTraceIndex(config) {
+    return (await loadTraceSnapshot(config)).index;
+}
+/** Read canonical metadata once and derive every summary/index view together. */
+async function loadTraceSnapshot(config) {
     const paths = (0, config_1.getTracePaths)(config);
     let index = createEmptyIndex();
     try {
@@ -188,6 +180,7 @@ async function loadTraceIndex(config) {
             throw error;
     }
     const entries = Object.create(null);
+    const traces = Object.create(null);
     for (const entry of Object.values(index.traces)) {
         validateId(entry.trace_id);
         validateSource(entry.source);
@@ -234,6 +227,7 @@ async function loadTraceIndex(config) {
             const entry = indexEntry(trace);
             entry.incident_ids = [...new Set([...(entries[id]?.incident_ids || []), ...entry.incident_ids])];
             entries[id] = entry;
+            traces[id] = trace;
         }
     }
     catch (error) {
@@ -269,9 +263,18 @@ async function loadTraceIndex(config) {
     }
     // Derived projection avoids a shared read/modify/write race across processes.
     index = createEmptyIndex();
-    for (const entry of Object.values(entries))
+    for (const entry of Object.values(entries)) {
         addEntry(index, entry);
-    return index;
+        const trace = traces[entry.trace_id] || reconstructTraceFromIndex(entry);
+        trace.incident_ids = [...entry.incident_ids];
+        trace.has_full_data = entry.has_full_data === true;
+        if (entry.full_data_path)
+            trace.full_data_path = entry.full_data_path;
+        else
+            delete trace.full_data_path;
+        traces[entry.trace_id] = trace;
+    }
+    return { index, traces };
 }
 /**
  * Create empty index
@@ -460,10 +463,10 @@ function reconstructTraceFromIndex(entry) {
 async function createCollection(name, traceIds, incident_id, config) {
     const paths = (0, config_1.getTracePaths)(config);
     // Load traces to generate summary
-    const index = await loadTraceIndex(config);
+    const snapshot = await loadTraceSnapshot(config);
     const traces = traceIds.map(id => {
         validateId(id);
-        return index.traces[id] ? reconstructTraceFromIndex(index.traces[id]) : null;
+        return snapshot.traces[id] || null;
     });
     const validTraces = traces.filter(Boolean);
     // Generate summary

@@ -187,3 +187,39 @@ test('legacy correlations survive metadata projection and escaping correlation d
   await assert.rejects(storage.correlateTraceToIncident('legacy-correlated','escape',config),/escapes/);
   assert.deepEqual(await fs.readdir(outside),[]);
 });
+
+test('all retrieval views preserve canonical OTLP summaries in one metadata pass',async t=>{
+  const config=await fixture(t);
+  const {OpenTelemetryAdapter}=require('../../dist/src/traces/adapters/opentelemetry.js');
+  const [parsed]=await new OpenTelemetryAdapter().parse({resourceSpans:[{
+    resource:{attributes:[{key:'service.name',value:{stringValue:'fidelity-fixture'}}]},scopeSpans:[{spans:[{
+      name:'GET /health '+ 'detail '.repeat(30),traceId:'abc',spanId:'def',startTimeUnixNano:'1700000000000000000',
+      endTimeUnixNano:'1700000006001000000',status:{code:2,message:'upstream unavailable'},attributes:[],
+    }]}]}]});
+  parsed.tokens_estimated=73;
+  parsed.session_id='fidelity-session';parsed.relevance_score=0.8;
+  await storage.storeTrace(parsed,{raw:true},config);
+  await storage.correlateTraceToIncident(parsed.trace_id,'fidelity-incident',config);
+  assert.ok(parsed.summary.highlights.length);assert.ok(parsed.summary.error);assert.ok(parsed.summary.performance);
+  const canonicalSummary=JSON.parse(JSON.stringify(parsed.summary));
+  const canonicalTrace={...JSON.parse(JSON.stringify(parsed)),incident_ids:['fidelity-incident']};
+  const metadata=path.join(config.memoryPath,'traces','metadata',parsed.trace_id+'.json');
+  const originalOpen=fs.open;let reads=0;
+  fs.open=async function(file,...args){if(file===metadata)reads++;return originalOpen.call(this,file,...args);};
+  t.after(()=>{fs.open=originalOpen;});
+  const calls=[()=>storage.loadTraceSummary(parsed.trace_id,config),()=>storage.loadAllTraces(config),
+    ()=>storage.loadTracesBySource(parsed.source,config),()=>storage.loadTracesByCategory(parsed.category,config),
+    ()=>storage.loadTracesBySeverity(parsed.severity,config),()=>storage.loadTracesForIncident('fidelity-incident',config)];
+  for(const call of calls){
+    reads=0;const result=await call(),loaded=Array.isArray(result)?result[0]:result;
+    assert.deepEqual(loaded,canonicalTrace);
+    assert.equal(reads,1);assert.deepEqual(loaded.summary,canonicalSummary);
+    assert.equal(loaded.duration_ms,parsed.duration_ms);assert.equal(loaded.tokens_estimated,73);
+    assert.equal(loaded.external_id,'abc');assert.equal(loaded.has_full_data,true);
+    assert.equal(loaded.full_data_path,parsed.full_data_path);assert.deepEqual(loaded.incident_ids,['fidelity-incident']);
+  }
+  reads=0;
+  const collection=await storage.createCollection('canonical durations',[parsed.trace_id,parsed.trace_id],undefined,config);
+  assert.equal(reads,1);assert.equal(collection.summary.slowest_operation,parsed.operation);
+  assert.deepEqual(await storage.loadFullTrace(parsed.trace_id,config),{raw:true});
+});
