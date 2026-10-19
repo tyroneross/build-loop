@@ -140,7 +140,7 @@ These rules hold for Claude Code, Codex, Cursor and Muse Code. Host differences 
 
 3. **Advisory hooks never enforce.** Coordination, lint and reminder hooks emit context or diagnostics, never a deny or block. Blocking is reserved for explicit safety, security or integrity gates, or an explicit opt-in.
 
-4. **Declare `timeout` in seconds on every hook that blocks.** Claude Code, Codex and Cursor read seconds; Muse Code's unit is unverified. A millisecond-shaped value (5000) means 83 minutes. `scripts/hook_budget_lint.py` flags this.
+4. **Bound every hook that blocks, in seconds.** Claude Code, Codex and Cursor read seconds; Muse Code's unit is unverified. A millisecond-shaped value (5000) means 83 minutes; `scripts/hook_budget_lint.py` flags it. Set the outer `timeout` from measured runtime under load, with headroom: too short a value discards the hook's output (AI Assistant's 3s budget dropped routing context mid-session, commit cca7f61). A handler that caps its own work internally may omit `timeout` and fall back to the host default; HB002 still reports it, so record the inner bound next to the hook.
 
 5. **Do not depend on sibling order.** Claude Code, Codex and Cursor run all matching hooks from every config layer, and Claude Code and Codex document running them concurrently. When decisions conflict, the most restrictive one wins.
 
