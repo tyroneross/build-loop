@@ -121,7 +121,7 @@ def detect_format(path: Path) -> str:
                 if obj.get("type") in {"event_msg", "response_item", "turn_context", "session_meta"}:
                     return CODEX
                 if ("sessionId" in obj or ("message" in obj and "type" in obj)
-                        or obj.get("role") in {"user", "assistant"}
+                        or obj.get("role") in ("user", "assistant")
                         or obj.get("type") in {"user", "assistant"}):
                     return CLAUDE
     except (OSError, TranscriptLimitError):
@@ -336,7 +336,7 @@ def _codex_output_is_error(output: str) -> bool:
 
 _CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
                         "<environment_context>", "<external_codex_apps_open_page>", "<user_instructions>")
-PARSER_VERSION = "5"
+PARSER_VERSION = "6"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 
@@ -427,6 +427,29 @@ _METADATA_RECORDS = frozenset({"file-history-snapshot", "queue-operation", "summ
     "progress", "system", "last-prompt", "custom-title", "agent-name", "agent-color",
     "pr-link", "compacted"})
 _CODEX_RECORDS = frozenset({"event_msg", "response_item", "session_meta", "turn_context"})
+# Only named bookkeeping/reasoning types may disappear without reducing
+# coverage. Unknown nested records may carry tools and must remain incomplete.
+_CODEX_EVENT_TYPES = frozenset({"user_message", "agent_message"})
+_CODEX_IGNORED_EVENTS = frozenset({"agent_reasoning", "token_count", "task_started",
+    "task_complete", "turn_aborted", "context_compacted"})
+_CODEX_RESPONSE_TYPES = frozenset({"message", "custom_tool_call", "function_call",
+    "custom_tool_call_output", "function_call_output"})
+_CODEX_IGNORED_RESPONSES = frozenset({"reasoning", "compaction"})
+
+
+def _supported_codex_record(obj: dict[str, Any]) -> bool:
+    kind, payload = obj.get("type"), obj.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    if kind in {"session_meta", "turn_context"}:
+        return True
+    ptype = payload.get("type")
+    if kind == "event_msg":
+        return isinstance(ptype, str) and ptype in _CODEX_EVENT_TYPES | _CODEX_IGNORED_EVENTS
+    if kind == "response_item":
+        return (isinstance(ptype, str) and ptype in _CODEX_RESPONSE_TYPES | _CODEX_IGNORED_RESPONSES
+                and (ptype != "message" or payload.get("role") in ("user", "assistant", "system", "developer")))
+    return False
 
 
 def iter_events(path: Path, *, include_provenance: bool = False, require_complete: bool = False) -> Iterator[dict[str, Any]]:
@@ -459,21 +482,16 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                 kind = obj.get("type")
                 if isinstance(kind, str) and kind in _METADATA_RECORDS:
                     continue
-                supported = (isinstance(kind, str) and kind in _CODEX_RECORDS
-                    or obj.get("role") in {"user", "assistant"}
-                    or isinstance(kind, str) and kind in {"user", "assistant"})
-                if not supported:
+                row_format = (CODEX if isinstance(kind, str) and kind in _CODEX_RECORDS
+                              else CLAUDE if obj.get("role") in ("user", "assistant")
+                              or isinstance(kind, str) and kind in {"user", "assistant"}
+                              else UNKNOWN)
+                if (row_format == UNKNOWN or fmt not in {UNKNOWN, row_format}
+                        or row_format == CODEX and not _supported_codex_record(obj)):
                     unsupported += 1
                     continue
                 if fmt == UNKNOWN:
-                    if obj.get("type") in {"event_msg", "response_item", "session_meta", "turn_context"}:
-                        fmt = CODEX
-                    elif ("sessionId" in obj or ("message" in obj and "type" in obj)
-                          or obj.get("role") in {"user", "assistant"}
-                          or obj.get("type") in {"user", "assistant"}):
-                        fmt = CLAUDE
-                    else:
-                        continue
+                    fmt = row_format
                 if fmt == CLAUDE:
                     if "message" not in obj and "content" in obj:
                         role = obj.get("role") or obj.get("type")
