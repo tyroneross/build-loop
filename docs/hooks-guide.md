@@ -36,6 +36,8 @@ Name the concrete failure before choosing an event: an unauthorized write, stale
 
 The official [hook guide](https://code.claude.com/docs/en/hooks-guide) distinguishes command hooks from model-based checks. Hook invocation can be predictable while an LLM judgment remains uncertain. Calling a model from a hook does not make its verdict deterministic.
 
+For hook additions and changes, use the [small hook-set checklist](../skills/plugin-builder/references/hooks-reference.md#keep-the-active-hook-set-small). It lives in the shipped reference so installed workflows can load it without copying this whole guide.
+
 ## Bind readiness, actions and completion to the same work
 
 The supplied image contributes a useful sequence: define readiness, grant bounded work, collect evidence, verify it, then apply any required acceptance decision. Reuse the existing plan and receipt formats for these facts.
