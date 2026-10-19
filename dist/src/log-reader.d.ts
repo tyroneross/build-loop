@@ -31,6 +31,16 @@ export interface LogReaderResult {
     files_read: string[];
     total_matched: number;
     truncated: boolean;
+    coverage: {
+        complete: boolean;
+        bytes_read: number;
+        max_bytes: number;
+        skipped_files: {
+            file: string;
+            reason: string;
+        }[];
+        malformed_lines: number;
+    };
 }
 /**
  * Read logs from the specified source.

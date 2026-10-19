@@ -119,6 +119,9 @@ export interface TraceIndex {
  * Index entry for a single trace
  */
 export interface TraceIndexEntry {
+    /** Canonical summary availability; absent on legacy index rows. */
+    has_full_data?: boolean;
+    full_data_path?: string;
     trace_id: string;
     source: TraceSource;
     timestamp: number;

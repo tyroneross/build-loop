@@ -5,18 +5,8 @@
  * - local: Each project has its own .claude/memory/ directory
  * - shared: All projects share ~/.claude-memory/ directory
  */
-export interface MemoryConfig {
-    /** Storage mode: local (per-project) or shared (global) */
-    storageMode: 'local' | 'shared';
-    /** Path to memory directory */
-    memoryPath: string;
-    /** Whether to automatically mine audit trail on startup */
-    autoMine: boolean;
-    /** Similarity threshold for retrieval (0-1) */
-    defaultSimilarityThreshold: number;
-    /** Maximum results to return */
-    defaultMaxResults: number;
-}
+import type { MemoryConfig } from './types';
+export type { MemoryConfig } from './types';
 /**
  * Get configuration from environment variables and defaults
  */

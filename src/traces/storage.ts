@@ -9,6 +9,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { createHash, randomUUID } from 'crypto';
 import type {
   UnifiedTrace,
   TraceIndex,
@@ -58,24 +59,31 @@ export async function storeTrace(
   rawData?: unknown,
   config?: MemoryConfig
 ): Promise<{ trace_id: string; file_path: string }> {
+  validateTrace(trace);
   const paths = getTracePaths(config);
-
-  // Ensure directories exist
-  await fs.mkdir(paths.traces, { recursive: true });
-  await fs.mkdir(path.join(paths.raw, trace.source), { recursive: true });
-
-  // Store raw data if provided
-  if (rawData) {
-    const rawPath = path.join(paths.raw, trace.source, `${trace.trace_id}.json`);
-    await fs.writeFile(rawPath, JSON.stringify(rawData, null, 2), 'utf-8');
-    trace.full_data_path = rawPath;
-    trace.has_full_data = true;
+  const metadata = path.join(paths.traces, 'metadata');
+  await containedDirectory(paths.traces, metadata);
+  const stored: UnifiedTrace = { ...trace, has_full_data: false };
+  delete stored.full_data_path;
+  if (rawData !== undefined) {
+    const content = JSON.stringify(rawData);
+    if (content === undefined) throw new Error('Raw trace is not JSON serializable');
+    const rawDir = path.join(paths.raw, trace.source);
+    await containedDirectory(paths.traces, rawDir);
+    // Immutable revision avoids concurrent same-ID writes pairing different raw data.
+    const digest = createHash('sha256').update(content).digest('hex');
+    stored.full_data_path = path.join(rawDir, `${trace.trace_id}.${digest}.json`);
+    if (Buffer.byteLength(content) > 64 * 1024 * 1024) throw new Error('Raw trace exceeds 64 MiB');
+    await atomicJson(stored.full_data_path, content);
+    stored.has_full_data = true;
   }
-
-  // Update index
-  await updateTraceIndex(trace, config);
-
-  return { trace_id: trace.trace_id, file_path: trace.full_data_path || '' };
+  // Publication point: incomplete writes leave only unreferenced raw revisions.
+  const serialized = JSON.stringify(stored);
+  if (Buffer.byteLength(serialized) > 1024 * 1024) throw new Error('Trace metadata exceeds 1 MiB');
+  await atomicJson(path.join(metadata, `${trace.trace_id}.json`), serialized);
+  trace.full_data_path = stored.full_data_path;
+  trace.has_full_data = stored.has_full_data;
+  return { trace_id: trace.trace_id, file_path: stored.full_data_path || '' };
 }
 
 /**
@@ -85,6 +93,7 @@ export async function loadTraceSummary(
   trace_id: string,
   config?: MemoryConfig
 ): Promise<UnifiedTrace | null> {
+  validateId(trace_id);
   const index = await loadTraceIndex(config);
   const entry = index.traces[trace_id];
 
@@ -105,8 +114,10 @@ export async function loadFullTrace(
   if (!trace?.full_data_path) return null;
 
   try {
-    const content = await fs.readFile(trace.full_data_path, 'utf-8');
-    return JSON.parse(content);
+    const paths = getTracePaths(config);
+    const locator = safeRawPath(trace, paths.raw);
+    await assertContained(paths.traces, locator);
+    return await readJson(locator, 64 * 1024 * 1024);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
@@ -197,16 +208,53 @@ export async function loadTracesForIncident(
  */
 export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex> {
   const paths = getTracePaths(config);
-
+  let index = createEmptyIndex();
   try {
-    const content = await fs.readFile(paths.index, 'utf-8');
-    return JSON.parse(content) as TraceIndex;
+    await assertContained(paths.traces, paths.index);
+    index = await readJson(paths.index, 64 * 1024 * 1024) as TraceIndex;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return createEmptyIndex();
-    }
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
+  const entries: Record<string, TraceIndexEntry> = Object.create(null);
+  for (const entry of Object.values(index.traces)) {
+    validateId(entry.trace_id);
+    validateSource(entry.source);
+    // Old indexes discarded the locator. Recover only the known contained path.
+    const legacyRaw = path.join(paths.raw, entry.source, `${entry.trace_id}.json`);
+    let available = false;
+    try { await assertContained(paths.traces, legacyRaw); available = (await fs.stat(legacyRaw)).isFile(); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    entries[entry.trace_id] = { ...entry, has_full_data: available,
+                              full_data_path: available ? legacyRaw : undefined };
+  }
+  const metadata = path.join(paths.traces, 'metadata');
+  try {
+    await assertContained(paths.traces, metadata);
+    for (const filename of await fs.readdir(metadata)) {
+      if (!filename.endsWith('.json')) continue;
+      const id = filename.slice(0, -5);
+      validateId(id);
+      const file = path.join(metadata, filename);
+      await assertContained(paths.traces, file);
+      const trace = await readJson(file, 1024 * 1024) as UnifiedTrace;
+      validateTrace(trace);
+      if (trace.trace_id !== id) throw new Error('Trace metadata identity mismatch');
+      if (trace.has_full_data) {
+        const raw = safeRawPath(trace, paths.raw);
+        await assertContained(paths.traces, raw);
+        await fs.access(raw);
+        trace.full_data_path = raw;
+      } else { delete trace.full_data_path; }
+      entries[id] = indexEntry(trace);
+    }
+  } catch (error) {
+    // Missing metadata directory is the legacy format; missing referenced raw is corruption.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || await exists(metadata)) throw error;
+  }
+  // Derived projection avoids a shared read/modify/write race across processes.
+  index = createEmptyIndex();
+  for (const entry of Object.values(entries)) addEntry(index, entry);
+  return index;
 }
 
 /**
@@ -226,70 +274,119 @@ function createEmptyIndex(): TraceIndex {
   };
 }
 
-/**
- * Update trace index with new trace
- */
-async function updateTraceIndex(
-  trace: UnifiedTrace,
-  config?: MemoryConfig
-): Promise<void> {
-  const paths = getTracePaths(config);
-  const index = await loadTraceIndex(config);
+const TRACE_SOURCES = new Set<TraceSource>(['opentelemetry', 'sentry', 'langchain',
+  'chrome-devtools', 'playwright', 'browser-console', 'internal']);
 
-  // Create index entry
-  const entry: TraceIndexEntry = {
-    trace_id: trace.trace_id,
-    source: trace.source,
-    timestamp: trace.timestamp,
-    severity: trace.severity,
-    category: trace.category,
-    operation: trace.operation,
+const TRACE_SEVERITIES = new Set(['debug', 'info', 'warning', 'error', 'fatal']);
+const TRACE_CATEGORIES = new Set(['http-request', 'http-response', 'database-query', 'cache-operation',
+  'llm-call', 'llm-chain', 'ui-interaction', 'ui-render', 'console-log', 'console-error',
+  'network-request', 'performance-metric', 'custom']);
+function validateTrace(trace: UnifiedTrace): void {
+  if (!trace || typeof trace !== 'object') throw new Error('Invalid trace object');
+  validateId(trace.trace_id); validateSource(trace.source);
+  if (!Number.isFinite(trace.timestamp) || !Number.isFinite(new Date(trace.timestamp).getTime()) ||
+      !TRACE_SEVERITIES.has(trace.severity) || !TRACE_CATEGORIES.has(trace.category) ||
+      typeof trace.operation !== 'string' || !trace.operation.trim() ||
+      !trace.summary || typeof trace.summary.description !== 'string' ||
+      !Array.isArray(trace.summary.highlights) || !trace.summary.highlights.every(v => typeof v === 'string') ||
+      (trace.incident_ids !== undefined && (!Array.isArray(trace.incident_ids) ||
+        !trace.incident_ids.every(v => typeof v === 'string' && v.length > 0))) ||
+      !Number.isFinite(trace.tokens_estimated) || trace.tokens_estimated < 0 ||
+      (trace.duration_ms !== undefined && (!Number.isFinite(trace.duration_ms) || trace.duration_ms < 0))) {
+    throw new Error('Invalid persisted trace shape');
+  }
+}
+function validateId(id: string): void {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) ||
+      ['__proto__', 'constructor', 'prototype'].includes(id)) throw new Error('Invalid storage ID');
+}
+function validateSource(source: TraceSource): void {
+  if (!TRACE_SOURCES.has(source)) throw new Error('Invalid trace source');
+}
+async function exists(file: string): Promise<boolean> {
+  try { await fs.access(file); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+async function assertContained(root: string, file: string): Promise<void> {
+  const [realRoot, realFile] = await Promise.all([fs.realpath(root), fs.realpath(file)]);
+  const relative = path.relative(realRoot, realFile);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Storage path escapes trace root');
+  }
+}
+async function containedDirectory(root: string, dir: string): Promise<void> {
+  await fs.mkdir(root, { recursive: true });
+  // Check each existing ancestor before mkdir can follow an escaping symlink.
+  let current = path.resolve(root);
+  for (const part of path.relative(current, dir).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    if (await exists(current)) await assertContained(root, current);
+    else {
+      try { await fs.mkdir(current); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      await assertContained(root, current);
+    }
+  }
+  await assertContained(root, dir);
+}
+async function readJson(file: string, maxBytes: number): Promise<unknown> {
+  const handle = await fs.open(file, 'r');
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > maxBytes) throw new Error('Invalid or oversized trace file');
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const block = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - total));
+      const { bytesRead } = await handle.read(block, 0, block.length, null);
+      if (!bytesRead) break;
+      total += bytesRead;
+      if (total > maxBytes) throw new Error('Trace file exceeds read budget');
+      chunks.push(block.subarray(0, bytesRead));
+    }
+    return JSON.parse(Buffer.concat(chunks, total).toString('utf-8'));
+  } finally { await handle.close(); }
+}
+async function atomicJson(file: string, content: string): Promise<void> {
+  const temp = `${file}.${randomUUID()}.tmp`;
+  let handle;
+  try {
+    handle = await fs.open(temp, 'wx', 0o600);
+    await handle.writeFile(content, 'utf-8');
+    await handle.sync();
+    await handle.close(); handle = undefined;
+    await fs.rename(temp, file);
+  } finally {
+    await handle?.close();
+    await fs.rm(temp, { force: true });
+  }
+}
+function safeRawPath(trace: UnifiedTrace, rawRoot: string): string {
+  validateId(trace.trace_id); validateSource(trace.source);
+  const basename = path.basename(trace.full_data_path || '');
+  const escapedId = trace.trace_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`^${escapedId}(?:\\.[a-f0-9]{64})?\\.json$`).test(basename)) {
+    throw new Error('Invalid raw revision locator');
+  }
+  return path.join(rawRoot, trace.source, basename);
+}
+function indexEntry(trace: UnifiedTrace): TraceIndexEntry {
+  return { trace_id: trace.trace_id, source: trace.source, timestamp: trace.timestamp,
+    severity: trace.severity, category: trace.category, operation: trace.operation,
     summary_preview: trace.summary.description.substring(0, 100),
     has_error: trace.severity === 'error' || trace.severity === 'fatal',
-    incident_ids: trace.incident_ids || [],
-  };
-
-  // Add to main index
-  index.traces[trace.trace_id] = entry;
+    incident_ids: trace.incident_ids || [], has_full_data: trace.has_full_data,
+    full_data_path: trace.full_data_path };
+}
+function addEntry(index: TraceIndex, entry: TraceIndexEntry): void {
+  index.traces[entry.trace_id] = entry;
   index.total_traces++;
-  index.last_updated = Date.now();
-
-  // Update by_source index
-  if (!index.by_source[trace.source]) {
-    index.by_source[trace.source] = [];
+  for (const [map, key] of [[index.by_source, entry.source], [index.by_category, entry.category],
+      [index.by_severity, entry.severity], [index.by_date, new Date(entry.timestamp).toISOString().slice(0, 10)],
+      ...entry.incident_ids.map(id => [index.by_incident, id])] as [Record<string, string[]>, string][]) {
+    if (!Object.prototype.hasOwnProperty.call(map, key)) Object.defineProperty(map, key, {value: [], enumerable: true});
+    map[key].push(entry.trace_id);
   }
-  index.by_source[trace.source].push(trace.trace_id);
-
-  // Update by_category index
-  if (!index.by_category[trace.category]) {
-    index.by_category[trace.category] = [];
-  }
-  index.by_category[trace.category].push(trace.trace_id);
-
-  // Update by_severity index
-  if (!index.by_severity[trace.severity]) {
-    index.by_severity[trace.severity] = [];
-  }
-  index.by_severity[trace.severity].push(trace.trace_id);
-
-  // Update by_date index
-  const dateKey = new Date(trace.timestamp).toISOString().slice(0, 10);
-  if (!index.by_date[dateKey]) {
-    index.by_date[dateKey] = [];
-  }
-  index.by_date[dateKey].push(trace.trace_id);
-
-  // Update by_incident index
-  for (const incidentId of trace.incident_ids || []) {
-    if (!index.by_incident[incidentId]) {
-      index.by_incident[incidentId] = [];
-    }
-    index.by_incident[incidentId].push(trace.trace_id);
-  }
-
-  // Save index
-  await fs.mkdir(path.dirname(paths.index), { recursive: true });
-  await fs.writeFile(paths.index, JSON.stringify(index, null, 2), 'utf-8');
 }
 
 /**
@@ -308,7 +405,8 @@ function reconstructTraceFromIndex(entry: TraceIndexEntry): UnifiedTrace {
       highlights: [],
     },
     incident_ids: entry.incident_ids,
-    has_full_data: true,
+    has_full_data: entry.has_full_data === true,
+    full_data_path: entry.full_data_path,
     tokens_estimated: 50,
   };
 }
@@ -329,9 +427,11 @@ export async function createCollection(
   const paths = getTracePaths(config);
 
   // Load traces to generate summary
-  const traces = await Promise.all(
-    traceIds.map((id) => loadTraceSummary(id, config))
-  );
+  const index = await loadTraceIndex(config);
+  const traces = traceIds.map(id => {
+    validateId(id);
+    return index.traces[id] ? reconstructTraceFromIndex(index.traces[id]) : null;
+  });
   const validTraces = traces.filter(Boolean) as UnifiedTrace[];
 
   // Generate summary
@@ -347,7 +447,7 @@ export async function createCollection(
   };
 
   // Save collection
-  await fs.mkdir(paths.collections, { recursive: true });
+  await containedDirectory(paths.traces, paths.collections);
   const filepath = path.join(paths.collections, `${collection.collection_id}.json`);
   await fs.writeFile(filepath, JSON.stringify(collection, null, 2), 'utf-8');
 
@@ -361,10 +461,12 @@ export async function loadCollection(
   collection_id: string,
   config?: MemoryConfig
 ): Promise<TraceCollection | null> {
+  validateId(collection_id);
   const paths = getTracePaths(config);
   const filepath = path.join(paths.collections, `${collection_id}.json`);
 
   try {
+    await assertContained(paths.traces, filepath);
     const content = await fs.readFile(filepath, 'utf-8');
     return JSON.parse(content) as TraceCollection;
   } catch (error) {
@@ -394,8 +496,8 @@ function generateCollectionSummary(traces: UnifiedTrace[]): CollectionSummary {
 
   const timestamps = traces.map((t) => t.timestamp);
   const timeRange = {
-    start: Math.min(...timestamps),
-    end: Math.max(...timestamps),
+    start: timestamps.length ? Math.min(...timestamps) : 0,
+    end: timestamps.length ? Math.max(...timestamps) : 0,
   };
 
   for (const trace of traces) {
