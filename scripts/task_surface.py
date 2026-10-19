@@ -186,6 +186,7 @@ def execution_items(workdir: Path) -> list[dict[str, Any]]:
                     created_by="Build Loop",
                 )
             )
+            rows[-1]["success_criteria"] = record.get("success_criteria") or record.get("acceptance_criteria")
     by_id: dict[str, dict[str, Any]] = {}
     for row in rows:
         current = by_id.get(row["id"])
@@ -222,13 +223,26 @@ def iteration_summary(workdir: Path) -> dict[str, dict[str, Any]]:
     return summaries
 
 
-def _validation_clarity(row: dict[str, Any]) -> str:
-    path = Path(str(row.get("path", "")))
+def _validation_clarity(row: dict[str, Any], document: str | None = None) -> str:
+    """Use the ref contract validator without treating declarations as proof."""
+    from ref_goals import criteria_error
+    criteria = row.get("success_criteria", row.get("acceptance_criteria"))
+    if criteria is not None:
+        values = [criteria] if isinstance(criteria, str) else criteria
+        return "unassessable" if criteria_error(values) else "clear"
     if row.get("surface", "").startswith("state."):
-        return "clear"
-    if path.exists():
-        return "clear"
-    return "unknown"
+        return "unknown"
+    if document is None:
+        try:
+            document = Path(str(row.get("path", ""))).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return "unknown"
+    match = re.search(
+        r"(?ims)^#{1,6}\s+(?:Acceptance(?: criteria)?|Success criteria|Validation|Definition of done)\s*:?\s*\n(.*?)(?=^#{1,6}\s|\Z)", document)
+    text = match.group(1).strip() if match else ""
+    if not text:
+        return "unknown"
+    return "unassessable" if criteria_error([text]) else "clear"
 
 
 def _risk_level(row: dict[str, Any]) -> str:
@@ -257,12 +271,20 @@ def rank_task_items(
     summaries: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
+    documents: dict[str, str] = {}
     for row in items:
         item = dict(row)
         item["rank_score"] = _rank_score(item)
         item["dry_run_action"] = SURFACE_ACTION.get(str(item.get("surface")), "review")
         item["risk"] = _risk_level(item)
-        item["validation_clarity"] = _validation_clarity(item)
+        path = str(item.get("path") or "")
+        if path not in documents and not str(item.get("surface", "")).startswith("state."):
+            try:
+                documents[path] = Path(path).read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                documents[path] = ""
+        item["validation_clarity"] = _validation_clarity(item, documents.get(path))
+        item["acceptance_declared"] = item["validation_clarity"] == "clear"
         item["execution_eligible"] = item.get("surface") not in {
             "backlog", "memory_backlog", "proposals"
         }
@@ -489,6 +511,7 @@ def collect_task_surface(
     include_operations_center: bool = False,
     operations_center_url: str = OPERATIONS_CENTER_URL,
     max_items: int = 100,
+    include_refs: bool = True,
 ) -> dict[str, Any]:
     wd = workdir.expanduser().resolve()
     items = execution_items(wd) + markdown_surface_items(
@@ -512,7 +535,13 @@ def collect_task_surface(
         counts[row["surface"]] = counts.get(row["surface"], 0) + 1
     next_item = next((row for row in ranked_items if row["execution_eligible"]), None)
     execution_count = sum(1 for row in ranked_items if row["execution_eligible"])
+    if include_refs:
+        from ref_goals import local_inventory
+        refs = local_inventory(wd)
+    else:
+        refs = {"status": "not_requested", "items": []}
     return {
+        "ref_inventory": refs,
         "action": "task-surface",
         "workdir": str(wd),
         "decision": "derived-active-view-no-new-ledger",
@@ -543,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--include-operations-center", action="store_true")
     parser.add_argument("--operations-center-url", default=OPERATIONS_CENTER_URL)
     parser.add_argument("--max-items", type=int, default=100)
+    parser.add_argument("--no-refs", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -550,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
         workdir=Path(args.workdir),
         memory_root=Path(args.memory_root).expanduser().resolve() if args.memory_root else None,
         include_memory=not args.no_memory,
+        include_refs=not args.no_refs,
         include_proposals=args.include_proposals,
         include_operations_center=args.include_operations_center,
         operations_center_url=args.operations_center_url,

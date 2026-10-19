@@ -352,3 +352,21 @@ class TaskSurfaceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_existing_file_is_not_clear_acceptance(tmp_path):
+    task = tmp_path / "task.md"
+    task.write_text("# Task\n## Acceptance criteria\n- [ ] <verifiable condition 1>\n")
+    row = {"path": str(task), "surface": "backlog"}
+    assert surface._validation_clarity(row) == "unassessable"
+    task.write_text("# Task\n")
+    assert surface._validation_clarity(row) == "unknown"
+    task.write_text("# Task\n## Acceptance criteria\n- Loading the same PDF twice invokes extraction once.\n")
+    assert surface._validation_clarity(row) == "clear"
+    assert surface._validation_clarity({"surface": "state.queued", "path": str(task)}) == "unknown"
+
+
+def test_malformed_acceptance_is_unassessable():
+    from task_surface import _validation_clarity
+    for criteria in ([" "], [None], True, {"criterion":"some result"}, "<verifiable condition 1>"):
+        assert _validation_clarity({"success_criteria":criteria}) == "unassessable"

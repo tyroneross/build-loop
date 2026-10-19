@@ -196,3 +196,32 @@ def test_empty_ledger_reports_missing_run_without_traceback(repo):
     (repo/'.build-loop/state.json').write_text('{}')
     with pytest.raises(ValueError,match='exactly one existing run'):
         goals.record(repo,payload())
+
+
+def test_retained_experiment_has_review_recovery_and_no_cleanup(repo):
+    goals.record(repo, payload())
+    with pytest.raises(ValueError, match='retention requires'):
+        goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                            'expected_revision':1, 'retention':{'owner':'owner'}})
+    retention = {'owner':'owner', 'hypothesis':'A parser can reuse one normalized source',
+                 'base_head':git(repo,'rev-parse','main'),
+                 'experiment_head':git(repo,'rev-parse','original-approach'),
+                 'target_branch':'main', 'recovery_ref':'original-approach',
+                 'next_review':'after canonical parser validation',
+                 'disposition_criteria':'integrate if equivalent and faster; otherwise archive recoverably'}
+    entry = goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                               'expected_revision':1, 'retention':retention})
+    assert entry['review_hold'] is True
+    assert entry['disposition'] == 'retained_experiment'
+    assert git(repo, 'rev-parse', 'original-approach') == retention['experiment_head']
+    view = goals.local_inventory(repo)
+    assert view['status'] == 'complete'
+    assert any(row['branch']=='original-approach' and row['goal_status']=='recorded'
+               for row in view['items'])
+
+
+def test_placeholder_ref_contract_cannot_close():
+    from ref_goals import contract_error, closure_error
+    entry = {"goal_history":[{"revision":1,"goal":"outcome", "source":"user", "reason":"initial", "recorded_at":"now", "success_criteria":["<verifiable condition 1>"]}]}
+    assert "placeholder" in contract_error(entry)
+    assert "placeholder" in closure_error(entry, "source", "target")

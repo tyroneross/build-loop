@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +22,19 @@ def text(value):
 
 def strings(value):
     return isinstance(value, list) and bool(value) and all(text(v) for v in value)
+
+
+_PLACEHOLDER_CRITERION = re.compile(
+    r"<[^>]*(?:condition|criteria|criterion|acceptance)[^>]*>|\b(?:TBD|TODO|placeholder)\b", re.I)
+
+
+def criteria_error(value):
+    """Shared shape and placeholder validation; declarations are not outcome proof."""
+    if not strings(value) or len(value) != len(set(value)):
+        return 'success criteria must be nonempty, unique outcome statements'
+    if any(_PLACEHOLDER_CRITERION.search(item) for item in value):
+        return 'success criteria contain unresolved placeholders'
+    return None
 
 
 def identity(entry):
@@ -40,8 +55,9 @@ def contract_error(entry):
         if not all(text(version.get(k)) for k in ('goal', 'source', 'reason', 'recorded_at')):
             return 'goal revisions require goal, source, change reason and timestamp'
         criteria = version.get('success_criteria')
-        if not strings(criteria) or len(criteria) != len(set(criteria)):
-            return 'success criteria must be nonempty, unique outcome statements'
+        error = criteria_error(criteria)
+        if error:
+            return error
     return None
 
 
@@ -135,11 +151,40 @@ def inventory(repo, branches, worktrees):
     return output
 
 
+def local_inventory(repo):
+    """Project actual local Git refs through the existing goal ledger owner."""
+    try:
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                                  capture_output=True, text=True, timeout=5).stdout
+        branches = []
+        for line in git("for-each-ref", "--format=%(refname:short)\t%(objectname)", "refs/heads").splitlines():
+            name, head = line.split("\t", 1)
+            branches.append({"name": name, "head": head})
+        worktrees = []
+        for block in git("worktree", "list", "--porcelain").strip().split("\n\n"):
+            row = {}
+            for line in block.splitlines():
+                key, _, value = line.partition(" ")
+                if key == "worktree": row["path"] = value
+                elif key == "HEAD": row["head"] = value
+                elif key == "branch": row["branch"] = value.removeprefix("refs/heads/")
+                elif key == "prunable": row["prunable"] = value or True
+            if row: worktrees.append(row)
+        items = inventory(repo, branches, worktrees)
+        return {"status": "complete", "items": items,
+                "branch_count": len(branches), "worktree_count": len(worktrees),
+                "prunable_count": sum("prunable" in row for row in worktrees),
+                "scope": "local Git and accessible ledgers; branch/worktree rows may overlap"}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {"status": "unavailable", "items": [], "reason": str(exc)}
+
+
 def record(workdir, payload):
     """Append revisions atomically; reject stale updates rather than overwrite."""
     if not isinstance(payload, dict) or not text(payload.get('run_id')):
         raise ValueError('an exact run_id is required')
-    if 'goal' not in payload and 'assessment' not in payload:
+    if 'goal' not in payload and 'assessment' not in payload and 'retention' not in payload:
         raise ValueError('supply a goal revision or an assessment')
     key = identity(payload)
     state_path = Path(workdir) / '.build-loop/state.json'
@@ -183,6 +228,18 @@ def record(workdir, payload):
             entry['purpose'] = version['goal']
             entry['success_criteria'] = version['success_criteria']
             entry.pop('goal_assessment', None)
+        if 'retention' in payload:
+            if contract_error(entry):
+                raise ValueError('record a valid goal before retaining an experiment')
+            retention = payload['retention']
+            required = ('owner', 'hypothesis', 'base_head', 'experiment_head', 'target_branch',
+                        'recovery_ref', 'next_review', 'disposition_criteria')
+            if not isinstance(retention, dict) or not all(text(retention.get(k)) for k in required):
+                raise ValueError('experiment retention requires ' + ', '.join(required))
+            entry['retention'] = copy.deepcopy(retention)
+            entry['review_hold'] = True
+            entry['review_hold_reason'] = retention['disposition_criteria']
+            entry['disposition'] = 'retained_experiment'
         if 'assessment' in payload:
             if contract_error(entry):
                 raise ValueError('record a valid goal before assessing it')
