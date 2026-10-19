@@ -65,6 +65,7 @@ async function storeTrace(trace, rawData, config) {
     const metadata = path_1.default.join(paths.traces, 'metadata');
     await containedDirectory(paths.traces, metadata);
     const stored = { ...trace, has_full_data: false };
+    delete stored.storage_coverage;
     delete stored.full_data_path;
     if (rawData !== undefined) {
         const content = JSON.stringify(rawData);
@@ -95,7 +96,10 @@ async function storeTrace(trace, rawData, config) {
 async function loadTraceSummary(trace_id, config) {
     validateId(trace_id);
     const snapshot = await loadTraceSnapshot(config, { traceId: trace_id });
-    requireComplete(snapshot);
+    // A valid canonical record remains usable when optional legacy correlation
+    // input is unavailable. Its returned object explicitly carries that omission.
+    if (snapshot.index.coverage.invalid.length)
+        requireComplete(snapshot);
     return snapshot.traces[trace_id] || null;
 }
 /**
@@ -198,11 +202,24 @@ async function loadTraceIndex(config) {
 async function loadTraceSnapshot(config, options = {}) {
     const paths = (0, config_1.getTracePaths)(config);
     const index = createEmptyIndex();
+    const canonicalDirect = options.traceId && await pathPresent(path_1.default.join(paths.traces, 'metadata', `${options.traceId}.json`));
+    if (canonicalDirect)
+        index.coverage.scope = 'canonical_trace_and_raw_availability';
     const entries = Object.create(null);
     const traces = Object.create(null);
     const invalid = (file, error, id) => {
         index.coverage.complete = false;
         index.coverage.invalid.push({ path: file, trace_id: id,
+            reason: error instanceof Error ? error.message : String(error) });
+    };
+    const legacyFailure = (error, id) => {
+        var _a;
+        if (!canonicalDirect) {
+            invalid(paths.index, error, id);
+            return;
+        }
+        index.coverage.complete = false;
+        ((_a = index.coverage).omitted || (_a.omitted = [])).push({ path: paths.index,
             reason: error instanceof Error ? error.message : String(error) });
     };
     // The legacy aggregate is compatibility input, never a publication owner.
@@ -231,12 +248,12 @@ async function loadTraceSnapshot(config, options = {}) {
                     entries[id] = { ...entry, has_full_data: available, full_data_path: available ? raw : undefined };
                 }
                 catch (error) {
-                    invalid(paths.index, error, id);
+                    legacyFailure(error, id);
                 }
             }
         }
         catch (error) {
-            invalid(paths.index, error);
+            legacyFailure(error);
         }
     }
     const metadata = path_1.default.join(paths.traces, 'metadata');
@@ -263,6 +280,7 @@ async function loadTraceSnapshot(config, options = {}) {
             await assertContained(paths.traces, file);
             const trace = await readJson(file, 1024 * 1024);
             validateTrace(trace);
+            delete trace.storage_coverage;
             if (trace.trace_id !== id)
                 throw new Error('Trace metadata identity mismatch');
             if (trace.has_full_data) {
@@ -308,7 +326,9 @@ async function loadTraceSnapshot(config, options = {}) {
                             if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId)
                                 throw new Error('Correlation identity mismatch');
                             const entry = entries[traceId];
-                            if (entry && !entry.incident_ids.includes(incidentId))
+                            if (!entry)
+                                throw new Error('Correlation references absent or invalid trace metadata');
+                            if (!entry.incident_ids.includes(incidentId))
                                 entry.incident_ids.push(incidentId);
                         }
                         catch (error) {
@@ -335,6 +355,8 @@ async function loadTraceSnapshot(config, options = {}) {
                 trace.full_data_path = entry.full_data_path;
             else
                 delete trace.full_data_path;
+            if (canonicalDirect && index.coverage.omitted?.length)
+                trace.storage_coverage = index.coverage;
             traces[entry.trace_id] = trace;
         }
     }

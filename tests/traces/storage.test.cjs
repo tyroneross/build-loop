@@ -294,3 +294,35 @@ test('compiled package root exposes explicit partial-result adoption API',()=>{
   assert.equal(api.loadTraceResults,storage.loadTraceResults);
   assert.equal(api.PartialTraceError,storage.PartialTraceError);
 });
+
+test('canonical direct lookup survives a corrupt legacy aggregate with explicit local coverage',async t=>{
+  const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+  await storage.storeTrace(trace('healthy'),{canonical:true},config);
+  const legacy=await storage.loadTraceIndex(config);
+  legacy.traces.healthy.incident_ids=['legacy-incident'];
+  await fs.writeFile(path.join(root,'index.json'),'{corrupt legacy aggregate');
+  const direct=await storage.loadTraceSummary('healthy',config);
+  assert.equal(direct.trace_id,'healthy');assert.equal(direct.storage_coverage.complete,false);
+  assert.equal(direct.storage_coverage.scope,'canonical_trace_and_raw_availability');
+  assert.equal(direct.storage_coverage.omitted[0].path,path.join(root,'index.json'));
+  assert.deepEqual(await storage.loadFullTrace('healthy',config),{canonical:true});
+  assert.equal((await storage.loadTraceResults(config)).coverage.complete,false);
+  await storage.storeTrace(direct,{updated:true},config);
+  assert.equal(JSON.parse(await fs.readFile(path.join(root,'metadata','healthy.json'),'utf8')).storage_coverage,undefined);
+  await fs.writeFile(path.join(root,'index.json'),JSON.stringify(legacy));
+  const merged=await storage.loadTraceSummary('healthy',config);
+  assert.deepEqual(merged.incident_ids,['legacy-incident']);assert.equal(merged.storage_coverage,undefined);
+  assert.deepEqual(await storage.loadFullTrace('healthy',config),{updated:true});
+});
+
+test('orphan correlation records are explicit invalid coverage without blocking healthy direct reads',async t=>{
+  const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+  await storage.storeTrace(trace('healthy'),undefined,config);
+  const directory=path.join(root,'correlations','orphan');await fs.mkdir(directory,{recursive:true});
+  await fs.writeFile(path.join(directory,'incident.json'),JSON.stringify({trace_id:'orphan',incident_id:'incident'}));
+  const result=await storage.loadTraceResults(config);
+  assert.equal(result.coverage.complete,false);assert.equal(result.coverage.invalid.length,1);
+  assert.match(result.coverage.invalid[0].reason,/absent or invalid trace metadata/);
+  assert.equal((await storage.loadTraceSummary('healthy',config)).trace_id,'healthy');
+  await assert.rejects(storage.loadTraceSummary('orphan',config),storage.PartialTraceError);
+});

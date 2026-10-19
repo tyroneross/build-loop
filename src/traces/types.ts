@@ -84,6 +84,8 @@ export interface UnifiedTrace {
   // Quality & Relevance
   relevance_score?: number;      // 0-1, how relevant to debugging
   tokens_estimated: number;      // Estimated tokens for summary
+  /** Derived read coverage, present when optional legacy input was unavailable. */
+  storage_coverage?: TraceCoverage;
 }
 
 /**
@@ -188,8 +190,9 @@ export interface TraceIndex {
 
 export interface TraceCoverage {
   complete: boolean;
-  scope: 'metadata_and_raw_availability';
+  scope: 'metadata_and_raw_availability' | 'canonical_trace_and_raw_availability';
   invalid: { path: string; trace_id?: string; reason: string }[];
+  omitted?: { path: string; reason: string }[];
 }
 
 /**

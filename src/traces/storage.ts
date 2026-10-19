@@ -66,6 +66,7 @@ export async function storeTrace(
   const metadata = path.join(paths.traces, 'metadata');
   await containedDirectory(paths.traces, metadata);
   const stored: UnifiedTrace = { ...trace, has_full_data: false };
+  delete stored.storage_coverage;
   delete stored.full_data_path;
   if (rawData !== undefined) {
     const content = JSON.stringify(rawData);
@@ -97,7 +98,9 @@ export async function loadTraceSummary(
 ): Promise<UnifiedTrace | null> {
   validateId(trace_id);
   const snapshot = await loadTraceSnapshot(config, { traceId: trace_id });
-  requireComplete(snapshot);
+  // A valid canonical record remains usable when optional legacy correlation
+  // input is unavailable. Its returned object explicitly carries that omission.
+  if (snapshot.index.coverage.invalid.length) requireComplete(snapshot);
   return snapshot.traces[trace_id] || null;
 }
 
@@ -229,11 +232,19 @@ async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: stri
 }> {
   const paths = getTracePaths(config);
   const index = createEmptyIndex();
+  const canonicalDirect = options.traceId && await pathPresent(path.join(paths.traces, 'metadata', `${options.traceId}.json`));
+  if (canonicalDirect) index.coverage.scope = 'canonical_trace_and_raw_availability';
   const entries: Record<string, TraceIndexEntry> = Object.create(null);
   const traces: Record<string, UnifiedTrace> = Object.create(null);
   const invalid = (file: string, error: unknown, id?: string) => {
     index.coverage.complete = false;
     index.coverage.invalid.push({path: file, trace_id: id,
+      reason: error instanceof Error ? error.message : String(error)});
+  };
+  const legacyFailure = (error: unknown, id?: string) => {
+    if (!canonicalDirect) { invalid(paths.index, error, id); return; }
+    index.coverage.complete = false;
+    (index.coverage.omitted ||= []).push({path: paths.index,
       reason: error instanceof Error ? error.message : String(error)});
   };
   // The legacy aggregate is compatibility input, never a publication owner.
@@ -256,9 +267,9 @@ async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: stri
           const available = await pathPresent(raw);
           if (available) await validateRawFile(paths.traces, raw);
           entries[id] = {...entry, has_full_data: available, full_data_path: available ? raw : undefined};
-        } catch (error) { invalid(paths.index, error, id); }
+        } catch (error) { legacyFailure(error, id); }
       }
-    } catch (error) { invalid(paths.index, error); }
+    } catch (error) { legacyFailure(error); }
   }
   const metadata = path.join(paths.traces, 'metadata');
   let filenames: string[] = [];
@@ -276,6 +287,7 @@ async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: stri
       await assertContained(paths.traces, file);
       const trace = await readJson(file, 1024 * 1024) as UnifiedTrace;
       validateTrace(trace);
+      delete trace.storage_coverage;
       if (trace.trace_id !== id) throw new Error('Trace metadata identity mismatch');
       if (trace.has_full_data) {
         const raw = safeRawPath(trace, paths.raw);
@@ -310,7 +322,8 @@ async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: stri
               const edge = await readJson(file, 1024) as {trace_id: string; incident_id: string};
               if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId) throw new Error('Correlation identity mismatch');
               const entry = entries[traceId];
-              if (entry && !entry.incident_ids.includes(incidentId)) entry.incident_ids.push(incidentId);
+              if (!entry) throw new Error('Correlation references absent or invalid trace metadata');
+              if (!entry.incident_ids.includes(incidentId)) entry.incident_ids.push(incidentId);
             } catch (error) { invalid(file, error, traceId); }
           }
         } catch (error) { invalid(directory, error, traceId); }
@@ -324,6 +337,7 @@ async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: stri
       trace.incident_ids = [...entry.incident_ids]; trace.has_full_data = entry.has_full_data === true;
       if (entry.full_data_path) trace.full_data_path = entry.full_data_path;
       else delete trace.full_data_path;
+      if (canonicalDirect && index.coverage.omitted?.length) trace.storage_coverage = index.coverage;
       traces[entry.trace_id] = trace;
     }
   }

@@ -41,6 +41,8 @@ export interface UnifiedTrace {
     full_data_path?: string;
     relevance_score?: number;
     tokens_estimated: number;
+    /** Derived read coverage, present when optional legacy input was unavailable. */
+    storage_coverage?: TraceCoverage;
 }
 /**
  * Token-efficient summary for LLM context injection
@@ -119,10 +121,14 @@ export interface TraceIndex {
 }
 export interface TraceCoverage {
     complete: boolean;
-    scope: 'metadata_and_raw_availability';
+    scope: 'metadata_and_raw_availability' | 'canonical_trace_and_raw_availability';
     invalid: {
         path: string;
         trace_id?: string;
+        reason: string;
+    }[];
+    omitted?: {
+        path: string;
         reason: string;
     }[];
 }
