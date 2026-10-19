@@ -188,6 +188,13 @@ class HH001BareBinaryTests(unittest.TestCase):
                "except ValueError:\n    raw = ''\nprint(json.dumps({}))\nEOF")
         self.assertEqual(self._hh001_binaries(cmd), [])
 
+    def test_unquoted_heredoc_substitutions_are_live_commands(self) -> None:
+        for expansion in ('$(node -v)', '`node -v`'):
+            with self.subTest(expansion=expansion):
+                self.assertIn('node', self._hh001_binaries('cat <<EOF\n' + expansion + '\nEOF'))
+                self.assertEqual(self._hh001_binaries("cat <<'EOF'\n" + expansion + '\nEOF'), [])
+                self.assertEqual(self._hh001_binaries('cat <<"EOF"\n' + expansion + '\nEOF'), [])
+
     def test_argument_after_quoted_command_is_not_a_command(self) -> None:
         # `"$BIN" hook ...`: the quoted program was blanked, so its first
         # argument looked like the command word.

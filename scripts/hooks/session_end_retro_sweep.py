@@ -432,7 +432,7 @@ def resolve_transcript() -> str:
     ta = _adapter()
     if ta is not None:
         try:
-            found = ta.find_codex_transcript(os.environ.get("PWD") or Path.cwd())
+            found = ta.find_codex_transcript(Path.cwd())
             if found:
                 return str(found)
         except Exception:

@@ -271,6 +271,19 @@ def test_normalized_sessions_keep_original_identity(tmp_path):
     assert outputs == ["source-one", "source-two"]
 
 
+def test_transcript_discovery_uses_actual_cwd_not_inherited_pwd(tmp_path, monkeypatch):
+    import types
+    seen = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('PWD', str(tmp_path / 'stale-project'))
+    monkeypatch.delenv('CLAUDE_TRANSCRIPT_PATH', raising=False)
+    monkeypatch.setattr(sweep.sys, 'argv', ['session_end_retro_sweep.py'])
+    adapter = types.SimpleNamespace(find_codex_transcript=lambda cwd: seen.append(Path(cwd)))
+    monkeypatch.setattr(sweep, '_adapter', lambda: adapter)
+    assert sweep.resolve_transcript() == ''
+    assert seen == [tmp_path]
+
+
 def test_production_script_imports_without_pythonpath(tmp_path):
     import os
     import subprocess
@@ -278,6 +291,12 @@ def test_production_script_imports_without_pythonpath(tmp_path):
     script = Path(sweep.__file__).resolve()
     env = {k: v for k, v in os.environ.items()
            if k not in {"PYTHONPATH", "CLAUDE_TRANSCRIPT_PATH", "CODEX_TRANSCRIPT_PATH", "TRANSCRIPT_PATH"}}
+    # An import smoke test must not discover the caller's real sessions or
+    # write retrospectives to its real home while running from a fixture cwd.
+    home = tmp_path / 'home'
+    home.mkdir()
+    env.update(HOME=str(home), CODEX_HOME=str(home / '.codex'),
+               XDG_STATE_HOME=str(home / '.local/state'), PWD=str(tmp_path / 'stale-project'))
     result = subprocess.run([sys.executable, str(script)], input="{}", text=True,
                             capture_output=True, cwd=tmp_path, env=env, timeout=10)
     assert result.returncode == 0, result.stderr

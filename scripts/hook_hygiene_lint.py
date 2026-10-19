@@ -244,7 +244,7 @@ def _strip_shell_comment(line: str) -> str:
 
 
 # `<<EOF` / `<<-'EOF'` ... terminator line. The body is input to the command,
-# so none of its words are commands.
+# quoted delimiters disable expansion; unquoted bodies can execute substitutions.
 HEREDOC_RE = re.compile(
     r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^\s*\2\s*$",
     re.DOTALL | re.MULTILINE,
@@ -252,7 +252,15 @@ HEREDOC_RE = re.compile(
 
 
 def _strip_heredoc_bodies(cmd: str) -> str:
-    return HEREDOC_RE.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
+    def scrub(match: re.Match) -> str:
+        header, body = match.group(0).split("\n", 1)
+        if match.group(1):
+            return header
+        # The body is data except for active shell substitutions. Reuse the
+        # existing substitution scanner rather than treating every data line
+        # as a command or hiding the expansions with the surrounding data.
+        return header + "\n" + "\n".join(m.group(0) for m in CMD_SUBST_RE.finditer(body))
+    return HEREDOC_RE.sub(scrub, cmd)
 
 
 def _strip_guards(cmd: str) -> str:
