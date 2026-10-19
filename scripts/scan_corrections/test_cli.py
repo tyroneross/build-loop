@@ -62,7 +62,7 @@ def test_cli_writes_candidates_to_pending_dir(tmp_path: Path) -> None:
         assert body.startswith("---\n")
         assert "kind:" in body
         assert "signal_type:" in body
-        assert "confidence: confirmed" in body
+        assert "confidence: provisional" in body
         assert "tier: 1-deterministic" in body
         assert "## Quote" in body
 
@@ -206,3 +206,17 @@ def test_f2_oversized_transcript_is_skipped(tmp_path: Path) -> None:
     assert not pending.exists() or len(list(pending.glob("*.md"))) == 0
     # Log message must mention the skip.
     assert "too large" in r.stderr.lower() or "skipping" in r.stderr.lower()
+
+
+def test_provenance_change_does_not_resurrect_discarded(tmp_path):
+    from scan_corrections.detect import detect_candidates
+    from scan_corrections.__main__ import _write_candidate
+    candidate = detect_candidates(text_turns=["Always use safe parsing."])[0]
+    pending = tmp_path / "pending"
+    original = _write_candidate(pending, candidate, source="fixture")
+    discarded = pending / "discarded"
+    discarded.mkdir()
+    original.rename(discarded / original.name)
+    candidate.extras.update({"speaker":"user", "origin":{"record_index":42}})
+    assert _write_candidate(pending, candidate, source="canonical-adapter") is None
+    assert len(list(discarded.glob("*.md"))) == 1

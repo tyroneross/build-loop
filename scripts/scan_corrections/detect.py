@@ -6,18 +6,9 @@ ZERO LLM dependency. Pure regex + heuristics over Claude Code transcript JSONL.
 
 Captures three signal classes from USER turns (the high-signal turns):
 
-1. **Correction-of-just-taken-action** — user pushes back on the assistant's
-   immediately-preceding action ("revert that", "undo", "don't do X").
-   Confidence: CONFIRMED (highest). Because the assistant just acted and
-   the user just said no, the textual evidence is unambiguous.
-
-2. **Preference / convention** — user states a project-scoped or global
-   preference ("always X", "never Y", "we use X for Z", "default to X").
-   Confidence: CONFIRMED.
-
-3. **Tradeoff / instead-of** — user names the right choice over the wrong
-   one ("X instead of Y", "actually X not Y", "X because Z, not Y").
-   Confidence: CONFIRMED.
+Regex matches are provisional candidates. A matching imperative can appear in
+quoted examples or descriptive text; confirmation requires source and context
+review. Only explicit cross-project language selects global scope.
 
 Detection runs over the LAST user turn first (highest signal), then walks
 back through the transcript for additional patterns. Returns Candidate
@@ -82,8 +73,7 @@ TRADEOFF_PATTERNS = [
 # Global-scope hints — when present, route to cross-project lesson lane.
 # Keyword set is intentionally narrow: only universal-language signals.
 GLOBAL_SCOPE_HINTS = re.compile(
-    r"\b(?:always|never|for\s+all\s+projects|globally|across\s+projects|"
-    r"every\s+project|in\s+general|as\s+a\s+rule|standing\s+(?:rule|preference))\b",
+    r"\b(?:for\s+all\s+projects|globally|across\s+projects|every\s+project)\b",
     re.I,
 )
 
@@ -110,7 +100,7 @@ class Candidate:
     signal_type: str  # the named pattern that fired (e.g. "always", "instead_of")
     quote: str  # verbatim user span
     context: str  # ±N char window around the quote
-    confidence: str  # "confirmed" (tier-1 only fires on high-signal patterns)
+    confidence: str  # regex candidates remain provisional until context review
     scope: str  # "project" | "global"
     turn_index: int  # 0-based index into the user-turn stream
     captured_chars: int  # length of the quote
@@ -142,9 +132,7 @@ class CorrectionDetector:
     def scan_turn(self, turn_text: str, turn_index: int, *, prior_assistant_acted: bool = False) -> list[Candidate]:
         """Scan one user turn and return Candidates.
 
-        `prior_assistant_acted` raises confidence for the correction class
-        (matters when the assistant just took an action and the user is
-        pushing back on it).
+        `prior_assistant_acted` supplies context; it does not confirm intent.
         """
         text = (turn_text or "").strip()
         if not text:
@@ -174,7 +162,7 @@ class CorrectionDetector:
                         signal_type=sig,
                         quote=quote,
                         context=ctx,
-                        confidence="confirmed",
+                        confidence="provisional",
                         scope=scope,
                         turn_index=turn_index,
                         captured_chars=len(quote),
@@ -195,7 +183,7 @@ class CorrectionDetector:
                         signal_type=sig,
                         quote=quote,
                         context=ctx,
-                        confidence="confirmed",
+                        confidence="provisional",
                         scope=scope,
                         turn_index=turn_index,
                         captured_chars=len(quote),
@@ -215,7 +203,7 @@ class CorrectionDetector:
                         signal_type=sig,
                         quote=quote,
                         context=ctx,
-                        confidence="confirmed",
+                        confidence="provisional",
                         scope=scope,
                         turn_index=turn_index,
                         captured_chars=len(quote),
@@ -236,6 +224,12 @@ class CorrectionDetector:
 
 
 def iter_user_turns_from_jsonl(transcript_path: Path) -> Iterable[tuple[int, str, bool]]:
+    """Compatibility view of canonical user turns without provenance metadata."""
+    for idx, text, prior, _ in _iter_user_turns(transcript_path):
+        yield idx, text, prior
+
+
+def _iter_user_turns(transcript_path: Path):
     """Yield (turn_index, user_text, prior_assistant_acted_signal) tuples.
 
     `prior_assistant_acted` is True when the most recent assistant message
@@ -285,7 +279,7 @@ def iter_user_turns_from_jsonl(transcript_path: Path) -> Iterable[tuple[int, str
                 continue
             content = _extract_text(obj)
             user_turn_idx += 1
-            yield user_turn_idx, content, prior_assistant_acted
+            yield user_turn_idx, content, prior_assistant_acted, obj.get("_source", {})
             # Reset after consumption.
             prior_assistant_acted = False
 
@@ -404,8 +398,13 @@ def detect_candidates(transcript_path: Path | str | None = None, *, text_turns: 
         return []
 
     p = Path(transcript_path) if not isinstance(transcript_path, Path) else transcript_path
-    for idx, content, prior in iter_user_turns_from_jsonl(p):
-        results.extend(detector.scan_turn(content, idx, prior_assistant_acted=prior))
+    for idx, content, prior, origin in _iter_user_turns(p):
+        candidates = detector.scan_turn(content, idx, prior_assistant_acted=prior)
+        for candidate in candidates:
+            candidate.extras.update({"speaker": "user", "origin": origin,
+                                     "source_locator": str(p), "scope_basis":
+                                     "explicit_cross_project" if candidate.scope == "global" else "project_default"})
+        results.extend(candidates)
     return _dedup(results)
 
 

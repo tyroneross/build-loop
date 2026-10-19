@@ -504,3 +504,23 @@ class TestBoundaryConditions:
         assert cs
         # Context can't exceed full text length.
         assert len(cs[0].context) <= len("Revert that.")
+
+
+def test_quoted_and_descriptive_matches_are_provisional():
+    for text in ('The guide says "always use Rust" as an example.', 'This process should always retry on failure.'):
+        candidates = detect_candidates(text_turns=[text])
+        assert candidates
+        assert all(c.confidence == "provisional" and c.scope == "project" for c in candidates)
+
+
+def test_canonical_origin_preserved_without_changing_suppression_identity(tmp_path):
+    source = tmp_path / "rollout.jsonl"
+    source.write_text(json.dumps({"type":"session_meta", "payload":{"id":"source-1"}}) + "\n" +
+                      json.dumps({"type":"event_msg", "payload":{"type":"user_message", "message":"Always use safe parsing."}}) + "\n")
+    candidate = detect_candidates(source)[0]
+    same = detect_candidates(text_turns=["Always use safe parsing."])[0]
+    assert candidate.id_hash == same.id_hash
+    assert candidate.extras["speaker"] == "user"
+    assert candidate.extras["origin"]["session_id"] == "source-1"
+    assert candidate.extras["origin"]["record_index"] == 2
+    assert candidate.extras["scope_basis"] == "project_default"

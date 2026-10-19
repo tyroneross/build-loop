@@ -88,7 +88,8 @@ def _emit_frontmatter(cand: Candidate, *, source: str) -> str:
     lines.append("## Next action for the host agent")
     lines.append("")
     lines.append(
-        "Refine this candidate into a durable record. Decide kind (decision|lesson|feedback) "
+        "Review the original speaker, source locator, quoted text and surrounding context before confirming intent. "
+        "Regex matches remain provisional. Decide kind (decision|lesson|feedback) "
         "and scope (project|global). If aligned with build-loop-memory contract, promote via "
         "`scripts/memory_writer.py` or `scripts/write_decision/__main__.py`. If not actionable, "
         "delete this file."
