@@ -182,7 +182,9 @@ def plan_wake(
         "delay_seconds": delay,
         "requested_seconds": requested,
         "max_delay_seconds": max_delay_seconds,
-        "delay_reason": "earlier cache-warm check" if delay < bounded else "requested/deadline bound",
+        "delay_reason": ("global wake ceiling" if bounded > CLAMP_MAX else
+                         "earlier cache-warm check" if delay < bounded else
+                         "requested/deadline bound"),
         "cache_warm": delay <= CACHE_WARM_CEIL,
         "reinject_prompt_ref": prompt_ref or "(carry intent.md + plan.md — never rely on memory)",
     })

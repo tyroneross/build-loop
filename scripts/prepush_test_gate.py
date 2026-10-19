@@ -177,6 +177,7 @@ FULL_SUITE_EXCLUDED_TREES = ("dist", "build", "node_modules", "vendor", ".venv")
 
 def full_suite_pytest_args(
     targets: Iterable[str] = FULL_SUITE_TARGETS, *, use_timeout: bool = True,
+    include_typescript_runtime: bool = False,
 ) -> list[str]:
     """One deterministic full profile; callers may supply discovered file targets.
 
@@ -184,8 +185,10 @@ def full_suite_pytest_args(
     collection mode: switching import modes breaks existing sibling imports.
     Local checks may omit the optional timeout plugin, with an explicit warning.
     """
+    marker = ("(not integration or typescript_runtime) and not live"
+              if include_typescript_runtime else "not integration and not live")
     args = [*targets, "-p", "no:cacheprovider", "-q", "--no-header", "-rfEs",
-            "--color=no", "-m", "not integration and not live"]
+            "--color=no", "-m", marker]
     for tree in FULL_SUITE_EXCLUDED_TREES:
         args += ["--ignore-glob", f"**/{tree}/**"]
     if use_timeout:

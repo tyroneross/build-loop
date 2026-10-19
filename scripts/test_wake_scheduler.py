@@ -95,3 +95,9 @@ def test_task_deadline_bounds_effective_wake():
 def test_positive_requested_check_is_never_postponed():
     for desired in (1, 20, 60, 270, 271, 300, 600, 900, 1199, 1200, 3600, 5000):
         assert 0 < ws.cache_safe_delay(desired) <= desired
+
+
+def test_global_ceiling_is_not_labelled_as_a_cache_check():
+    result = ws.plan_wake("codex", ws.EXTERNAL, desired_seconds=5000)
+    assert result['delay_seconds'] == 3600
+    assert result['delay_reason'] == 'global wake ceiling'

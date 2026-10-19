@@ -29,6 +29,25 @@ def _now_iso() -> str:
 
 
 class RecentTrajectoryShapeTests(unittest.TestCase):
+    def test_malformed_advisory_rows_never_drop_the_audit_packet(self):
+        now = _now_iso()
+        cases = [None, {"runs": "invalid"}, {"runs": ["invalid"]},
+                 {"runs": [{"date": now, "goal": ["unexpected"],
+                            "judge_decisions": ["invalid", {"brief": {"bad": True}}]}]},
+                 {"runs": [{"date": now, "goal": "valid", "judge_decisions": "invalid"}]},
+                 {"runs": [{"date": "2026-10-19T20:00:00", "goal": "unknown timezone"}]},
+                 {"runs": [{"date": {"invalid": True}, "goal": "unknown date"}]}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / ".build-loop/state.json"
+            state.parent.mkdir()
+            for shape in cases:
+                with self.subTest(shape=shape):
+                    original = json.dumps(shape)
+                    state.write_text(original)
+                    self.assertIsInstance(abc._recent_trajectory(root), str)
+                    self.assertEqual(state.read_text(), original)
+
     def test_status_phases_and_legacy_chunks_render_without_mutating_state(self):
         cases = [
             ({"phases": {"assess": "complete", "execute": "complete"}}, 0),

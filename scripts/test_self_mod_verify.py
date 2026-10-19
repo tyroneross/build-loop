@@ -1931,7 +1931,8 @@ class TestTypeScriptRuntimeRouting(unittest.TestCase):
             runtime_test.parent.mkdir()
             runtime_test.write_text("def test_runtime(): pass\n")
             for changed in ("src/config.ts", "src/traces/storage.ts", "tests/config.test.cjs",
-                            "tests/traces/storage.test.cjs", "package.json", "package-lock.json"):
+                            "tests/traces/storage.test.cjs", "package.json", "package-lock.json",
+                            "tsconfig.json", "tsconfig.runtime.json"):
                 with self.subTest(changed=changed):
                     self.assertEqual(gate._tests_for_changed(root, [changed]), [str(runtime_test.resolve())])
             self.assertEqual(gate._tests_for_changed(root, ["src/config.ts", "package.json"]),
@@ -1952,7 +1953,7 @@ class TestTypeScriptRuntimeRouting(unittest.TestCase):
             self.assertEqual(gate._tests_for_changed(root, changed), [])
 
 
-    def test_changed_cli_runs_runtime_marker_but_excludes_other_integrations(self):
+    def test_changed_and_full_cli_run_runtime_marker_but_exclude_other_integrations(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "tests").mkdir()
@@ -1970,9 +1971,12 @@ class TestTypeScriptRuntimeRouting(unittest.TestCase):
                 "@pytest.mark.integration\n"
                 "def test_service():\n    raise AssertionError('unrelated integration ran')\n"
             )
-            result = _run(["--workdir", str(root), "--scope", "changed",
-                           "--changed-files", "src/config.ts", "--json"])
-            payload = _payload(result.stdout)
-            self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
-            self.assertEqual(payload["passed"], 1)
-            self.assertTrue((root / "runtime-ran").exists())
+            for scope in ("changed", "full"):
+                with self.subTest(scope=scope):
+                    (root / "runtime-ran").unlink(missing_ok=True)
+                    result = _run(["--workdir", str(root), "--scope", scope,
+                                   "--changed-files", "src/config.ts", "--json"])
+                    payload = _payload(result.stdout)
+                    self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
+                    self.assertEqual(payload["passed"], 1)
+                    self.assertTrue((root / "runtime-ran").exists())

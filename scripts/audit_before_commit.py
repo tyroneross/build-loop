@@ -1189,16 +1189,20 @@ def _recent_trajectory(root: Path) -> str:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return "_(no active build trajectory)_\n"
-    runs = data.get("runs") or []
-    if not runs:
+    runs = data.get("runs") if isinstance(data, dict) else None
+    if not isinstance(runs, list) or not runs or not isinstance(runs[-1], dict):
         return "_(no active build trajectory)_\n"
     last = runs[-1]
     ts_str = last.get("endedAt") or last.get("date") or ""
+    if not isinstance(ts_str, str):
+        return "_(no active build trajectory — timestamp is not text)_\n"
     try:
         if "T" in ts_str and ts_str.endswith("Z") and "-" not in ts_str:
             run_ts = _dt.datetime.strptime(ts_str, "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
         else:
             run_ts = _dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if run_ts.tzinfo is None:
+            return "_(no active build trajectory — timestamp has no timezone)_\n"
     except (ValueError, TypeError):
         return "_(no active build trajectory — timestamp unparseable)_\n"
     age_min = (_dt.datetime.now(_dt.timezone.utc) - run_ts).total_seconds() / 60
@@ -1210,12 +1214,15 @@ def _recent_trajectory(root: Path) -> str:
         execute = phases.get("execute") if isinstance(phases, dict) else None
         nested = execute.get("chunks") if isinstance(execute, dict) else None
         chunks = nested if isinstance(nested, list) else []
-    out = [f"- goal: {(last.get('goal') or '')[:160]}", f"- chunks: {len(chunks)}"]
-    decisions = last.get("judge_decisions") or []
+    goal = last.get("goal")
+    out = [f"- goal: {goal[:160] if isinstance(goal, str) else '(unavailable)'}", f"- chunks: {len(chunks)}"]
+    raw_decisions = last.get("judge_decisions")
+    decisions = [row for row in raw_decisions if isinstance(row, dict)] if isinstance(raw_decisions, list) else []
     if decisions:
         out.append("- last 3 judge_decisions:")
         for jd in decisions[-3:]:
-            brief = (jd.get("brief") or jd.get("reason") or "")[:80]
+            raw_brief = jd.get("brief") or jd.get("reason") or ""
+            brief = raw_brief[:80] if isinstance(raw_brief, str) else "(unavailable)"
             out.append(f"  - {jd.get('judge_id', '?')} → {jd.get('verdict', '?')}: {brief}")
     else:
         out.append("- (no judge_decisions yet)")

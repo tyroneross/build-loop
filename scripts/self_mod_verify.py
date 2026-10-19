@@ -295,7 +295,8 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
         rel = p.relative_to(workdir.resolve())
         if ((rel.parts[:1] == ("src",) and p.suffix == ".ts")
                 or (rel.parts[:1] == ("tests",) and p.suffix == ".cjs")
-                or rel.as_posix() in {"package.json", "package-lock.json"}):
+                or rel.as_posix() in {"package.json", "package-lock.json"}
+                or (len(rel.parts) == 1 and p.name.startswith("tsconfig") and p.suffix == ".json")):
             _add_by_name("test_typescript_runtime.py")
             continue
         # Other non-Python files, including documentation, are not pytest targets.
@@ -1405,12 +1406,16 @@ def _verify_inner(
                 "Install it with `uv sync --extra test` to restore the guard.",
                 file=sys.stderr,
             )
-        cmd = runner_base + full_suite_pytest_args(test_files, use_timeout=has_timeout)
+        cmd = runner_base + full_suite_pytest_args(
+            test_files, use_timeout=has_timeout,
+            include_typescript_runtime=any(
+                Path(filename).name == "test_typescript_runtime.py" for filename in test_files),
+        )
     else:
         # This local runtime integration has a dedicated JS CI owner. Include
         # only its explicit marker here; unrelated service integrations stay out.
         if any(Path(filename).name == "test_typescript_runtime.py" for filename in test_files):
-            cmd += ["-m", "not integration or typescript_runtime"]
+            cmd += ["-m", "(not integration or typescript_runtime) and not live"]
         cmd += test_files
 
     # --- Run pytest ---

@@ -207,7 +207,7 @@ def test_retained_experiment_has_review_recovery_and_no_cleanup(repo):
                  'base_head':git(repo,'rev-parse','main'),
                  'experiment_head':git(repo,'rev-parse','original-approach'),
                  'target_branch':'main', 'recovery_ref':'original-approach',
-                 'next_review':'after canonical parser validation',
+                 'next_review':'2999-01-01',
                  'review_trigger':'rebase when canonical parser or schema changes',
                  'evidence':['oracle receipt'],
                  'disposition_criteria':'integrate if equivalent and faster; otherwise archive recoverably'}
@@ -220,6 +220,31 @@ def test_retained_experiment_has_review_recovery_and_no_cleanup(repo):
     assert view['status'] == 'complete'
     assert any(row['branch']=='original-approach' and row['goal_status']=='recorded'
                for row in view['items'])
+    for field, value, message in (
+        ('next_review', 'after parser validation', 'ISO date'),
+        ('recovery_ref', 'missing-recovery-ref', 'does not resolve'),
+        ('base_head', 'missing-base', 'does not resolve'),
+        ('experiment_head', 'missing-experiment', 'does not resolve'),
+    ):
+        invalid = {**retention, field: value}
+        with pytest.raises(ValueError, match=message):
+            goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                               'expected_revision':1, 'retention':invalid})
+    retention['next_review'] = '2000-01-01'
+    goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                       'expected_revision':1, 'retention':retention})
+    overdue = next(row for row in goals.local_inventory(repo)['items']
+                   if row['branch']=='original-approach')
+    assert overdue['goal_status'] == 'needs_review'
+    assert 'review due' in overdue['reason']
+    from task_surface import collect_task_surface
+    surface = collect_task_surface(workdir=repo, include_memory=False)
+    assert any(row['branch']=='original-approach' and 'review due' in (row['reason'] or '')
+               for row in surface['ref_inventory']['items'])
+    git(repo, 'commit', '--allow-empty', '-m', 'different recovery target')
+    with pytest.raises(ValueError, match='does not preserve'):
+        goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                           'expected_revision':1, 'retention':{**retention,'recovery_ref':'main'}})
 
 
 def test_placeholder_ref_contract_cannot_close():
@@ -227,6 +252,25 @@ def test_placeholder_ref_contract_cannot_close():
     entry = {"goal_history":[{"revision":1,"goal":"outcome", "source":"user", "reason":"initial", "recorded_at":"now", "success_criteria":["<verifiable condition 1>"]}]}
     assert "placeholder" in contract_error(entry)
     assert "placeholder" in closure_error(entry, "source", "target")
+
+
+def test_symbolic_retention_is_pinned_and_branch_movement_is_visible(repo):
+    goals.record(repo, payload())
+    retention = {'owner':'owner', 'hypothesis':'equivalent parser', 'base_head':'main',
+                 'experiment_head':'original-approach', 'target_branch':'main',
+                 'recovery_ref':'original-approach', 'next_review':'2999-01-01',
+                 'review_trigger':'parser change', 'evidence':['oracle receipt'],
+                 'disposition_criteria':'review equivalence before integration'}
+    entry = goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
+                               'expected_revision':1, 'retention':retention})
+    original = git(repo, 'rev-parse', 'original-approach')
+    assert entry['retention']['base_head'] == original
+    assert entry['retention']['experiment_head'] == original
+    git(repo, 'commit', '--allow-empty', '-m', 'next experiment')
+    git(repo, 'branch', '-f', 'original-approach', 'HEAD')
+    row = next(r for r in goals.local_inventory(repo)['items'] if r['branch']=='original-approach')
+    assert row['goal_status'] == 'needs_review'
+    assert 'does not preserve' in row['reason']
 
 
 def test_live_inventory_does_not_claim_complete_when_ledger_is_unreadable(repo):

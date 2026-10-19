@@ -10,7 +10,7 @@ import copy
 import json
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from atomic_io import LockedFile, atomic_write_bytes
@@ -34,6 +34,41 @@ def criteria_error(value):
         return 'success criteria must be nonempty, unique outcome statements'
     if any(_PLACEHOLDER_CRITERION.search(item) for item in value):
         return 'success criteria contain unresolved placeholders'
+    return None
+
+
+def retention_error(retention, repo, *, head=None, today=None):
+    """Validate the declared recovery contract; this is not owner authority."""
+    required = ('owner', 'hypothesis', 'base_head', 'experiment_head', 'target_branch',
+                'recovery_ref', 'next_review', 'review_trigger', 'disposition_criteria')
+    if not isinstance(retention, dict) or not all(text(retention.get(k)) for k in required):
+        return 'experiment retention requires ' + ', '.join(required)
+    if not strings(retention.get('evidence')):
+        return 'experiment retention requires nonempty evidence references'
+    try:
+        due = date.fromisoformat(retention['next_review'])
+        if due.isoformat() != retention['next_review']:
+            raise ValueError('noncanonical date')
+    except ValueError:
+        return 'experiment retention next_review requires an ISO date (YYYY-MM-DD)'
+    resolved = {}
+    for key in ('base_head', 'experiment_head', 'target_branch', 'recovery_ref'):
+        try:
+            resolved[key] = subprocess.run(
+                ['git', '-C', str(repo), 'rev-parse', '--verify', '--end-of-options',
+                 retention[key] + '^{commit}'],
+                check=True, capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return f'experiment retention {key} does not resolve to a commit'
+    if resolved['recovery_ref'] != resolved['experiment_head']:
+        return 'experiment recovery_ref does not preserve experiment_head'
+    if head is not None and any(retention[k] != resolved[k] for k in ('base_head', 'experiment_head')):
+        return 'experiment retention requires pinned commit heads; refresh symbolic legacy records'
+    if head is not None and resolved['experiment_head'] != head:
+        return 'experiment retention head changed; refresh evidence and recovery'
+    if today is not None and due <= today:
+        return 'retained experiment review due on ' + due.isoformat()
     return None
 
 
@@ -145,6 +180,9 @@ def inventory(repo, branches, worktrees):
         error = ('goal ledger unavailable: ' + '; '.join(failures)) if failures else (
             'conflicting goal records' if len(matches) > 1 else
             contract_error(matches[0]['contract']) if matches else 'missing_goal')
+        if not error and matches[0]['contract'].get('review_hold'):
+            error = retention_error(matches[0]['contract'].get('retention'), repo,
+                                    head=head, today=datetime.now(timezone.utc).date())
         output.append({'branch': branch, 'path': path, 'head': head,
                        'goal_status': 'needs_review' if error else 'recorded',
                        'reason': error, 'records': matches})
@@ -233,12 +271,18 @@ def record(workdir, payload):
             if contract_error(entry):
                 raise ValueError('record a valid goal before retaining an experiment')
             retention = payload['retention']
-            required = ('owner', 'hypothesis', 'base_head', 'experiment_head', 'target_branch',
-                        'recovery_ref', 'next_review', 'review_trigger', 'disposition_criteria')
-            if not isinstance(retention, dict) or not all(text(retention.get(k)) for k in required):
-                raise ValueError('experiment retention requires ' + ', '.join(required))
-            if not strings(retention.get('evidence')):
-                raise ValueError('experiment retention requires nonempty evidence references')
+            error = retention_error(retention, workdir)
+            if error:
+                raise ValueError(error)
+            # Store immutable observations, not symbolic branches that can
+            # move together with their alleged recovery target.
+            retention = copy.deepcopy(retention)
+            for key in ('base_head', 'experiment_head'):
+                retention[key] = subprocess.run(
+                    ['git', '-C', str(workdir), 'rev-parse', '--verify', '--end-of-options',
+                     retention[key] + '^{commit}'],
+                    check=True, capture_output=True, text=True, timeout=5,
+                ).stdout.strip()
             entry['retention'] = copy.deepcopy(retention)
             entry['review_hold'] = True
             entry['review_hold_reason'] = retention['disposition_criteria']
