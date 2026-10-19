@@ -239,21 +239,43 @@ def run_session_retro(build_loop: Path, transcript: Path, cwd: Path, *, source_k
 
 def run_miner(build_loop: Path, out_dir: Path) -> dict:
     miner = build_loop / "scripts" / "transcript-pattern-miner.py"
+    reason = None
+    data = {}
     try:
-        subprocess.run(
-            ["python3", str(miner), "--days", str(MINER_WINDOW_DAYS),
+        result = subprocess.run(
+            [sys.executable, str(miner), "--days", str(MINER_WINDOW_DAYS),
              "--out-dir", str(out_dir)],
             check=False, capture_output=True, timeout=120,
         )
-    except Exception:
-        return {}
-    cand = out_dir / ".candidates.json"
-    if not cand.exists():
-        return {}
-    try:
-        return json.loads(cand.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+        if result.returncode:
+            reason = "miner_nonzero_exit"
+        else:
+            data = json.loads((out_dir / ".candidates.json").read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                reason = "invalid_candidates"
+                data = {}
+    except Exception as exc:
+        reason = type(exc).__name__
+    if reason:
+        data = {"candidates": [], "coverage": {"failed_count": 1,
+                "complete_selected_sources": False, "failure": reason}}
+    coverage = data.get("coverage")
+    if isinstance(coverage, dict):
+        # One bounded latest receipt survives TemporaryDirectory cleanup even
+        # when there are zero candidates. No source bodies or subprocess stderr.
+        payload = {"updated_at": datetime.now(timezone.utc).isoformat(), "coverage": coverage}
+        encoded = json.dumps(payload).encode()
+        if len(encoded) > 128 * 1024:
+            encoded = json.dumps({"coverage": {"complete_selected_sources": False,
+                                              "failure": "coverage_receipt_limit"}}).encode()
+        try:
+            sys.path.insert(0, str(build_loop / "scripts"))
+            from atomic_io import atomic_write_bytes
+            atomic_write_bytes(RETRO_STAGING / "miner-coverage.json", encoded)
+        except Exception:
+            print("session_end_retro_sweep: miner coverage receipt unavailable", file=sys.stderr)
+    return data
+
 
 
 # Core-tool steps carry no reusable semantic content: a sequence made only of
@@ -446,8 +468,10 @@ def main() -> None:
     # Codex records cwd in session_meta/turn_context, not as a top-level field,
     # so the adapter is the only path that resolves a Codex project at all.
     cwd = adapter_cwd or resolve_project_cwd(transcript)
+    adapter = _adapter()
+    source_key = adapter.session_key(raw_transcript) if adapter else raw_transcript.stem
     if cwd is not None and is_project_dir(cwd) and not formal_run_retro_exists(cwd):
-        run_session_retro(build_loop, transcript, cwd, source_key=_adapter().session_key(raw_transcript))
+        run_session_retro(build_loop, transcript, cwd, source_key=source_key)
 
     with tempfile.TemporaryDirectory() as tmp:
         data = run_miner(build_loop, Path(tmp))
@@ -461,6 +485,7 @@ def main() -> None:
         payload = {
             "generated_at": data.get("generated_at"),
             "window": data.get("window_label"),
+            "coverage": data.get("coverage"),
             "skills": skills, "lessons": lessons,
             "transcript": str(transcript),
         }
@@ -469,7 +494,7 @@ def main() -> None:
         # ALSO drop a durable, project-scoped copy into the workdir's learn lane
         # (EC-01 coord) so the signal is not stranded in the global cache.
         write_workdir_digest(cwd, payload, ts)
-        session_key = _adapter().session_key(raw_transcript) if _adapter() else raw_transcript.stem or ts
+        session_key = source_key or ts
         write_marker(skills, lessons, staging, session_key)
 
 

@@ -14,8 +14,9 @@ def load_processed(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError:
+        value = json.loads(path.read_text())
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
         return {}
 
 
@@ -27,9 +28,13 @@ def save_processed(path: Path, processed: dict[str, str]) -> None:
 
 
 def file_signature(path: Path) -> str:
-    """Verified content plus parser version; same-size rewrites invalidate reuse."""
-    from transcript_adapter import PARSER_VERSION, _source_revision
-    return f"{PARSER_VERSION}:{_source_revision(path)}"
+    """Cheap inventory stamp, never a content/reuse proof.
+
+    Aggregates are rebuilt every run, so hashing all source bytes here was a
+    redundant read and could fail before source-local error isolation.
+    """
+    info = path.stat()
+    return f"stat:{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}:{info.st_ctime_ns}"
 
 
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:

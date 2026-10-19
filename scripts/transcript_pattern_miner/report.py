@@ -28,6 +28,7 @@ def render_report(
     test_invocation_count: int,
     test_outcomes_jsonl_path: Path,
     generated_at: dt.datetime,
+    coverage: dict[str, Any] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append(f"# Transcript Pattern Miner — {generated_at.date().isoformat()}")
@@ -40,6 +41,17 @@ def render_report(
     lines.append("> Pure-stdlib pattern miner. Single-user context: full quotes (≤300 chars) and full secret values surfaced for rotation tracking.")
     lines.append("> Output remains local-only — no network egress, no auto-publish.")
     lines.append("")
+
+    if coverage is not None:
+        lines.extend(["## Source coverage", "",
+                      f"- Processed: {coverage['processed']}; rejected: {coverage['failed_count']}; outside mtime window: {coverage['outside_mtime_window']}.",
+                      "- Every selected source is reprocessed; the stat inventory does not skip unchanged inputs."])
+        for failure in coverage["failed_sources"]:
+            locator = failure['path'].replace("`", "'").replace("\n", " ")
+            lines.append(f"- Rejected `{locator}`: {failure['error_type']} (no aggregate retained).")
+        if coverage["failures_truncated"]:
+            lines.append(f"- Additional rejected source locators omitted: {coverage['failures_truncated']}.")
+        lines.append("")
 
     _render_corrections(lines, corrections)
     _render_sequences(lines, sequences)

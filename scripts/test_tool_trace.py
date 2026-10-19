@@ -269,3 +269,104 @@ def test_hook_with_fifo_state_stays_unattributed_without_blocking(tmp_path):
     code=f"import sys;sys.path.insert(0,{str(Path(__file__).resolve().parent)!r});from pathlib import Path;import tool_trace as t;s=t.record_hook(Path({str(tmp_path)!r}),'start',{{'tool_name':'Bash','session_id':'s','timestamp':'2026-10-19T12:00:00Z'}});assert s['attributes']['build_loop.run_id'] is None"
     result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=2)
     assert result.returncode==0,result.stderr
+
+
+def test_reingest_deduplicates_rotated_legacy_ordinal_spans(tmp_path):
+    source=tmp_path/'session.jsonl'
+    source.write_text(_line('user','hello','2026-10-19T12:00:00Z')+'\n'+_line('assistant',[{'type':'tool_use','id':'call','name':'Bash','input':{}}],'2026-10-19T12:00:01Z')+'\n'+_line('user',[{'type':'tool_result','tool_use_id':'call','content':'ok'}],'2026-10-19T12:00:02Z'))
+    old=trace.build_span(workdir=tmp_path,session_id='session',tool_name='Bash',tool_use_id='call',phase='reconciled',ordinal=1)
+    old['attributes'].pop('gen_ai.tool.call.id',None)
+    old['attributes'].pop('build_loop.tool.call_id_sha256',None)
+    rotated=tmp_path/trace.TRACE_PATH.with_suffix('.jsonl.1')
+    rotated.parent.mkdir(parents=True)
+    rotated.write_text(json.dumps(old)+'\n')
+    assert trace.ingest_transcript(tmp_path,source)['written']==0
+
+
+def test_failed_ingestion_has_a_visible_bounded_receipt(tmp_path,monkeypatch):
+    import pytest,transcript_adapter as adapter
+    source=tmp_path/'oversized.jsonl';source.write_text('x'*100)
+    monkeypatch.setattr(adapter,'MAX_SOURCE_BYTES',50)
+    with pytest.raises(adapter.TranscriptLimitError):trace.ingest_transcript(tmp_path,source)
+    receipt=tmp_path/'.build-loop/telemetry/tool-traces.coverage.json'
+    assert receipt.exists()
+    data=json.loads(receipt.read_text())
+    assert data['receipts'][-1]['status']=='skipped'
+    assert data['receipts'][-1]['reason']=='input_limit'
+
+
+def test_semantic_dedup_ignores_span_hash_and_tolerates_corrupt_rotated_shapes(tmp_path):
+    source=tmp_path/'session.jsonl'
+    source.write_text(_line('assistant',[{'type':'tool_use','id':'call','name':'Bash','input':{}}],'2026-10-19T12:00:01Z')+'\n'+_line('user',[{'type':'tool_result','tool_use_id':'call','content':'ok'}],'2026-10-19T12:00:02Z'))
+    span=trace.build_span(workdir=tmp_path,session_id='session',tool_name='Bash',tool_use_id='call',phase='reconciled')
+    span['span_id']='arbitrary-legacy-hash'
+    path=tmp_path/trace.TRACE_PATH.with_suffix('.jsonl.2');path.parent.mkdir(parents=True)
+    shapes=[[],{'attributes':[],'event':'reconciled'}, {'span_id':[],'event':'reconciled','attributes':{'session.id':'session','gen_ai.tool.name':'Bash'}}, {**span,'status':[]},span]
+    path.write_text('broken json\n'+'\n'.join(json.dumps(row) for row in shapes))
+    assert trace.ingest_transcript(tmp_path,source)['written']==0
+    receipt=json.loads((tmp_path/'.build-loop/telemetry/tool-traces.coverage.json').read_text())['receipts'][-1]
+    assert receipt['history']['invalid_records']==5
+    assert receipt['history']['older_call_identity']=='unavailable'
+
+
+def test_history_budget_failure_precedes_any_trace_publication(tmp_path,monkeypatch):
+    import pytest,transcript_adapter as adapter
+    source=tmp_path/'session.jsonl'
+    source.write_text(_line('assistant',[{'type':'tool_use','id':'new','name':'Bash','input':{}}],'2026-10-19T12:00:01Z'))
+    old=trace.build_span(workdir=tmp_path,session_id='other',tool_name='Bash',tool_use_id='old',phase='observed')
+    trace.append_span(tmp_path,old)
+    path=tmp_path/trace.TRACE_PATH;before=path.read_bytes()
+    monkeypatch.setattr(trace,'MAX_HISTORY_BYTES',1)
+    with pytest.raises(adapter.TranscriptLimitError):trace.ingest_transcript(tmp_path,source)
+    assert path.read_bytes()==before
+    row=json.loads((tmp_path/'.build-loop/telemetry/tool-traces.coverage.json').read_text())['receipts'][-1]
+    assert row['status']=='skipped'
+    assert row['history']['aggregate_read_budget_bytes']==1
+
+
+def test_receipts_retain_only_latest_bounded_source_failures(tmp_path,monkeypatch):
+    import pytest
+    monkeypatch.setattr(trace,'MAX_COVERAGE_RECEIPTS',3)
+    for index in range(5):
+        source=tmp_path/f'source-{index}.jsonl'
+        source.write_text(json.dumps({'sessionId':'actual','type':'user','message':{'content':'hello'}}))
+        with pytest.raises(ValueError):trace.ingest_transcript(tmp_path,source,session_id='other')
+    path=tmp_path/'.build-loop/telemetry/tool-traces.coverage.json'
+    assert path.stat().st_size<=trace.MAX_COVERAGE_BYTES
+    rows=json.loads(path.read_text())['receipts']
+    assert len(rows)==3 and all(row['status']=='skipped' for row in rows)
+    assert rows[0]['source_locator'].endswith('source-2.jsonl')
+    assert trace.summarize(tmp_path)['coverage']['ingestion']['receipts']==rows
+
+
+def test_call_count_budget_rejects_source_before_writes(tmp_path,monkeypatch):
+    import pytest,transcript_adapter as adapter
+    source=tmp_path/'source.jsonl'
+    source.write_text(_line('assistant',[{'type':'tool_use','id':str(index),'name':'Bash','input':{}} for index in range(2)],'2026-10-19T12:00:00Z'))
+    monkeypatch.setattr(trace,'MAX_INGEST_CALLS',1)
+    with pytest.raises(adapter.TranscriptLimitError):trace.ingest_transcript(tmp_path,source)
+    assert not (tmp_path/trace.TRACE_PATH).exists()
+
+
+def test_actual_cli_rejection_keeps_fail_open_exit_and_source_receipt(tmp_path):
+    import subprocess,sys
+    from transcript_adapter import MAX_SOURCE_BYTES
+    source=tmp_path/'oversized.jsonl'
+    with source.open('wb') as handle:handle.truncate(MAX_SOURCE_BYTES+1)
+    result=subprocess.run([sys.executable,str(Path(trace.__file__).resolve()),'--workdir',str(tmp_path),'ingest','--transcript',str(source)],input='{}',capture_output=True,text=True,timeout=5)
+    assert result.returncode==0
+    row=json.loads((tmp_path/'.build-loop/telemetry/tool-traces.coverage.json').read_text())['receipts'][-1]
+    assert row['status']=='skipped' and row['reason']=='input_limit'
+    assert not (tmp_path/trace.TRACE_PATH).exists()
+
+
+def test_concurrent_reconciliation_shares_semantic_writer_lock(tmp_path):
+    import subprocess,sys
+    source=tmp_path/'session.jsonl'
+    source.write_text(_line('assistant',[{'type':'tool_use','id':'call','name':'Bash','input':{}}],'2026-10-19T12:00:01Z')+'\n'+_line('user',[{'type':'tool_result','tool_use_id':'call','content':'ok'}],'2026-10-19T12:00:02Z'))
+    command=[sys.executable,str(Path(trace.__file__).resolve()),'--workdir',str(tmp_path),'ingest','--transcript',str(source)]
+    processes=[subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE) for _ in range(2)]
+    for process in processes:
+        stdout,stderr=process.communicate(timeout=5)
+        assert process.returncode==0,stderr
+    assert len(list(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH)))==1

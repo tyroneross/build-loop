@@ -297,3 +297,48 @@ def test_sweep_reuses_revision_cache(tmp_path,monkeypatch):
     second,_=sweep.normalize_transcript(source,tmp_path/'cache')
     assert first == second and first != source and len(calls) == 1
     assert adapter.session_key(first) == 'original'
+
+
+def test_miner_failure_replaces_stale_candidates_with_visible_coverage(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    out=tmp_path/'out';out.mkdir()
+    (out/'.candidates.json').write_text(json.dumps({'candidates':[{'stale':True}]}))
+    stage=tmp_path/'stage';monkeypatch.setattr(sweep,'RETRO_STAGING',stage)
+    monkeypatch.setattr(sweep.subprocess,'run',lambda *args,**kwargs:SimpleNamespace(returncode=1))
+    result=sweep.run_miner(Path(__file__).resolve().parents[2],out)
+    assert result['candidates']==[]
+    assert result['coverage']['complete_selected_sources'] is False
+    receipt=stage/'miner-coverage.json'
+    assert json.loads(receipt.read_text())['coverage']['failure']=='miner_nonzero_exit'
+
+
+def test_empty_candidates_keep_miner_source_failure_receipt(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    out=tmp_path/'out';out.mkdir()
+    coverage={'failed_count':1,'failed_sources':[{'path':'source','error_type':'TranscriptReadError'}]}
+    (out/'.candidates.json').write_text(json.dumps({'candidates':[],'coverage':coverage}))
+    stage=tmp_path/'stage';monkeypatch.setattr(sweep,'RETRO_STAGING',stage)
+    monkeypatch.setattr(sweep.subprocess,'run',lambda *args,**kwargs:SimpleNamespace(returncode=0))
+    result=sweep.run_miner(Path(__file__).resolve().parents[2],out)
+    assert result['coverage']==coverage
+    assert json.loads((stage/'miner-coverage.json').read_text())['coverage']==coverage
+
+
+def test_optional_adapter_absence_keeps_session_retro_source_key(tmp_path,monkeypatch):
+    import pytest
+    source=tmp_path/'session.jsonl';source.write_text('{}\n')
+    seen=[]
+    monkeypatch.setattr(sweep,'resolve_transcript',lambda:str(source))
+    monkeypatch.setattr(sweep,'normalize_transcript',lambda *args:(source,None))
+    monkeypatch.setattr(sweep,'session_is_trivial',lambda *args:False)
+    monkeypatch.setattr(sweep,'find_build_loop',lambda:tmp_path)
+    monkeypatch.setattr(sweep,'resolve_project_cwd',lambda *args:tmp_path)
+    monkeypatch.setattr(sweep,'is_project_dir',lambda *args:True)
+    monkeypatch.setattr(sweep,'formal_run_retro_exists',lambda *args:False)
+    monkeypatch.setattr(sweep,'_adapter',lambda:None)
+    monkeypatch.setattr(sweep,'run_session_retro',lambda *args,**kwargs:seen.append(kwargs['source_key']))
+    monkeypatch.setattr(sweep,'run_miner',lambda *args:{'candidates':[]})
+    def stop():raise SystemExit(0)
+    monkeypatch.setattr(sweep,'_log_and_exit',stop)
+    with pytest.raises(SystemExit):sweep.main()
+    assert seen==['session']

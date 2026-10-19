@@ -701,3 +701,54 @@ def test_canonical_user_prose_and_conflicting_origins(tmp_path):
         stream.write(json.dumps({"type":"user","message":{"content":"Always parse once"},"_source":{"host":"codex","session_id":"other","record_index":1,"origin":"event_msg"}})+'\n')
     with pytest.raises(ValueError,match="conflicting"):
         process_session_file(normalized,None)
+
+
+def test_miner_isolates_conflicting_source_and_preserves_rerun_outputs(tmp_path):
+    import transcript_pattern_miner.__main__ as cli
+    sessions=build_fixture(tmp_path)
+    bad=sessions/'000-conflicting.jsonl'
+    bad.write_text('\n'.join(json.dumps({'type':'user','message':{'content':'Always preserve evidence'},'sessionId':session}) for session in ['one','two']))
+    out=tmp_path/'out'
+    args=['--all','--no-route-corrections','--sessions-dir',str(sessions),'--out-dir',str(out)]
+    assert cli.main(args)==0
+    first=json.loads((out/'.candidates.json').read_text())
+    assert first['coverage']['failed_count']==1
+    assert first['coverage']['failed_sources'][0]['path']==str(bad)
+    assert first['candidates']
+    assert cli.main(args)==0
+    second=json.loads((out/'.candidates.json').read_text())
+    assert second['candidates']==first['candidates']
+    assert second['coverage']['processed']==first['coverage']['processed']
+    assert '000-conflicting' in next(out.glob('????-??-??.md')).read_text()
+
+
+@pytest.mark.parametrize('failure',['size','fifo'])
+def test_miner_continues_after_real_source_budget_or_type_failure(tmp_path,monkeypatch,failure):
+    import os,transcript_adapter as adapter
+    import transcript_pattern_miner.__main__ as cli
+    sessions=build_fixture(tmp_path)
+    limit=max(path.stat().st_size for path in sessions.glob('*.jsonl'))+1
+    monkeypatch.setattr(adapter,'MAX_SOURCE_BYTES',limit)
+    bad=sessions/'000-unreadable.jsonl'
+    if failure=='size':
+        with bad.open('wb') as handle:handle.truncate(limit+1)
+    else:os.mkfifo(bad)
+    out=tmp_path/'out'
+    assert cli.main(['--all','--no-route-corrections','--sessions-dir',str(sessions),'--out-dir',str(out)])==0
+    data=json.loads((out/'.candidates.json').read_text())
+    assert data['coverage']['failed_count']==1
+    assert data['coverage']['processed']==3
+    assert data['candidates']
+
+
+def test_selected_sources_do_not_pay_unused_content_hash_pass(tmp_path,monkeypatch):
+    import transcript_adapter as adapter
+    import transcript_pattern_miner.__main__ as cli
+    sessions=build_fixture(tmp_path)
+    def forbidden(*args):raise AssertionError('unused content hash pass')
+    monkeypatch.setattr(adapter,'_source_revision',forbidden)
+    out=tmp_path/'out'
+    assert cli.main(['--all','--no-route-corrections','--sessions-dir',str(sessions),'--out-dir',str(out)])==0
+    data=json.loads((out/'.candidates.json').read_text())
+    assert data['coverage']['failed_count']==0
+    assert data['coverage']['processed']==3
