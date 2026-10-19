@@ -54,11 +54,12 @@
 set -u
 
 SWEEP="${1:-}"
-# Foreground work is only stdin capture + detached dispatch. Hashing, parsing,
+# Foreground work only dispatches; the worker inherits the payload pipe. Hashing, parsing,
 # cache waits and consumers belong to the existing worker invocation.
 if [ "${2:-}" != "--worker" ]; then
-    PAYLOAD="$(cat 2>/dev/null)" || PAYLOAD=""
-    _BL_STOP_PAYLOAD="$PAYLOAD" nohup "$BASH" "$0" "$SWEEP" --worker </dev/null >/dev/null 2>&1 &
+    # Keep the inherited pipe open across the supervisor; payload bytes must
+    # never become one environment/argv string (exec has per-string limits).
+    nohup "$BASH" "$0" "$SWEEP" --worker <&0 >/dev/null 2>&1 &
     printf '{}'
     exit 0
 fi
@@ -79,7 +80,9 @@ _noop() {
 # Empty stdin is NORMAL on a host that supplies no Stop payload (Codex). The
 # old `[ -n "$PAYLOAD" ] || _noop` here made every non-Claude host a silent
 # no-op before the transcript was ever looked for.
-PAYLOAD="${_BL_STOP_PAYLOAD:-}"
+# A sentinel preserves trailing JSON whitespace through command substitution.
+PAYLOAD="$(cat 2>/dev/null && printf '.')" || PAYLOAD="."
+PAYLOAD="${PAYLOAD%.}"
 
 # Resolve python3 without depending on a populated PATH (shared helper).
 _HOOK_DIR="$(dirname "$0")"
@@ -87,22 +90,19 @@ _py=""
 [ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
 [ -n "$_py" ] || _noop
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 
-# Extract transcript_path + cwd from the payload. The payload is passed through
-# the environment (never interpolated into the python source) so a value
-# containing quotes or shell metacharacters cannot inject.
-_BL_STOP_PAYLOAD="$PAYLOAD"
-export _BL_STOP_PAYLOAD
+# Extract transcript_path + cwd through stdin, never shell source or exec
+# environment. The original JSON remains available for billing below.
 # Four lines: original path, cwd, explicit-path presence, declared session ID.
 # Newlines are stripped
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
-    "$_py" - <<'PY' 2>/dev/null
-import json, os
+    printf '%s' "$PAYLOAD" | "$_py" -c '
+import json, sys
 try:
-    d = json.loads(os.environ.get("_BL_STOP_PAYLOAD", "") or "{}")
+    d = json.loads(sys.stdin.read() or "{}")
     if not isinstance(d, dict):
         d = {}
 except Exception:
@@ -119,7 +119,7 @@ print(transcript)
 print(safe(d.get("cwd")))
 print("1" if provided else "0")
 print(safe(d.get("session_id")))
-PY
+' 2>/dev/null
 )" || _parsed=""
 
 TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
@@ -193,8 +193,11 @@ _run_one() {
     case "$1" in
     traces)
         if [ -n "$TRANSCRIPT" ]; then
-            nohup "$_py" "${PLUGIN_ROOT}/scripts/tool_trace.py" --workdir "$CWD" ingest \
-                --transcript "$TRANSCRIPT" --session-id "$SESSION_ID" </dev/null >/dev/null 2>&1 &
+            local trace_args=(--workdir "$CWD" ingest --transcript "$TRANSCRIPT" --session-id "$SESSION_ID")
+            if [ -n "$ORIGINAL_TRANSCRIPT" ]; then
+                trace_args+=(--source-locator "$ORIGINAL_TRANSCRIPT")
+            fi
+            nohup "$_py" "${PLUGIN_ROOT}/scripts/tool_trace.py" "${trace_args[@]}" </dev/null >/dev/null 2>&1 &
         else
             # Reuse the consumer's bounded failure receipt without reparsing an
             # unavailable original source or inventing another session identity.

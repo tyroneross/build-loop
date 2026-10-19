@@ -609,3 +609,46 @@ def test_complete_ingestion_accepts_empty_and_known_metadata_prefixes(tmp_path):
             assert events == []
         elif rows[-1].get('type') in {'assistant','response_item'}:
             assert events
+
+
+def test_complete_reader_rejects_cross_host_tool_records(tmp_path):
+    import pytest
+    codex = [
+        {"type": "session_meta", "payload": {"id": "codex-session"}},
+        {"type": "response_item", "payload": {"type": "function_call", "call_id": "a", "name": "exec", "arguments": "{}"}},
+    ]
+    claude = [{"type": "assistant", "sessionId": "claude-session", "message": {
+        "role": "assistant", "content": [{"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "true"}}]}}]
+    for rows in (codex + claude, claude + codex):
+        source = _write(tmp_path / "mixed.jsonl", rows)
+        with pytest.raises(ta.TranscriptReadError, match="unsupported transcript records"):
+            list(ta.iter_events(source, require_complete=True))
+        assert ta.normalize_cached(source, tmp_path / "cache") is None
+
+
+def test_complete_reader_rejects_unknown_nested_codex_records(tmp_path):
+    import pytest
+    for kind in ("response_item", "event_msg"):
+        source = _write(tmp_path / "unknown.jsonl", [
+            {"type": "session_meta", "payload": {"id": "session"}},
+            {"type": kind, "payload": {"type": "local_shell_call", "call_id": "missing", "action": {"command": ["true"]}}},
+        ])
+        with pytest.raises(ta.TranscriptReadError, match="unsupported transcript records"):
+            list(ta.iter_events(source, require_complete=True))
+        assert ta.normalize_cached(source, tmp_path / "cache") is None
+
+
+def test_complete_reader_accepts_supported_metadata_and_reasoning_prefixes(tmp_path):
+    rows = [
+        {"type": "file-history-snapshot"},
+        {"type": "session_meta", "payload": {"id": "session"}},
+        {"type": "turn_context", "payload": {"cwd": "/repo"}},
+        {"type": "response_item", "payload": {"type": "reasoning", "summary": []}},
+        {"type": "event_msg", "payload": {"type": "agent_reasoning", "text": "internal"}},
+        {"type": "event_msg", "payload": {"type": "token_count", "info": {}}},
+        {"type": "response_item", "payload": {"type": "message", "role": "developer", "content": []}},
+        {"type": "response_item", "payload": {"type": "function_call", "call_id": "a", "name": "exec", "arguments": "{}"}},
+    ]
+    events = list(ta.iter_events(_write(tmp_path / "prefixes.jsonl", rows), require_complete=True))
+    assert len(events) == 1
+    assert events[0]["message"]["content"][0]["id"] == "a"

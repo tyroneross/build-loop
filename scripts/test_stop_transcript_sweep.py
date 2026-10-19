@@ -189,8 +189,12 @@ class StopSweepHostContractTests(unittest.TestCase):
         # THE POINT OF THIS TEST: the host does not set this. Any hook that
         # needs it is dead in production.
         env.pop("CLAUDE_TRANSCRIPT_PATH", None)
-        env["CLAUDE_PLUGIN_ROOT"] = str(self.root)
-        env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
+        if getattr(self, "no_claude_env", False):
+            env.pop("CLAUDE_PLUGIN_ROOT", None)
+            env.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            env["CLAUDE_PLUGIN_ROOT"] = str(self.root)
+            env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
         env["BL_TEST_RECORD"] = str(self.record)
         env["BUILD_LOOP_TRANSCRIPT_WORKER_MS"] = str(getattr(self, "worker_budget_ms", 120000))
         env["HOME"] = str(self.root / "fakehome")
@@ -201,7 +205,7 @@ class StopSweepHostContractTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=env,
-            cwd=str(self.workdir),
+            cwd=str(getattr(self, "hook_cwd", self.workdir)),
             timeout=20,
         )
 
@@ -235,6 +239,65 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
 
     # ---- the convicting tests -----------------------------------------
+
+    def test_registered_codex_from_subdir_without_claude_environment(self):
+        from unittest.mock import patch
+        import shutil
+        # A real fixture checkout: wrapper location owns its script root.
+        (self.root / "hooks").unlink()
+        shutil.copytree(REPO / "hooks", self.root / "hooks")
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
+        self.no_claude_env = True
+        self.hook_cwd = self.root / "scripts"
+        import shlex
+        codex_registration = json.loads((REPO / ".codex/hooks.json").read_text())
+        command = next(h["command"] for g in codex_registration["hooks"]["Stop"] for h in g["hooks"]
+                       if "stop-transcript-sweep.sh" in h.get("command", ""))
+        # Claude's real registration requires its supplied plugin/project root.
+        # The shared wrapper itself also works without those host variables.
+        direct = "bash " + shlex.quote(str(self.root / "hooks/stop-transcript-sweep.sh")) + " all"
+        for name, registration in (("codex", command), ("direct-wrapper", direct)):
+            with self.subTest(host=name):
+                self.record.unlink(missing_ok=True)
+                with patch(__name__ + "._hook_command", return_value=registration):
+                    cp = self._run("all", self._payload())
+                self._assert_hook_contract(cp)
+                for sweep in ("cost-ledger", "decisions", "corrections", "findings", "traces"):
+                    self.assertTrue(self._records(sweep, timeout_s=2), sweep)
+
+    def test_registered_claude_from_subdir_preserves_explicit_plugin_root(self):
+        self.hook_cwd = self.root / "scripts"
+        cp = self._run("all", self._payload())
+        self._assert_hook_contract(cp)
+        for sweep in ("cost-ledger", "decisions", "corrections", "findings", "traces"):
+            self.assertTrue(self._records(sweep, timeout_s=2), sweep)
+
+    def test_large_registered_payload_preserves_billing_and_event_identity(self):
+        from unittest.mock import patch
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
+        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+            for size in (128 * 1024 + 1, 1024 * 1024 + 1):
+                with self.subTest(host=str(hooks_path), size=size):
+                    self.record.unlink(missing_ok=True)
+                    payload = json.loads(self._payload())
+                    marker = self.workdir / "must-not-execute"
+                    payload["final_message"] = "x" * size + ";touch " + str(marker) + ";$(false)"
+                    serialized = json.dumps(payload) + "\n\n"
+                    with patch(__name__ + ".HOOKS_JSON", hooks_path):
+                        cp = self._run("all", serialized)
+                    self._assert_hook_contract(cp)
+                    rows = self._records("cost-ledger", timeout_s=2)
+                    self.assertTrue(rows, "large Stop payload lost billing")
+                    self.assertEqual(rows[0]["stdin"], serialized)
+                    trace = self._records("traces", timeout_s=2)
+                    self.assertTrue(trace)
+                    self.assertIn(payload["session_id"], trace[0]["argv"])
+                    self.assertIn(payload["transcript_path"], trace[0]["argv"])
+                    locator = trace[0]["argv"].index("--source-locator")
+                    self.assertEqual(trace[0]["argv"][locator + 1], payload["transcript_path"])
+                    for consumer in ("decisions", "corrections", "findings"):
+                        self.assertTrue(self._records(consumer, timeout_s=2), consumer)
+                    self.assertFalse(marker.exists())
 
     def test_decisions_sweep_launches_from_stdin_transcript_path(self) -> None:
         cp = self._run("decisions", self._payload())
