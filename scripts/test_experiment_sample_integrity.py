@@ -151,6 +151,14 @@ def _seed_state_and_controls(workdir: Path, background_count: int = 3, control_c
     state = workdir / ".build-loop" / "state.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({"runs": runs}), encoding="utf-8")
+    review_dir = state.parent / "compatibility"
+    review_dir.mkdir(exist_ok=True)
+    for run in runs:
+        (review_dir / f"{run['run_id']}.json").write_text(json.dumps({
+            "schema_version": 1, "run_id": run['run_id'], "disposition": "not-applicable",
+            "reason": "Sample-floor fixture has no new component boundary lesson.",
+            "evidence": [".build-loop/state.json"],
+        }))
     return runs[0]["run_id"]
 
 

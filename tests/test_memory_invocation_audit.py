@@ -42,11 +42,11 @@ def test_recall_envelope_shape_on_empty_workdir(tmp_path: Path) -> None:
         assert isinstance(v, list), f"results_by_kind[{k}] must be a list"
     # Merged is bounded by limit * #kinds.
     assert len(env["merged"]) <= 5 * len(rbk)
-    # Reasons must include backend-unavailable signals (Postgres + MCP both expected down in CI).
-    reasons_text = " ".join(env["reasons"])
-    assert "db_unavailable" in reasons_text or "psycopg" in reasons_text or env["reasons"] == [] or any(
-        "mcp" in r or "db" in r for r in env["reasons"]
-    )
+    # SQLite can satisfy recall without a Postgres outage. The absent debugger
+    # remains a separate, explicit coverage gap instead of implying DB failure.
+    assert all(isinstance(reason, str) and reason for reason in env["reasons"])
+    if not (tmp_path / ".claude/memory/incidents").exists():
+        assert any(reason.startswith("debugger_unavailable:") for reason in env["reasons"])
 
 
 def test_recall_kind_filter_validates() -> None:

@@ -158,15 +158,11 @@ Full protocol: `references/iterate-protocol.md`. Highlights:
 
 ### Phase D: Closeout (runs by default at end of every run)
 
-Full protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presence, reap stale peers, stop watchers, relinquish lease, collapse branches via `scripts/collapse_run.py`, archive coord file, optional changes.jsonl rotation, final `run-closeout` post, state tracking, release briefed push-hold). The `## Branch hygiene` report block is sourced from collapse_run.py's JSON. Phase D runs even when Phase 6 Learn is deferred; the only skip is an explicit `closeout: false` in the dispatch envelope.
+Record ref goals and observable success criteria before implementation; assess original/current outcomes before closure per `skills/repo-maintenance/references/reconciliation.md`. Full closeout protocol: `references/phase-d-closeout.md`. Nine-step sequence (reap presence, reap stale peers, stop watchers, relinquish lease, collapse branches via `scripts/collapse_run.py`, archive coord file, optional changes.jsonl rotation, final `run-closeout` post, state tracking, release briefed push-hold). The `## Branch hygiene` report block is sourced from collapse_run.py's JSON. Phase D runs even when Phase 6 Learn is deferred; the only skip is an explicit `closeout: false` in the dispatch envelope.
 
 ### Phase 6: Learn (mandatory)
 
 Full protocol: `references/learn-protocol.md`. After the run record lands, invoke `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <run-id> --source review-g --json`. Dispatch each returned `work_orders[]` role using its payload. Attach architect output with `attest --artifact <path>`; this creates the promotion-reviewer order. Attach reviewer output with `attest --verdict <verdict>`. Emit the receipt's complete `learn_line`, then run `run_close_lint.py ... --require-orchestrator --require-learn`. A pending or error receipt keeps the report open. Outcomes are **accruing** (`Learn: accruing (N/3 runs)`), **deferred** (`Learn: deferred — <reason>`), or **full**. Promotion to `active/` still requires explicit `/build-loop:promote-experiment`.
-
-## Branch and worktree goals
-
-Before implementation on a new or adopted ref, attach the originating goal and observable success criteria to its `createdRefs` record. Use `worktree_guard.py --run-id <id> --purpose <goal> --success-criterion <outcome> --goal-source <request-or-plan>` for new worktrees, or `scripts/ref_goals.py` to fill `missing_goal` after Assess and before Execute. Preserve original intent and sourced revisions. Assess current criteria and the original goal before strict closeout, even when another implementation achieved the outcome. Follow `skills/repo-maintenance/references/reconciliation.md`; "merged" and "branch removed" are not outcome criteria.
 
 ## Capability Routing
 

@@ -365,3 +365,12 @@ def test_normalized_round_trip_preserves_source_and_records_container(tmp_path):
     assert reread['_source']['record_index']==2
     assert reread['_container']['path']==str(dest.resolve())
     assert reread['_container']['record_index']==1
+
+
+def test_named_pipe_is_rejected_before_blocking_open(tmp_path):
+    import os,pytest
+    source=tmp_path/'pipe';os.mkfifo(source)
+    import transcript_adapter as adapter
+    with pytest.raises(adapter.TranscriptReadError):
+        list(adapter.iter_events(source,require_complete=True))
+    assert adapter.normalize_cached(source,tmp_path/'cache') is None

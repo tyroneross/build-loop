@@ -197,7 +197,7 @@ class NoTranscriptBannerTests(unittest.TestCase):
     """
 
     def test_banner_present_when_transcript_absent(self) -> None:
-        sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "r",
+        sections = build(None, {"runs": [{"run_id": "r", "outcome": "pass"}]}, None, None, "r",
                          transcript_note="no transcript for this run (host=claude_code)")
         body = render_full_markdown(sections, run_id="r", repo="demo")
         self.assertIn("NO TRANSCRIPT", body)

@@ -208,6 +208,8 @@ def test_retained_experiment_has_review_recovery_and_no_cleanup(repo):
                  'experiment_head':git(repo,'rev-parse','original-approach'),
                  'target_branch':'main', 'recovery_ref':'original-approach',
                  'next_review':'after canonical parser validation',
+                 'review_trigger':'rebase when canonical parser or schema changes',
+                 'evidence':['oracle receipt'],
                  'disposition_criteria':'integrate if equivalent and faster; otherwise archive recoverably'}
     entry = goals.record(repo, {'run_id':'ours', 'branch':'original-approach',
                                'expected_revision':1, 'retention':retention})
@@ -225,3 +227,8 @@ def test_placeholder_ref_contract_cannot_close():
     entry = {"goal_history":[{"revision":1,"goal":"outcome", "source":"user", "reason":"initial", "recorded_at":"now", "success_criteria":["<verifiable condition 1>"]}]}
     assert "placeholder" in contract_error(entry)
     assert "placeholder" in closure_error(entry, "source", "target")
+
+
+def test_live_inventory_does_not_claim_complete_when_ledger_is_unreadable(repo):
+    (repo/'.build-loop/state.json').write_text('{broken')
+    assert goals.local_inventory(repo)['status'] == 'incomplete'

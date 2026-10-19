@@ -377,6 +377,12 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
     path = Path(path)
     consumed = 0
     try:
+        if not path.is_file():
+            if path.exists():
+                raise TranscriptReadError("transcript source must be a regular file")
+            if require_complete:
+                raise TranscriptReadError("transcript source is absent")
+            return
         if path.stat().st_size > MAX_SOURCE_BYTES:
             raise TranscriptLimitError("transcript exceeds source byte budget")
         fmt = UNKNOWN
@@ -459,7 +465,7 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
         if pending is not None:
             yield pending
     except OSError as exc:
-        if consumed or require_complete:
+        if isinstance(exc, TranscriptReadError) or consumed or require_complete:
             raise TranscriptReadError("transcript read incomplete") from exc
         return
 
@@ -520,6 +526,8 @@ def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS, *, keep: Path | None 
 
 
 def _source_revision(source: Path) -> str:
+    if not source.is_file():
+        raise TranscriptReadError("transcript source must be a regular file")
     if source.stat().st_size > MAX_SOURCE_BYTES:
         raise TranscriptLimitError("transcript exceeds source byte budget")
     digest = hashlib.sha256()

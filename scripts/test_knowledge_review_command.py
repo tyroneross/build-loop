@@ -156,3 +156,12 @@ class KnowledgeReviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_canonical_review_path_outside_checkout_is_preserved(tmp_path,monkeypatch):
+    import knowledge_review
+    outside=tmp_path/'canonical';outside.mkdir()
+    (outside/'decision.md').write_text("---\nid: external\ntitle: Canonical review\n---\n")
+    workdir=tmp_path/'checkout';workdir.mkdir()
+    monkeypatch.setattr(knowledge_review,'review_dir_for',lambda _:outside)
+    assert knowledge_review.review_queue_items(workdir)[0]['path'] == str((outside/'decision.md').resolve())

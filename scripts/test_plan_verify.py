@@ -21,10 +21,18 @@ from context_bootstrap import write_packet  # noqa: E402
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT)] + args,
-        capture_output=True, text=True, timeout=30,
-    )
+    # Legacy fixtures characterize independent rules. Declare their decision
+    # context explicitly so a developer's active Phase 1 packet cannot leak in.
+    if "--repo" in args and Path(args[args.index("--repo") + 1]).resolve() == REPO_ROOT.resolve() and "--run-id" not in args:
+        original = Path(args[0]).read_text()
+        if "## Decision History" not in original:
+            with tempfile.TemporaryDirectory() as directory:
+                copy = Path(directory) / Path(args[0]).name
+                copy.write_text(original + "\n## Decision History\n\n- Unverified: Characterization fixture tests other verifier rules; no decision judgment is claimed.\n- Update: none\n")
+                return subprocess.run([sys.executable, str(SCRIPT), str(copy), *args[1:]],
+                                      capture_output=True, text=True, timeout=30)
+    return subprocess.run([sys.executable, str(SCRIPT)] + args,
+                          capture_output=True, text=True, timeout=30)
 
 
 class DecisionHistoryDispositionTests(unittest.TestCase):

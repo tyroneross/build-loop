@@ -52,19 +52,35 @@ def test_codex_session_start_probe_starts_watcher() -> None:
     )
 
 
-def test_claude_session_start_watcher_uses_long_lived_parent() -> None:
-    script = CLAUDE_SESSION_HOOK.read_text(encoding="utf-8")
-
-    assert "--tool claude_code --session-id" in script
-    assert "session-start-safe --workdir" in script
-    assert "session-start-advance --workdir" in script
-    assert script.count('--session-id "$RALLY_HOOK_SESSION_ID"') >= 4
-    assert "CLAUDE_SESSION_ID" in script
-    assert "--mode hook --start-watch" in script
-    assert '--watch-parent-pid "${PPID}"' in script, (
-        "Claude SessionStart must tie the watcher to the host parent; the "
-        "short-lived session_probe process cannot own the detached watcher."
-    )
+def test_claude_session_start_watcher_uses_long_lived_parent(tmp_path: Path) -> None:
+    import time
+    hook_dir, _ = _recording_claude_hook_plugin(tmp_path)
+    shutil.copyfile(REPO / "hooks/_bounded_hook.sh", hook_dir / "_bounded_hook.sh")
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    subprocess.run(["git", "init", "-q", str(workdir)], check=True)
+    capture = tmp_path / "watcher.jsonl"
+    env = dict(os.environ)
+    for key in ("BUILD_LOOP_RALLY_SESSION_START_FOREGROUND", "BUILD_LOOP_RALLY_POINT_SKIP_WATCH", "BUILD_LOOP_RALLY_START_PARENT_PID"):
+        env.pop(key, None)
+    env.update({"CLAUDE_PROJECT_DIR": str(workdir), "RALLY_TOOL_ID": "claude_code", "_BL_HOOK_CAPTURE": str(capture)})
+    result = subprocess.run(["bash", str(hook_dir / "session-start-rally-point.sh")],
+                            input=json.dumps({"session_id":"watcher-session"}), capture_output=True,
+                            text=True, env=env, timeout=5)
+    assert result.returncode == 0
+    deadline = time.monotonic() + 3
+    records = []
+    while time.monotonic() < deadline:
+        if capture.exists():
+            records = [json.loads(line) for line in capture.read_text().splitlines() if line]
+            if any(record["script"] == "session_probe.py" for record in records):
+                break
+        time.sleep(0.02)
+    probe = next(record["argv"] for record in records if record["script"] == "session_probe.py")
+    assert probe[probe.index("--tool") + 1] == "claude_code"
+    assert probe[probe.index("--session-id") + 1] == "watcher-session"
+    assert "--start-watch" in probe
+    assert probe[probe.index("--watch-parent-pid") + 1] == str(os.getpid())
 
 
 def test_claude_plugin_preserves_session_start_event_stdin() -> None:

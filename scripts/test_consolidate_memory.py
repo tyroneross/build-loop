@@ -23,6 +23,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import importlib.util
+import pytest
+
+pytestmark = [pytest.mark.db, pytest.mark.live]
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -32,6 +36,8 @@ SCHEMA_TEST = "build_loop_memory_test"
 
 
 def _has_db() -> bool:
+    if importlib.util.find_spec("psycopg") is None:
+        return False
     if "DATABASE_URL" in os.environ:
         return True
     conn_env = Path.home() / ".config" / "agent-memory" / "connection.env"

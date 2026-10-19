@@ -517,8 +517,18 @@ class TestGoldenFixture(unittest.TestCase):
     """ACCEPTANCE: the 2026-08-29 retro, filed by hand into three repos."""
 
     def setUp(self) -> None:
-        self.real_bl = Path.home() / "dev" / "git-folder" / "build-loop"
-        self.plan = ff.plan(GOLDEN, build_loop_root=self.real_bl)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo_parent = Path(temporary.name)
+        self.real_bl = self.repo_parent / "build-loop"
+        self.toolkit = self.repo_parent / "RossLabs-AI-Toolkit"
+        for repo in (self.real_bl, self.toolkit):
+            (repo / ".git").mkdir(parents=True)
+        (self.real_bl / ".build-loop/backlog/items").mkdir(parents=True)
+        (self.toolkit / "LESSONS-LEARNED.md").write_text("# Historical filing fixture\n")
+        (self.toolkit / "plugins/mockup-gallery").mkdir(parents=True)
+        (self.toolkit / "plugins/build-loop").mkdir()
+        self.plan = ff.plan(GOLDEN, build_loop_root=self.real_bl, repo_roots=[self.repo_parent])
 
     def test_identifies_the_six_ranked_findings(self):
         self.assertEqual(self.plan["finding_count"], 6)
@@ -534,7 +544,7 @@ class TestGoldenFixture(unittest.TestCase):
         self.assertEqual(entry["target"]["mechanism"], "lessons-learned")
         self.assertEqual(
             Path(entry["target"]["path"]),
-            Path.home() / "dev" / "git-folder" / "RossLabs-AI-Toolkit" / "LESSONS-LEARNED.md",
+            self.toolkit / "LESSONS-LEARNED.md",
         )
 
     # GROUND TRUTH: where the human actually filed each of the six findings,
@@ -601,7 +611,7 @@ class TestGoldenFixture(unittest.TestCase):
                   sorted(p.name for p in (self.real_bl / ".build-loop" / "backlog"
                                           / "items").glob("*.md"))
                   if (self.real_bl / ".build-loop" / "backlog" / "items").is_dir() else [])
-        ff.plan(GOLDEN, build_loop_root=self.real_bl)
+        ff.plan(GOLDEN, build_loop_root=self.real_bl, repo_roots=[self.repo_parent])
         after = (GOLDEN.read_text(encoding="utf-8"),
                  sorted(p.name for p in (self.real_bl / ".build-loop" / "backlog"
                                          / "items").glob("*.md"))

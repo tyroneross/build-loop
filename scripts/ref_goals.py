@@ -172,7 +172,8 @@ def local_inventory(repo):
                 elif key == "prunable": row["prunable"] = value or True
             if row: worktrees.append(row)
         items = inventory(repo, branches, worktrees)
-        return {"status": "complete", "items": items,
+        incomplete = any(str(row.get("reason", "")).startswith("goal ledger unavailable:") for row in items)
+        return {"status": "incomplete" if incomplete else "complete", "items": items,
                 "branch_count": len(branches), "worktree_count": len(worktrees),
                 "prunable_count": sum("prunable" in row for row in worktrees),
                 "scope": "local Git and accessible ledgers; branch/worktree rows may overlap"}
@@ -233,9 +234,11 @@ def record(workdir, payload):
                 raise ValueError('record a valid goal before retaining an experiment')
             retention = payload['retention']
             required = ('owner', 'hypothesis', 'base_head', 'experiment_head', 'target_branch',
-                        'recovery_ref', 'next_review', 'disposition_criteria')
+                        'recovery_ref', 'next_review', 'review_trigger', 'disposition_criteria')
             if not isinstance(retention, dict) or not all(text(retention.get(k)) for k in required):
                 raise ValueError('experiment retention requires ' + ', '.join(required))
+            if not strings(retention.get('evidence')):
+                raise ValueError('experiment retention requires nonempty evidence references')
             entry['retention'] = copy.deepcopy(retention)
             entry['review_hold'] = True
             entry['review_hold_reason'] = retention['disposition_criteria']

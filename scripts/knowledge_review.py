@@ -78,7 +78,7 @@ def review_queue_items(workdir: Path) -> list[dict]:
             "primary_tag": fm.get("primary_tag"),
             "entity": fm.get("entity"),
             "date": fm.get("date"),
-            "path": str(f.relative_to(workdir)),
+            "path": str(f.relative_to(workdir)) if f.is_relative_to(workdir) else str(f.resolve()),
         })
     return out
 
@@ -276,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         args.schema = _ds()
 
     workdir = Path(args.workdir).resolve()
+    from _paths import set_memory_workdir
+    set_memory_workdir(workdir)
 
     review = review_queue_items(workdir)
     rot = rot_items(workdir, args.rot_threshold_days)

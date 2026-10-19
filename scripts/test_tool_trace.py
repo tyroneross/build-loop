@@ -134,3 +134,11 @@ def test_source_session_deduplicates_raw_normalized_and_revision_copy(tmp_path):
     import pytest
     with pytest.raises(ValueError,match="conflicting"):
         trace.ingest_transcript(tmp_path,source,session_id="different")
+
+
+def test_named_pipe_summary_is_rejected_without_waiting(tmp_path):
+    import os,pytest
+    from transcript_adapter import TranscriptReadError
+    path=tmp_path/'pipe';os.mkfifo(path)
+    with pytest.raises(TranscriptReadError):
+        trace.summarize_path(path)

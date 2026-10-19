@@ -307,8 +307,12 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
 
 def _iter_trace_rows(path: Path):
     """Stream bounded records; resource/IO failures remain explicit, not empty coverage."""
-    from transcript_adapter import MAX_SOURCE_BYTES, MAX_RECORD_BYTES, TranscriptLimitError
+    from transcript_adapter import MAX_SOURCE_BYTES, MAX_RECORD_BYTES, TranscriptLimitError, TranscriptReadError
     try:
+        if not path.is_file():
+            if path.exists():
+                raise TranscriptReadError("trace source must be a regular file")
+            return
         if path.stat().st_size > MAX_SOURCE_BYTES:
             raise TranscriptLimitError("Trace exceeds source byte budget")
         with path.open("rb") as handle:

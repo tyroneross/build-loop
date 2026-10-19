@@ -133,20 +133,21 @@ def _positive_int(value: Any) -> int | None:
 
 
 def _session_id_matches(actual: Any, expected: str | None) -> bool:
-    """Compare raw host ids with Rally's canonical managed-session identity."""
+    """Compare raw IDs with canonical parent/managed identity; retain generations."""
     if expected is None:
         return True
     if not isinstance(actual, str):
         return False
 
-    prefix = "sess:managed:"
+    prefixes = ("sess:managed:", "sess:parent:")
 
     def raw(value: str) -> str:
-        if value.startswith(prefix) and "#" in value[len(prefix):]:
-            return value[len(prefix):].rsplit("#", 1)[0]
+        for prefix in prefixes:
+            if value.startswith(prefix) and "#" in value[len(prefix):]:
+                return value[len(prefix):].rsplit("#", 1)[0]
         return value
 
-    if expected.startswith(prefix):
+    if expected.startswith(prefixes):
         # A canonical identity includes the generation/liveness suffix. Never
         # collapse ``#old`` and ``#live`` into the same proof.
         return actual == expected

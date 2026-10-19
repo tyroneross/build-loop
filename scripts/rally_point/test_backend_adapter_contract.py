@@ -2148,3 +2148,11 @@ def test_local_backend_never_shells_rally(
     assert result.status == "unavailable"
     assert result.precommit_unavailable
     assert result.reason == "native backend not selected"
+
+
+def test_parent_identity_matching_retains_canonical_generation():
+    assert adapter._session_id_matches('sess:parent:host-id#live','host-id')
+    assert adapter._session_id_matches('sess:parent:host-id#live','sess:parent:host-id#live')
+    assert not adapter._session_id_matches('sess:parent:other#live','host-id')
+    assert not adapter._session_id_matches('sess:parent:host-id#old','sess:parent:host-id#live')
+    assert not adapter._session_id_matches('sess:managed:host-id#live','sess:parent:host-id#live')
