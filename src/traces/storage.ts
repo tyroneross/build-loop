@@ -20,6 +20,7 @@ import type {
   TraceSeverity,
   TraceCollection,
   CollectionSummary,
+  TraceCoverage,
 } from './types';
 import type { MemoryConfig } from '../types';
 import { getTracePaths } from '../config';
@@ -35,7 +36,7 @@ export function generateTraceId(): string {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
   const timeStr = now.toISOString().slice(11, 19).replace(/:/g, '');
-  const random = Math.random().toString(36).substring(2, 6);
+  const random = randomUUID();
 
   return `TRC_${dateStr}_${timeStr}_${random}`;
 }
@@ -47,7 +48,7 @@ export function generateCollectionId(): string {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
   const timeStr = now.toISOString().slice(11, 19).replace(/:/g, '');
-  const random = Math.random().toString(36).substring(2, 4);
+  const random = randomUUID();
 
   return `COL_${dateStr}_${timeStr}_${random}`;
 }
@@ -65,6 +66,7 @@ export async function storeTrace(
   const metadata = path.join(paths.traces, 'metadata');
   await containedDirectory(paths.traces, metadata);
   const stored: UnifiedTrace = { ...trace, has_full_data: false };
+  delete stored.storage_coverage;
   delete stored.full_data_path;
   if (rawData !== undefined) {
     const content = JSON.stringify(rawData);
@@ -95,7 +97,10 @@ export async function loadTraceSummary(
   config?: MemoryConfig
 ): Promise<UnifiedTrace | null> {
   validateId(trace_id);
-  const snapshot = await loadTraceSnapshot(config);
+  const snapshot = await loadTraceSnapshot(config, { traceId: trace_id });
+  // A valid canonical record remains usable when optional legacy correlation
+  // input is unavailable. Its returned object explicitly carries that omission.
+  if (snapshot.index.coverage.invalid.length) requireComplete(snapshot);
   return snapshot.traces[trace_id] || null;
 }
 
@@ -110,24 +115,42 @@ export async function loadFullTrace(
 
   if (!trace?.full_data_path) return null;
 
-  try {
-    const paths = getTracePaths(config);
-    const locator = safeRawPath(trace, paths.raw);
-    await assertContained(paths.traces, locator);
-    return await readJson(locator, 64 * 1024 * 1024);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
+  const paths = getTracePaths(config);
+  const locator = safeRawPath(trace, paths.raw);
+  await assertContained(paths.traces, locator);
+  return await readJson(locator, 64 * 1024 * 1024, paths.traces);
 }
 
 /**
  * Load all traces (summaries only)
  */
 export async function loadAllTraces(config?: MemoryConfig): Promise<UnifiedTrace[]> {
-  return Object.values((await loadTraceSnapshot(config)).traces);
+  const snapshot = await loadTraceSnapshot(config);
+  requireComplete(snapshot);
+  return Object.values(snapshot.traces);
+}
+
+/** Explicit partial-result API. Legacy array APIs remain strict so JSON cannot
+ * silently discard coverage attached to an array. Callers must adopt this API
+ * to display healthy rows alongside invalid-record coverage. */
+export async function loadTraceResults(config?: MemoryConfig): Promise<{
+  traces: UnifiedTrace[]; coverage: TraceCoverage;
+}> {
+  const snapshot = await loadTraceSnapshot(config);
+  return { traces: Object.values(snapshot.traces), coverage: snapshot.index.coverage };
+}
+
+export class PartialTraceError extends Error {
+  constructor(public readonly coverage: TraceCoverage, public readonly traces: UnifiedTrace[]) {
+    super(`Incomplete trace coverage: ${coverage.invalid.map(item => item.reason).join('; ')}`);
+    this.name = 'PartialTraceError';
+  }
+}
+
+function requireComplete(snapshot: {index: TraceIndex & {coverage: TraceCoverage}; traces: Record<string, UnifiedTrace>}): void {
+  if (!snapshot.index.coverage.complete) {
+    throw new PartialTraceError(snapshot.index.coverage, Object.values(snapshot.traces));
+  }
 }
 
 /**
@@ -137,7 +160,8 @@ export async function loadTracesBySource(
   source: TraceSource,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const {index, traces} = await loadTraceSnapshot(config);
+  const snapshot = await loadTraceSnapshot(config); requireComplete(snapshot);
+  const {index, traces} = snapshot;
   const traceIds = index.by_source[source] || [];
 
   return traceIds
@@ -151,7 +175,8 @@ export async function loadTracesByCategory(
   category: TraceCategory,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const {index, traces} = await loadTraceSnapshot(config);
+  const snapshot = await loadTraceSnapshot(config); requireComplete(snapshot);
+  const {index, traces} = snapshot;
   const traceIds = index.by_category[category] || [];
 
   return traceIds
@@ -165,7 +190,8 @@ export async function loadTracesBySeverity(
   severity: TraceSeverity,
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
-  const {index, traces} = await loadTraceSnapshot(config);
+  const snapshot = await loadTraceSnapshot(config); requireComplete(snapshot);
+  const {index, traces} = snapshot;
   const traceIds = index.by_severity[severity] || [];
 
   return traceIds
@@ -180,7 +206,8 @@ export async function loadTracesForIncident(
   config?: MemoryConfig
 ): Promise<UnifiedTrace[]> {
   validateId(incident_id);
-  const {index, traces} = await loadTraceSnapshot(config);
+  const snapshot = await loadTraceSnapshot(config); requireComplete(snapshot);
+  const {index, traces} = snapshot;
   const traceIds = index.by_incident[incident_id] || [];
 
   return traceIds
@@ -194,108 +221,147 @@ export async function loadTracesForIncident(
 /**
  * Load or initialize trace index
  */
-export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex> {
-  return (await loadTraceSnapshot(config)).index;
+export async function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex & {coverage: TraceCoverage}> {
+  return (await loadTraceSnapshot(config, { indexOnly: true })).index;
 }
 
-/** Read canonical metadata once and derive every summary/index view together. */
-async function loadTraceSnapshot(config?: MemoryConfig): Promise<{
-  index: TraceIndex; traces: Record<string, UnifiedTrace>;
+/** Read each relevant metadata record once. Failures belong to a record, not
+ * its healthy neighbors. Index-only callers discard full objects immediately. */
+async function loadTraceSnapshot(config?: MemoryConfig, options: {traceId?: string; indexOnly?: boolean} = {}): Promise<{
+  index: TraceIndex & {coverage: TraceCoverage}; traces: Record<string, UnifiedTrace>;
 }> {
   const paths = getTracePaths(config);
-  let index = createEmptyIndex();
-  try {
-    await assertContained(paths.traces, paths.index);
-    index = await readJson(paths.index, 64 * 1024 * 1024) as TraceIndex;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
+  const index = createEmptyIndex();
+  const canonicalDirect = options.traceId && await pathPresent(path.join(paths.traces, 'metadata', `${options.traceId}.json`));
+  if (canonicalDirect) index.coverage.scope = 'canonical_trace_and_raw_availability';
   const entries: Record<string, TraceIndexEntry> = Object.create(null);
   const traces: Record<string, UnifiedTrace> = Object.create(null);
-  for (const entry of Object.values(index.traces)) {
-    validateId(entry.trace_id);
-    validateSource(entry.source);
-    if (!Array.isArray(entry.incident_ids)) throw new Error('Invalid legacy incident IDs');
-    entry.incident_ids.forEach(validateId);
-    // Old indexes discarded the locator. Recover only the known contained path.
-    const legacyRaw = path.join(paths.raw, entry.source, `${entry.trace_id}.json`);
-    let available = false;
-    try { await assertContained(paths.traces, legacyRaw); available = (await fs.stat(legacyRaw)).isFile(); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    entries[entry.trace_id] = { ...entry, has_full_data: available,
-                              full_data_path: available ? legacyRaw : undefined };
+  const invalid = (file: string, error: unknown, id?: string) => {
+    index.coverage.complete = false;
+    index.coverage.invalid.push({path: file, trace_id: id,
+      reason: error instanceof Error ? error.message : String(error)});
+  };
+  const legacyFailure = (error: unknown, id?: string) => {
+    if (!canonicalDirect) { invalid(paths.index, error, id); return; }
+    index.coverage.complete = false;
+    (index.coverage.omitted ||= []).push({path: paths.index,
+      reason: error instanceof Error ? error.message : String(error)});
+  };
+  // The legacy aggregate is compatibility input, never a publication owner.
+  if (await pathPresent(paths.index)) {
+    try {
+      await assertContained(paths.traces, paths.index);
+      const legacy = await readJson(paths.index, 64 * 1024 * 1024, paths.traces) as TraceIndex;
+      if (!legacy || !legacy.traces || typeof legacy.traces !== 'object' || Array.isArray(legacy.traces)) {
+        throw new Error('Invalid legacy trace index');
+      }
+      for (const [id, entry] of Object.entries(legacy.traces)) {
+        if (options.traceId && id !== options.traceId) continue;
+        try {
+          validateId(id);
+          if (!entry || entry.trace_id !== id) throw new Error('Legacy identity mismatch');
+          validateTrace(reconstructTraceFromIndex(entry));
+          if (!Array.isArray(entry.incident_ids)) throw new Error('Invalid legacy incident IDs');
+          entry.incident_ids.forEach(validateId);
+          const raw = path.join(paths.raw, entry.source, `${id}.json`);
+          const available = await pathPresent(raw);
+          if (available) await validateRawFile(paths.traces, raw);
+          entries[id] = {...entry, has_full_data: available, full_data_path: available ? raw : undefined};
+        } catch (error) { legacyFailure(error, id); }
+      }
+    } catch (error) { legacyFailure(error); }
   }
   const metadata = path.join(paths.traces, 'metadata');
-  try {
-    await assertContained(paths.traces, metadata);
-    for (const filename of await fs.readdir(metadata)) {
-      if (!filename.endsWith('.json')) continue;
-      const id = filename.slice(0, -5);
+  let filenames: string[] = [];
+  if (options.traceId) filenames = [`${options.traceId}.json`];
+  else if (await pathPresent(metadata)) {
+    try { await assertContained(paths.traces, metadata); filenames = await fs.readdir(metadata); }
+    catch (error) { invalid(metadata, error); }
+  }
+  for (const filename of filenames) {
+    if (!filename.endsWith('.json')) continue;
+    const id = filename.slice(0, -5), file = path.join(metadata, filename);
+    try {
       validateId(id);
-      const file = path.join(metadata, filename);
+      if (!await pathPresent(file)) continue;
       await assertContained(paths.traces, file);
-      const trace = await readJson(file, 1024 * 1024) as UnifiedTrace;
+      const trace = await readJson(file, 1024 * 1024, paths.traces) as UnifiedTrace;
       validateTrace(trace);
+      delete trace.storage_coverage;
       if (trace.trace_id !== id) throw new Error('Trace metadata identity mismatch');
       if (trace.has_full_data) {
         const raw = safeRawPath(trace, paths.raw);
-        await assertContained(paths.traces, raw);
-        await fs.access(raw);
+        await validateRawFile(paths.traces, raw);
         trace.full_data_path = raw;
-      } else { delete trace.full_data_path; }
+      } else delete trace.full_data_path;
       const entry = indexEntry(trace);
       entry.incident_ids = [...new Set([...(entries[id]?.incident_ids || []), ...entry.incident_ids])];
       entries[id] = entry;
-      traces[id] = trace;
+      if (!options.indexOnly) traces[id] = trace;
+    } catch (error) {
+      // A corrupt canonical record must never resurrect an obsolete legacy row.
+      delete entries[id]; delete traces[id]; invalid(file, error, id);
     }
-  } catch (error) {
-    // Missing metadata directory is the legacy format; missing referenced raw is corruption.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || await exists(metadata)) throw error;
   }
-  // Immutable edges have one publication point each; independent writers never
-  // overwrite another incident's correlation while rebuilding this projection.
   const correlations = path.join(paths.traces, 'correlations');
-  if (await exists(correlations)) {
-    await assertContained(paths.traces, correlations);
-    for (const traceId of await fs.readdir(correlations)) {
-      validateId(traceId);
-      const directory = path.join(correlations, traceId);
-      await assertContained(paths.traces, directory);
-      for (const filename of await fs.readdir(directory)) {
-        if (!filename.endsWith('.json')) continue;
-        const incidentId = filename.slice(0, -5);
-        validateId(incidentId);
-        const file = path.join(directory, filename);
-        await assertContained(paths.traces, file);
-        const edge = await readJson(file, 1024) as {trace_id: string; incident_id: string};
-        if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId) {
-          throw new Error('Correlation identity mismatch');
-        }
-        const entry = entries[traceId];
-        if (entry && !entry.incident_ids.includes(incidentId)) entry.incident_ids.push(incidentId);
+  if (await pathPresent(correlations)) {
+    try {
+      await assertContained(paths.traces, correlations);
+      const ids = options.traceId ? [options.traceId] : await fs.readdir(correlations);
+      for (const traceId of ids) {
+        const directory = path.join(correlations, traceId);
+        try {
+          validateId(traceId);
+          if (!await pathPresent(directory)) continue;
+          await assertContained(paths.traces, directory);
+          for (const filename of await fs.readdir(directory)) {
+            if (!filename.endsWith('.json')) continue;
+            const file = path.join(directory, filename), incidentId = filename.slice(0, -5);
+            try {
+              validateId(incidentId); await assertContained(paths.traces, file);
+              const edge = await readJson(file, 1024, paths.traces) as {trace_id: string; incident_id: string};
+              if (!edge || edge.trace_id !== traceId || edge.incident_id !== incidentId) throw new Error('Correlation identity mismatch');
+              const entry = entries[traceId];
+              if (!entry) throw new Error('Correlation references absent or invalid trace metadata');
+              if (!entry.incident_ids.includes(incidentId)) entry.incident_ids.push(incidentId);
+            } catch (error) { invalid(file, error, traceId); }
+          }
+        } catch (error) { invalid(directory, error, traceId); }
       }
-    }
+    } catch (error) { invalid(correlations, error); }
   }
-  // Derived projection avoids a shared read/modify/write race across processes.
-  index = createEmptyIndex();
   for (const entry of Object.values(entries)) {
     addEntry(index, entry);
-    const trace = traces[entry.trace_id] || reconstructTraceFromIndex(entry);
-    trace.incident_ids = [...entry.incident_ids];
-    trace.has_full_data = entry.has_full_data === true;
-    if (entry.full_data_path) trace.full_data_path = entry.full_data_path;
-    else delete trace.full_data_path;
-    traces[entry.trace_id] = trace;
+    if (!options.indexOnly) {
+      const trace = traces[entry.trace_id] || reconstructTraceFromIndex(entry);
+      trace.incident_ids = [...entry.incident_ids]; trace.has_full_data = entry.has_full_data === true;
+      if (entry.full_data_path) trace.full_data_path = entry.full_data_path;
+      else delete trace.full_data_path;
+      if (canonicalDirect && index.coverage.omitted?.length) trace.storage_coverage = index.coverage;
+      traces[entry.trace_id] = trace;
+    }
   }
   return {index, traces};
+}
+
+/** lstat distinguishes an absent path from a dangling symlink (corruption). */
+async function pathPresent(file: string): Promise<boolean> {
+  try { await fs.lstat(file); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+
+async function validateRawFile(root: string, file: string): Promise<void> {
+  const handle = await openContainedRegular(root, file, 64 * 1024 * 1024);
+  await handle.close();
 }
 
 /**
  * Create empty index
  */
-function createEmptyIndex(): TraceIndex {
+function createEmptyIndex(): TraceIndex & {coverage: TraceCoverage} {
   return {
     version: '1.0.0',
+    coverage: {complete: true, scope: 'metadata_and_raw_availability', invalid: []},
     last_updated: Date.now(),
     total_traces: 0,
     traces: {},
@@ -320,6 +386,7 @@ function validateTrace(trace: UnifiedTrace): void {
   if (!Number.isFinite(trace.timestamp) || !Number.isFinite(new Date(trace.timestamp).getTime()) ||
       !TRACE_SEVERITIES.has(trace.severity) || !TRACE_CATEGORIES.has(trace.category) ||
       typeof trace.operation !== 'string' || !trace.operation.trim() ||
+      typeof trace.has_full_data !== 'boolean' ||
       !trace.summary || typeof trace.summary.description !== 'string' ||
       !Array.isArray(trace.summary.highlights) || !trace.summary.highlights.every(v =>
         v && typeof v === 'object' && typeof v.label === 'string' && typeof v.value === 'string') ||
@@ -364,11 +431,50 @@ async function containedDirectory(root: string, dir: string): Promise<void> {
   }
   await assertContained(root, dir);
 }
-async function readJson(file: string, maxBytes: number): Promise<unknown> {
-  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NONBLOCK);
+/** O_NOFOLLOW protects the final opened component where supported. Directory
+ * and descriptor identity checks detect cooperative/one-shot namespace swaps
+ * before reading bytes, including swap-back races. Public Node APIs provide no
+ * portable openat/RESOLVE_BENEATH guarantee against a same-privilege adversary
+ * continuously changing ancestors between checks; do not claim that boundary. */
+async function openContainedRegular(root: string, file: string, maxBytes: number) {
+  const [realRoot, target] = await Promise.all([fs.realpath(root), fs.realpath(file)]);
+  const relative = path.relative(realRoot, target);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Storage path escapes trace root');
+  }
+  const capture = async () => {
+    if (await fs.realpath(root) !== realRoot || await fs.realpath(target) !== target) {
+      throw new Error('Storage path changed during guarded open');
+    }
+    const identities: bigint[][] = [];
+    let directory = realRoot;
+    for (const part of ['', ...path.dirname(relative).split(path.sep).filter(p => p && p !== '.')]) {
+      if (part) directory = path.join(directory, part);
+      const entry = await fs.lstat(directory, {bigint: true});
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error('Storage ancestor changed during guarded open');
+      identities.push([entry.dev, entry.ino]);
+    }
+    const entry = await fs.lstat(target, {bigint: true});
+    if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Invalid or oversized trace file');
+    return {identities, entry};
+  };
+  const before = await capture();
+  const handle = await fs.open(target, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
   try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.size > maxBytes) throw new Error('Invalid or oversized trace file');
+    const opened = await handle.stat({bigint: true}), after = await capture();
+    if (!opened.isFile() || opened.size > BigInt(maxBytes)) throw new Error('Invalid or oversized trace file');
+    if (before.entry.dev !== opened.dev || before.entry.ino !== opened.ino ||
+        after.entry.dev !== opened.dev || after.entry.ino !== opened.ino ||
+        before.identities.length !== after.identities.length ||
+        before.identities.some((entry, i) => entry[0] !== after.identities[i][0] || entry[1] !== after.identities[i][1])) {
+      throw new Error('Storage identity changed during guarded open');
+    }
+    return handle;
+  } catch (error) { await handle.close(); throw error; }
+}
+async function readJson(file: string, maxBytes: number, root: string): Promise<unknown> {
+  const handle = await openContainedRegular(root, file, maxBytes);
+  try {
     const chunks: Buffer[] = [];
     let total = 0;
     while (true) {
@@ -463,6 +569,7 @@ export async function createCollection(
 
   // Load traces to generate summary
   const snapshot = await loadTraceSnapshot(config);
+  requireComplete(snapshot);
   const traces = traceIds.map(id => {
     validateId(id);
     return snapshot.traces[id] || null;
@@ -504,7 +611,7 @@ export async function loadCollection(
 
   try {
     await assertContained(paths.traces, filepath);
-    return await readJson(filepath, 1024 * 1024) as TraceCollection;
+    return await readJson(filepath, 1024 * 1024, paths.traces) as TraceCollection;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
@@ -580,8 +687,7 @@ export async function correlateTraceToIncident(
 ): Promise<void> {
   validateId(trace_id);
   validateId(incident_id);
-  const index = await loadTraceIndex(config);
-  if (!index.traces[trace_id]) return;
+  if (!await loadTraceSummary(trace_id, config)) return;
   const paths = getTracePaths(config);
   const directory = path.join(paths.traces, 'correlations', trace_id);
   await containedDirectory(paths.traces, directory);
@@ -597,6 +703,7 @@ export async function getTraceStats(config?: MemoryConfig): Promise<{
   by_severity: Record<string, number>;
   oldest_trace: number;
   newest_trace: number;
+  coverage: TraceCoverage;
 }> {
   const index = await loadTraceIndex(config);
 
@@ -615,6 +722,7 @@ export async function getTraceStats(config?: MemoryConfig): Promise<{
 
   return {
     total_traces: index.total_traces,
+    coverage: index.coverage,
     by_source: bySource,
     by_severity: bySeverity,
     oldest_trace: timestamps.length > 0 ? Math.min(...timestamps) : 0,

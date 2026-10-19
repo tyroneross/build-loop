@@ -84,6 +84,8 @@ export interface UnifiedTrace {
   // Quality & Relevance
   relevance_score?: number;      // 0-1, how relevant to debugging
   tokens_estimated: number;      // Estimated tokens for summary
+  /** Derived read coverage, present when optional legacy input was unavailable. */
+  storage_coverage?: TraceCoverage;
 }
 
 /**
@@ -167,6 +169,8 @@ export interface CollectionSummary {
  * Trace index for fast lookup
  */
 export interface TraceIndex {
+  /** Coverage of this projection; raw JSON payloads remain lazy and unparsed. */
+  coverage?: TraceCoverage;
   version: string;                    // Schema version
   last_updated: number;               // Unix timestamp
   total_traces: number;
@@ -182,6 +186,13 @@ export interface TraceIndex {
 
   // Correlation index
   by_incident: Record<string, string[]>;  // incident_id -> trace_ids
+}
+
+export interface TraceCoverage {
+  complete: boolean;
+  scope: 'metadata_and_raw_availability' | 'canonical_trace_and_raw_availability';
+  invalid: { path: string; trace_id?: string; reason: string }[];
+  omitted?: { path: string; reason: string }[];
 }
 
 /**

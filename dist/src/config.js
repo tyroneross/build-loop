@@ -75,6 +75,10 @@ function requireInteger(value, name, minimum) {
         throw new TypeError(`${name} must be a safe integer >= ${minimum}`);
     }
 }
+/** Optional properties explicitly set to undefined inherit their defaults. */
+function definedOverrides(value) {
+    return Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item !== undefined));
+}
 /** Get and validate the final configuration, allowing overrides to replace bad env values. */
 function getConfig(overrides) {
     const mode = overrides?.storageMode ?? (process.env.CLAUDE_MEMORY_MODE || 'local');
@@ -86,7 +90,7 @@ function getConfig(overrides) {
         autoMine: environmentBoolean('CLAUDE_MEMORY_AUTO_MINE', false),
         defaultSimilarityThreshold: environmentNumber('CLAUDE_MEMORY_THRESHOLD', 0.5),
         defaultMaxResults: environmentNumber('CLAUDE_MEMORY_MAX_RESULTS', 5),
-        ...overrides,
+        ...definedOverrides(overrides),
     };
     if (config.storageMode !== 'local' && config.storageMode !== 'shared') {
         throw new TypeError('storageMode must be local or shared');
@@ -149,7 +153,7 @@ function getTokenConfig(overrides) {
         },
         defaultTier: process.env.CLAUDE_MEMORY_TIER || 'compact',
         autoAdjust: environmentBoolean('CLAUDE_MEMORY_AUTO_ADJUST', true),
-        ...overrides,
+        ...definedOverrides(overrides),
     };
     if (config.defaultTier !== 'summary' && config.defaultTier !== 'compact' && config.defaultTier !== 'full') {
         throw new TypeError('defaultTier must be summary, compact or full');

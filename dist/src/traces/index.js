@@ -7,7 +7,7 @@
  * Exports all trace functionality.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.autoParseTraces = exports.getAdapter = exports.BrowserTraceAdapter = exports.LangchainAdapter = exports.SentryAdapter = exports.OpenTelemetryAdapter = exports.getSlowestOperations = exports.getTopErrors = exports.groupByCategory = exports.filterByTimeWindow = exports.summarizeTracesCompact = exports.createTraceSummary = exports.TraceSummarizer = exports.getTraceStats = exports.correlateTraceToIncident = exports.loadCollection = exports.createCollection = exports.loadTraceIndex = exports.loadTracesForIncident = exports.loadTracesBySeverity = exports.loadTracesByCategory = exports.loadTracesBySource = exports.loadAllTraces = exports.loadFullTrace = exports.loadTraceSummary = exports.storeTrace = exports.generateCollectionId = exports.generateTraceId = void 0;
+exports.autoParseTraces = exports.getAdapter = exports.BrowserTraceAdapter = exports.LangchainAdapter = exports.SentryAdapter = exports.OpenTelemetryAdapter = exports.getSlowestOperations = exports.getTopErrors = exports.groupByCategory = exports.filterByTimeWindow = exports.summarizeTracesCompact = exports.createTraceSummary = exports.TraceSummarizer = exports.getTraceStats = exports.correlateTraceToIncident = exports.loadCollection = exports.createCollection = exports.PartialTraceError = exports.loadTraceResults = exports.loadTraceIndex = exports.loadTracesForIncident = exports.loadTracesBySeverity = exports.loadTracesByCategory = exports.loadTracesBySource = exports.loadAllTraces = exports.loadFullTrace = exports.loadTraceSummary = exports.storeTrace = exports.generateCollectionId = exports.generateTraceId = void 0;
 // Storage
 var storage_1 = require("./storage");
 Object.defineProperty(exports, "generateTraceId", { enumerable: true, get: function () { return storage_1.generateTraceId; } });
@@ -21,6 +21,8 @@ Object.defineProperty(exports, "loadTracesByCategory", { enumerable: true, get: 
 Object.defineProperty(exports, "loadTracesBySeverity", { enumerable: true, get: function () { return storage_1.loadTracesBySeverity; } });
 Object.defineProperty(exports, "loadTracesForIncident", { enumerable: true, get: function () { return storage_1.loadTracesForIncident; } });
 Object.defineProperty(exports, "loadTraceIndex", { enumerable: true, get: function () { return storage_1.loadTraceIndex; } });
+Object.defineProperty(exports, "loadTraceResults", { enumerable: true, get: function () { return storage_1.loadTraceResults; } });
+Object.defineProperty(exports, "PartialTraceError", { enumerable: true, get: function () { return storage_1.PartialTraceError; } });
 Object.defineProperty(exports, "createCollection", { enumerable: true, get: function () { return storage_1.createCollection; } });
 Object.defineProperty(exports, "loadCollection", { enumerable: true, get: function () { return storage_1.loadCollection; } });
 Object.defineProperty(exports, "correlateTraceToIncident", { enumerable: true, get: function () { return storage_1.correlateTraceToIncident; } });

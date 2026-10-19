@@ -41,6 +41,8 @@ export interface UnifiedTrace {
     full_data_path?: string;
     relevance_score?: number;
     tokens_estimated: number;
+    /** Derived read coverage, present when optional legacy input was unavailable. */
+    storage_coverage?: TraceCoverage;
 }
 /**
  * Token-efficient summary for LLM context injection
@@ -105,6 +107,8 @@ export interface CollectionSummary {
  * Trace index for fast lookup
  */
 export interface TraceIndex {
+    /** Coverage of this projection; raw JSON payloads remain lazy and unparsed. */
+    coverage?: TraceCoverage;
     version: string;
     last_updated: number;
     total_traces: number;
@@ -114,6 +118,19 @@ export interface TraceIndex {
     by_severity: Record<TraceSeverity, string[]>;
     by_date: Record<string, string[]>;
     by_incident: Record<string, string[]>;
+}
+export interface TraceCoverage {
+    complete: boolean;
+    scope: 'metadata_and_raw_availability' | 'canonical_trace_and_raw_availability';
+    invalid: {
+        path: string;
+        trace_id?: string;
+        reason: string;
+    }[];
+    omitted?: {
+        path: string;
+        reason: string;
+    }[];
 }
 /**
  * Index entry for a single trace

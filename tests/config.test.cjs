@@ -53,7 +53,7 @@ test('malformed numeric environment values fail whole-value validation', () => {
 });
 test('memory overrides validate runtime types and paths', () => {
   environment({}, () => {
-    for (const overrides of [{storageMode:'other'}, {storageMode:undefined}, {memoryPath:''}, {memoryPath:' '}, {memoryPath:'bad\0path'}, {memoryPath:42}, {autoMine:'false'}, {defaultSimilarityThreshold:NaN}, {defaultSimilarityThreshold:Infinity}, {defaultSimilarityThreshold:-1}, {defaultSimilarityThreshold:2}, {defaultMaxResults:-1}, {defaultMaxResults:1.5}, {defaultMaxResults:'5'}]) assert.throws(() => getConfig(overrides),TypeError);
+    for (const overrides of [{storageMode:'other'}, {memoryPath:''}, {memoryPath:' '}, {memoryPath:'bad\0path'}, {memoryPath:42}, {autoMine:'false'}, {defaultSimilarityThreshold:NaN}, {defaultSimilarityThreshold:Infinity}, {defaultSimilarityThreshold:-1}, {defaultSimilarityThreshold:2}, {defaultMaxResults:-1}, {defaultMaxResults:1.5}, {defaultMaxResults:'5'}]) assert.throws(() => getConfig(overrides),TypeError);
     assert.equal(getConfig({memoryPath:'relative/path',autoMine:true}).memoryPath,'relative/path');
   });
 });
@@ -71,9 +71,18 @@ test('invalid enum and boolean env values are rejected after explicit overrides 
 test('token overrides reject malformed nested budgets, overflow and invalid per-item limits', () => {
   environment({}, () => {
     for (const malformed of [null,{}, {total:10}, {...budget(),total:0}, {...budget(),total:Infinity}, {...budget(),total:Number.MAX_SAFE_INTEGER+1}, {...budget(),allocated:null}, {...budget(),perItem:[]}, {...budget(),allocated:{patterns:0,incidents:11,metadata:0}}, {...budget(),allocated:{patterns:-1,incidents:0,metadata:0}}, {...budget(),allocated:{patterns:0,incidents:0.5,metadata:0}}, {...budget(),perItem:{pattern:0,incident:2,summary:1}}, {...budget(),perItem:{pattern:1,incident:2,summary:NaN}}, {...budget(),allocated:{patterns:Number.MAX_SAFE_INTEGER,incidents:Number.MAX_SAFE_INTEGER,metadata:0}}]) assert.throws(() => getTokenConfig({budget:malformed}),TypeError);
-    for (const overrides of [{defaultTier:undefined},{defaultTier:'other'},{autoAdjust:'true'}]) assert.throws(() => getTokenConfig(overrides),TypeError);
+    for (const overrides of [{defaultTier:'other'},{autoAdjust:'true'}]) assert.throws(() => getTokenConfig(overrides),TypeError);
     assert.deepEqual(getTokenConfig({budget:budget()}).budget,budget());
     const largest = {...budget(),total:Number.MAX_SAFE_INTEGER,allocated:{patterns:Number.MAX_SAFE_INTEGER,incidents:0,metadata:0}};
     assert.equal(getTokenConfig({budget:largest}).budget.total,Number.MAX_SAFE_INTEGER);
+  });
+});
+
+test('undefined optional overrides inherit validated defaults and environment',()=>{
+  environment({MODE:'shared',PATH:'/optional-path',AUTO_MINE:'true',THRESHOLD:'0.7',MAX_RESULTS:'3',TIER:'full',AUTO_ADJUST:'false'},()=>{
+    assert.deepEqual(getConfig({storageMode:undefined,memoryPath:undefined,autoMine:undefined,defaultSimilarityThreshold:undefined,defaultMaxResults:undefined}),getConfig());
+    assert.deepEqual(getTokenConfig({budget:undefined,defaultTier:undefined,autoAdjust:undefined}),getTokenConfig());
+    assert.throws(()=>getConfig({memoryPath:null}),TypeError);
+    assert.throws(()=>getTokenConfig({budget:null}),TypeError);
   });
 });
