@@ -121,7 +121,7 @@ def _bounded_record(record: dict[str, Any]) -> dict[str, Any]:
         if key in record:
             out[key] = _truncate_utf8(record.get(key), limit)
     out["still_on_task"] = bool(record.get("still_on_task"))
-    for key in ("interval_seconds", "next_check_in_at", "ts"):
+    for key in ("interval_seconds", "next_check_in_at", "ts", "progress_observed_since", "last_evidence_change_at"):
         if key in record:
             out[key] = record.get(key)
     evidence = record.get("evidence_refs")
@@ -209,6 +209,22 @@ def _read_snapshot(path: Path) -> tuple[list[dict[str, Any]], bool]:
     return records_reversed, coverage_incomplete
 
 
+def _track_progress(record: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+    """Track evidence-reference changes, never heartbeat prose as verified progress."""
+    out = dict(record)
+    now = _record_timestamp(record)
+    if prior and _record_timestamp(prior) <= now:
+        out["progress_observed_since"] = prior.get("progress_observed_since", _record_timestamp(prior))
+        before = prior.get("evidence_refs") or []
+        after = record.get("evidence_refs") or []
+        changed = bool(after) and set(after) != set(before)
+        out["last_evidence_change_at"] = now if changed else prior.get("last_evidence_change_at")
+    else:
+        out["progress_observed_since"] = record.get("progress_observed_since", now)
+        out["last_evidence_change_at"] = record.get("last_evidence_change_at", now if record.get("evidence_refs") else None)
+    return out
+
+
 def _snapshot_bytes(
     existing: list[dict[str, Any]],
     incoming: dict[str, Any],
@@ -291,6 +307,9 @@ def _line_append(path: Path, record: dict[str, Any]) -> None:
     lock_fd = _acquire_write_lock(path)
     try:
         existing, coverage_incomplete = _read_snapshot(path)
+        previous = [item for item in existing if _record_key(item) == _record_key(record)]
+        tracked = _track_progress(_bounded_record(record), max(previous, key=_record_timestamp) if previous else None)
+        record.update(tracked)
         _atomic_write(
             path,
             _snapshot_bytes(
@@ -438,6 +457,8 @@ def _compact_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
         "attention_reason",
         "interval_seconds",
         "next_check_in_at",
+        "progress_observed_since",
+        "last_evidence_change_at",
         "ts",
     )
     out = {k: record.get(k) for k in keys if k in record}
@@ -507,6 +528,15 @@ def summarize_task_health_records(
         ),
         key=timestamp,
     )
+    # Native fact histories and the compact local snapshot share this reducer.
+    history: dict[tuple[str, str], dict[str, Any]] = {}
+    tracked_records = []
+    for record in records:
+        key = _record_key(record)
+        tracked = _track_progress(record, history.get(key))
+        history[key] = tracked
+        tracked_records.append(tracked)
+    records = tracked_records
     latest_any = records[-1] if records else None
     expected_records = [
         rec for rec in records if expected_ref and rec.get("task_ref") == expected_ref
@@ -588,9 +618,24 @@ def summarize_task_health_records(
         health = "stale_check_in"
         missed_count = max(1, int(math.ceil((current_time - next_at) / interval)))
 
+    baseline = selected.get("last_evidence_change_at")
+    if baseline is None:
+        baseline = selected.get("progress_observed_since")
+    try:
+        progress_age = max(0.0, current_time - float(baseline))
+    except (ValueError, TypeError):
+        progress_age = None
+    progress = "unknown" if progress_age is None else (
+        "stale_evidence" if progress_age > interval + grace else "recent_observation")
+    if health == "current" and status in {"running", "reviewing"} and progress == "stale_evidence":
+        health = "needs_attention"
+
     return result_with_coverage({
         "expected_ref": expected_ref,
         "health": health,
+        "progress": {"state": progress, "age_seconds": progress_age,
+                     "basis": "evidence_reference_changes_not_verified_contents",
+                     "action": "inspect_command_and_checkpoint_before_isolated_replacement"},
         "missed_count": missed_count,
         "latest": _compact_record(selected),
         "latest_for_expected": _compact_record(latest_expected) if expected_ref else None,

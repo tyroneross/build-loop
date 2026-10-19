@@ -225,3 +225,24 @@ def test_nonnumeric_timestamp_is_safe_and_zero_limit_is_empty(tmp_path):
     assert len(records) == 1
     assert records[0]["ts"] == "not-a-number"
     assert heartbeat.read_heartbeats(channel, tool="codex", limit=0) == []
+
+
+def test_fresh_heartbeats_do_not_hide_stalled_evidence(tmp_path):
+    for ts in (10, 20, 30):
+        heartbeat.write_heartbeat(tmp_path, session_id="s",tool="codex",task_ref="t",
+                                  interval_seconds=10,ts=ts,progress_since_last=f"still running {ts}")
+    result = heartbeat.summarize_task_health(tmp_path,tool="codex",session_id="s",expected_ref="t",now=31,grace_seconds=0)
+    assert result["health"] == "needs_attention"
+    assert result["missed_count"] == 0
+    assert result["progress"]["state"] == "stale_evidence"
+    heartbeat.write_heartbeat(tmp_path,session_id="s",tool="codex",task_ref="t",interval_seconds=10,ts=32,evidence_refs=["commit:abc"])
+    result = heartbeat.summarize_task_health(tmp_path,tool="codex",session_id="s",now=33,grace_seconds=0)
+    assert result["health"] == "current"
+
+
+def test_native_history_tracks_same_reference_without_prose_reset():
+    rows = [heartbeat.make_record(session_id="s",tool="codex",task_ref="t",ts=ts,interval_seconds=10,
+                                 evidence_refs=["checkpoint:one"],progress_since_last=str(ts)) for ts in (10,20,30)]
+    result = heartbeat.summarize_task_health_records(rows,tool="codex",session_id="s",now=31,grace_seconds=0)
+    assert result["health"] == "needs_attention"
+    assert result["progress"]["age_seconds"] == 21
