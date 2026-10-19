@@ -32,7 +32,7 @@ A **`Stop` hook** (Claude Code) + the **Codex `Stop`** equivalent, shipped in bu
 - **Advisory + fail-open:** `exit 0` always; emit valid JSON; never `decision: block`. (build-loop hook charter; `hooks/rally-coordination-hook.sh` precedent.)
 - **Self-gate** on `.build-loop/` presence; silent elsewhere.
 - **Idempotent** with Review-G (no double-record; per-run sentinel so a Stop firing twice is a no-op).
-- **Minimal-PATH safe:** hooks run under `/usr/bin:/bin`. Resolve `python3` absolutely or `command -v`-guard; missing tool → `exit 0`. (See memory `reference_hooks_minimal_path_failopen`.)
+- **Short-PATH safe:** a host started as a macOS app gives hooks `/usr/bin:/bin:/usr/sbin:/sbin` (skills/plugin-builder/references/hooks-reference.md). Resolve `python3` absolutely or `command -v`-guard; missing tool → `exit 0`. (See memory `reference_hooks_minimal_path_failopen`.)
 - **Honest labeling:** the hook makes the gap **visible**, it does not make the Fable judgment happen. A Stop-recorded run carries `source: append_run` and a floor `auditor_status`; the gate WARNs that judgment was skipped. It never silently marks the run as judged.
 
 ## Honest scope limit
