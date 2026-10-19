@@ -583,3 +583,29 @@ def test_normalized_publication_respects_downstream_record_budget(tmp_path,monke
     dest=tmp_path/'normalized.jsonl'
     with pytest.raises(ta.TranscriptLimitError):ta.normalize_to_file(source,dest)
     assert not dest.exists() and not list(tmp_path.glob('*.part'))
+
+
+def test_complete_ingestion_rejects_unsupported_records_in_same_stream(tmp_path):
+    import pytest
+    unsupported = {'type':'future_host_turn','payload':{'message':'Always verify before commit'}}
+    for rows in ([unsupported], [unsupported] + CODEX_ROWS, CODEX_ROWS + [unsupported],
+                 [{'type':'session_meta','payload':{'id':'s'}} , unsupported],
+                 CLAUDE_ROWS + [unsupported]):
+        source = _write(tmp_path/'unsupported.jsonl', rows)
+        with pytest.raises(ta.TranscriptReadError):
+            list(ta.iter_events(source, require_complete=True))
+
+
+def test_complete_ingestion_accepts_empty_and_known_metadata_prefixes(tmp_path):
+    metadata = [{'type':'session_meta','payload':{'id':'s'}},
+                {'type':'turn_context','payload':{}},
+                {'type':'event_msg','payload':{'type':'token_count'}}]
+    for rows in ([], metadata, [{'type':'file-history-snapshot','snapshot':{}}],
+                 [{'type':'progress','data':{}}] + CLAUDE_ROWS,
+                 metadata + CODEX_ROWS):
+        source = _write(tmp_path/'supported.jsonl',rows)
+        events = list(ta.iter_events(source,require_complete=True))
+        if not rows or rows == metadata:
+            assert events == []
+        elif rows[-1].get('type') in {'assistant','response_item'}:
+            assert events
