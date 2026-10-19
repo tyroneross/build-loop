@@ -467,7 +467,7 @@ class TestWorktreeSafetyInventory:
         (wt / "debug.log").write_text("noise\n")
         return repo, wt, branch
 
-    def test_clean_verdict_carries_the_ignored_set(self, tmp_path: Path) -> None:
+    def test_clean_git_status_does_not_authorize_ignored_data_loss(self, tmp_path: Path) -> None:
         repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
         assert _git(wt, "status", "--short").stdout.strip() == "", (
             "precondition: the short status an operator would read shows nothing"
@@ -477,9 +477,47 @@ class TestWorktreeSafetyInventory:
             repo, str(wt), branch, live_cwds=[], live_cwd_error=None
         )
 
-        assert safety["safe"] is True
+        assert safety["safe"] is False
+        assert "archive ignored non-cache" in safety["reason"]
         assert ".env" in safety["inventory"]["ignored"]
         assert safety["inventory"]["caches_only_claim_supported"] is False
+
+    def test_default_retained_experiment_keeps_unarchived_ignored_data(self, tmp_path: Path) -> None:
+        repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)
+        original = (wt / ".env").read_bytes()
+        _write_state(repo, {"run_id":"ignored_data", "createdRefs":[
+            {"branch":branch, "path":str(wt), "review_hold":True}]})
+        result = collapse_run.collapse(repo, run_id="ignored_data", owner_released=True)
+        assert result["errors"]
+        assert not result["kept_for_review"]
+        assert wt.exists() and (wt / ".env").read_bytes() == original
+        assert _git(repo, "rev-parse", "--verify", branch).returncode == 0
+
+    def test_unknown_inventory_never_authorizes_removal(self, tmp_path: Path, monkeypatch) -> None:
+        repo = _make_repo(tmp_path)
+        branch = 'feature-x'; _make_branch(repo, branch)
+        wt = _make_worktree(repo, branch)
+        monkeypatch.setattr(collapse_run, '_worktree_inventory', lambda _: {'ok':False,'error':'unreadable'})
+        result = collapse_run.inspect_worktree_safety(repo, str(wt), branch, live_cwds=[])
+        assert result['safe'] is False
+        assert wt.exists()
+
+    def test_cache_directory_with_uninspected_symlink_is_not_removable(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / '.gitignore').write_text('build/\n')
+        _git(repo, 'add', '.gitignore'); _git(repo, 'commit', '-m', 'ignore generated build')
+        branch = 'feature-cache'; _make_branch(repo, branch)
+        wt = _make_worktree(repo, branch)
+        outside = tmp_path / 'outside-fixture'; outside.mkdir()
+        (outside / 'unreproducible.txt').write_text('owned fixture content')
+        (wt / 'build').mkdir()
+        (wt / 'build/linked').symlink_to(outside, target_is_directory=True)
+        result = collapse_run.inspect_worktree_safety(repo, str(wt), branch, live_cwds=[])
+        assert result['inventory']['ok'] is True
+        assert result['inventory']['non_reproducible_ignored'] == []
+        assert result['inventory']['caches_only_claim_supported'] is False
+        assert result['safe'] is False
+        assert (outside / 'unreproducible.txt').read_text() == 'owned fixture content'
 
     def test_locked_worktree_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
         repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)

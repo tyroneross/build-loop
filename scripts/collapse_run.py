@@ -629,8 +629,7 @@ def _path_contains_cwd(path: Path, cwd: Path) -> bool:
 def _worktree_inventory(candidate: Path) -> dict[str, Any]:
     """Full deletion inventory (tracked + untracked + IGNORED) for a worktree.
 
-    Fail-open: an inventory error degrades the evidence, it never vetoes a
-    removal the other checks already cleared."""
+    Unknown contents cannot authorize irreversible worktree removal."""
     try:
         return worktree_inventory.inventory(candidate)
     except Exception as exc:  # noqa: BLE001 — evidence gathering must not raise
@@ -752,6 +751,13 @@ def inspect_worktree_safety(
             "reason": "live process cwd is inside worktree",
             "path": str(candidate),
             "owners": owners,
+            "inventory": inventory,
+        }
+    if not inventory.get("ok") or inventory.get("caches_only_claim_supported") is not True:
+        return {
+            "safe": False,
+            "reason": "archive ignored non-cache data before removal; inventory must prove reproducible contents",
+            "path": str(candidate),
             "inventory": inventory,
         }
     return {
