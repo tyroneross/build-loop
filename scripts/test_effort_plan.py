@@ -51,9 +51,11 @@ class Plan(unittest.TestCase):
     def test_low_confidence_and_missing_estimates_are_named(self):
         self.lookups["api"] = lk(5, 8, n=2)
         self.lookups["e2e"] = None
-        notes = ep.build_plan(CHUNKS, self.lookups)["notes"]
-        self.assertTrue(any(n.startswith("api: low confidence") for n in notes), notes)
-        self.assertTrue(any(n.startswith("e2e: no past jobs") for n in notes), notes)
+        plan = ep.build_plan(CHUNKS, self.lookups)
+        self.assertEqual(plan["status"], "unavailable")
+        self.assertIn("e2e", plan["reason"])
+        self.assertNotIn("critical_path", plan)
+
 
 
 class Degrade(unittest.TestCase):
@@ -75,6 +77,38 @@ class Degrade(unittest.TestCase):
                     mock.patch.object(ep, "EFFORT_SCRIPT", Path(__file__)), \
                     mock.patch("builtins.print"):
                 self.assertEqual(ep.main(["plan", "--chunks", str(chunks), "--record"]), 2)
+
+
+class RecordedPlan(unittest.TestCase):
+    def test_empty_store_is_unavailable(self):
+        plan = ep.build_plan(CHUNKS, {c["id"]: {"n": 0, "scope": "all"} for c in CHUNKS})
+        self.assertEqual(plan["status"], "unavailable")
+        self.assertNotIn("serial_total", plan)
+
+    def test_record_and_close_use_same_estimate_once_for_exact_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            chunks = Path(d) / "chunks.json"
+            chunks.write_text(json.dumps(CHUNKS))
+            estimates = {"schema": lk(10,20), "api": lk(5,8), "ui": lk(20,30), "e2e": lk(4,6)}
+            with mock.patch.object(ep, "EFFORT_SCRIPT", Path(__file__)), mock.patch.object(ep, "lookup", side_effect=lambda c: estimates[c["id"]]), mock.patch.object(ep, "run_effort") as remote, mock.patch("builtins.print"), mock.patch.object(ep.time, "time", return_value=100):
+                self.assertEqual(ep.main(["plan", "--chunks", str(chunks), "--workdir", d, "--run-id", "run-one", "--record", "--gut", "40"]), 0)
+                remote.assert_not_called()
+            with mock.patch("builtins.print"), mock.patch.object(ep.time, "time", return_value=700):
+                self.assertEqual(ep.main(["close", "--workdir", d, "--run-id", "run-one"]), 0)
+            result = Path(d) / ".build-loop/runs/run-one/effort-result.json"
+            original = result.read_bytes()
+            data = json.loads(original)
+            self.assertEqual(data["lookup_min"], 34)
+            self.assertEqual(data["actual_min"], 10)
+            with mock.patch("builtins.print"), mock.patch.object(ep.time, "time", return_value=1300):
+                ep.main(["close", "--workdir", d, "--run-id", "run-one"])
+                ep.main(["close", "--workdir", d, "--run-id", "run-two"])
+            self.assertEqual(result.read_bytes(), original)
+            self.assertFalse((Path(d) / ".build-loop/runs/run-two/effort-result.json").exists())
+
+    def test_lookup_timeout_degrades(self):
+        with mock.patch.object(ep, "EFFORT_SCRIPT", Path(__file__)), mock.patch.object(ep.subprocess, "run", side_effect=ep.subprocess.TimeoutExpired("lookup",10)):
+            self.assertIsNone(ep.run_effort(["lookup"]))
 
 
 if __name__ == "__main__":

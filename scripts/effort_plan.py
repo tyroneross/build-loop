@@ -12,7 +12,9 @@ into dispatch waves from their dependencies and reports:
     integration checkpoint after every wave that runs chunks in parallel
 
 `--record` stores a prediction (with the orchestrator's gut estimate, made
-BEFORE the lookup) so `close` at Report can score both against the actual.
+BEFORE the lookup) so `close` at Report can score both against elapsed wall-clock minutes.
+Predictions and immutable results belong to the exact Build Loop run; the
+external effort tool is queried read-only and its prediction ledger is untouched.
 
 Degrades, never blocks: if the effort tool or its store is missing, it prints
 `status: unavailable` with the reason and exits 0.
@@ -34,7 +36,7 @@ from pathlib import Path
 EFFORT_SCRIPT = Path(os.environ.get(
     "BUILD_LOOP_EFFORT_SCRIPT",
     str(Path.home() / "dev" / "git-folder" / "transcript-miner" / "scripts" / "effort.py")))
-STATE_FILE = Path(".build-loop") / "effort.json"
+STATE_FILE = Path(".build-loop") / "runs"
 LOW_N = 5
 LOPSIDED = 3.0  # longest chunk in a wave at least this many times the shortest
 
@@ -42,8 +44,11 @@ LOPSIDED = 3.0  # longest chunk in a wave at least this many times the shortest
 def run_effort(args: list[str]) -> dict | None:
     if not EFFORT_SCRIPT.exists():
         return None
-    proc = subprocess.run([sys.executable, str(EFFORT_SCRIPT), *args],
-                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    try:
+        proc = subprocess.run([sys.executable, str(EFFORT_SCRIPT), *args],
+                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if proc.returncode != 0:
         return None
     try:
@@ -98,6 +103,9 @@ def critical_path(chunks: list[dict], est: dict[str, float]) -> tuple[float, lis
 
 
 def build_plan(chunks: list[dict], lookups: dict[str, dict | None]) -> dict:
+    missing = [c["id"] for c in chunks if not lookups.get(c["id"]) or not lookups[c["id"]].get("n") or any(not isinstance(lookups[c["id"]].get(k), (int, float)) for k in ("typical_min", "slow_min"))]
+    if missing:
+        return {"status": "unavailable", "reason": "missing measured estimates: " + ", ".join(missing), "waves": waves(chunks)}
     typ = {cid: (r or {}).get("typical_min", 0.0) for cid, r in lookups.items()}
     slow = {cid: (r or {}).get("slow_min", 0.0) for cid, r in lookups.items()}
     layered = waves(chunks)
@@ -155,7 +163,7 @@ def cmd_plan(args) -> int:
         plan = {"status": "unavailable", "reason": f"effort tool not found at {EFFORT_SCRIPT}"}
     else:
         lookups = {c["id"]: lookup(c) for c in chunks}
-        if all(r is None for r in lookups.values()):
+        if all(not r or not r.get("n") for r in lookups.values()):
             plan = {"status": "unavailable",
                     "reason": "effort lookup failed; run `effort.py index` to build the store"}
         else:
@@ -169,37 +177,47 @@ def cmd_plan(args) -> int:
             print("error: --record needs --gut (your estimate made BEFORE this lookup)",
                   file=sys.stderr)
             return 2
-        lines = sum(int(c.get("lines") or 0) for c in chunks)
-        platforms = {c.get("platform") for c in chunks if c.get("platform")}
-        pred_args = ["predict", "--json", "--job", args.job or "build-loop run",
-                     "--gut", str(args.gut), "--lines", str(lines),
-                     "--commits", str(len(chunks))]
-        if len(platforms) == 1:
-            pred_args += ["--platform", platforms.pop()]
-        pred = run_effort(pred_args)
-        if pred:
-            plan["prediction_id"] = pred["id"]
-            state = Path(args.workdir) / STATE_FILE
-            state.parent.mkdir(parents=True, exist_ok=True)
-            state.write_text(json.dumps({"prediction_id": pred["id"], "recorded_at": int(time.time()),
-                                         "gut_min": args.gut, "plan": plan}, indent=2))
+        if not args.run_id or Path(args.run_id).name != args.run_id or args.run_id in (".", ".."):
+            print("error: --record needs a single-component --run-id", file=sys.stderr)
+            return 2
+        state = Path(args.workdir) / STATE_FILE / args.run_id / "effort.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with state.open("x") as output:
+                json.dump({"run_id": args.run_id, "recorded_at": time.time(),
+                           "gut_min": args.gut, "plan": plan}, output, indent=2)
+        except FileExistsError:
+            print("error: this run already has a recorded prediction", file=sys.stderr)
+            return 2
     print(json.dumps(plan, indent=2) if args.json else render(plan))
     return 0
 
 
 def cmd_close(args) -> int:
-    state = Path(args.workdir) / STATE_FILE
+    if not args.run_id or Path(args.run_id).name != args.run_id or args.run_id in (".", ".."):
+        print("status: nothing to close (no valid --run-id)")
+        return 0
+    state = Path(args.workdir) / STATE_FILE / args.run_id / "effort.json"
     if not state.exists():
         print("status: nothing to close (no recorded prediction for this run)")
         return 0
-    pid = json.loads(state.read_text()).get("prediction_id")
-    if not EFFORT_SCRIPT.exists() or pid is None:
-        print("status: unavailable — effort tool or prediction id missing")
+    receipt = state.with_name("effort-result.json")
+    if receipt.exists():
+        print(receipt.read_text().strip())
         return 0
-    proc = subprocess.run([sys.executable, str(EFFORT_SCRIPT), "close", str(pid),
-                           *(["--note", args.note] if args.note else [])],
-                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    print(proc.stdout.strip() or proc.stderr.strip())
+    data = json.loads(state.read_text())
+    actual = max(0.0, (time.time() - data["recorded_at"]) / 60)
+    lookup_min = data["plan"]["critical_path"]["typical_min"]
+    result = {"run_id": args.run_id, "actual_min": actual, "gut_min": data["gut_min"],
+              "lookup_min": lookup_min, "estimate_kind": "critical_path",
+              "gut_ratio": data["gut_min"] / actual if actual else None,
+              "lookup_ratio": lookup_min / actual if actual else None}
+    try:
+        with receipt.open("x") as output:
+            json.dump(result, output, indent=2)
+    except FileExistsError:
+        result = json.loads(receipt.read_text())
+    print(json.dumps(result))
     return 0
 
 
@@ -209,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan", help="estimate chunks, waves, critical path")
     p.add_argument("--chunks", required=True, help="JSON list of chunks")
     p.add_argument("--workdir", default=".")
+    p.add_argument("--run-id", help="exact Build Loop run identity")
     p.add_argument("--record", action="store_true", help="store a prediction to score at Report")
     p.add_argument("--gut", type=float, help="orchestrator's estimate in minutes, made first")
     p.add_argument("--job", help="one-line description for the ledger")
@@ -216,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("close", help="score the recorded prediction against the actual")
     p.add_argument("--workdir", default=".")
+    p.add_argument("--run-id", help="exact Build Loop run identity")
     p.add_argument("--note")
     p.set_defaults(fn=cmd_close)
     args = ap.parse_args(argv)
