@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "6eedd86829c6c035de9e9d1d642544edc0b647ae0e0ba54274f4118f9275a145"
+    "content_sha256": "c9bdaefe9fe842eb7040f28239dbb8651a3ae1734ea3138a379564f5225931ef"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1332,6 +1332,7 @@
       "scripts/drain_proposals.py": "drain_proposals.py — cross-repo proposal-drain gate (the multiplier).",
       "scripts/drain_self_review_proposals.py": "Consumer for the self-review proposal queue.",
       "scripts/early_risk_probe.py": "Fast, read-only checks for predictable build and deploy delays.",
+      "scripts/effort_plan.py": "Measured effort estimates for a build-loop plan.",
       "scripts/embed_backend.py": "Embedding backend abstraction for repo-local episodic memory.",
       "scripts/embed_daemon.py": "Long-running embedder daemon (Phase H).",
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",

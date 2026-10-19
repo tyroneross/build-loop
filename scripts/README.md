@@ -109,6 +109,7 @@ hygiene check as `scripts/` scales.
 | `transcript-pattern-miner.py` | Read-only transcript miner |
 | `archive_project_plan.py` | Archives ephemeral `.build-loop` project plans into build-loop-memory before optional local removal |
 | `install_memory.py` | Bootstraps `build-loop-memory` from a manifest-backed public seed; `--guided` walks a terminal-first install and `--validate-seed` checks privacy/package safety |
+| `effort_plan.py` | Phase 2 measured effort: per-chunk minutes from past agent jobs (transcript-miner effort store), dispatch waves, critical path, coordination notes; `close` scores gut vs lookup at Report |
 | `research_trigger.py` | Classifies when Research plugin work is required, selects depth from trigger/risk/t-shirt signals, and caches the Phase 1 research gate |
 | `dogfood_reload_checkpoint.py` | Detects runtime-changing self-work and records stop/reload/resume checkpoint ACKs or fallbacks |
 | `task_surface.py` | Emits the canonical read-only active task view from existing execution state, local queues, and project memory backlog |
