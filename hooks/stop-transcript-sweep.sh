@@ -5,13 +5,11 @@
 # stop-transcript-sweep.sh — launch ONE background transcript sweep from the
 # Claude Code `Stop` hook.
 #
-#   $1 = sweep: all | decisions | corrections | findings | cost-ledger
+#   $1 = sweep: all | decisions | corrections | findings | traces | cost-ledger
 #
-#        `all` is the ONLY mode that should be REGISTERED as a hook. The four
-#        sweeps share a firing moment, an input, and an intent (extract signals
-#        from this session's transcript), so four registrations were four
-#        copies of one hook -- each re-resolving and re-normalizing the same
-#        transcript. One hook resolves once and fans out. The individual modes
+#        `all` is the ONLY mode that should be REGISTERED as a hook. The five
+#        consumers share the session event and one bounded worker. One hook
+#        resolves the transcript once and fans out. The individual modes
 #        remain callable for testing and manual re-runs.
 #
 # WHY THIS EXISTS (the defect it fixes)
@@ -97,7 +95,7 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 # containing quotes or shell metacharacters cannot inject.
 _BL_STOP_PAYLOAD="$PAYLOAD"
 export _BL_STOP_PAYLOAD
-# Three lines: original transcript_path, cwd, then explicit-path presence.
+# Four lines: original path, cwd, explicit-path presence, declared session ID.
 # Newlines are stripped
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
@@ -120,12 +118,15 @@ provided = bool(transcript)
 print(transcript)
 print(safe(d.get("cwd")))
 print("1" if provided else "0")
+print(safe(d.get("session_id")))
 PY
 )" || _parsed=""
 
 TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
 CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
 TRANSCRIPT_PROVIDED="$(printf '%s\n' "$_parsed" | sed -n '3p')"
+SESSION_ID="$(printf '%s\n' "$_parsed" | sed -n '4p')"
+ORIGINAL_TRANSCRIPT="$TRANSCRIPT"
 [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 # Billing remains a direct shell child so the shared process-group deadline
@@ -188,8 +189,28 @@ fi
 [ -n "$TRANSCRIPT" ] || [ "$TRANSCRIPT_PROVIDED" = "1" ] || _noop
 
 _run_one() {
-    [ "$1" = "cost-ledger" ] || [ -n "$TRANSCRIPT" ] || return 0
+    [ "$1" = "traces" ] || [ -n "$TRANSCRIPT" ] || return 0
     case "$1" in
+    traces)
+        if [ -n "$TRANSCRIPT" ]; then
+            nohup "$_py" "${PLUGIN_ROOT}/scripts/tool_trace.py" --workdir "$CWD" ingest \
+                --transcript "$TRANSCRIPT" --session-id "$SESSION_ID" </dev/null >/dev/null 2>&1 &
+        else
+            # Reuse the consumer's bounded failure receipt without reparsing an
+            # unavailable original source or inventing another session identity.
+            nohup env PYTHONPATH="${PLUGIN_ROOT}/scripts" _BL_TRACE_SOURCE="$ORIGINAL_TRANSCRIPT" \
+                _BL_TRACE_CWD="$CWD" _BL_TRACE_SESSION="$SESSION_ID" "$_py" - <<'PY_RECEIPT' >/dev/null 2>&1 &
+import os
+from pathlib import Path
+try:
+    from tool_trace import _ingestion_receipt
+    _ingestion_receipt(Path(os.environ["_BL_TRACE_CWD"]), Path(os.environ["_BL_TRACE_SOURCE"]),
+        os.environ["_BL_TRACE_SESSION"], error=OSError("normalization unavailable"))
+except (ImportError, OSError, TypeError):
+    pass
+PY_RECEIPT
+        fi
+        ;;
     decisions)
         nohup "$_py" "${PLUGIN_ROOT}/scripts/scan_transcript_for_decisions.py" \
             --workdir "$CWD" \
@@ -215,7 +236,7 @@ _run_one() {
 }
 
 if [ "$SWEEP" = "all" ]; then
-    for one in decisions corrections findings; do
+    for one in decisions corrections findings traces; do
         _run_one "$one"
     done
 else

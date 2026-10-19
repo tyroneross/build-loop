@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Host-contract regression tests for the four Stop-hook transcript sweeps.
+"""Host-contract regression tests for the shared Stop-hook transcript consumers.
 
 THE DEFECT THESE CONVICT
 ------------------------
@@ -94,8 +94,8 @@ def _sweep_registrations() -> list[str]:
 def _hook_command(sweep: str) -> str:
     """Return the Stop-hook command that must launch ``sweep``.
 
-    The four sweeps share a firing moment, an input, and an intent, so they are
-    registered ONCE in `all` mode rather than four times. Each per-sweep test
+    The consumers share a firing moment and an input, so they are
+    registered ONCE in `all` mode. Each per-sweep test
     still drives the real registration and asserts its own recorder fired --
     the contract under test is "this sweep launches from stdin transcript_path",
     not "this sweep has its own hook entry".
@@ -120,7 +120,7 @@ class StopSweepHostContractTests(unittest.TestCase):
 
         # Fake CLAUDE_PLUGIN_ROOT: real hooks/ (so the wrapper + its python
         # resolver are the shipped ones) + recorder stubs in place of the
-        # four sweep scripts.
+        # five consumer scripts.
         (self.root / "hooks").symlink_to(REPO / "hooks")
         scripts = self.root / "scripts"
         scripts.mkdir()
@@ -133,6 +133,12 @@ class StopSweepHostContractTests(unittest.TestCase):
         (scripts / "cost_ledger_hook.py").write_text(
             _RECORDER.format(sweep="cost-ledger", read_stdin=True)
         )
+        trace_recorder = _RECORDER.format(sweep="traces", read_stdin=False)
+        (scripts / "tool_trace.py").write_text(
+            "if __name__ == '__main__':\n" + "\n".join("    " + line for line in trace_recorder.splitlines()) + "\n"
+            "def _ingestion_receipt(workdir, transcript, session_id, **kwargs):\n"
+            " import json,os\n"
+            " with open(os.environ['BL_TEST_RECORD'],'a') as f: f.write(json.dumps({'sweep':'trace-skip','source':str(transcript),'session':session_id})+'\\n')\n")
         for mod, sweep in (("scan_corrections", "corrections"), ("scan_findings", "findings")):
             pkg = scripts / mod
             pkg.mkdir()
@@ -202,7 +208,7 @@ class StopSweepHostContractTests(unittest.TestCase):
     def _records(self, sweep: str | None = None, timeout_s: float = 15.0) -> list[dict]:
         """Poll for the backgrounded stub's record rows.
 
-        `all` mode launches four recorders CONCURRENTLY, so the first row to
+        `all` mode launches five recorders CONCURRENTLY, so the first row to
         land is not necessarily the sweep under test. Waiting for the named
         sweep's own row is the difference between a real assertion and a race.
         """
@@ -282,7 +288,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         cp = self._run("decisions", self._payload())
         self._assert_hook_contract(cp)
         normalized_paths = []
-        for sweep in ("decisions", "corrections", "findings"):
+        for sweep in ("decisions", "corrections", "findings", "traces"):
             rows = self._records(sweep)
             self.assertTrue(rows, msg=f"{sweep} never launched")
             argv = rows[0]["argv"]
@@ -320,7 +326,11 @@ class StopSweepHostContractTests(unittest.TestCase):
                 self.assertTrue(rows, "original cost event was dropped with text normalization")
                 self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
                 self.assertFalse(discovery.exists(), "explicit path must never fall back to another session")
-                self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger"})
+                skipped = self._records("trace-skip", timeout_s=2)
+                self.assertTrue(skipped)
+                self.assertEqual(skipped[0]["source"], str(self.transcript))
+                self.assertEqual(skipped[0]["session"], json.loads(self._payload())["session_id"])
+                self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger", "trace-skip"})
 
     def test_foreground_returns_while_normalization_is_blocked_and_cost_is_delivered(self) -> None:
         adapter = self.root / "scripts/transcript_adapter.py"
@@ -386,6 +396,55 @@ class StopSweepHostContractTests(unittest.TestCase):
                     if str(billing) in command:
                         try: os.kill(pid, signal.SIGTERM)
                         except ProcessLookupError: pass
+
+    def test_stalled_trace_is_terminated_at_worker_deadline(self):
+        import signal
+        self.worker_budget_ms = 1000
+        trace_script = self.root / "scripts/tool_trace.py"
+        trace_script.write_text("import os,time,json\n"
+            "with open(os.environ['BL_TEST_RECORD'],'a') as f: f.write(json.dumps({'sweep':'traces','pid':os.getpid()})+'\\n')\n"
+            "time.sleep(10)\n")
+        cp = self._run("all",self._payload())
+        self._assert_hook_contract(cp)
+        rows = self._records("traces", timeout_s=2)
+        self.assertTrue(rows)
+        pid = rows[0]["pid"]
+        try:
+            self.assertTrue(self._records("cost-ledger",timeout_s=2))
+            for consumer in ("decisions","corrections","findings"):
+                self.assertTrue(self._records(consumer,timeout_s=2))
+            deadline = time.monotonic()+3
+            while time.monotonic()<deadline:
+                try: os.kill(pid,0)
+                except ProcessLookupError: break
+                time.sleep(.02)
+            else: self.fail("trace consumer outlived worker deadline")
+        finally:
+            command = subprocess.run(['ps','-p',str(pid),'-o','command='],capture_output=True,text=True).stdout
+            if str(trace_script) in command:
+                try: os.kill(pid,signal.SIGTERM)
+                except ProcessLookupError: pass
+
+    def test_trace_has_no_foreground_stop_registration(self):
+        data = json.loads(HOOKS_JSON.read_text())
+        commands = [h.get("command", "") for g in data["hooks"]["Stop"] for h in g["hooks"]]
+        self.assertFalse(any("/scripts/tool_trace.py" in c and " ingest " in c for c in commands))
+
+    def test_large_admitted_source_returns_before_trace_ingestion(self):
+        self.worker_budget_ms = 1000
+        with self.transcript.open("w") as stream:
+            for index in range(75000):
+                for role in ("assistant", "user"):
+                    stream.write(json.dumps({"type":role,"message":{"role":role,"content":[
+                        {"type":"tool_use" if role == "assistant" else "tool_result",
+                         "id":str(index), "tool_use_id":str(index), "name":"Bash", "input":{"command":"true"},
+                         "content":"ok"}]}})+"\n")
+        self.assertGreater(self.transcript.stat().st_size, 17_000_000)
+        started = time.monotonic()
+        cp = self._run("all",self._payload())
+        self._assert_hook_contract(cp)
+        self.assertLess(time.monotonic()-started,1.5)
+        time.sleep(1.1)  # let the owned process-group deadline close fixture readers
 
     # ---- fail-open / never-block contract ------------------------------
 
