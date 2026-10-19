@@ -40,7 +40,7 @@ CLI:
   python3 transcript-pattern-miner.py            # last 7 days
   python3 transcript-pattern-miner.py --days 30
   python3 transcript-pattern-miner.py --all
-  python3 transcript-pattern-miner.py --force    # ignore .processed.json cache
+  python3 transcript-pattern-miner.py --force    # discard prior .processed.json inventory (all inputs are reprocessed)
 
 Privacy (single-user context, see feedback_single_user_transcripts.md):
   Quotes are capped at 300 chars (raised from 80; thin previews under-judged
@@ -113,7 +113,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--days", type=int, default=7, help="Window in days (default 7)")
     p.add_argument("--all", action="store_true", help="Scan full history")
-    p.add_argument("--force", action="store_true", help="Reprocess files in cache")
+    p.add_argument("--force", action="store_true", help="Discard prior inventory; all selected files are always reprocessed")
     p.add_argument(
         "--sessions-dir",
         default=None,
@@ -172,20 +172,41 @@ def main(argv: list[str]) -> int:
     sessions_scanned = 0
     sessions_in_window = 0
 
+    coverage = {"files_considered": len(jsonl_files), "attempted": 0, "processed": 0,
+                "outside_mtime_window": 0, "empty_or_outside_window": 0,
+                "failed_count": 0, "failed_sources": [], "failures_truncated": 0,
+                "complete_selected_sources": True,
+                "inventory_semantics": "stat_only; all selected sources reprocessed"}
     for path in jsonl_files:
-        st = path.stat()
-        mtime = dt.datetime.fromtimestamp(st.st_mtime, tz=dt.timezone.utc)
-        if cutoff is not None and mtime < cutoff:
+        try:
+            st = path.stat()
+            mtime = dt.datetime.fromtimestamp(st.st_mtime, tz=dt.timezone.utc)
+            if cutoff is not None and mtime < cutoff:
+                coverage["outside_mtime_window"] += 1
+                continue
+            sessions_scanned += 1
+            coverage["attempted"] += 1
+            sig = file_signature(path)
+            agg = process_session_file(path, cutoff)
+        except Exception as exc:
+            # One rejected source never authorizes its partial aggregate, nor
+            # prevents unrelated sources from producing a report this run.
+            processed.pop(str(path), None)
+            coverage["complete_selected_sources"] = False
+            coverage["failed_count"] += 1
+            if len(coverage["failed_sources"]) < 100:
+                coverage["failed_sources"].append({"path": str(path)[:512],
+                                                  "error_type": type(exc).__name__})
+            else:
+                coverage["failures_truncated"] += 1
             continue
-        sig = file_signature(path)
-        sessions_scanned += 1
-        agg = process_session_file(path, cutoff)
+        processed[str(path)] = sig
         if agg is None:
-            processed[str(path)] = sig
+            coverage["empty_or_outside_window"] += 1
             continue
         sessions_in_window += 1
+        coverage["processed"] += 1
         aggs.append(agg)
-        processed[str(path)] = sig
 
     save_processed(processed_path, processed)
 
@@ -212,6 +233,7 @@ def main(argv: list[str]) -> int:
         test_invocation_count=len(per_invocation),
         test_outcomes_jsonl_path=outcomes_jsonl,
         generated_at=now,
+        coverage=coverage,
     )
 
     today = now.date().isoformat()
@@ -236,6 +258,7 @@ def main(argv: list[str]) -> int:
     candidates_path.write_text(json.dumps({
         "generated_at": now.isoformat(),
         "window_label": window_label,
+        "coverage": coverage,
         "candidates": candidates,
         # Closed and back anyway. Kept in the file rather than dropped: a
         # recurrence after a close says the fix did not hold, which is a
@@ -247,6 +270,7 @@ def main(argv: list[str]) -> int:
     # Brief stdout summary so caller (cron, agent, human) sees something useful.
     print(f"transcript-pattern-miner: window={window_label}")
     print(f"  sessions scanned: {sessions_scanned} (in window: {sessions_in_window})")
+    print(f"  sources rejected: {coverage['failed_count']} (see report coverage)")
     print(f"  correction clusters: {len(corrections)}")
     print(f"  repeated sequences: {len(sequences)}")
     print(f"  cross-project files: {len(cross_files)}, churn files: {len(churn_files)}")

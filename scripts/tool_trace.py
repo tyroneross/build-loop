@@ -5,7 +5,8 @@
 The hook path is fail-open and dependency-free. It records bounded metadata,
 hashes, and redacted previews; it never stores unbounded tool inputs/results.
 Transcript reconciliation supplies a durable completed span when host hooks do
-not expose a stable pre/post correlation id.
+not expose a stable pre/post correlation id. Deduplication covers only the
+current ledger and retained rotations; evicted call identity is unavailable.
 """
 from __future__ import annotations
 
@@ -22,12 +23,17 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from atomic_io import LockedFile  # noqa: E402
+from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
 
 TRACE_PATH = Path(".build-loop/telemetry/tool-traces.jsonl")
 MAX_PREVIEW_CHARS = 512
 MAX_FILE_BYTES = 10 * 1024 * 1024
 ROTATED_FILES = 2
+# Bounds are independent of corpus growth and include every retained rotation.
+MAX_INGEST_CALLS = 100_000
+MAX_HISTORY_BYTES = 64 * 1024 * 1024
+MAX_COVERAGE_BYTES = 128 * 1024
+MAX_COVERAGE_RECEIPTS = 64
 SENSITIVE_KEY = re.compile(
     r"(?:authorization|cookie|password|passwd|secret|token|api[_-]?key|private[_-]?key|credential)",
     re.IGNORECASE,
@@ -165,6 +171,7 @@ def build_span(
     attributes: dict[str, Any] = {
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool_name or "unknown",
+        "build_loop.tool.call_id_sha256": _hash(tool_use_id),
         "session.id": session_id or "unknown",
         "build_loop.run_id": _attached_run_id(run_context, session_id, timestamp),
         "build_loop.tool.phase": phase,
@@ -207,11 +214,15 @@ def append_span(workdir: Path, span: dict[str, Any]) -> None:
     path = workdir / TRACE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(span, sort_keys=True, separators=(",", ":")) + "\n"
-    with LockedFile(path):
-        _rotate(path)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.flush()
+    with LockedFile(path, timeout_s=1):
+        _append_span_unlocked(path, line)
+
+
+def _append_span_unlocked(path: Path, line: str) -> None:
+    _rotate(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.flush()
 
 
 def _payload() -> dict[str, Any]:
@@ -278,12 +289,12 @@ def _contains_error(value: Any) -> bool:
     return False
 
 
-def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> dict[str, int]:
+def _ingest_transcript(workdir: Path, transcript: Path, session_id: str = "", *, history_coverage: dict | None = None) -> dict[str, int]:
     uses: dict[str, dict[str, Any]] = {}
     results: dict[str, dict[str, Any]] = {}
     session = session_id or transcript.stem
     source_sessions: set[str] = set()
-    from transcript_adapter import iter_events
+    from transcript_adapter import iter_events, TranscriptLimitError
     for ordinal, record in enumerate(iter_events(transcript, include_provenance=True, require_complete=True)):
         original_session = (record.get("_source") or {}).get("session_id")
         if isinstance(original_session, str) and original_session.strip():
@@ -295,13 +306,22 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use" and block.get("id"):
+                if len(uses) >= MAX_INGEST_CALLS and str(block["id"]) not in uses:
+                    raise TranscriptLimitError("tool call count exceeds ingestion budget")
+                origin = record.get("_source") or {}
+                container = record.get("_container") or {}
                 uses[str(block["id"])] = {
+                    "legacy_ordinals": {ordinal, 0, *(value - 1 for value in
+                        (origin.get("record_index"), container.get("record_index"))
+                        if type(value) is int and value > 0)},
                     "name": str(block.get("name") or "unknown"),
                     "input": block.get("input"),
                     "timestamp": record.get("timestamp"),
                     "ordinal": ordinal,
                 }
             elif block.get("type") == "tool_result" and block.get("tool_use_id"):
+                if len(results) >= MAX_INGEST_CALLS and str(block["tool_use_id"]) not in results:
+                    raise TranscriptLimitError("tool result count exceeds ingestion budget")
                 results[str(block["tool_use_id"])] = {
                     "result": _result_text(block),
                     "is_error": bool(block.get("is_error")),
@@ -312,48 +332,167 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
     if source_sessions:
         session = next(iter(source_sessions))
     path = workdir / TRACE_PATH
-    existing: set[tuple[str, str]] = set()
-    if path.exists():
-        for row in _iter_trace_rows(path):
-            existing.add((str(row.get("span_id")), str(row.get("event"))))
-    written = 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    history_coverage = history_coverage if history_coverage is not None else {}
+    history_coverage.update({"deduplication_window": "current_plus_retained_rotations",
+                             "retained_rotations": ROTATED_FILES,
+                             "older_call_identity": "unavailable",
+                             "aggregate_read_budget_bytes": MAX_HISTORY_BYTES,
+                             "invalid_records": 0, "legacy_unmatched_records": 0})
     context = _run_context(workdir)
+    # Retain identities only for this bounded source, never an entire history set.
+    incoming = {}
+    legacy = {}
     for tool_use_id, use in uses.items():
-        result = results.get(tool_use_id, {})
-        span = build_span(
-            workdir=workdir,
-            run_context=context,
-            session_id=session,
-            tool_name=use["name"],
-            tool_use_id=tool_use_id,
-            phase="reconciled" if tool_use_id in results else "observed",
-            tool_input=use.get("input"),
-            tool_result=result.get("result"),
-            is_error=bool(result.get("is_error")),
-            timestamp=use.get("timestamp"),
-            end_timestamp=result.get("timestamp"),
-            ordinal=0,  # source call ID is stable across revisions and normalized containers
-        )
-        if (span["span_id"], span["event"]) in existing:
-            continue
-        append_span(workdir, span)
-        existing.add((span["span_id"], span["event"]))
-        written += 1
+        phase = "reconciled" if tool_use_id in results else "observed"
+        key = (session, _hash(tool_use_id), phase)
+        incoming[key] = {**use, "id": tool_use_id}
+        for ordinal in use["legacy_ordinals"]:
+            legacy[_span_id(session, tool_use_id, use["name"], ordinal)] = key
+    existing = set()
+    written = 0
+    # The existing writer lock covers snapshot+dedup+publication, so concurrent
+    # reconciliations cannot both decide that the same semantic event is new.
+    with LockedFile(path, timeout_s=1):
+        remaining = [MAX_HISTORY_BYTES]
+        for history in [path, *(path.with_suffix(path.suffix + f".{i}") for i in range(1, ROTATED_FILES + 1))]:
+            for row in _iter_trace_rows(history, remaining=remaining, diagnostics=history_coverage):
+                attrs = row.get("attributes") or {}
+                if (not isinstance(attrs, dict) or not isinstance(attrs.get("session.id"), str)
+                        or not isinstance(attrs.get("gen_ai.tool.name"), str)
+                        or not isinstance(row.get("event"), str)):
+                    history_coverage["invalid_records"] += 1
+                    continue
+                if not _valid_span_status(row):
+                    history_coverage["invalid_records"] += 1
+                    continue
+                call_hash = attrs.get("build_loop.tool.call_id_sha256")
+                if not isinstance(call_hash, str):
+                    old_call_id = attrs.get("gen_ai.tool.call.id")
+                    call_hash = _hash(old_call_id) if isinstance(old_call_id, str) else None
+                span_id = row.get("span_id")
+                if not isinstance(span_id, str):
+                    history_coverage["invalid_records"] += 1
+                    continue
+                key = (attrs.get("session.id"), call_hash, row.get("event")) if call_hash else legacy.get(span_id)
+                if key is None:
+                    history_coverage["legacy_unmatched_records"] += 1
+                if key in incoming and attrs.get("session.id") == session and row.get("event") == key[2]:
+                    existing.add(key)
+        for key, use in incoming.items():
+            if key in existing:
+                continue
+            phase = key[2]
+            tool_use_id = use["id"]
+            result = results.get(tool_use_id, {})
+            span = build_span(
+                workdir=workdir, run_context=context, session_id=session,
+                tool_name=use["name"], tool_use_id=tool_use_id, phase=phase,
+                tool_input=use.get("input"), tool_result=result.get("result"),
+                is_error=bool(result.get("is_error")), timestamp=use.get("timestamp"),
+                end_timestamp=result.get("timestamp"), ordinal=0,
+            )
+            _append_span_unlocked(path, json.dumps(span, sort_keys=True, separators=(",", ":")) + "\n")
+            existing.add(key)
+            written += 1
     return {"seen": len(uses), "written": written}
 
 
-def _iter_trace_rows(path: Path):
+def _coverage_path(path: Path) -> Path:
+    return path.with_suffix(".coverage.json")
+
+
+def _read_receipts(path: Path) -> dict[str, Any]:
+    from transcript_adapter import _open_regular_binary
+    try:
+        with _open_regular_binary(path) as handle:
+            data = handle.read(MAX_COVERAGE_BYTES + 1)
+        if len(data) > MAX_COVERAGE_BYTES:
+            raise ValueError("coverage receipt byte budget exceeded")
+        value = json.loads(data)
+        if not isinstance(value, dict) or not isinstance(value.get("receipts"), list):
+            raise ValueError("malformed coverage receipt")
+        return value
+    except FileNotFoundError:
+        return {"receipts": [], "status": "absent"}
+    except (OSError, ValueError, RecursionError):
+        return {"receipts": [], "status": "unavailable"}
+
+
+def _ingestion_receipt(workdir: Path, transcript: Path, session_id: str, *,
+                       result: dict | None = None, error: Exception | None = None,
+                       history_coverage: dict | None = None) -> None:
+    from transcript_adapter import TranscriptLimitError
+    target = _coverage_path(workdir / TRACE_PATH)
+    locator = str(transcript.absolute())
+    reason = ("input_limit" if isinstance(error, TranscriptLimitError) else
+              "identity_or_input_rejected" if isinstance(error, ValueError) else
+              "source_or_history_unavailable" if error else None)
+    row = {"source_key": _hash(locator), "source_locator": locator[:512],
+           "declared_session_id": session_id[:180],
+           "status": "skipped" if error else "ingested", "reason": reason,
+           "error_type": type(error).__name__ if error else None,
+           "updated_at_unix": int(time.time()), "counts": result, "history": history_coverage}
+    try:
+        with LockedFile(target, timeout_s=0.25):
+            previous = _read_receipts(target)
+            rows = [value for value in previous["receipts"] if isinstance(value, dict)
+                    and value.get("source_key") != row["source_key"]]
+            rows.append(row)
+            rows = rows[-MAX_COVERAGE_RECEIPTS:]
+            payload = {"schema": "build-loop.tool-ingestion-coverage.v1", "status": "observed_sources_only",
+                       "retention_limit": MAX_COVERAGE_RECEIPTS, "receipts": rows}
+            encoded = json.dumps(payload, sort_keys=True).encode()
+            while len(encoded) > MAX_COVERAGE_BYTES and len(rows) > 1:
+                rows.pop(0)
+                encoded = json.dumps(payload, sort_keys=True).encode()
+            if len(encoded) > MAX_COVERAGE_BYTES:
+                raise ValueError("coverage receipt byte budget exceeded")
+            atomic_write_bytes(target, encoded)
+    except (OSError, ValueError, TimeoutError):
+        print("tool_trace: ingestion receipt unavailable", file=sys.stderr)
+
+
+def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> dict[str, int]:
+    history_coverage = {}
+    try:
+        result = _ingest_transcript(workdir, transcript, session_id, history_coverage=history_coverage)
+    except Exception as error:
+        _ingestion_receipt(workdir, transcript, session_id, error=error, history_coverage=history_coverage)
+        raise
+    _ingestion_receipt(workdir, transcript, session_id, result=result, history_coverage=history_coverage)
+    return result
+
+
+def _valid_span_status(row: dict[str, Any]) -> bool:
+    """Only explicit terminal outcomes authorize completed-call accounting."""
+    status = row.get("status")
+    allowed = {"OK", "ERROR"} if row.get("event") == "reconciled" else {"OK", "ERROR", "UNSET"}
+    code = status.get("code") if isinstance(status, dict) else None
+    return isinstance(code, str) and code in allowed
+
+
+def _iter_trace_rows(path: Path, *, remaining: list[int] | None = None, diagnostics: dict | None = None):
     """Stream bounded records; resource/IO failures remain explicit, not empty coverage."""
     from transcript_adapter import _open_regular_binary, _bounded_lines
     try:
         with _open_regular_binary(path) as handle:
             for line in _bounded_lines(handle):
+                if remaining is not None:
+                    remaining[0] -= len(line)
+                    if remaining[0] < 0:
+                        from transcript_adapter import TranscriptLimitError
+                        raise TranscriptLimitError("retained trace history exceeds aggregate read budget")
                 try:
                     row = json.loads(line)
-                except (ValueError, UnicodeError):
+                except (ValueError, UnicodeError, RecursionError):
+                    if diagnostics is not None:
+                        diagnostics["invalid_records"] += 1
                     continue
                 if isinstance(row, dict):
                     yield row
+                elif diagnostics is not None:
+                    diagnostics["invalid_records"] += 1
     except FileNotFoundError:
         return
 
@@ -368,8 +507,14 @@ def summarize_path(
     tools: Counter = Counter()
     hashes: Counter = Counter()
     durations: list[float] = []
-    for row in _iter_trace_rows(path):
+    diagnostics = {"invalid_records": 0}
+    for row in _iter_trace_rows(path, diagnostics=diagnostics):
         attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
+        status = row.get("status")
+        if (not isinstance(attrs.get("gen_ai.tool.name"), str) or not _valid_span_status(row)
+                or not isinstance(attrs.get("gen_ai.tool.call.arguments.sha256"), (str, type(None)))):
+            diagnostics["invalid_records"] += 1
+            continue
         if row.get("event") != "reconciled":
             continue
         if run_id and attrs.get("build_loop.run_id") != run_id:
@@ -380,7 +525,7 @@ def summarize_path(
                 continue
         count += 1
         tools[attrs.get("gen_ai.tool.name", "unknown")] += 1
-        errors += (row.get("status") or {}).get("code") == "ERROR"
+        errors += status.get("code") == "ERROR"
         rate_limits += bool(RATE_LIMIT.search(str(attrs.get("gen_ai.tool.call.result.preview", ""))))
         hashes[(attrs.get("gen_ai.tool.name"), attrs.get("gen_ai.tool.call.arguments.sha256"))] += 1
         if isinstance(row.get("duration_ms"), (int, float)):
@@ -397,7 +542,9 @@ def summarize_path(
         "p95_duration_ms": p95,
         "tools": dict(tools.most_common(12)),
         "coverage": {"source": "observed_reconciled_spans", "complete_tool_coverage": "unavailable",
-                     "source_available": path.is_file(), "run_filter": run_id},
+                     "source_available": path.is_file(), "run_filter": run_id,
+                     "ingestion": _read_receipts(_coverage_path(path)),
+                     "invalid_trace_records": diagnostics["invalid_records"]},
     }
 
 
