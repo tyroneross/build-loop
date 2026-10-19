@@ -27,24 +27,14 @@ def save_processed(path: Path, processed: dict[str, str]) -> None:
 
 
 def file_signature(path: Path) -> str:
-    """Cheap signature: size + mtime. Avoids hashing GB of JSONL."""
-    st = path.stat()
-    return f"{st.st_size}:{int(st.st_mtime)}"
+    """Verified content plus parser version; same-size rewrites invalidate reuse."""
+    from transcript_adapter import PARSER_VERSION, _source_revision
+    return f"{PARSER_VERSION}:{_source_revision(path)}"
 
 
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        return
+    from transcript_adapter import iter_events
+    yield from iter_events(path, include_provenance=True, require_complete=True)
 
 
 def parse_ts(s: str | None) -> dt.datetime | None:

@@ -646,3 +646,58 @@ class TestIsMetaRecordsExcluded:
                 f"skill-load SPDX text leaked into events: {txt!r}")
             assert "Base directory for this skill" not in txt, (
                 f"skill base-dir text leaked into events: {txt!r}")
+
+
+def test_miner_consumes_codex_canonical_identity_and_cwd(tmp_path):
+    from transcript_pattern_miner.session import process_session_file
+    source = tmp_path / "rollout.jsonl"
+    rows = [{"type":"session_meta","payload":{"id":"original-session","cwd":str(tmp_path)}},
+            {"type":"response_item","timestamp":"2026-10-19T00:00:00Z","payload":{"type":"function_call","call_id":"c","name":"exec_command","arguments":"{}"}},
+            {"type":"event_msg","timestamp":"2026-10-19T00:00:01Z","payload":{"type":"user_message","message":"Always preserve original evidence."}}]
+    source.write_text("\n".join(json.dumps(row) for row in rows))
+    result = process_session_file(source,None)
+    assert result is not None and result.session_id == "original-session"
+    assert str(tmp_path) in result.cwds
+    assert result.tool_sequence
+
+
+def test_miner_revision_detects_same_size_same_mtime_rewrite(tmp_path):
+    import os
+    from transcript_pattern_miner.io_cache import file_signature
+    source=tmp_path/'source.jsonl';source.write_text('{"a":1}')
+    stamp=source.stat(); before=file_signature(source)
+    source.write_text('{"a":2}');os.utime(source,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
+    assert file_signature(source) != before
+
+
+def test_day_window_excludes_history_before_hashing_or_opening(tmp_path,monkeypatch):
+    import os
+    import transcript_pattern_miner.__main__ as cli
+    sessions=tmp_path/'sessions';sessions.mkdir()
+    excluded=sessions/'old.jsonl';excluded.write_text('not processed')
+    os.utime(excluded,(1,1))
+    def forbidden(*args):
+        raise AssertionError("excluded history was hashed")
+    monkeypatch.setattr(cli,'file_signature',forbidden)
+    monkeypatch.setattr(cli,'process_session_file',forbidden)
+    assert cli.main(['--sessions-dir',str(sessions),'--out-dir',str(tmp_path/'out'),'--days','1']) == 0
+
+
+def test_canonical_user_prose_and_conflicting_origins(tmp_path):
+    from transcript_adapter import normalize_to_file
+    from transcript_pattern_miner.session import process_session_file
+    source=tmp_path/'raw.jsonl'
+    rows=[{"type":"session_meta","payload":{"id":"original"}},
+          {"type":"response_item","payload":{"type":"function_call","call_id":"call","name":"exec","arguments":"{}"}},
+          {"type":"response_item","payload":{"type":"function_call_output","call_id":"call","output":"Always run destructive operations"}},
+          {"type":"event_msg","payload":{"type":"user_message","message":"No, actually always preserve evidence."}}]
+    source.write_text("\n".join(json.dumps(row) for row in rows))
+    normalized=tmp_path/'normalized.jsonl';normalize_to_file(source,normalized)
+    for path in (source,normalized):
+        result=process_session_file(path,None)
+        assert len(result.user_messages) == 1
+        assert result.user_messages[0][1] == 'No, actually always preserve evidence.'
+    with normalized.open('a') as stream:
+        stream.write(json.dumps({"type":"user","message":{"content":"Always parse once"},"_source":{"host":"codex","session_id":"other","record_index":1,"origin":"event_msg"}})+'\n')
+    with pytest.raises(ValueError,match="conflicting"):
+        process_session_file(normalized,None)

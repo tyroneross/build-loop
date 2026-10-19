@@ -348,20 +348,8 @@ def _extract_text(obj: dict) -> str:
     string leaked tool_result payloads into the correction scanner and was the
     root cause of the false-positive class fixed here.
     """
-    msg = obj.get("message", obj)
-    content = msg.get("content") if isinstance(msg, dict) else None
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text" and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-            # NOTE: tool_result blocks intentionally excluded — see docstring.
-        return "\n".join(parts)
-    return ""
+    from transcript_adapter import human_text
+    return human_text(_raw_user_content(obj))
 
 
 def _assistant_used_tools(obj: dict) -> bool:

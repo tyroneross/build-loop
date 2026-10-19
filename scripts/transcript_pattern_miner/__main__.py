@@ -173,12 +173,11 @@ def main(argv: list[str]) -> int:
     sessions_in_window = 0
 
     for path in jsonl_files:
-        sig = file_signature(path)
         st = path.stat()
         mtime = dt.datetime.fromtimestamp(st.st_mtime, tz=dt.timezone.utc)
         if cutoff is not None and mtime < cutoff:
-            processed[str(path)] = sig
             continue
+        sig = file_signature(path)
         sessions_scanned += 1
         agg = process_session_file(path, cutoff)
         if agg is None:

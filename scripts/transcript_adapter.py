@@ -76,7 +76,8 @@ def session_key(path: Path) -> str:
                     continue
                 payload = row.get("payload")
                 candidate = (payload.get("id") if row.get("type") == "session_meta"
-                             and isinstance(payload, dict) else row.get("sessionId"))
+                             and isinstance(payload, dict) else row.get("sessionId") or
+                             (row["_source"].get("session_id") if isinstance(row.get("_source"), dict) else None))
                 if isinstance(candidate, str) and candidate.strip():
                     identity = candidate.strip()
                     break
@@ -210,6 +211,17 @@ def find_codex_transcript(
     return None
 
 
+def human_text(content: Any) -> str:
+    """Human prose only; tool results cannot become user directions."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(item if isinstance(item, str) else item["text"]
+                     for item in content if isinstance(item, str) or
+                     (isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str))).strip()
+
+
 def _text_block(text: str) -> list[dict[str, str]]:
     return [{"type": "text", "text": text}]
 
@@ -309,7 +321,7 @@ def _codex_output_is_error(output: str) -> bool:
 
 _CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
                         "<environment_context>", "<external_codex_apps_open_page>")
-PARSER_VERSION = "2"
+PARSER_VERSION = "3"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 
@@ -371,6 +383,7 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
         pending = None
         pending_origin = None
         source_session = None
+        source_cwd = None
         with path.open("rb") as handle:
             line_number = 0
             consumed = 0
@@ -402,9 +415,13 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                     payload = obj.get("payload")
                     if obj.get("type") == "session_meta" and isinstance(payload, dict):
                         source_session = payload.get("id") or payload.get("session_id")
+                    if obj.get("type") in {"session_meta", "turn_context"} and isinstance(payload, dict):
+                        source_cwd = payload.get("cwd") or source_cwd
                     event = _codex_event(obj)
                     if event is None:
                         continue
+                    if source_cwd:
+                        event["cwd"] = source_cwd
                 if include_provenance:
                     original = event.get("_source")
                     valid_origin = (isinstance(original, dict)

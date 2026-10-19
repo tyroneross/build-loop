@@ -164,9 +164,8 @@ def _record_user_prose(
     proj: str,
 ) -> None:
     """Capture a real user prose message when it follows an assistant turn."""
-    if not isinstance(content, str):
-        return
-    is_real, cleaned = is_real_user_text(content)
+    from transcript_adapter import human_text
+    is_real, cleaned = is_real_user_text(human_text(content))
     if not (is_real and agg._prev_was_assistant):
         return
     agg.user_messages.append((ts, cleaned, proj))
@@ -216,13 +215,11 @@ def _process_user_record(
     msg = obj.get("message") or {}
     content = msg.get("content")
     text = message_text(content)
-    if not text:
-        return False
     for kind, val in scan_secrets(text):
         agg.secret_hits.append((kind, val, proj, ts))
     _record_user_prose(agg, content, ts, proj)
     _record_tool_results(agg, content, ts, proj)
-    return True
+    return bool(text or isinstance(content, list) and any(isinstance(item, dict) and item.get("type") == "tool_result" for item in content))
 
 
 def _record_assistant_text_item(
@@ -600,8 +597,15 @@ def process_session_file(path: Path, cutoff: dt.datetime | None) -> SessionAggre
     has_any = False
     in_window = cutoff is None
     seen_uuids: set[str] = set()
+    source_sessions: set[str] = set()
 
     for obj in iter_jsonl(path):
+        origin_session = (obj.get("_source") or {}).get("session_id")
+        if isinstance(origin_session, str) and origin_session.strip():
+            source_sessions.add(origin_session.strip())
+            if len(source_sessions) > 1:
+                raise ValueError("conflicting miner source session identity")
+            agg.session_id = origin_session.strip()
         # Skip hook-injected / command-scaffolding / skill-load records.
         # Claude Code marks these with top-level isMeta=true even though
         # type stays "user"/"assistant" (Stop-hook feedback, slash-command
@@ -639,7 +643,9 @@ def process_session_file(path: Path, cutoff: dt.datetime | None) -> SessionAggre
         if t == "user":
             if _process_user_record(agg, obj, ts, proj):
                 has_any = True
-            agg._prev_was_assistant = False
+            from transcript_adapter import human_text
+            if human_text((obj.get("message") or {}).get("content")):
+                agg._prev_was_assistant = False
 
         elif t == "assistant":
             if _process_assistant_record(agg, obj, ts, proj):

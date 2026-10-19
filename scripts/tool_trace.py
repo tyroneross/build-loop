@@ -247,34 +247,12 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
     uses: dict[str, dict[str, Any]] = {}
     results: dict[str, dict[str, Any]] = {}
     session = session_id or transcript.stem
-    try:
-        lines = transcript.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {"seen": 0, "written": 0}
-    for ordinal, line in enumerate(lines):
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        payload = record.get("payload") if record.get("type") == "response_item" else None
-        if isinstance(payload, dict):
-            block_type = payload.get("type")
-            call_id = str(payload.get("call_id") or payload.get("id") or "")
-            if block_type in {"function_call", "custom_tool_call"} and call_id:
-                uses[call_id] = {
-                    "name": str(payload.get("name") or "unknown"),
-                    "input": _decode_maybe_json(payload.get("arguments", payload.get("input"))),
-                    "timestamp": record.get("timestamp"),
-                    "ordinal": ordinal,
-                }
-            elif block_type in {"function_call_output", "custom_tool_call_output"} and call_id:
-                output = payload.get("output")
-                results[call_id] = {
-                    "result": output,
-                    "is_error": _contains_error(output),
-                    "timestamp": record.get("timestamp"),
-                }
-            continue
+    source_sessions: set[str] = set()
+    from transcript_adapter import iter_events
+    for ordinal, record in enumerate(iter_events(transcript, include_provenance=True, require_complete=True)):
+        original_session = (record.get("_source") or {}).get("session_id")
+        if isinstance(original_session, str) and original_session.strip():
+            source_sessions.add(original_session.strip())
         content = (record.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue
@@ -294,14 +272,14 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
                     "is_error": bool(block.get("is_error")),
                     "timestamp": record.get("timestamp"),
                 }
+    if len(source_sessions) > 1 or (session_id and source_sessions and source_sessions != {session_id}):
+        raise ValueError("conflicting transcript source session identity")
+    if source_sessions:
+        session = next(iter(source_sessions))
     path = workdir / TRACE_PATH
     existing: set[tuple[str, str]] = set()
     if path.exists():
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
+        for row in _iter_trace_rows(path):
             existing.add((str(row.get("span_id")), str(row.get("event"))))
     written = 0
     for tool_use_id, use in uses.items():
@@ -317,7 +295,7 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
             is_error=bool(result.get("is_error")),
             timestamp=use.get("timestamp"),
             end_timestamp=result.get("timestamp"),
-            ordinal=int(use.get("ordinal", 0)),
+            ordinal=0,  # source call ID is stable across revisions and normalized containers
         )
         if (span["span_id"], span["event"]) in existing:
             continue
@@ -327,53 +305,68 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
     return {"seen": len(uses), "written": written}
 
 
+def _iter_trace_rows(path: Path):
+    """Stream bounded records; resource/IO failures remain explicit, not empty coverage."""
+    from transcript_adapter import MAX_SOURCE_BYTES, MAX_RECORD_BYTES, TranscriptLimitError
+    try:
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            raise TranscriptLimitError("Trace exceeds source byte budget")
+        with path.open("rb") as handle:
+            consumed = 0
+            while line := handle.readline(MAX_RECORD_BYTES + 1):
+                consumed += len(line)
+                if len(line) > MAX_RECORD_BYTES or consumed > MAX_SOURCE_BYTES:
+                    raise TranscriptLimitError("Trace exceeds read budget")
+                try:
+                    row = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                if isinstance(row, dict):
+                    yield row
+    except FileNotFoundError:
+        return
+
+
 def summarize_path(
     path: Path,
     run_id: str | None = None,
     *,
     recent_seconds: int | None = None,
 ) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
+    count = errors = rate_limits = 0
+    tools: Counter = Counter()
+    hashes: Counter = Counter()
+    durations: list[float] = []
+    for row in _iter_trace_rows(path):
+        attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
+        if row.get("event") != "reconciled":
+            continue
+        if run_id and attrs.get("build_loop.run_id") != run_id:
+            continue
+        if recent_seconds is not None:
+            end_ns = row.get("end_time_unix_nano") or row.get("start_time_unix_nano")
+            if not isinstance(end_ns, int) or end_ns < time.time_ns() - recent_seconds * 1_000_000_000:
                 continue
-            attrs = row.get("attributes") if isinstance(row, dict) else {}
-            if row.get("event") != "reconciled":
-                continue
-            if run_id and (attrs or {}).get("build_loop.run_id") != run_id:
-                continue
-            if recent_seconds is not None:
-                end_ns = row.get("end_time_unix_nano") or row.get("start_time_unix_nano")
-                if not isinstance(end_ns, int) or end_ns < time.time_ns() - recent_seconds * 1_000_000_000:
-                    continue
-            rows.append(row)
-    tools = Counter((row.get("attributes") or {}).get("gen_ai.tool.name", "unknown") for row in rows)
-    errors = sum((row.get("status") or {}).get("code") == "ERROR" for row in rows)
-    durations = sorted(float(row["duration_ms"]) for row in rows if isinstance(row.get("duration_ms"), (int, float)))
-    rate_limits = sum(
-        bool(RATE_LIMIT.search(str((row.get("attributes") or {}).get("gen_ai.tool.call.result.preview", ""))))
-        for row in rows
-    )
-    hashes = Counter(
-        (
-            (row.get("attributes") or {}).get("gen_ai.tool.name"),
-            (row.get("attributes") or {}).get("gen_ai.tool.call.arguments.sha256"),
-        )
-        for row in rows
-    )
+        count += 1
+        tools[attrs.get("gen_ai.tool.name", "unknown")] += 1
+        errors += (row.get("status") or {}).get("code") == "ERROR"
+        rate_limits += bool(RATE_LIMIT.search(str(attrs.get("gen_ai.tool.call.result.preview", ""))))
+        hashes[(attrs.get("gen_ai.tool.name"), attrs.get("gen_ai.tool.call.arguments.sha256"))] += 1
+        if isinstance(row.get("duration_ms"), (int, float)):
+            durations.append(float(row["duration_ms"]))
+    durations.sort()
     retries = sum(max(0, count - 1) for count in hashes.values())
     p95 = durations[min(len(durations) - 1, int(len(durations) * 0.95))] if durations else None
     return {
-        "tool_calls": len(rows),
+        "tool_calls": count,
         "tool_errors": errors,
-        "error_rate": round(errors / len(rows), 4) if rows else 0.0,
+        "error_rate": round(errors / count, 4) if count else 0.0,
         "repeated_calls": retries,
         "provider_429s": rate_limits,
         "p95_duration_ms": p95,
         "tools": dict(tools.most_common(12)),
+        "coverage": {"source": "observed_reconciled_spans", "complete_tool_coverage": "unavailable",
+                     "source_available": path.is_file(), "run_filter": run_id},
     }
 
 

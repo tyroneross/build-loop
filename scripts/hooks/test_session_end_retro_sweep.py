@@ -267,7 +267,7 @@ def test_normalized_sessions_keep_original_identity(tmp_path):
         directory = tmp_path / (session_id + "-temp")
         directory.mkdir()
         normalized, _ = sweep.normalize_transcript(source, directory)
-        outputs.append(normalized.stem)
+        outputs.append(sweep._adapter().session_key(normalized))
     assert outputs == ["source-one", "source-two"]
 
 
@@ -282,3 +282,18 @@ def test_production_script_imports_without_pythonpath(tmp_path):
                             capture_output=True, cwd=tmp_path, env=env, timeout=10)
     assert result.returncode == 0, result.stderr
     assert "ModuleNotFoundError" not in result.stderr
+
+
+def test_sweep_reuses_revision_cache(tmp_path,monkeypatch):
+    adapter=sweep._adapter()
+    source=tmp_path/'source.jsonl'
+    source.write_text(json.dumps({"type":"session_meta","payload":{"id":"original"}})+'\n'+json.dumps({"type":"event_msg","payload":{"type":"user_message","message":"hello"}}))
+    original=adapter.normalize_to_file
+    calls=[]
+    def counted(*args,**kwargs):
+        calls.append(1);return original(*args,**kwargs)
+    monkeypatch.setattr(adapter,'normalize_to_file',counted)
+    first,_=sweep.normalize_transcript(source,tmp_path/'cache')
+    second,_=sweep.normalize_transcript(source,tmp_path/'cache')
+    assert first == second and first != source and len(calls) == 1
+    assert adapter.session_key(first) == 'original'

@@ -97,3 +97,40 @@ def test_codex_response_items_are_reconciled(tmp_path: Path) -> None:
     assert summary["tool_errors"] == 1
     assert summary["provider_429s"] == 1
     assert summary["tools"] == {"exec_command": 1, "apply_patch": 1}
+
+
+def test_trace_summary_streams_without_materializing_file(tmp_path, monkeypatch):
+    source = tmp_path / "session.jsonl"
+    source.write_text(_line("assistant", [{"type":"tool_use","id":"id","name":"Bash","input":{"command":"run"}}], "2026-08-10T00:00:00Z"))
+    trace.ingest_transcript(tmp_path,source)
+    original = Path.read_text
+    def no_trace_read(path,*args,**kwargs):
+        if path.name.endswith("jsonl"):
+            raise AssertionError("whole-file trace read")
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,"read_text",no_trace_read)
+    assert trace.summarize(tmp_path)["tool_calls"] == 1
+
+
+def test_trace_budget_failure_is_not_zero_coverage(tmp_path,monkeypatch):
+    import pytest, transcript_adapter
+    path=tmp_path/"large.jsonl";path.write_text("x"*100)
+    monkeypatch.setattr(transcript_adapter,"MAX_SOURCE_BYTES",50)
+    with pytest.raises(transcript_adapter.TranscriptLimitError):
+        trace.summarize_path(path)
+
+
+def test_source_session_deduplicates_raw_normalized_and_revision_copy(tmp_path):
+    from transcript_adapter import normalize_to_file
+    source=tmp_path/'rollout.jsonl'
+    rows=[{"type":"session_meta","payload":{"id":"original"}},
+          {"type":"response_item","payload":{"type":"function_call","call_id":"same-call","name":"exec","arguments":"{}"}}]
+    source.write_text("\n".join(json.dumps(row) for row in rows))
+    normalized=tmp_path/'normalized-one.jsonl';normalize_to_file(source,normalized)
+    revised=tmp_path/'normalized-two.jsonl';normalize_to_file(normalized,revised)
+    assert trace.ingest_transcript(tmp_path,source)["written"] == 1
+    assert trace.ingest_transcript(tmp_path,normalized)["written"] == 0
+    assert trace.ingest_transcript(tmp_path,revised)["written"] == 0
+    import pytest
+    with pytest.raises(ValueError,match="conflicting"):
+        trace.ingest_transcript(tmp_path,source,session_id="different")

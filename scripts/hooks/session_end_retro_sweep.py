@@ -42,10 +42,8 @@ Invoked fire-and-forget (nohup &) by the host SessionEnd hook.
 """
 from __future__ import annotations
 
-import atexit
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -140,8 +138,8 @@ def normalize_transcript(transcript: Path, workdir: Path) -> tuple[Path, Path | 
     try:
         if ta.detect_format(transcript) != ta.CODEX:
             return transcript, None
-        dest = workdir / f"{ta.session_key(transcript)}.jsonl"
-        if ta.normalize_to_file(transcript, dest) == 0:
+        dest = ta.normalize_cached(transcript, workdir)
+        if dest is None:
             return transcript, None
         cwd = ta.session_cwd(transcript)
         return dest, (Path(cwd) if cwd else None)
@@ -431,8 +429,8 @@ def main() -> None:
     # Normalize BEFORE the triviality check: session_is_trivial() parses the
     # Claude shape, so a raw Codex rollout scores as empty and the sweep exits
     # having silently skipped a real session.
-    _norm_dir = Path(tempfile.mkdtemp(prefix="bl-retro-norm-"))
-    atexit.register(shutil.rmtree, _norm_dir, True)
+    # Same cache owner as stop-transcript-sweep.sh; no per-sweep extraction copy.
+    _norm_dir = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state") / "build-loop/transcript-cache"
     transcript, adapter_cwd = normalize_transcript(raw_transcript, _norm_dir)
     if session_is_trivial(transcript):
         _log_and_exit()

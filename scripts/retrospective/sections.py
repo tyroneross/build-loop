@@ -51,7 +51,7 @@ def _normalize(text: str) -> str:
     return s[:_NORMALIZE_LEN]
 
 
-from transcript_adapter import _codex_event, iter_events
+from transcript_adapter import _codex_event, iter_events, human_text as _human_text
 
 
 def _normalize_transcript_record(rec: dict[str, Any]) -> dict[str, Any] | None:
@@ -73,24 +73,6 @@ def _content_blocks(rec: dict[str, Any]) -> list[Any]:
     content = (rec.get("message") or {}).get("content")
     return content if isinstance(content, list) else []
 
-
-def _human_text(content: Any) -> str:
-    """Join the human-authored prose in a message content field.
-
-    Accepts the legacy string form and the block-list form. ``tool_result``
-    blocks are skipped — they are tool output, not human prose.
-    """
-    if isinstance(content, str):
-        return content.strip()
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for blk in content:
-        if isinstance(blk, str):
-            parts.append(blk)
-        elif isinstance(blk, dict) and blk.get("type") == "text" and isinstance(blk.get("text"), str):
-            parts.append(blk["text"])
-    return "\n".join(parts).strip()
 
 
 def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
