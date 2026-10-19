@@ -298,9 +298,10 @@ def run(
         state = _load_state_json(workdir)
         intent_md = _load_md(workdir, "intent.md")
         plan_md = _load_md(workdir, "plan.md")
-        rid = run_id or _derive_run_id(state)
-        target_run = _find_run(state, rid)
         from rally_point.build_loop_id import resolve_run_identity
+        selection = resolve_run_identity(state, include_history=True)
+        rid = run_id or selection.build_run_id or "unknown"
+        target_run = _find_run(state, rid)
         active = resolve_run_identity(state)
         if not target_run and active.state == "active" and active.build_run_id == rid:
             target_run = state.get("execution") or {}
@@ -315,8 +316,9 @@ def run(
         tx_reason = None
         if transcript is not None:
             tx = transcript
-        elif run_id is not None and not target_run and not session_id:
-            tx, tx_reason = None, "explicit run has no matching evidence; transcript membership unavailable"
+        elif not session_id and (not target_run or run_start is None or
+                                 (run_id is None and selection.build_run_id is None)):
+            tx, tx_reason = None, "run has no unambiguous dated evidence; implicit transcript discovery unavailable"
         else:
             sid = session_id or _derive_session_id(state)
             tx, tx_reason = find_transcript_for_run(

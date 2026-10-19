@@ -111,8 +111,13 @@ def resolve_run_identity(
     runs = [r for r in history if isinstance(r, dict)] if isinstance(history, list) else []
     if runs:
         last = runs[-1]
-        run_id = next((v for k in ("run_id", "build_loop_id", "id")
-                       if (v := identifier(last.get(k)))), None) if include_history else None
+        run_id = None
+        if include_history:
+            aliases = {v for k in ("run_id", "build_loop_id")
+                       if (v := identifier(last.get(k)))}
+            if len(aliases) > 1:
+                return RunIdentity(None, session, "conflicting")
+            run_id = aliases.pop() if aliases else identifier(last.get("id"))
         return RunIdentity(run_id, session, "between_runs")
     return RunIdentity(None, session, "absent")
 

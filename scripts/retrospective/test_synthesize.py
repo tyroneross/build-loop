@@ -409,3 +409,19 @@ def test_unknown_explicit_run_rejects_unscoped_judges(tmp_path):
     bl.mkdir()
     (bl / "judge-decisions.json").write_text(json.dumps({"decisions": [{"verdict": "approve"}]}))
     assert _load_judge_decisions_json(tmp_path, "unknown", require_identity=True) == []
+
+
+def test_unresolved_or_undated_implicit_run_never_discovers_a_transcript(tmp_path):
+    cases = [
+        {"runs": [{"run_id": "A", "build_loop_id": "B", "started_at": "2026-10-19T18:00:00Z"}]},
+        {"execution": {"run_id": "A", "build_loop_id": "B"}},
+        {"execution": {"run_id": "undated"}},
+        {},
+    ]
+    for index, state in enumerate(cases):
+        workdir, _ = _build_workdir(tmp_path / str(index))
+        (workdir / ".build-loop/state.json").write_text(json.dumps(state))
+        with patch("retrospective.synthesize.find_transcript_for_run") as discover:
+            result = synth_run(workdir, memory_root=tmp_path / "no-memory")
+        discover.assert_not_called()
+        assert result["status"] == "ok"

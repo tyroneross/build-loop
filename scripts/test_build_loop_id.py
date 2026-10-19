@@ -491,3 +491,12 @@ def test_malformed_identity_history_is_absent(history):
     identity = bli.resolve_run_identity({"runs": history})
     assert identity.build_run_id is None
     assert identity.state == "absent"
+
+
+def test_selected_history_rejects_conflicting_aliases_and_preserves_legacy_id():
+    conflict = {"runs": [{"run_id": "A", "build_loop_id": "B"}]}
+    selected = bli.resolve_run_identity(conflict, include_history=True)
+    assert selected.state == "conflicting"
+    assert selected.build_run_id is None
+    assert bli.resolve_run_identity({"runs": [{"id": "legacy"}]}, include_history=True).build_run_id == "legacy"
+    assert bli.resolve_run_identity({"runs": [{"run_id": "A", "build_loop_id": "A"}]}, include_history=True).build_run_id == "A"
