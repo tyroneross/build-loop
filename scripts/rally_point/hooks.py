@@ -31,7 +31,6 @@ try:
     from rally_point import actor_identity, channel_paths, discovery_bridge, presence, revision
     from rally_point.backend_adapter import (
         acknowledge,
-        audit_next,
         native_room_summary,
         resolve_context,
         room_snapshot,
@@ -41,7 +40,6 @@ except ImportError:
     from . import actor_identity, channel_paths, discovery_bridge, presence, revision
     from .backend_adapter import (
         acknowledge,
-        audit_next,
         native_room_summary,
         resolve_context,
         room_snapshot,
@@ -547,14 +545,11 @@ def pre_edit_hint(
     if context is None:
         context = resolve_context(workdir)
     if context.native:
-        native_identity = actor_identity.resolve_identity(tool, session_id)
-        result = audit_next(context, tool=native_identity.native_tool)
-        if result.ok and not _rally_quiet():
-            data = result.payload.get("data") if isinstance(result.payload, dict) else {}
-            next_data = data.get("next") if isinstance(data, dict) else {}
-            actionable = next_data.get("actionable") if isinstance(next_data, dict) else None
-            if actionable:
-                print(f"rally: native coordination pending ({context.envelope.app_slug})")
+        # No native Rally read on the per-tool path. `rally next --audit` took
+        # 1.4-3.0 s on a large room (measured 2026-10-19, easy-terminal), past
+        # the 1.5 s hook deadline on every call, so it never printed and cost
+        # every Edit/Write/Bash 1.5 s. Pending coordination is surfaced once
+        # per prompt by the Rally UserPromptSubmit summary instead.
         return 0
     if context.envelope.backend != "build-loop-local":
         _surface_coordination_refusal(context, "pre-tool coordination read")
@@ -569,6 +564,18 @@ def pre_edit_hint(
     if current > seen and not _rally_quiet():
         print(f"rally: peer ahead → checkpoint ({slug} rev {seen}→{current})")
     return 0
+
+
+def _spawn_background_join(op: Path, *, tool: str, session_id: str, model: str) -> None:
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "pre-edit-join-bg", "--workdir", str(op),
+         "--tool", tool, "--session-id", session_id, "--model", model],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,  # outlives the hook's killed process group
+        close_fds=True,
+    )
 
 
 def _same_path(a: Path, b: Path) -> bool:
@@ -588,6 +595,7 @@ def pre_edit_join(
     model: str = "unknown",
     now: float | None = None,
     context=None,
+    force: bool = False,
 ) -> int:
     """Per-tool-use throttled re-join of the operative repo's Rally room.
 
@@ -622,7 +630,7 @@ def pre_edit_join(
     t = now if now is not None else time.time()
     try:
         early_session_id = actor_identity.resolve_identity(tool, session_id).session_id
-        if early_session_id and _fresh_native_throttle(
+        if not force and early_session_id and _fresh_native_throttle(
             op, early_session_id, throttle_s=_throttle_seconds(), now=t
         ):
             return 0
@@ -641,12 +649,23 @@ def pre_edit_join(
     if context.native:
         native_identity = actor_identity.resolve_identity(tool, session_id)
         resolved_session_id = native_identity.session_id
-        if _fresh_native_throttle(
+        if not force and _fresh_native_throttle(
             op,
             resolved_session_id,
             throttle_s=_throttle_seconds(),
             now=t,
         ):
+            return 0
+        if discovery_bridge._NONBLOCKING:
+            # Per-tool hook: a native presence write measured ~1.4 s (room
+            # snapshot + enter) and often exceeds Rally's own 3 s watchdog,
+            # which reports a committed write as not ok. Claim the throttle
+            # first, then write from a detached process the hook never waits on.
+            try:
+                _touch_native_throttle(op, resolved_session_id, now=t)
+                _spawn_background_join(op, tool=tool, session_id=resolved_session_id, model=model)
+            except Exception:
+                pass
             return 0
         if _remaining_seconds() < _JOIN_MIN_REMAINING_SECONDS:
             # Not enough budget left to finish a Rally write; retry on the
@@ -787,9 +806,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "session-start-advance",
         "session-start-safe",
         "pre-edit",
+        "pre-edit-join-bg",
     ):
         sp = sub.add_parser(name)
         sp.add_argument("--workdir", default=".")
+        if name == "pre-edit-join-bg":
+            sp.add_argument("--tool", default="claude_code")
+            sp.add_argument("--session-id", default=None)
+            sp.add_argument("--model", default="unknown")
         if name.startswith("session-start"):
             sp.add_argument("--tool", default="claude_code")
             sp.add_argument("--session-id", default=None)
@@ -827,9 +851,11 @@ def main(argv: list[str] | None = None) -> int:
     # Every subcommand here runs inside a host hook with a short timeout:
     # reuse discovery across hook processes and stop before the host kills us.
     previous_disk_cache = discovery_bridge.enable_disk_cache()
-    # ``session-start-advance`` runs in the SessionStart wrapper's detached
-    # background stage (no host timeout), so it must be allowed to finish.
-    if args.subcommand != "session-start-advance":
+    # Per-tool hooks never wait on the rally CLI (discovery_bridge note).
+    previous_nonblocking = discovery_bridge.enable_nonblocking(args.subcommand == "pre-edit")
+    # ``session-start-advance`` and ``pre-edit-join-bg`` run detached (no host
+    # timeout), so they must be allowed to finish.
+    if args.subcommand not in ("session-start-advance", "pre-edit-join-bg"):
         _arm_deadline(_hook_deadline_seconds())
     try:
         return _dispatch(args, workdir)
@@ -846,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         _disarm_deadline()
         discovery_bridge.enable_disk_cache(previous_disk_cache)
+        discovery_bridge.enable_nonblocking(previous_nonblocking)
 
 
 def _dispatch(args: argparse.Namespace, workdir: Path) -> int:
@@ -870,6 +897,17 @@ def _dispatch(args: argparse.Namespace, workdir: Path) -> int:
                 tool=args.tool,
                 session_id=args.session_id,
             )
+        if args.subcommand == "pre-edit-join-bg":
+            # The hook already claimed the throttle; write synchronously here.
+            discovery_bridge.enable_nonblocking(False)
+            return pre_edit_join(
+                workdir,
+                command=f"cd {shlex.quote(str(workdir))}",
+                tool=args.tool,
+                session_id=args.session_id,
+                model=args.model,
+                force=True,
+            )
         if args.subcommand == "pre-edit":
             file_path = args.file_path
             bash_command = args.bash_command
@@ -884,6 +922,22 @@ def _dispatch(args: argparse.Namespace, workdir: Path) -> int:
                 context = resolve_context(workdir)
             except Exception:
                 context = None
+            # Join first: it is the cheap, useful half. The hint ran first
+            # until 2026-10-19 and, when slow, the host deadline killed the
+            # process before the join ever ran.
+            if not args.skip_join:
+                try:
+                    pre_edit_join(
+                        workdir,
+                        file_path=file_path,
+                        command=bash_command,
+                        tool=args.tool,
+                        session_id=session_id,
+                        model=args.model,
+                        context=context,
+                    )
+                except Exception:
+                    pass
             # Legacy revision-advanced hint (workdir's existing channel).
             try:
                 pre_edit_hint(
@@ -894,17 +948,6 @@ def _dispatch(args: argparse.Namespace, workdir: Path) -> int:
                 )
             except Exception:
                 pass
-            # New: throttled operative-repo join.
-            if not args.skip_join:
-                pre_edit_join(
-                    workdir,
-                    file_path=file_path,
-                    command=bash_command,
-                    tool=args.tool,
-                    session_id=session_id,
-                    model=args.model,
-                    context=context,
-                )
             return 0
     except Exception:
         return 0

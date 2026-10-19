@@ -882,6 +882,61 @@ _DISK_CACHE_IDENTITY_ENV = (
 )
 
 
+# Hook hot path (2026-10-19): a native probe (`rally whoami` + `rally status
+# read`) measured 1.4-1.5 s on a large room, at or past the 1.5 s per-tool hook
+# deadline. The deadline killed the probe before it could refresh the disk
+# cache, so after each TTL expiry every Edit/Write/Bash hook paid the full
+# deadline and did nothing. Non-blocking mode never probes in the caller:
+# a fresh entry is used, a stale one (<= STALE_MAX_SECONDS) is used while one
+# detached process refreshes it, and a missing one raises DiscoveryPending
+# after starting that refresh. Only per-tool hooks enable it.
+STALE_MAX_SECONDS = 24 * 60 * 60
+_REFRESH_LOCK_SECONDS = 30
+_NONBLOCKING = False
+
+
+class DiscoveryPending(RuntimeError):
+    """No cached Rally channel yet; a background refresh was started."""
+
+
+def enable_nonblocking(enabled: bool = True) -> bool:
+    """Never run the rally CLI in this process; see the note above."""
+    global _NONBLOCKING
+    previous = _NONBLOCKING
+    _NONBLOCKING = bool(enabled)
+    return previous
+
+
+def _spawn_refresh(workdir: Path, workdir_key: str, binary: str) -> bool:
+    """Start one detached refresher per cache key. Returns True when started."""
+    key = _disk_cache_key(workdir_key, binary)
+    if key is None:
+        return False
+    try:
+        directory = _disk_cache_dir()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock = directory / f"{key}.refresh"
+        try:
+            if time.time() - lock.stat().st_mtime < _REFRESH_LOCK_SECONDS:
+                return False  # one refresher already running
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--workdir", str(workdir), "--refresh", str(lock)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # outlives the hook's killed process group
+            close_fds=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def enable_disk_cache(enabled: bool = True) -> bool:
     """Let ``resolve()`` reuse a healthy native envelope across processes.
 
@@ -919,7 +974,9 @@ def _disk_cache_key(workdir_key: str, binary: str) -> str | None:
     return hashlib.sha256(blob).hexdigest()
 
 
-def _disk_cache_get(workdir_key: str, binary: str) -> DiscoveryEnvelope | None:
+def _disk_cache_get(
+    workdir_key: str, binary: str, *, max_age: float | None = None
+) -> DiscoveryEnvelope | None:
     if not _DISK_CACHE_ENABLED:
         return None
     key = _disk_cache_key(workdir_key, binary)
@@ -930,7 +987,8 @@ def _disk_cache_get(workdir_key: str, binary: str) -> DiscoveryEnvelope | None:
         cached_at = float(data["cached_at"])
         if data.get("key") != key or data.get("schema") != _DISK_CACHE_SCHEMA:
             return None
-        if not (0 <= time.time() - cached_at <= CACHE_TTL_SECONDS):
+        limit = CACHE_TTL_SECONDS if max_age is None else max_age
+        if not (0 <= time.time() - cached_at <= limit):
             return None
         envelope = _shape_envelope_from_discover(
             dict(data["raw"]), resolved_via=str(data["resolved_via"])
@@ -1061,6 +1119,13 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         if envelope is not None:
             _cache_put(native_key, "repo-local-rally-cli", envelope)
             return envelope
+        if _NONBLOCKING and _DISK_CACHE_ENABLED:
+            stale = _disk_cache_get(native_key, native_binary, max_age=STALE_MAX_SECONDS)
+            _spawn_refresh(requested_workdir, native_key, native_binary)
+            if stale is not None:
+                _cache_put(native_key, "repo-local-rally-cli", stale)
+                return stale
+            raise DiscoveryPending(f"Rally channel for {requested_workdir} is refreshing in the background")
         envelope = _resolve_native_rally_channel(
             native_binary,
             requested_workdir,
@@ -1956,7 +2021,19 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--workdir", default=".")
     p.add_argument("--json", action="store_true",
                    help="Emit JSON envelope (default).")
+    p.add_argument("--refresh", default=None, metavar="LOCK",
+                   help="Background refresher: probe, write the disk cache, remove LOCK.")
     args = p.parse_args(argv)
+    if args.refresh:
+        enable_disk_cache(True)
+        try:
+            resolve(Path(args.workdir))
+        finally:
+            try:
+                os.unlink(args.refresh)
+            except OSError:
+                pass
+        return 0
     envelope = resolve(Path(args.workdir))
     json.dump(envelope.to_dict(), sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

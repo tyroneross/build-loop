@@ -210,3 +210,147 @@ def test_native_join_skipped_when_budget_is_low(monkeypatch, tmp_path):
     monkeypatch.setattr(hooks, "_DEADLINE_AT", time.monotonic() + 0.1)
     assert hooks.pre_edit_join(tmp_path, session_id="s-low-budget") == 0
     assert writes == []
+
+
+def test_pre_edit_runs_join_before_hint_and_never_reads_native_rally(monkeypatch, tmp_path):
+    """2026-10-19: the native hint ran `rally next --audit` (1.4-3.0 s) before
+    the join, so the 1.5 s host deadline killed every call before either
+    finished. The join must run first, and the hint must not call Rally."""
+    order = []
+
+    class NativeContext:
+        native = True
+
+    monkeypatch.setattr(hooks, "resolve_context", lambda _wd: NativeContext())
+    monkeypatch.setattr(hooks, "pre_edit_join", lambda *_a, **_k: order.append("join") or 0)
+    real_hint = hooks.pre_edit_hint
+
+    def tracking_hint(*a, **k):
+        order.append("hint")
+        return real_hint(*a, **k)
+
+    monkeypatch.setattr(hooks, "pre_edit_hint", tracking_hint)
+
+    native_calls = []
+
+    def no_native_calls(*a, **_k):
+        native_calls.append(a)  # recorded, not raised: dispatch swallows errors
+
+    import rally_point.backend_adapter as backend_adapter
+    monkeypatch.setattr(backend_adapter, "invoke_native", no_native_calls)
+    rc = hooks.main(["pre-edit", "--workdir", str(tmp_path), "--command", "ls"])
+    assert rc == 0
+    assert order == ["join", "hint"]
+    assert native_calls == [], "pre-edit must not invoke the rally CLI"
+
+
+def test_join_still_runs_when_hint_raises(monkeypatch, tmp_path):
+    ran = []
+    monkeypatch.setattr(hooks, "resolve_context", lambda _wd: None)
+    monkeypatch.setattr(hooks, "pre_edit_join", lambda *_a, **_k: ran.append("join") or 0)
+
+    def broken_hint(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hooks, "pre_edit_hint", broken_hint)
+    assert hooks.main(["pre-edit", "--workdir", str(tmp_path), "--command", "ls"]) == 0
+    assert ran == ["join"]
+
+
+@pytest.fixture
+def nonblocking(native_stub, monkeypatch):
+    spawned = []
+    monkeypatch.setattr(discovery_bridge, "_spawn_refresh", lambda *a: spawned.append(a) or True)
+    discovery_bridge.enable_disk_cache(True)
+    previous = discovery_bridge.enable_nonblocking(True)
+    yield native_stub, spawned
+    discovery_bridge.enable_nonblocking(previous)
+
+
+def test_nonblocking_cold_cache_never_probes_and_starts_refresh(nonblocking):
+    (_binary, repo, calls, _cache), spawned = nonblocking
+    with pytest.raises(discovery_bridge.DiscoveryPending):
+        discovery_bridge.resolve(repo)
+    assert calls["probe"] == 0
+    assert len(spawned) == 1
+
+
+def test_nonblocking_serves_stale_entry_and_refreshes(nonblocking, monkeypatch):
+    (_binary, repo, calls, _cache), spawned = nonblocking
+    discovery_bridge.enable_nonblocking(False)
+    discovery_bridge.resolve(repo)  # blocking probe warms the disk cache
+    discovery_bridge.enable_nonblocking(True)
+    discovery_bridge.clear_cache()
+    real_time = time.time
+    monkeypatch.setattr(discovery_bridge.time, "time", lambda: real_time() + discovery_bridge.CACHE_TTL_SECONDS + 5)
+    envelope = discovery_bridge.resolve(repo)
+    assert envelope.backend == "rally"
+    assert calls["probe"] == 1  # only the warm-up
+    assert len(spawned) == 1
+
+
+def test_nonblocking_fresh_entry_needs_no_refresh(nonblocking):
+    (_binary, repo, calls, _cache), spawned = nonblocking
+    discovery_bridge.enable_nonblocking(False)
+    discovery_bridge.resolve(repo)
+    discovery_bridge.enable_nonblocking(True)
+    discovery_bridge.clear_cache()
+    discovery_bridge.resolve(repo)
+    assert calls["probe"] == 1
+    assert spawned == []
+
+
+def test_spawn_refresh_is_single_flight(native_stub, monkeypatch):
+    binary, repo, _calls, _cache = native_stub
+    started = []
+    monkeypatch.setattr(discovery_bridge.subprocess, "Popen", lambda *a, **k: started.append(a))
+    discovery_bridge.enable_disk_cache(True)
+    assert discovery_bridge._spawn_refresh(repo, str(repo), str(binary)) is True
+    assert discovery_bridge._spawn_refresh(repo, str(repo), str(binary)) is False
+    assert len(started) == 1
+    assert "--refresh" in started[0][0]
+
+
+class _FakeEnvelope:
+    app_slug = "demo"
+    backend = "rally"
+
+
+class _FakeNativeContext:
+    native = True
+    envelope = _FakeEnvelope()
+
+
+def _native_join_env(monkeypatch, tmp_path):
+    writes, spawned = [], []
+    monkeypatch.setattr(hooks, "resolve_operative_repo", lambda wd, **_k: tmp_path)
+    monkeypatch.setattr(hooks, "resolve_context", lambda _wd: _FakeNativeContext())
+    monkeypatch.setattr(hooks, "write_backend_presence", lambda *a, **k: writes.append(k) or type("R", (), {"ok": True})())
+    monkeypatch.setattr(hooks, "_spawn_background_join", lambda op, **k: spawned.append(k))
+    return writes, spawned
+
+
+def test_hook_hot_path_hands_presence_write_to_background(monkeypatch, tmp_path):
+    writes, spawned = _native_join_env(monkeypatch, tmp_path)
+    previous = discovery_bridge.enable_nonblocking(True)
+    try:
+        hooks.pre_edit_join(tmp_path, command="ls", tool="claude_code", session_id="s1", context=_FakeNativeContext())
+        # Second call inside the throttle window does nothing.
+        hooks.pre_edit_join(tmp_path, command="ls", tool="claude_code", session_id="s1", context=_FakeNativeContext())
+    finally:
+        discovery_bridge.enable_nonblocking(previous)
+    assert writes == []
+    assert len(spawned) == 1
+
+
+def test_background_join_writes_even_inside_throttle_window(monkeypatch, tmp_path):
+    writes, spawned = _native_join_env(monkeypatch, tmp_path)
+    previous = discovery_bridge.enable_nonblocking(False)
+    try:
+        rc = hooks.main(["pre-edit-join-bg", "--workdir", str(tmp_path), "--tool", "claude_code", "--session-id", "s1"])
+        rc2 = hooks.main(["pre-edit-join-bg", "--workdir", str(tmp_path), "--tool", "claude_code", "--session-id", "s1"])
+    finally:
+        discovery_bridge.enable_nonblocking(previous)
+    assert rc == rc2 == 0
+    assert len(writes) == 2
+    assert spawned == []
