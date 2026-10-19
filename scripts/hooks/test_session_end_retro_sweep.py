@@ -254,3 +254,31 @@ def test_claude_transcript_is_not_rewritten(tmp_path):
     out, cwd = sweep.normalize_transcript(claude, tmp_path / "norm2")
     assert out == claude
     assert cwd is None
+
+
+def test_normalized_sessions_keep_original_identity(tmp_path):
+    outputs = []
+    for session_id in ("source-one", "source-two"):
+        source = tmp_path / f"{session_id}.jsonl"
+        source.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": session_id, "cwd": str(tmp_path)}}) + "\n" + json.dumps({
+            "type": "response_item", "payload": {"type": "function_call", "name": "exec",
+                                                    "call_id": "call", "arguments": "{}"}}) + "\n")
+        directory = tmp_path / (session_id + "-temp")
+        directory.mkdir()
+        normalized, _ = sweep.normalize_transcript(source, directory)
+        outputs.append(normalized.stem)
+    assert outputs == ["source-one", "source-two"]
+
+
+def test_production_script_imports_without_pythonpath(tmp_path):
+    import os
+    import subprocess
+    import sys
+    script = Path(sweep.__file__).resolve()
+    env = {k: v for k, v in os.environ.items()
+           if k not in {"PYTHONPATH", "CLAUDE_TRANSCRIPT_PATH", "CODEX_TRANSCRIPT_PATH", "TRANSCRIPT_PATH"}}
+    result = subprocess.run([sys.executable, str(script)], input="{}", text=True,
+                            capture_output=True, cwd=tmp_path, env=env, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "ModuleNotFoundError" not in result.stderr

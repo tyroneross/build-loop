@@ -140,7 +140,7 @@ def normalize_transcript(transcript: Path, workdir: Path) -> tuple[Path, Path | 
     try:
         if ta.detect_format(transcript) != ta.CODEX:
             return transcript, None
-        dest = workdir / "transcript-normalized.jsonl"
+        dest = workdir / f"{ta.session_key(transcript)}.jsonl"
         if ta.normalize_to_file(transcript, dest) == 0:
             return transcript, None
         cwd = ta.session_cwd(transcript)
@@ -212,7 +212,7 @@ def formal_run_retro_exists(cwd: Path) -> bool:
         return False
 
 
-def run_session_retro(build_loop: Path, transcript: Path, cwd: Path) -> None:
+def run_session_retro(build_loop: Path, transcript: Path, cwd: Path, *, source_key: str | None = None) -> None:
     """Fire the DETERMINISTIC rich retrospective for a non-run session.
 
     This is the auto-actuator for "make the rich retro fire automatically" on
@@ -222,7 +222,7 @@ def run_session_retro(build_loop: Path, transcript: Path, cwd: Path) -> None:
     durable copy to build-loop-memory. The expensive LLM enrichment stays
     on-demand (the marker invites `/retro`). Fail-open: any error is swallowed.
     """
-    session_key = transcript.stem or "session"
+    session_key = source_key or transcript.stem or "session"
     scripts_dir = build_loop / "scripts"
     env = dict(os.environ)
     env["PYTHONPATH"] = str(scripts_dir) + os.pathsep + env.get("PYTHONPATH", "")
@@ -262,10 +262,8 @@ def run_miner(build_loop: Path, out_dir: Path) -> dict:
 # these is the universal edit-test loop and recurs in EVERY coding session, so
 # proposing it as a skill is permanent noise (observed 2026-07-04: the same two
 # ×24-session `Edit→Bash` candidates re-marked across 6 consecutive sessions).
-GENERIC_TOOL_PREFIXES = {
-    "Bash", "Edit", "MultiEdit", "Read", "Write", "Grep", "Glob",
-    "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
-}
+_shared_adapter = _adapter()
+GENERIC_TOOL_PREFIXES = _shared_adapter.GENERIC_TOOLS if _shared_adapter else frozenset()
 
 # A step is a PLACEHOLDER when its sub-name names no specific work: the miner
 # emitted the tool's generic parameter slot rather than a concrete identity.
@@ -451,7 +449,7 @@ def main() -> None:
     # so the adapter is the only path that resolves a Codex project at all.
     cwd = adapter_cwd or resolve_project_cwd(transcript)
     if cwd is not None and is_project_dir(cwd) and not formal_run_retro_exists(cwd):
-        run_session_retro(build_loop, transcript, cwd)
+        run_session_retro(build_loop, transcript, cwd, source_key=_adapter().session_key(raw_transcript))
 
     with tempfile.TemporaryDirectory() as tmp:
         data = run_miner(build_loop, Path(tmp))
@@ -473,7 +471,7 @@ def main() -> None:
         # ALSO drop a durable, project-scoped copy into the workdir's learn lane
         # (EC-01 coord) so the signal is not stranded in the global cache.
         write_workdir_digest(cwd, payload, ts)
-        session_key = transcript.stem or ts
+        session_key = _adapter().session_key(raw_transcript) if _adapter() else raw_transcript.stem or ts
         write_marker(skills, lessons, staging, session_key)
 
 

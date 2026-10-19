@@ -465,3 +465,29 @@ def test_rally_fields_for_returns_empty_when_workdir_is_none():
 
 def test_rally_fields_for_returns_empty_when_state_missing(tmp_path: Path):
     assert bli.rally_fields_for(tmp_path / "nope") == {}
+
+
+@pytest.mark.parametrize("execution", [{"run_id": "active"}, {"build_loop_id": "active"},
+                                     {"run_id": "active", "build_loop_id": "active"}])
+def test_shared_identity_aliases_and_session(execution):
+    execution = {**execution, "current_session_id": "source-session"}
+    result = bli.resolve_run_identity({"execution": execution, "runs": [{"run_id": "old"}]})
+    assert (result.build_run_id, result.source_session_id, result.state) == (
+        "active", "source-session", "active")
+
+
+def test_shared_identity_absence_history_and_conflict():
+    state = {"runs": [{"run_id": "completed"}]}
+    assert bli.resolve_run_identity(state).build_run_id is None
+    assert bli.resolve_run_identity(state).state == "between_runs"
+    assert bli.resolve_run_identity(state, include_history=True).build_run_id == "completed"
+    conflicting = {"execution": {"run_id": "one", "build_loop_id": "two"}, **state}
+    assert bli.resolve_run_identity(conflicting, include_history=True).state == "conflicting"
+    assert bli.resolve_run_identity(conflicting, include_history=True).build_run_id is None
+
+
+@pytest.mark.parametrize("history", [1, True, "wrong", {}])
+def test_malformed_identity_history_is_absent(history):
+    identity = bli.resolve_run_identity({"runs": history})
+    assert identity.build_run_id is None
+    assert identity.state == "absent"

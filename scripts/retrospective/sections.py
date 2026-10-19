@@ -259,14 +259,8 @@ def extract_user_prompts(transcript_jsonl: Path | None) -> list[dict[str, Any]]:
 # agent's LLM body only narrates on top of these captured signals.
 # ---------------------------------------------------------------------------
 
-# Core tools carry no reusable semantic content: a sequence made only of these
-# is the universal edit-test loop and recurs in every coding session, so
-# proposing it as a script is permanent noise (mirrors the identical gate in
-# scripts/hooks/session_end_retro_sweep.py — keep the two sets in sync).
-_GENERIC_TOOLS = frozenset({
-    "Bash", "Edit", "MultiEdit", "Read", "Write", "Grep", "Glob",
-    "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
-})
+# One host-neutral definition shared with the SessionEnd sweep.
+from transcript_adapter import GENERIC_TOOLS as _GENERIC_TOOLS
 
 _MCP_PLUGIN_RE = re.compile(r"^mcp__(?:plugin_)?([a-z0-9]+)")
 _ISSUE_MARKER_RE = re.compile(
@@ -575,26 +569,25 @@ def _append_unique(items: list[str], text: str | None) -> None:
 
 
 def _run_identifier(run: dict[str, Any]) -> str | None:
-    for key in ("run_id", "build_loop_id", "id"):
-        value = run.get(key)
-        if value:
-            return str(value)
-    return None
+    from rally_point.build_loop_id import resolve_run_identity
+    identity = resolve_run_identity({"execution": run})
+    if identity.state == "conflicting":
+        return None
+    return identity.build_run_id or (str(run["id"]) if run.get("id") else None)
 
 
 def _runs_for_run_id(state_json: dict[str, Any], run_id: str | None) -> list[dict[str, Any]]:
     """Return run records for this retrospective.
 
-    Prefer run records matching ``run_id``. When none match, fall back to the
-    latest run to preserve the historical behavior and support hook-only state.
+    Explicit IDs require an exact match. With no ID, latest-run selection is
+    intentional; a missing explicit ID cannot borrow another run's evidence.
     """
     runs = [r for r in (state_json.get("runs") or []) if isinstance(r, dict)]
     if not runs:
         return []
     if run_id:
         matched = [r for r in runs if _run_identifier(r) == str(run_id)]
-        if matched:
-            return matched
+        return matched
     return [runs[-1]]
 
 
@@ -1063,8 +1056,13 @@ def build(
           summaries; sections 8-9 are fully derived.
     """
     state_json = state_json or {}
-    intent_md = intent_md or ""
-    plan_md = plan_md or ""
+    from rally_point.build_loop_id import resolve_run_identity
+    identity = resolve_run_identity(state_json)
+    # Current mutable files belong only to the matching active execution.
+    # A historical row proves identity, not ownership of today's files.
+    context_bound = identity.state == "active" and identity.build_run_id == run_id
+    intent_md = (intent_md or "") if context_bound else ""
+    plan_md = (plan_md or "") if context_bound else ""
 
     prompts = extract_user_prompts(transcript_jsonl)
     clusters = cluster_repeated_prompts(prompts, threshold=prompted_threshold)

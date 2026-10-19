@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - path fallback
 
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import temporal_membership as tm
-from retrospective.sections import build as build_sections, load_routing_evidence
+from retrospective.sections import build as build_sections, load_routing_evidence, _run_identifier
 from retrospective.write import (
     write_active,
     promote_durable,
@@ -62,7 +62,7 @@ def _load_state_json(workdir: Path) -> dict[str, Any]:
 
 
 def _load_judge_decisions_json(
-    workdir: Path, run_id: str | None = None,
+    workdir: Path, run_id: str | None = None, *, require_identity: bool = False,
 ) -> list[dict[str, Any]]:
     """Read `.build-loop/judge-decisions.json` without enforcing writer policy.
 
@@ -103,6 +103,8 @@ def _load_judge_decisions_json(
         item_run_id = item.get("run_id") or item.get("build_loop_id")
         if item_run_id and str(item_run_id) != str(run_id):
             continue
+        if require_identity and not (file_run_id or item_run_id):
+            continue
         kept.append(item)
     return kept
 
@@ -113,13 +115,6 @@ def _decision_key(decision: dict[str, Any]) -> str:
     except TypeError:
         return repr(sorted(decision.items()))
 
-
-def _run_identifier(run: dict[str, Any]) -> str | None:
-    for key in ("run_id", "build_loop_id", "id"):
-        value = run.get(key)
-        if value:
-            return str(value)
-    return None
 
 
 def _merge_judge_decisions(
@@ -164,13 +159,10 @@ def _merge_judge_decisions(
         if _run_identifier(runs[index]) == run_id:
             target_index = index
             break
-    if target_index is None and runs:
-        target_index = len(runs) - 1
-
     if target_index is None:
         target = {"run_id": run_id}
         runs.append(target)
-        target_index = 0
+        target_index = len(runs) - 1
     else:
         target = dict(runs[target_index])
 
@@ -202,21 +194,9 @@ def _load_md(workdir: Path, name: str) -> str:
 
 
 def _derive_run_id(state: dict[str, Any]) -> str:
-    """Return a stable run id from state.json.
-
-    Prefers ``state.execution.build_loop_id``; falls back to the latest
-    ``runs[-1].run_id`` or 'unknown'.
-    """
-    exe = state.get("execution") or {}
-    if exe.get("build_loop_id"):
-        return str(exe["build_loop_id"])
-    runs = state.get("runs") or []
-    if runs:
-        last = runs[-1]
-        for k in ("run_id", "build_loop_id", "id"):
-            if last.get(k):
-                return str(last[k])
-    return "unknown"
+    """Select current identity, or explicitly request history between runs."""
+    from rally_point.build_loop_id import resolve_run_identity
+    return resolve_run_identity(state, include_history=True).build_run_id or "unknown"
 
 
 def _intent_one_line(intent_md: str) -> str | None:
@@ -268,7 +248,7 @@ def _derive_repo_slug(workdir: Path) -> str:
 
 
 def _find_run(state: dict[str, Any], run_id: str) -> dict[str, Any]:
-    """Return the runs[] entry matching ``run_id`` (latest match), else the last run, else {}.
+    """Return only the exact runs[] match, else absent evidence.
 
     The run window + host the membership preflight needs come from this entry.
     """
@@ -278,7 +258,7 @@ def _find_run(state: dict[str, Any], run_id: str) -> dict[str, Any]:
     for run in reversed(runs):
         if _run_identifier(run) == str(run_id):
             return run
-    return runs[-1]
+    return {}
 
 
 def run(
@@ -320,15 +300,23 @@ def run(
         plan_md = _load_md(workdir, "plan.md")
         rid = run_id or _derive_run_id(state)
         target_run = _find_run(state, rid)
+        from rally_point.build_loop_id import resolve_run_identity
+        active = resolve_run_identity(state)
+        if not target_run and active.state == "active" and active.build_run_id == rid:
+            target_run = state.get("execution") or {}
+        if active.state != "active" or active.build_run_id != rid:
+            intent_md = plan_md = None
         run_host = (str(target_run.get("host") or "").strip() or None)
         run_start, run_end = tm.run_window(target_run)
         state = _merge_judge_decisions(
-            state, _load_judge_decisions_json(workdir, rid), rid,
+            state, _load_judge_decisions_json(workdir, rid, require_identity=not bool(target_run)), rid,
             run_start, run_end, run_host,
         )
         tx_reason = None
         if transcript is not None:
             tx = transcript
+        elif run_id is not None and not target_run and not session_id:
+            tx, tx_reason = None, "explicit run has no matching evidence; transcript membership unavailable"
         else:
             sid = session_id or _derive_session_id(state)
             tx, tx_reason = find_transcript_for_run(

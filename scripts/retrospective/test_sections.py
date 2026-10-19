@@ -237,6 +237,7 @@ class BuildSectionsTests(unittest.TestCase):
 
     def test_judge_failures_appear_in_issues(self) -> None:
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [{
                 "judge_id": "independent-auditor",
                 "checkpoint_id": "build",
@@ -260,6 +261,7 @@ class BuildSectionsTests(unittest.TestCase):
         work order learn-4290d6ae4098 on a candidate naming no gate.
         """
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [{
                 "judge": "independent-auditor",
                 "verdict": "suggest_correction",
@@ -277,6 +279,7 @@ class BuildSectionsTests(unittest.TestCase):
     def test_empty_checkpoint_string_emits_no_enforce_candidate(self) -> None:
         """An empty-string `checkpoint_id` is unresolved, not a gate name."""
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [{
                 "judge_id": "independent-auditor-hook",
                 "checkpoint_id": "   ",
@@ -289,7 +292,7 @@ class BuildSectionsTests(unittest.TestCase):
 
     def test_intent_restated_line_surfaces_in_takeaways(self) -> None:
         intent = "# Build Intent\n\n## Restated intent\nDo the thing well.\n\nmore..."
-        sec = build(None, {}, intent, None, "run-x")
+        sec = build(None, {"execution": {"run_id": "run-x"}}, intent, None, "run-x")
         self.assertIn("Do the thing well.", sec["key_takeaways"])
 
     def test_meta_carries_counts(self) -> None:
@@ -383,6 +386,7 @@ class WhatWentWellDedupeTests(unittest.TestCase):
 
     def test_dedupes_repeated_wins_preserving_order(self) -> None:
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [
                 {"judge_id": "commit-auditor", "checkpoint_id": "", "verdict": "approve"},
                 {"judge_id": "commit-auditor", "checkpoint_id": "", "verdict": "approve"},
@@ -402,6 +406,7 @@ class WhatWentWellDedupeTests(unittest.TestCase):
 
     def test_keeps_checkpoint_when_non_empty(self) -> None:
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [
                 {"judge_id": "auditor", "checkpoint_id": "phase-3-commit", "verdict": "pass"},
             ],
@@ -411,6 +416,7 @@ class WhatWentWellDedupeTests(unittest.TestCase):
 
     def test_distinct_checkpoints_kept_separately(self) -> None:
         state = {"runs": [{
+            "run_id": "run-x",
             "judge_decisions": [
                 {"judge_id": "auditor", "checkpoint_id": "chunk-1", "verdict": "pass"},
                 {"judge_id": "auditor", "checkpoint_id": "chunk-2", "verdict": "pass"},
@@ -481,3 +487,17 @@ class RoutingEvidenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_unmatched_run_omits_unrelated_plan_and_intent():
+    result = build(None, {"runs": [{"run_id": "old"}]},
+                   "## Restated intent\nUnrelated prior task", "# Unrelated prior plan", "missing")
+    assert "Unrelated prior" not in str(result)
+
+
+def test_historical_identity_does_not_own_mutable_current_files():
+    result = build(None, {"execution": {"run_id": "current"},
+                          "runs": [{"run_id": "historical", "outcome": "pass"}]},
+                   "## Restated intent\nCurrent task intent", "# Current task plan", "historical")
+    assert "Current task" not in str(result)
+    assert "Run outcome: pass" in result["key_takeaways"]

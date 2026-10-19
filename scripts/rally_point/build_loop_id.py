@@ -62,12 +62,59 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 STATE_REL = Path(".build-loop") / "state.json"
 RUNS_REL = Path(".build-loop") / "runs"
 
 _MAX_COLLISION_ATTEMPTS = 5
+
+
+@dataclass(frozen=True)
+class RunIdentity:
+    build_run_id: str | None
+    source_session_id: str | None
+    state: Literal["active", "between_runs", "absent", "conflicting"]
+
+
+def resolve_run_identity(
+    state: dict[str, Any], *, source_session_id: str | None = None,
+    include_history: bool = False,
+) -> RunIdentity:
+    """Resolve aliases once; never attribute live activity to a completed run.
+
+    History is explicit opt-in for retrospective selection between formal runs.
+    Conflicting active aliases are unknown evidence, not an arbitrary preference.
+    """
+    def identifier(value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    if not isinstance(state, dict):
+        return RunIdentity(None, source_session_id, "absent")
+    execution = state.get("execution")
+    execution = execution if isinstance(execution, dict) else {}
+    session = (identifier(source_session_id) or identifier(execution.get("current_session_id"))
+               or identifier(execution.get("started_by_session_id")))
+    aliases = {v for k in ("build_loop_id", "run_id")
+               if (v := identifier(execution.get(k)))}
+    if len(aliases) > 1:
+        return RunIdentity(None, session, "conflicting")
+    if aliases:
+        return RunIdentity(aliases.pop(), session, "active")
+    legacy = {v for k in ("build_loop_id", "run_id") if (v := identifier(state.get(k)))}
+    if len(legacy) > 1:
+        return RunIdentity(None, session, "conflicting")
+    if legacy:
+        return RunIdentity(legacy.pop(), session, "active")
+    history = state.get("runs")
+    runs = [r for r in history if isinstance(r, dict)] if isinstance(history, list) else []
+    if runs:
+        last = runs[-1]
+        run_id = next((v for k in ("run_id", "build_loop_id", "id")
+                       if (v := identifier(last.get(k)))), None) if include_history else None
+        return RunIdentity(run_id, session, "between_runs")
+    return RunIdentity(None, session, "absent")
 
 
 def _now_utc() -> _dt.datetime:

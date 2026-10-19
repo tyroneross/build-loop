@@ -44,12 +44,47 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import hashlib
 from pathlib import Path
 from typing import Any, Iterator
 
 CLAUDE = "claude"
 CODEX = "codex"
 UNKNOWN = "unknown"
+
+GENERIC_TOOLS = frozenset({
+    "Bash", "Edit", "MultiEdit", "Read", "Write", "Grep", "Glob",
+    "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
+    "exec", "wait", "exec_command", "write_stdin", "functions.exec", "functions.wait",
+    "functions.exec_command", "functions.write_stdin", "spawn_agent", "send_message",
+    "followup_task", "wait_agent", "list_agents", "interrupt_agent",
+    "collaboration.spawn_agent", "collaboration.send_message", "collaboration.followup_task",
+    "collaboration.wait_agent", "collaboration.list_agents", "collaboration.interrupt_agent",
+})
+
+
+def session_key(path: Path) -> str:
+    """A safe original session key, independent of a temporary normalized name."""
+    identity = path.stem
+    try:
+        with path.open(errors="replace") as handle:
+            for _, line in zip(range(40), handle):
+                row = _loads(line)
+                if not row:
+                    continue
+                payload = row.get("payload")
+                candidate = (payload.get("id") if row.get("type") == "session_meta"
+                             and isinstance(payload, dict) else row.get("sessionId"))
+                if isinstance(candidate, str) and candidate.strip():
+                    identity = candidate.strip()
+                    break
+    except OSError:
+        pass
+    if re.fullmatch(r"[a-zA-Z0-9_.-]{1,180}", identity) and identity not in {".", ".."}:
+        return identity
+    return hashlib.sha256(identity.encode()).hexdigest()
+
 
 _DETECT_SCAN_LINES = 40
 

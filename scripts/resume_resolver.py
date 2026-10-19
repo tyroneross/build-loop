@@ -120,6 +120,9 @@ def _same_session_continuity(execution: dict, current_session_id: str | None) ->
 
 def _validate_execution_v1(execution: dict) -> str | None:
     """Return the first structural error in a schema-v1 execution block."""
+    from rally_point.build_loop_id import resolve_run_identity
+    if resolve_run_identity({"execution": execution}).state == "conflicting":
+        return "execution run_id and build_loop_id conflict"
     run_id = execution.get("run_id")
     if not isinstance(run_id, str) or not run_id.strip():
         return "execution.run_id must be a non-empty string"
@@ -307,11 +310,11 @@ def _parse_iso(s: str) -> datetime | None:
 
 
 def _execution_identity(row: dict) -> str | None:
-    for key in ("build_loop_id", "run_id", "id"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    from rally_point.build_loop_id import resolve_run_identity
+    identity = resolve_run_identity({"execution": row})
+    if identity.state == "conflicting":
+        return None
+    return identity.build_run_id or (str(row["id"]) if row.get("id") else None)
 
 
 def _matching_terminal_evidence(state: dict, run_id: str, source: str) -> list[str]:

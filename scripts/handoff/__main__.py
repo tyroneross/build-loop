@@ -506,7 +506,7 @@ Ahead/behind: {ahead_behind}
 4. Read §8 Landmines FIRST — those are the traps that fire on a first action.
 5. Confirm nobody started a new run since this doc was written: the newest
    `runs[]` entry in `.build-loop/state.json` should still be `{last_run_id}`.
-   (Read `runs[-1].run_id`. Do NOT read `execution.run_id` — `execution` is
+   (Use `resolve_run_identity(state, include_history=True)` from `rally_point.build_loop_id`; execution is
    empty between runs, and `.current-run-id` can be months stale.)
 6. **There is no pre-assigned next task.** This doc reports state, not a plan.
    Pick from §5 Queues, or ask the owner. Nothing in §5 is authorized by

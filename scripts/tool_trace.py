@@ -97,8 +97,8 @@ def _run_id(workdir: Path) -> str | None:
         state = json.loads((workdir / ".build-loop/state.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    execution = state.get("execution") if isinstance(state, dict) else {}
-    return (execution or {}).get("run_id") or state.get("run_id") or state.get("build_loop_id")
+    from rally_point.build_loop_id import resolve_run_identity
+    return resolve_run_identity(state).build_run_id
 
 
 def _iso_to_unix_nano(value: Any) -> int | None:

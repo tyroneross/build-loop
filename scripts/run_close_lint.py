@@ -170,11 +170,8 @@ def _runs(state: dict) -> list[dict]:
 
 
 def _execution_run_id(state: dict) -> str | None:
-    execution = state.get("execution")
-    if not isinstance(execution, dict):
-        return None
-    run_id = execution.get("run_id")
-    return run_id if isinstance(run_id, str) and run_id.strip() else None
+    from rally_point.build_loop_id import resolve_run_identity
+    return resolve_run_identity(state).build_run_id
 
 
 def _remediation(workdir: Path, run_id: str | None) -> str:

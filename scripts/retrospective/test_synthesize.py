@@ -383,3 +383,29 @@ class JudgeDecisionsCanonicalShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_unmatched_explicit_run_cannot_borrow_latest_evidence():
+    from retrospective.synthesize import _find_run, _derive_run_id
+    from retrospective.sections import _runs_for_run_id
+    state = {"execution": {"run_id": "current"},
+             "runs": [{"run_id": "unrelated", "host": "wrong-host", "outcome": "pass"}]}
+    assert _derive_run_id(state) == "current"
+    assert _find_run(state, "missing") == {}
+    assert _runs_for_run_id(state, "missing") == []
+    assert _runs_for_run_id(state, "unrelated") == state["runs"]
+
+
+def test_merge_judges_does_not_mutate_an_unmatched_historical_run():
+    state = {"runs": [{"run_id": "old", "judge_decisions": [{"verdict": "approve"}]}]}
+    merged = _merge_judge_decisions(state, [{"verdict": "nay", "run_id": "new"}], "new")
+    assert merged["runs"][0] == state["runs"][0]
+    assert merged["runs"][1]["run_id"] == "new"
+    assert merged["runs"][1]["judge_decisions"] == [{"verdict": "nay", "run_id": "new"}]
+
+
+def test_unknown_explicit_run_rejects_unscoped_judges(tmp_path):
+    bl = tmp_path / ".build-loop"
+    bl.mkdir()
+    (bl / "judge-decisions.json").write_text(json.dumps({"decisions": [{"verdict": "approve"}]}))
+    assert _load_judge_decisions_json(tmp_path, "unknown", require_identity=True) == []

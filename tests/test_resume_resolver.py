@@ -1287,7 +1287,11 @@ def test_terminal_lookalikes_keep_existing_stale_run_guard(
         now=datetime(2026, 9, 3, 14, 30, tzinfo=timezone.utc),
     )
 
-    assert env["decision"] == "review"
+    if unsafe_evidence == "nonmatching_identity":
+        assert env["decision"] == "abort"
+        assert "run_id and build_loop_id conflict" in env["reason"]
+    else:
+        assert env["decision"] == "review"
     assert env["run_id"] == execution["run_id"]
     assert json.loads(state_path.read_text())["execution"] == expected_execution
 
