@@ -51,6 +51,7 @@ class Allows(unittest.TestCase):
         for command in (
             "curl --data-urlencode 'text=while true; do sleep 30; done' https://example.invalid",
             'printf "%s" "until [ -f done ]; do sleep 5; done" > guide.md',
+            r'curl --data-urlencode "text=example \"while true; do sleep 30; done\" end" https://example.invalid',
             "python3 - <<'PY'\ntext = 'while true; do sleep 30; done'\nPY",
         ):
             with self.subTest(command=command):
@@ -64,6 +65,8 @@ class Allows(unittest.TestCase):
                         "echo foo#bar; while true; do sleep 30; done",
                         "echo ${name#prefix}; while true; do sleep 30; done",
                         "echo ok # comment with break\nwhile true; do sleep 30; done",
+                        r'echo "\""; while true; do sleep 30; done',
+                        r'while true; do printf "\""; sleep 30; done',
                         'echo "$(while true; do sleep 30; done)"'):
             with self.subTest(command=command):
                 self.assertIsNotNone(gate.evaluate(command))

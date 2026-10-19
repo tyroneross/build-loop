@@ -279,6 +279,26 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
 
+    def test_normalization_failure_cannot_rediscover_a_peer_or_drop_cost_event(self) -> None:
+        adapter = self.root / "scripts/transcript_adapter.py"
+        adapter.unlink()  # fixture symlink only; never edit the real adapter
+        discovery = self.root / "discovery-called"
+        adapter.write_text(
+            "from pathlib import Path\nCODEX = 'codex'\n"
+            "def detect_format(path): return CODEX\n"
+            "def normalize_cached(source, cache): return None\n"
+            "if __name__ == '__main__':\n"
+            f"    Path({str(discovery)!r}).write_text('unexpected discovery')\n"
+            f"    print({str(self.transcript)!r})\n"
+        )
+        cp = self._run("all", self._payload())
+        self._assert_hook_contract(cp)
+        rows = self._records("cost-ledger")
+        self.assertTrue(rows, "original cost event was dropped with text normalization")
+        self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
+        self.assertFalse(discovery.exists(), "explicit path must never fall back to another session")
+        self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger"})
+
     # ---- fail-open / never-block contract ------------------------------
 
     def test_all_sweeps_no_op_cleanly_on_empty_stdin(self) -> None:

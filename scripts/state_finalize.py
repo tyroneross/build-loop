@@ -83,12 +83,16 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Best-effort Stop hook crash annotation (M4).")
+    p = argparse.ArgumentParser(description="Explicit crash annotation; ordinary Stop is ignored.")
     p.add_argument("--workdir", required=True)
     p.add_argument("--mark-incomplete-as-crashed", action="store_true",
-                   help="Annotate state.json.execution.crashed_at if phase != 'report' (default behavior)")
-    p.add_argument("--signal", default="stop_hook", help="Value for crash_signal field (default: stop_hook)")
+                   help="Legacy compatibility flag; an explicit crash signal is also required")
+    p.add_argument("--signal", default="stop_hook", help="Verified crash signal; default stop_hook does nothing")
     args = p.parse_args(argv)
+    # Existing hosts can retain the removed Stop registration until reload.
+    # Keep that old invocation harmless after the handler bytes are updated.
+    if args.signal == "stop_hook":
+        return 0
     try:
         annotate_if_incomplete(Path(args.workdir).resolve(), signal=args.signal)
     except Exception:

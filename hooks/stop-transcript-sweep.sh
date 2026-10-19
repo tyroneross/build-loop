@@ -85,7 +85,8 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 # containing quotes or shell metacharacters cannot inject.
 _BL_STOP_PAYLOAD="$PAYLOAD"
 export _BL_STOP_PAYLOAD
-# Two newline-separated lines: transcript_path, then cwd. Newlines are stripped
+# Three lines: normalized transcript_path, cwd, then explicit-path presence.
+# Newlines are stripped
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
     _BL_SWEEP_SCRIPTS="${PLUGIN_ROOT}/scripts" \
@@ -105,6 +106,7 @@ def safe(v):
 
 
 transcript = safe(d.get("transcript_path"))
+provided = bool(transcript)
 if transcript:
     # A native Codex payload already contains its rollout path. Normalize it
     # here too; the cwd-discovery fallback below only covers a missing path.
@@ -114,24 +116,29 @@ if transcript:
     except ImportError:
         pass  # Preserve the existing Claude-only path when no adapter ships.
     else:
-        if adapter.detect_format(Path(transcript)) == adapter.CODEX:
-            transcript = str(adapter.normalize_cached(
-                Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"])
-            ) or "")
+        try:
+            if adapter.detect_format(Path(transcript)) == adapter.CODEX:
+                transcript = str(adapter.normalize_cached(
+                    Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"])
+                ) or "")
+        except (OSError, ValueError):
+            transcript = ""  # preserve event identity even if adapter IO fails
 print(transcript)
 print(safe(d.get("cwd")))
+print("1" if provided else "0")
 PY
 )" || _parsed=""
 
 TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
 CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
+TRANSCRIPT_PROVIDED="$(printf '%s\n' "$_parsed" | sed -n '3p')"
 [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 # No transcript in the payload: resolve the host's own session from CWD and
 # normalize it to the Claude shape every sweep below parses. One call does both
 # -- handing back a raw Codex path would move the no-op one step downstream.
 # Claude always supplies transcript_path, so this is for hosts that do not.
-if [ -z "$TRANSCRIPT" ]; then
+if [ -z "$TRANSCRIPT" ] && [ "$TRANSCRIPT_PROVIDED" != "1" ]; then
     _adapter="${PLUGIN_ROOT}/scripts/transcript_adapter.py"
     if [ -f "$_adapter" ]; then
         TRANSCRIPT="$("$_py" "$_adapter" --find-codex-session "$CWD" \
@@ -139,10 +146,12 @@ if [ -z "$TRANSCRIPT" ]; then
     fi
 fi
 
-# Every sweep needs a transcript; check once rather than in each arm.
-[ -n "$TRANSCRIPT" ] || _noop
+# An explicit path belongs to this event even if text normalization failed.
+# Never rediscover another session, and keep original cost attribution usable.
+[ -n "$TRANSCRIPT" ] || [ "$TRANSCRIPT_PROVIDED" = "1" ] || _noop
 
 _run_one() {
+    [ "$1" = "cost-ledger" ] || [ -n "$TRANSCRIPT" ] || return 0
     case "$1" in
     decisions)
         nohup "$_py" "${PLUGIN_ROOT}/scripts/scan_transcript_for_decisions.py" \

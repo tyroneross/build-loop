@@ -179,7 +179,26 @@ def evaluate(command: str, env: dict[str, str] | None = None) -> str | None:
         shell_stdin = re.search(r"\b(?:sh|bash|zsh|dash|ksh)\b[^;\n]*<<", command)
         if not incomplete and not shell_stdin and "$(" not in command and "`" not in command:
             command = stripped
-        lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|()\n")
+        # Non-POSIX shlex retains quote provenance but does not understand
+        # escaped quote characters. Protect those literal characters first so
+        # they cannot split a data string or swallow a later executable loop.
+        protected = []
+        single = double = False
+        i = 0
+        while i < len(command):
+            char = command[i]
+            if char == "\\" and not single and i + 1 < len(command):
+                pair = command[i:i + 2]
+                protected.append("_escaped_quote_" if pair[1] in "\"'" else pair)
+                i += 2
+                continue
+            if char == "'" and not double:
+                single = not single
+            elif char == '"' and not single:
+                double = not double
+            protected.append(char)
+            i += 1
+        lexer = shlex.shlex("".join(protected), posix=False, punctuation_chars=";&|()\n")
         lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         lexer.commenters = ""
