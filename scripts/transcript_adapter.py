@@ -336,7 +336,7 @@ def _codex_output_is_error(output: str) -> bool:
 
 _CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
                         "<environment_context>", "<external_codex_apps_open_page>", "<user_instructions>")
-PARSER_VERSION = "4"
+PARSER_VERSION = "5"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 
@@ -421,6 +421,14 @@ def _codex_event(obj: dict[str, Any]) -> dict[str, Any] | None:
     return event
 
 
+# These host bookkeeping records carry no extractable turns. Recognize them
+# without committing the stream to a host before its first actual turn.
+_METADATA_RECORDS = frozenset({"file-history-snapshot", "queue-operation", "summary",
+    "progress", "system", "last-prompt", "custom-title", "agent-name", "agent-color",
+    "pr-link", "compacted"})
+_CODEX_RECORDS = frozenset({"event_msg", "response_item", "session_meta", "turn_context"})
+
+
 def iter_events(path: Path, *, include_provenance: bool = False, require_complete: bool = False) -> Iterator[dict[str, Any]]:
     """One streaming parse; UI prose wins over its adjacent API representation.
 
@@ -432,6 +440,7 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
     consumed = 0
     try:
         fmt = UNKNOWN
+        unsupported = 0
         pending = None
         pending_origin = None
         source_session = None
@@ -444,6 +453,17 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                 consumed += len(raw)
                 obj = _loads(raw.decode("utf-8", errors="replace"))
                 if obj is None:
+                    if raw.strip():
+                        unsupported += 1
+                    continue
+                kind = obj.get("type")
+                if isinstance(kind, str) and kind in _METADATA_RECORDS:
+                    continue
+                supported = (isinstance(kind, str) and kind in _CODEX_RECORDS
+                    or obj.get("role") in {"user", "assistant"}
+                    or isinstance(kind, str) and kind in {"user", "assistant"})
+                if not supported:
+                    unsupported += 1
                     continue
                 if fmt == UNKNOWN:
                     if obj.get("type") in {"event_msg", "response_item", "session_meta", "turn_context"}:
@@ -509,8 +529,12 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                     yield event
         if pending is not None:
             yield pending
+        if require_complete and unsupported:
+            raise TranscriptReadError(f"unsupported transcript records: {unsupported}")
     except OSError as exc:
-        if isinstance(exc, TranscriptReadError) or consumed or require_complete:
+        if isinstance(exc, TranscriptReadError):
+            raise
+        if consumed or require_complete:
             raise TranscriptReadError("transcript read incomplete") from exc
         return
 
