@@ -478,7 +478,7 @@ class TestWorktreeSafetyInventory:
         )
 
         assert safety["safe"] is False
-        assert "archive ignored non-cache" in safety["reason"]
+        assert "archive ignored contents" in safety["reason"]
         assert ".env" in safety["inventory"]["ignored"]
         assert safety["inventory"]["caches_only_claim_supported"] is False
 
@@ -518,6 +518,22 @@ class TestWorktreeSafetyInventory:
         assert result['inventory']['caches_only_claim_supported'] is False
         assert result['safe'] is False
         assert (outside / 'unreproducible.txt').read_text() == 'owned fixture content'
+
+    def test_handwritten_content_in_cache_named_directory_is_preserved(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / '.gitignore').write_text('build/\n')
+        _git(repo, 'add', '.gitignore'); _git(repo, 'commit', '-m', 'ignore build')
+        branch = 'feature-design'; _make_branch(repo, branch)
+        wt = _make_worktree(repo, branch)
+        (wt / 'build').mkdir()
+        original = b'Unique handwritten design; not regenerable from source'
+        (wt / 'build/design-final.txt').write_bytes(original)
+        _write_state(repo, {'run_id':'handwritten', 'createdRefs':[
+            {'branch':branch, 'path':str(wt), 'review_hold':True}]})
+        result = collapse_run.collapse(repo, run_id='handwritten', owner_released=True)
+        assert result['errors']
+        assert (wt / 'build/design-final.txt').read_bytes() == original
+        assert not result['kept_for_review']
 
     def test_locked_worktree_verdict_still_carries_the_inventory(self, tmp_path: Path) -> None:
         repo, wt, branch = self._repo_with_ignored_worktree(tmp_path)

@@ -753,10 +753,14 @@ def inspect_worktree_safety(
             "owners": owners,
             "inventory": inventory,
         }
-    if not inventory.get("ok") or inventory.get("caches_only_claim_supported") is not True:
+    # A cache-looking filename is not reproducibility evidence. Archive every
+    # ignored entry before this irreversible directory removal; callers can
+    # still discard known regenerated artifacts explicitly outside closeout.
+    if (not inventory.get("ok") or inventory.get("ignored") != []
+            or inventory.get("caches_only_claim_supported") is not True):
         return {
             "safe": False,
-            "reason": "archive ignored non-cache data before removal; inventory must prove reproducible contents",
+            "reason": "archive ignored contents before removal; inventory must be complete and empty",
             "path": str(candidate),
             "inventory": inventory,
         }
