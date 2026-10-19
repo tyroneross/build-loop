@@ -83,6 +83,8 @@ if str(_THIS_DIR) not in sys.path:
 
 from prepush_test_gate import (  # noqa: E402  — path insert must precede import
     BASELINE_RELPATH,
+    FULL_SUITE_TARGETS,
+    full_suite_pytest_args,
     _BASELINE_REQUIRED_FIELDS,
     _today,
     classify_failures,
@@ -96,7 +98,7 @@ EXIT_PASS = 0
 EXIT_BLOCK_TESTS = 1
 EXIT_BLOCK_BASELINE = 2
 
-DEFAULT_TARGETS = ("scripts/", "tests/")
+DEFAULT_TARGETS = FULL_SUITE_TARGETS
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
         "--today", type=str, default=None,
         help="Override today's date (YYYY-MM-DD) — test seam.",
     )
+    parser.add_argument("--full-suite", action="store_true",
+                        help="Run the canonical deterministic full-suite profile.")
     parser.add_argument("pytest_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
@@ -372,6 +376,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if (args.pytest_output is None) != (args.pytest_exit_code is None):
         parser.error("--pytest-output and --pytest-exit-code must be used together")
+
+    if args.full_suite and (args.pytest_args or args.pytest_output is not None):
+        parser.error("--full-suite cannot be combined with raw pytest args or captured output")
 
     # --- baseline first: unusable or expired blocks BEFORE the suite runs ----
     # Same fail-safe posture as prepush_test_gate: a suppression list you cannot
@@ -420,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         rc = int(args.pytest_exit_code)
         output = args.pytest_output.read_text(encoding="utf-8", errors="replace")
     else:
-        pytest_args = list(args.pytest_args)
+        pytest_args = full_suite_pytest_args() if args.full_suite else list(args.pytest_args)
         if pytest_args and pytest_args[0] == "--":
             pytest_args = pytest_args[1:]
         if not pytest_args:

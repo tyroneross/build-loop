@@ -116,6 +116,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+from prepush_test_gate import (
+    FULL_SUITE_TARGETS, FULL_SUITE_EXCLUDED_TREES, full_suite_pytest_args,
+)
+
 # Exit codes. 0 is the ONLY green result. no_tests / no_changes are inconclusive
 # (the gate verified nothing) and get their own code so they never read as pass.
 EXIT_PASS = 0
@@ -154,13 +158,7 @@ def _is_core_path(rel_posix: str) -> bool:
 # the whole collection with "import file mismatch" the moment both copies land
 # in one invocation. Discovery therefore never returns a path under these roots
 # — excluding them at the source beats de-duplicating downstream.
-_NON_GATE_TREES = (
-    "dist",
-    "build",
-    "node_modules",
-    "vendor",
-    ".venv",
-)
+_NON_GATE_TREES = FULL_SUITE_EXCLUDED_TREES
 
 
 def _in_non_gate_tree(path: Path, workdir: Path) -> bool:
@@ -274,10 +272,9 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
 
     # Index every test file by basename, recursively under scripts/ and tests/.
     test_index: dict[str, list[Path]] = {}
-    for root in (workdir / "scripts", workdir / "tests"):
-        if root.is_dir():
-            for tf in root.rglob("test_*.py"):
-                test_index.setdefault(tf.name, []).append(tf)
+    for filename in _all_script_tests(workdir):
+        tf = Path(filename)
+        test_index.setdefault(tf.name, []).append(tf)
 
     def _add_by_name(name: str) -> None:
         for tf in test_index.get(name, []):
@@ -303,7 +300,7 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
         # A mirror copy under a generated tree (dist/, build/, vendor/, ...) is
         # build output, not a gate target — and collecting it alongside its
         # scripts/ twin aborts the run with "import file mismatch".
-        if _in_non_gate_tree(p, workdir):
+        if not p.is_relative_to(workdir.resolve()) or _in_non_gate_tree(p, workdir):
             continue
 
         if p.name.startswith("test_"):
@@ -328,7 +325,6 @@ def _broad_tests_for_changed(workdir: Path, changed_files: list[str]) -> list[st
     Adds test files whose name shares a stem prefix with any changed file,
     covering the module neighbourhood without running the full suite.
     """
-    scripts_dir = workdir / "scripts"
     base = _tests_for_changed(workdir, changed_files)
     seen: set[str] = set(base)
 
@@ -344,26 +340,32 @@ def _broad_tests_for_changed(workdir: Path, changed_files: list[str]) -> list[st
         if area:
             prefixes.add(area)
 
-    if scripts_dir.is_dir():
-        for f in sorted(scripts_dir.glob("test_*.py")):
-            if str(f) in seen:
-                continue
-            # Include if name matches any area prefix
-            stem_no_test = f.stem[5:]  # strip "test_"
-            area = stem_no_test.split("_")[0] if "_" in stem_no_test else stem_no_test
-            if area in prefixes:
-                seen.add(str(f))
-                base.append(str(f))
+    for f in map(Path, _all_script_tests(workdir)):
+        if str(f) in seen:
+            continue
+        stem_no_test = f.stem[5:]
+        area = stem_no_test.split("_")[0] if "_" in stem_no_test else stem_no_test
+        if area in prefixes:
+            seen.add(str(f))
+            base.append(str(f))
 
     return base
 
 
 def _all_script_tests(workdir: Path) -> list[str]:
-    """Return all test files under scripts/."""
-    scripts_dir = workdir / "scripts"
-    if not scripts_dir.is_dir():
-        return []
-    return sorted(str(f) for f in scripts_dir.glob("test_*.py"))
+    """Return recursive tests from both roots, excluding generated/outside files."""
+    root = workdir.resolve()
+    tests = set()
+    for target in FULL_SUITE_TARGETS:
+        directory = root / target
+        if not directory.is_dir():
+            continue
+        for candidate in directory.rglob("test_*.py"):
+            resolved = candidate.resolve()
+            if (resolved.is_relative_to(root) and resolved.is_file()
+                    and not _in_non_gate_tree(resolved, root)):
+                tests.add(str(resolved))
+    return sorted(tests)
 
 
 def _git_changed_files(workdir: Path) -> tuple[list[str], list[str]]:
@@ -1387,7 +1389,7 @@ def _verify_inner(
 
     # --- Build pytest command ---
     # Full scope: serial (no xdist), per-test timeout so hangs fail cleanly,
-    # and -m "not live" to exclude tests that require a live external service.
+    # and the shared deterministic profile to exclude live/model integrations.
     # auto/changed scope: fast path — no extra flags needed.
     # `-rf` emits the "FAILED <nodeid>" short-summary lines that _FAILED_ITEM_RE
     # parses into failed_tests[]; `--color=no` strips ANSI so the `^FAILED` regex
@@ -1396,27 +1398,17 @@ def _verify_inner(
     # `-q` printed the count ("N failed") but failed_tests came back empty.
     cmd = runner_base + ["-q", "-rf", "--color=no", "-p", "no:cacheprovider", "--tb=short"]
     if scope == "full":
-        # `--timeout` comes from the pytest-timeout PLUGIN, not pytest itself.
-        # It is declared in pyproject's `test` extra, so CI always has it — but a
-        # dev venv provisioned without the extra does not, and pytest then exits
-        # 4 (usage error) on the unrecognized flag. That exit was classified as
-        # verdict=error/"Timeout", so the self-modification safety gate reported
-        # a hard error on a healthy tree and blocked its own dogfooding.
-        # Degrade instead of hard-failing: keep the hang protection when the
-        # plugin is present, drop it (with a warning) when it is not. A gate that
-        # cannot run because an OPTIONAL plugin is missing has verified nothing,
-        # which is strictly worse than running without the hang guard.
-        if _runner_has_pytest_timeout(runner_base, cwd=workdir):
-            cmd += ["--timeout=120", "--timeout-method=thread"]
-        else:
+        has_timeout = _runner_has_pytest_timeout(runner_base, cwd=workdir)
+        if not has_timeout:
             print(
                 "self_mod_verify: pytest-timeout not installed in the runner "
                 "interpreter; proceeding WITHOUT per-test hang protection. "
                 "Install it with `uv sync --extra test` to restore the guard.",
                 file=sys.stderr,
             )
-        cmd += ["-m", "not live"]
-    cmd += test_files
+        cmd = runner_base + full_suite_pytest_args(test_files, use_timeout=has_timeout)
+    else:
+        cmd += test_files
 
     # --- Run pytest ---
     timed_out = False

@@ -207,9 +207,11 @@ def test_all_default_gates_run_and_pass_on_green_repo():
     skip) — a mis-pathed gate would surface as 'skip', not 'pass'. The two env
     sensitive gates (artifact-freshness needs bash+pyyaml+fresh diagram) may skip in
     a constrained env, so they are allowed pass-or-skip; the rest must pass."""
+    # Exercise gate wiring independently of the calendar-sensitive production
+    # baseline. Expired/unusable baseline blocking has separate regressions.
     interp = gate._resolve_interpreter(REPO)
     has_yaml = gate._module_available(interp, "yaml", workdir=REPO)
-    verdict = gate.evaluate(REPO, [MAIN_PUSH_LINE], force_run=True)
+    verdict = gate.evaluate(REPO, [MAIN_PUSH_LINE], force_run=True, baseline={"ok": True, "entries": []})
     assert verdict["action"] == "allow", verdict
     by_name = {r["name"]: r["status"] for r in verdict["gate_results"]}
     # These need only pytest (which the test process proves available) -> must PASS,
@@ -232,7 +234,7 @@ def test_shallow_clone_skips_artifact_freshness(monkeypatch):
     --check false-positives STALE. The gate must fail-open SKIP (not BLOCK) a green
     repo in that case. Pre-fix this blocked CI on the gate's own merge commit."""
     monkeypatch.setattr(gate, "_is_shallow_clone", lambda wd: True)
-    verdict = gate.evaluate(REPO, [MAIN_PUSH_LINE], force_run=True)
+    verdict = gate.evaluate(REPO, [MAIN_PUSH_LINE], force_run=True, baseline={"ok": True, "entries": []})
     by_name = {r["name"]: r["status"] for r in verdict["gate_results"]}
     assert by_name.get("artifact-freshness") == "skip", verdict
     assert verdict["action"] == "allow", verdict

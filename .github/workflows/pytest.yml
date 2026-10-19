@@ -89,7 +89,7 @@ jobs:
         # 3/4/5 (a broken developer env must never wedge a push); CI fails
         # CLOSED on them, because `uv sync --extra test` just provisioned this
         # env, so "pytest couldn't run" is a defect here, not a local hiccup.
-        # Everything below this line is the unchanged pytest invocation.
+        # The full pytest arguments come from the shared deterministic profile.
         #
         # --timeout caps any single test (thread method) so a hung test fails
         # loudly instead of stalling the job. `live`/`db` auto-skip in
@@ -114,17 +114,7 @@ jobs:
         # test_contextual_prepend, test_rerank, test_rerank_daemon. They run on
         # demand with `pytest -m integration`.
         run: |
-          uv run python scripts/ci_known_red_gate.py \
-            --target scripts/ --target tests/ -- \
-            scripts/ tests/ \
-            -p no:cacheprovider -q --no-header -rfEs \
-            -m "not integration" \
-            --timeout=60 --timeout-method=thread \
-            --deselect scripts/rally_point/test_post_commit.py::test_plain_commit_writes_one_record \
-            --deselect scripts/rally_point/test_post_commit.py::test_manifest_commit_also_writes_dep_change \
-            --deselect scripts/rally_point/test_acceptance_stage1.py::test_stage1_acceptance \
-            --deselect scripts/rally_point/test_presence.py::test_stale_presence_regression_across_presence_status_and_lifecycle \
-            --deselect scripts/semantic_index/test_hybrid.py::test_read_semantic_passes_embed_fn_through_to_query_facts
+          uv run python scripts/ci_known_red_gate.py --full-suite
 
       - name: Hook reliability lints
         # Deterministic enforcement of the hook runtime contract (WP2):

@@ -1885,3 +1885,38 @@ class TestGitDerivationErrors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestRecursiveFullCoverage(unittest.TestCase):
+    def test_nested_failure_and_second_root_reach_full_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "scripts" / "capability" / "tests"
+            nested.mkdir(parents=True)
+            _write_failing_test(nested, "test_nested.py")
+            other = root / "tests"
+            other.mkdir()
+            _write_passing_test(other, "test_other.py")
+            _init_git_repo(root)
+            result = _run(["--workdir", str(root), "--scope", "full", "--json"])
+            payload = _payload(result.stdout)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(payload["verdict"], "fail")
+            self.assertEqual(payload["passed"], 1)
+            self.assertEqual(payload["failed"], 1)
+            self.assertEqual(len(payload["ran"]), 2)
+            self.assertFalse(payload["reverted"])
+            self.assertTrue((nested / "test_nested.py").exists())
+
+    def test_broad_discovers_both_roots_but_not_generated_mirrors(self):
+        import self_mod_verify as gate
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("scripts/pkg/test_task_nested.py", "tests/deep/test_task_other.py",
+                        "scripts/vendor/test_task_surface.py"):
+                target = root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("def test_ok(): pass\n")
+            actual = gate._broad_tests_for_changed(root, ["scripts/task_surface.py"])
+            self.assertEqual({Path(f).relative_to(root.resolve()).as_posix() for f in actual},
+                             {"scripts/pkg/test_task_nested.py", "tests/deep/test_task_other.py"})

@@ -160,9 +160,8 @@ _NAMED_PYTEST_TARGETS = (
     "scripts/test_agent_surface_policy.py",    # test_agent_surface_policy
 )
 
-# Full-mode deselect list — mirrors .github/workflows/pytest.yml. Duplicated by
-# necessity (opt-in path only); drift is fail-toward-safe (a stale deselect just
-# runs an extra test that, if red, correctly blocks the push).
+# Canonical deterministic full-suite profile, shared by CI and self-mod checks.
+# Existing deselections retain their documented owners; do not add silent skips.
 _FULL_DESELECT = (
     "scripts/rally_point/test_post_commit.py::test_plain_commit_writes_one_record",
     "scripts/rally_point/test_post_commit.py::test_manifest_commit_also_writes_dep_change",
@@ -170,6 +169,30 @@ _FULL_DESELECT = (
     "scripts/rally_point/test_presence.py::test_stale_presence_regression_across_presence_status_and_lifecycle",
     "scripts/semantic_index/test_hybrid.py::test_read_semantic_passes_embed_fn_through_to_query_facts",
 )
+
+
+FULL_SUITE_TARGETS = ("scripts/", "tests/")
+FULL_SUITE_EXCLUDED_TREES = ("dist", "build", "node_modules", "vendor", ".venv")
+
+
+def full_suite_pytest_args(
+    targets: Iterable[str] = FULL_SUITE_TARGETS, *, use_timeout: bool = True,
+) -> list[str]:
+    """One deterministic full profile; callers may supply discovered file targets.
+
+    Live/model integration runs stay explicit opt-ins. Retain the established
+    collection mode: switching import modes breaks existing sibling imports.
+    Local checks may omit the optional timeout plugin, with an explicit warning.
+    """
+    args = [*targets, "-p", "no:cacheprovider", "-q", "--no-header", "-rfEs",
+            "--color=no", "-m", "not integration and not live"]
+    for tree in FULL_SUITE_EXCLUDED_TREES:
+        args += ["--ignore-glob", f"**/{tree}/**"]
+    if use_timeout:
+        args += ["--timeout=60", "--timeout-method=thread"]
+    for node_id in _FULL_DESELECT:
+        args += ["--deselect", node_id]
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -591,14 +614,7 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
 
     if full:
         # Exact CI parity — the full deterministic suite.
-        argv = [
-            interp, "-m", "pytest", "scripts/", "tests/",
-            "-p", "no:cacheprovider", "-q", "--no-header", "-rfEs",
-            "-m", "not integration",
-            "--timeout=60", "--timeout-method=thread",
-        ]
-        for d in _FULL_DESELECT:
-            argv += ["--deselect", d]
+        argv = [interp, "-m", "pytest", *full_suite_pytest_args()]
         gates.append({
             "name": "full-deterministic-suite",
             "argv": argv,

@@ -401,11 +401,14 @@ class TestWorkflowWiring:
     def test_workflow_still_runs_the_named_suites_and_markers(self):
         """Preserve the pipeline this gate wraps — same paths, marker, deselects."""
         text = WORKFLOW.read_text(encoding="utf-8")
-        for token in ("scripts/ tests/", 'not integration', "--timeout=60",
-                      "--timeout-method=thread", "-rfE"):
-            assert token in text, f"pytest.yml lost {token!r}"
+        assert "--full-suite" in text
+        specs = P._build_gates(REPO, sys.executable, full=True)
+        assert specs[0]["argv"][3:] == P.full_suite_pytest_args()
+        args = P.full_suite_pytest_args()
+        assert args[:2] == list(G.DEFAULT_TARGETS)
+        assert "not integration and not live" in args
         for deselect in P._FULL_DESELECT:
-            assert deselect in text, f"pytest.yml lost deselect {deselect!r}"
+            assert deselect in args
 
     def test_only_pytest_workflow_runs_the_suite(self):
         """No second, unguarded CI path may run the test suite."""
@@ -471,3 +474,16 @@ class TestRunsRealPytest:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_full_profile_cli_executes_shared_args(tmp_path, monkeypatch):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "known_red_baseline.json").write_text(
+        json.dumps({"version": 1, "entries": []}))
+    calls = []
+    def runner(args, *, workdir):
+        calls.append((args, workdir))
+        return 0, "1 passed in 0.01s"
+    monkeypatch.setattr(G, "run_pytest", runner)
+    assert G.main(["--workdir", str(tmp_path), "--full-suite"]) == 0
+    assert calls == [(P.full_suite_pytest_args(), tmp_path)]
