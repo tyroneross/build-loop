@@ -32,15 +32,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; python3 \"$root/scripts/tool_trace.py\" --workdir \"$root\" ingest >/dev/null 2>&1 || true; printf '{}'",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" stop 2>/dev/null || printf '{}'",
             "timeout": 6
           }

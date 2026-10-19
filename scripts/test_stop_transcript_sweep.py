@@ -426,9 +426,11 @@ class StopSweepHostContractTests(unittest.TestCase):
                 except ProcessLookupError: pass
 
     def test_trace_has_no_foreground_stop_registration(self):
-        data = json.loads(HOOKS_JSON.read_text())
-        commands = [h.get("command", "") for g in data["hooks"]["Stop"] for h in g["hooks"]]
-        self.assertFalse(any("/scripts/tool_trace.py" in c and " ingest " in c for c in commands))
+        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+            with self.subTest(host=str(hooks_path)):
+                data = json.loads(hooks_path.read_text())
+                commands = [h.get("command", "") for g in data["hooks"]["Stop"] for h in g["hooks"]]
+                self.assertFalse(any("/scripts/tool_trace.py" in c and " ingest " in c for c in commands))
 
     def test_large_admitted_source_returns_before_trace_ingestion(self):
         self.worker_budget_ms = 1000
@@ -440,11 +442,16 @@ class StopSweepHostContractTests(unittest.TestCase):
                          "id":str(index), "tool_use_id":str(index), "name":"Bash", "input":{"command":"true"},
                          "content":"ok"}]}})+"\n")
         self.assertGreater(self.transcript.stat().st_size, 17_000_000)
-        started = time.monotonic()
-        cp = self._run("all",self._payload())
-        self._assert_hook_contract(cp)
-        self.assertLess(time.monotonic()-started,1.5)
-        time.sleep(1.1)  # let the owned process-group deadline close fixture readers
+        from unittest.mock import patch
+        subprocess.run(["git","init","-q",str(self.root)],check=True,capture_output=True)
+        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+            with self.subTest(host=str(hooks_path)):
+                started = time.monotonic()
+                with patch(__name__ + ".HOOKS_JSON", hooks_path):
+                    cp = self._run("all",self._payload())
+                self._assert_hook_contract(cp)
+                self.assertLess(time.monotonic()-started,1.5)
+                time.sleep(1.1)  # close owned fixture readers before next host
 
     # ---- fail-open / never-block contract ------------------------------
 
