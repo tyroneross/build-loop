@@ -363,9 +363,7 @@ def _ingest_transcript(workdir: Path, transcript: Path, session_id: str = "", *,
                         or not isinstance(row.get("event"), str)):
                     history_coverage["invalid_records"] += 1
                     continue
-                status = row.get("status")
-                if (not isinstance(status, dict) or status.get("code") not in {"OK", "ERROR", "UNSET"}
-                        or (row["event"] == "reconciled" and status.get("code") == "UNSET")):
+                if not _valid_span_status(row):
                     history_coverage["invalid_records"] += 1
                     continue
                 call_hash = attrs.get("build_loop.tool.call_id_sha256")
@@ -466,6 +464,14 @@ def ingest_transcript(workdir: Path, transcript: Path, session_id: str = "") -> 
     return result
 
 
+def _valid_span_status(row: dict[str, Any]) -> bool:
+    """Only explicit terminal outcomes authorize completed-call accounting."""
+    status = row.get("status")
+    allowed = {"OK", "ERROR"} if row.get("event") == "reconciled" else {"OK", "ERROR", "UNSET"}
+    code = status.get("code") if isinstance(status, dict) else None
+    return isinstance(code, str) and code in allowed
+
+
 def _iter_trace_rows(path: Path, *, remaining: list[int] | None = None, diagnostics: dict | None = None):
     """Stream bounded records; resource/IO failures remain explicit, not empty coverage."""
     from transcript_adapter import _open_regular_binary, _bounded_lines
@@ -505,7 +511,7 @@ def summarize_path(
     for row in _iter_trace_rows(path, diagnostics=diagnostics):
         attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
         status = row.get("status")
-        if (not isinstance(attrs.get("gen_ai.tool.name"), str) or not isinstance(status, dict)
+        if (not isinstance(attrs.get("gen_ai.tool.name"), str) or not _valid_span_status(row)
                 or not isinstance(attrs.get("gen_ai.tool.call.arguments.sha256"), (str, type(None)))):
             diagnostics["invalid_records"] += 1
             continue

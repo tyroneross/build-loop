@@ -370,3 +370,15 @@ def test_concurrent_reconciliation_shares_semantic_writer_lock(tmp_path):
         stdout,stderr=process.communicate(timeout=5)
         assert process.returncode==0,stderr
     assert len(list(trace._iter_trace_rows(tmp_path/trace.TRACE_PATH)))==1
+
+
+def test_unknown_reconciled_status_is_not_a_success_or_completed_call(tmp_path):
+    path=tmp_path/'ledger.jsonl'
+    for status in ({},{'code':'UNSET'},{'code':'UNKNOWN'},{'code':[]},{'code':{}},{'code':1},[],None):
+        path.write_text(json.dumps({'event':'reconciled','status':status,'attributes':{'gen_ai.tool.name':'Bash'}})+'\n')
+        result=trace.summarize_path(path)
+        assert result['tool_calls']==0
+        assert result['coverage']['invalid_trace_records']==1
+    path.write_text(json.dumps({'event':'observed','status':{'code':'UNSET'},'attributes':{'gen_ai.tool.name':'Bash'}})+'\n')
+    result=trace.summarize_path(path)
+    assert result['tool_calls']==0 and result['coverage']['invalid_trace_records']==0
