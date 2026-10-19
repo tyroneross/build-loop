@@ -121,7 +121,7 @@ if transcript:
                 transcript = str(adapter.normalize_cached(
                     Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"])
                 ) or "")
-        except (OSError, ValueError):
+        except (OSError, ValueError, ImportError):
             transcript = ""  # preserve event identity even if adapter IO fails
 print(transcript)
 print(safe(d.get("cwd")))

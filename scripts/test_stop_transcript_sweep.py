@@ -120,7 +120,8 @@ class StopSweepHostContractTests(unittest.TestCase):
         (self.root / "hooks").symlink_to(REPO / "hooks")
         scripts = self.root / "scripts"
         scripts.mkdir()
-        (scripts / "transcript_adapter.py").symlink_to(REPO / "scripts" / "transcript_adapter.py")
+        for dependency in ("transcript_adapter.py", "atomic_io.py"):
+            (scripts / dependency).symlink_to(REPO / "scripts" / dependency)
 
         (scripts / "scan_transcript_for_decisions.py").write_text(
             _RECORDER.format(sweep="decisions", read_stdin=False)
@@ -283,21 +284,25 @@ class StopSweepHostContractTests(unittest.TestCase):
         adapter = self.root / "scripts/transcript_adapter.py"
         adapter.unlink()  # fixture symlink only; never edit the real adapter
         discovery = self.root / "discovery-called"
-        adapter.write_text(
-            "from pathlib import Path\nCODEX = 'codex'\n"
-            "def detect_format(path): return CODEX\n"
-            "def normalize_cached(source, cache): return None\n"
-            "if __name__ == '__main__':\n"
-            f"    Path({str(discovery)!r}).write_text('unexpected discovery')\n"
-            f"    print({str(self.transcript)!r})\n"
-        )
-        cp = self._run("all", self._payload())
-        self._assert_hook_contract(cp)
-        rows = self._records("cost-ledger")
-        self.assertTrue(rows, "original cost event was dropped with text normalization")
-        self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
-        self.assertFalse(discovery.exists(), "explicit path must never fall back to another session")
-        self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger"})
+        for behavior in ("return None", "raise ImportError('missing cache dependency')"):
+            with self.subTest(behavior=behavior):
+                self.record.unlink(missing_ok=True)
+                discovery.unlink(missing_ok=True)
+                adapter.write_text(
+                    "from pathlib import Path\nCODEX = 'codex'\n"
+                    "def detect_format(path): return CODEX\n"
+                    f"def normalize_cached(source, cache): {behavior}\n"
+                    "if __name__ == '__main__':\n"
+                    f"    Path({str(discovery)!r}).write_text('unexpected discovery')\n"
+                    f"    print({str(self.transcript)!r})\n"
+                )
+                cp = self._run("all", self._payload())
+                self._assert_hook_contract(cp)
+                rows = self._records("cost-ledger")
+                self.assertTrue(rows, "original cost event was dropped with text normalization")
+                self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
+                self.assertFalse(discovery.exists(), "explicit path must never fall back to another session")
+                self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger"})
 
     # ---- fail-open / never-block contract ------------------------------
 
