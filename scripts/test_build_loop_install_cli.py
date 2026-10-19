@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
 import shutil
 import subprocess
 import unittest
@@ -31,6 +34,27 @@ class BuildLoopInstallCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--host <all|claude|codex>", result.stdout)
         self.assertIn("--skip-memory", result.stdout)
+
+    def test_missing_supervisor_runtime_fails_before_cache_sync(self) -> None:
+        node = shutil.which("node")
+        for available_but_incomplete in (False, True):
+            with self.subTest(incomplete_modules=available_but_incomplete), tempfile.TemporaryDirectory() as directory:
+                tools = Path(directory)
+                (tools / "python3").symlink_to(sys.executable)
+                if available_but_incomplete:
+                    perl = tools / "perl"
+                    perl.write_text("#!/bin/sh\nexit 1\n")
+                    perl.chmod(0o755)
+                env = dict(os.environ, PATH=str(tools), HOME=str(tools / "home"))
+                result = subprocess.run(
+                    [node, str(INSTALLER), "--host", "codex", "--skip-memory", "--json"],
+                    cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=20,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Perl", result.stderr)
+                self.assertIn("JSON::PP", result.stderr)
+                self.assertNotIn("sync codex plugin cache", result.stdout)
+                self.assertFalse((tools / "home").exists())
 
     def test_codex_dry_run_json_succeeds_without_memory_write(self) -> None:
         result = subprocess.run(

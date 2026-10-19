@@ -93,6 +93,19 @@ function findPython() {
   throw new Error("python3 is required to install build-loop");
 }
 
+function verifyHookSupervisorRuntime() {
+  const probe = spawnSync("perl", ["-MJSON::PP", "-MTime::HiRes", "-MPOSIX", "-e", "exit 0"], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  if (probe.status !== 0) {
+    throw new Error(
+      "Bounded hooks require Perl with JSON::PP, Time::HiRes and POSIX. " +
+      "Install the Perl runtime and these modules, then retry installation."
+    );
+  }
+}
+
 function parseJsonMaybe(text) {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -187,6 +200,7 @@ function main() {
   }
 
   const python = findPython();
+  verifyHookSupervisorRuntime();
   const steps = [];
 
   if (process.platform !== "darwin" && !args.allowNonMac && !args.json) {
