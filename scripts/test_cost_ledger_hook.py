@@ -187,66 +187,63 @@ class CostLedgerHookTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_activation_path_hook_registered(self):
-        # The regression-class assertion: the script MUST be wired into hooks.json.
-        # Removing this registration should fail the test (mutation guard).
-        #
-        # The Stop entry now reaches the script through
-        # hooks/stop-transcript-sweep.sh (the wrapper that reads transcript_path
-        # from the stdin JSON payload — there is no CLAUDE_TRANSCRIPT_PATH env
-        # var, and the old inline guard on it never fired). So the activation
-        # path is two links long and BOTH must hold.
-        data = json.loads(HOOKS_JSON.read_text())
-        stop = data.get("hooks", {}).get("Stop", [])
-        cmds = [hk.get("command", "") for grp in stop for hk in grp.get("hooks", [])]
+        """The registered command must deliver a real billing row, not name it."""
+        import os
+        import shutil
+        import time
 
-        sweep = REPO / "hooks" / "stop-transcript-sweep.sh"
-        sweep_src = sweep.read_text()
-        # d279e3f2 collapsed four separately-registered Stop sweeps into ONE
-        # invocation that takes a sweep name, so the registered command reads
-        # `stop-transcript-sweep.sh all` and no longer carries the literal
-        # string "cost-ledger". Asserting on that literal made this test fail
-        # against a hook that was working correctly.
-        #
-        # Both links of the activation path are still checked, so removing
-        # either still fails: the wrapper must be registered on Stop, AND the
-        # argument it is registered with must actually reach the cost-ledger
-        # branch — either named directly or dispatched through `all`.
-        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c]
-        self.assertTrue(
-            registered,
-            "stop-transcript-sweep.sh is not registered on the Stop event in hooks.json",
-        )
-        dispatches_cost_ledger = any(
-            "cost-ledger" in c
-            or ('" all' in c or "' all" in c or c.rstrip().endswith(" all"))
-            for c in registered
-        )
-        self.assertTrue(
-            dispatches_cost_ledger,
-            "the registered Stop sweep neither names cost-ledger nor passes `all`; "
-            f"registered commands: {registered}",
-        )
-        # `all` only counts while the wrapper's fan-out still includes it.
-        # Match the fan-out LIST, not the file text: the wrapper documents its
-        # own sweep names in a header comment, so a substring check passes even
-        # after the branch is renamed out of the loop (caught by mutation:
-        # renaming the case label to `_disabled_cost_ledger)` left the substring
-        # present and the test green).
-        fanout = re.search(r"for one in ([^;]+);", sweep_src)
-        self.assertIsNotNone(
-            fanout, "stop-transcript-sweep.sh has no `for one in ...` fan-out loop"
-        )
-        self.assertIn(
-            "cost-ledger",
-            fanout.group(1).split(),
-            "stop-transcript-sweep.sh `all` fan-out no longer includes cost-ledger; "
-            f"fan-out is: {fanout.group(1).strip()}",
-        )
-        self.assertIn(
-            "cost_ledger_hook.py",
-            sweep.read_text(),
-            f"{sweep} no longer invokes cost_ledger_hook.py — the Stop activation path is broken",
-        )
+        data = json.loads(HOOKS_JSON.read_text())
+        registered = [hook.get("command", "")
+                      for group in data["hooks"]["Stop"] for hook in group["hooks"]
+                      if "stop-transcript-sweep.sh" in hook.get("command", "")]
+        self.assertTrue(registered, "Stop transcript worker is not registered")
+        command = next((value for value in registered if " all" in value), None)
+        self.assertIsNotNone(command, "Stop must dispatch the shared all worker")
+        source = (REPO / "hooks/stop-transcript-sweep.sh").read_text()
+
+        def activate(name, wrapper):
+            base = self.tmp / name
+            hooks = base / "plugin/hooks"
+            hooks.mkdir(parents=True)
+            for dependency in ("_bounded_hook.sh", "_resolve_python.sh"):
+                shutil.copy2(REPO / "hooks" / dependency, hooks / dependency)
+            (hooks / "stop-transcript-sweep.sh").write_text(wrapper)
+            scripts = base / "plugin/scripts"
+            scripts.mkdir()
+            (scripts / "cost_ledger_hook.py").symlink_to(HOOK)
+            for filename in ("scan_transcript_for_decisions.py", "tool_trace.py"):
+                (scripts / filename).write_text("pass\n")
+            for package in ("scan_corrections", "scan_findings"):
+                (scripts / package).mkdir()
+                (scripts / package / "__main__.py").write_text("pass\n")
+            ctx = _make_context(base / "project")
+            transcript, ledger = base / "session.jsonl", base / "ledger.jsonl"
+            _transcript(transcript, [{"id": "activation", "subagent_type": "implementer"}])
+            payload = json.dumps({"session_id": "activation-session",
+                                  "transcript_path": str(transcript), "cwd": str(ctx)})
+            env = os.environ.copy()
+            env.update(CLAUDE_PLUGIN_ROOT=str(base / "plugin"), CLAUDE_PROJECT_DIR=str(ctx),
+                       BUILD_LOOP_COST_LEDGER=str(ledger), BUILD_LOOP_TRANSCRIPT_WORKER_MS="5000",
+                       HOME=str(base / "home"), XDG_STATE_HOME=str(base / "state"))
+            result = subprocess.run(["/bin/sh", "-c", command], input=payload,
+                                    capture_output=True, text=True, cwd=ctx, env=env, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {})
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline and not _rows(ledger):
+                time.sleep(.02)
+            return _rows(ledger)
+
+        rows = activate("real", source)
+        self.assertEqual(len(rows), 1, "Registered Stop command did not activate billing")
+        self.assertEqual(rows[0]["run_id"], "bl-testrun-001")
+        self.assertEqual(rows[0]["agent"], "implementer")
+        self.assertEqual(rows[0]["task_id"], 't-ce748bfb')
+        # Keep registration intact: removing the actual child launch must lose
+        # billing, even though comments still mention its script and mode.
+        launch = next(line for line in source.splitlines()
+                      if "printf" in line and "/scripts/cost_ledger_hook.py" in line)
+        self.assertEqual(activate("disabled", source.replace(launch, "            :", 1)), [])
 
     def test_activation_path_does_not_gate_on_nonexistent_env_var(self):
         """`CLAUDE_TRANSCRIPT_PATH` is not a Claude Code env var.
