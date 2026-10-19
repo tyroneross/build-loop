@@ -65,13 +65,13 @@ def test_guides_cover_catalog_entries_and_dynamic_evidence_boundaries() -> None:
             recheck("openrouter-models.json"),
         ),
         "fireworks-ai.md": (
-            "no uptime or latency SLA",
+            "SLA-backed Reserved Throughput",
             "FIREWORKS_API_KEY",
             "2026-08-27",
             recheck("fireworks-ai-models.json"),
         ),
         "together-ai.md": (
-            "dynamic per organization and model",
+            "contract- and model-specific",
             "TOGETHER_API_KEY",
             "2026-08-27",
             recheck("together-ai-models.json"),
@@ -110,7 +110,9 @@ def test_openrouter_snapshot_is_bounded_and_records_near_term_expirations() -> N
     assert popular_snapshot["request"] == "GET /api/v1/models?output_modalities=all&sort=most-popular"
     assert re.fullmatch(r"[0-9a-f]{64}", popular_snapshot["response_sha256"])
     assert popular_snapshot["model_count"] == snapshot["model_count"]
-    assert [row["popular_rank"] for row in catalog["model_samples"]] == [1, 2, 3, 4, 8, 11]
+    ranks = [row["popular_rank"] for row in catalog["model_samples"]]
+    assert ranks == sorted(set(ranks)), "samples must keep unique observed popularity order"
+    assert all(type(rank) is int and 1 <= rank <= popular_snapshot["model_count"] for rank in ranks)
     assert snapshot["access_mode"].startswith("unauthenticated")
     assert "lowest current route price" not in json.dumps(catalog)
     # Unknown support is recorded as null, never guessed. (MiMo-V2.5, the original
@@ -126,10 +128,25 @@ def test_fireworks_deprecated_routes_have_current_replacements() -> None:
     assert current_ids.isdisjoint(deprecated_ids)
     migrations = {row["id"]: row for row in catalog["deprecations"]}
     assert migrations["accounts/fireworks/models/deepseek-v4-pro"]["replacement"] == (
+        "accounts/fireworks/models/deepseek-v4p1-flash-1017"
+    )
+    assert migrations["accounts/fireworks/models/deepseek-v4-pro"]["historical_replacement"] == (
         "accounts/fireworks/models/deepseek-v4-pro-0813"
     )
+    assert all(row.get("replacement") not in deprecated_ids for row in migrations.values())
     assert migrations["accounts/fireworks/models/gpt-oss-20b"]["effective_at"] == "2026-08-27"
     assert catalog["runtime_verification"]["status"] == "not_run_missing_credential"
+
+
+def test_fireworks_public_card_conflicts_cannot_recommend_serverless_routes() -> None:
+    catalog = load_catalog("fireworks-ai-models.json")
+    models = {row["id"]: row for row in catalog["models"]}
+    for slug in ("qwen3p7-plus", "step-3p7-flash-nvfp4"):
+        record = models[f"accounts/fireworks/models/{slug}"]
+        assert record["lifecycle"] == "deployment_candidate"
+        assert "Serverless Not supported" in record["availability_note"]
+    assert models["accounts/fireworks/models/qwen3p7-plus"]["pricing"] is None
+    assert catalog["provider_features"]["serverless_sla"] is None
 
 
 def test_together_removals_override_serverless_candidate_rows() -> None:

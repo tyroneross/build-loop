@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "together_ai",
   "display_name": "Together AI",
-  "captured_at": "2026-09-23",
-  "review_after": "2026-10-07",
+  "captured_at": "2026-10-19",
+  "review_after": "2026-10-21",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "curated_serverless_snapshot",
   "coverage": {
@@ -32,67 +32,73 @@
     {
       "id": "serverless_models",
       "url": "https://docs.together.ai/docs/serverless/models",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "recommended_models",
       "url": "https://docs.together.ai/docs/inference/recommended-models",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "rate_limits",
       "url": "https://docs.together.ai/docs/serverless/rate-limits",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "deprecations",
       "url": "https://docs.together.ai/docs/deprecations",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "structured_outputs",
       "url": "https://docs.together.ai/docs/inference/chat/structured-outputs",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "reasoning",
       "url": "https://docs.together.ai/docs/inference/chat/reasoning",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "function_calling",
       "url": "https://docs.together.ai/docs/inference/function-calling/overview",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "vision",
       "url": "https://docs.together.ai/docs/inference/vision/overview",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "transcription",
       "url": "https://docs.together.ai/docs/inference/transcription/overview",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "text_to_speech",
       "url": "https://docs.together.ai/docs/inference/text-to-speech/overview",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     },
     {
       "id": "pricing",
       "url": "https://www.together.ai/pricing",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
+      "tier": "T1"
+    },
+    {
+      "id": "openai_compatibility",
+      "url": "https://docs.together.ai/docs/inference/openai-compatibility",
+      "captured_at": "2026-10-19",
       "tier": "T1"
     }
   ],
@@ -103,16 +109,16 @@
   },
   "provider_features": {
     "api": {
-      "base_url": "https://api.together.xyz/v1",
+      "base_url": "https://api.together.ai/v1",
       "openai_compatible": true,
       "serverless_and_dedicated_share_inference_api": true
     },
     "rate_limits": {
-      "scope": "per organization and per model",
-      "policy": "dynamic based on live capacity and sustained successful usage",
+      "scope": "contract- and model-specific; effective account limits not tested",
+      "policy": "demand-related throttling; bounded backoff for 429/503; provisioned throughput provides contracted guarantees",
       "over_limit_code": 429,
-      "at_or_below_dynamic_limit_capacity_code": 503,
-      "actual_limits": "read response headers; internal enforcement is per second even when displayed per minute"
+      "capacity_code": 503,
+      "actual_limits": "Consult current model/contract terms; older automatic-growth, header and per-second mechanics were not re-established."
     },
     "structured_outputs": "supported on the models marked Yes in the serverless table; use the documented JSON mode/schema contract",
     "function_calling": "supported on the models marked Yes in the serverless table",
@@ -128,10 +134,11 @@
     ],
     "capacity": {
       "serverless": "best for prototypes and variable or moderate traffic",
-      "batch": "discounted on most models for latency-insensitive work",
-      "dedicated": "reserved hardware for predictable performance and original-version retention",
+      "batch": "Model-specific availability and pricing; no blanket discount across most models was re-established.",
+      "dedicated": "Reserved hardware; continued availability of an older version is model-specific, as stated on the deprecations page.",
       "provisioned_throughput": "reserved token capacity for supported production models"
-    }
+    },
+    "modalities_scope": "Provider-wide APIs; the current catalog has no serverless embeddings. Dedicated availability remains model-specific."
   },
   "models": [
     {
@@ -221,7 +228,7 @@
       "capabilities": {
         "function_calling": true,
         "structured_outputs": true,
-        "reasoning": true
+        "reasoning": null
       },
       "sources": [
         "serverless_models",
@@ -324,35 +331,6 @@
       ]
     },
     {
-      "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-      "display_name": "DeepSeek V4 Flash 0731",
-      "lifecycle": "serverless",
-      "context_window_tokens": 1000000,
-      "pricing": {
-        "unit": "usd_per_million_tokens",
-        "input": 0.14,
-        "cached_input": 0.03,
-        "output": 0.28
-      },
-      "capabilities": {
-        "function_calling": true,
-        "structured_outputs": true,
-        "reasoning": true
-      },
-      "best_fit": [
-        "mid_size_general_purpose",
-        "function_calling",
-        "coding_agents"
-      ],
-      "sources": [
-        "serverless_models",
-        "recommended_models",
-        "reasoning",
-        "function_calling",
-        "structured_outputs"
-      ]
-    },
-    {
       "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "display_name": "DeepSeek V4 Pro 0813",
       "lifecycle": "serverless",
@@ -391,13 +369,55 @@
         "output": 1.28
       },
       "capabilities": {
-        "function_calling": null,
-        "structured_outputs": null,
-        "reasoning": true
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
       },
       "sources": [
         "serverless_models",
         "reasoning"
+      ]
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "lifecycle": "serverless",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.3,
+        "cached_input": 0.006,
+        "output": 1.2
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
+      },
+      "sources": [
+        "serverless_models",
+        "recommended_models"
+      ]
+    },
+    {
+      "id": "meta-models/Muse-Glimmer-30B",
+      "display_name": "Muse Glimmer 30B",
+      "lifecycle": "serverless",
+      "context_window_tokens": 131072,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.35,
+        "cached_input": 0.04,
+        "output": 1.5
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
+      },
+      "sources": [
+        "serverless_models",
+        "deprecations"
       ]
     }
   ],
@@ -449,56 +469,52 @@
       "use": "speech_to_text",
       "pricing": {
         "unit": "usd_per_audio_minute",
-        "amount": 0.0045
+        "amount": 0.0015
       },
       "sources": [
         "serverless_models",
         "recommended_models",
         "transcription"
-      ]
-    },
-    {
-      "id": "intfloat/multilingual-e5-large-instruct",
-      "use": "embeddings",
-      "context_window_tokens": 514,
-      "pricing": {
-        "unit": "usd_per_million_input_tokens",
-        "amount": 0.02
-      },
-      "sources": [
-        "serverless_models",
-        "recommended_models"
-      ]
+      ],
+      "pricing_conflict": {
+        "pricing_page_amount": 0.0045,
+        "unit": "usd_per_audio_minute",
+        "resolution": "serverless_models takes precedence"
+      }
     }
   ],
   "recent_removals": [
     {
       "id": "openai/gpt-oss-20b",
-      "removed_at": "2026-09-14",
+      "removed_at": "2026-09-15",
       "dedicated_available": true,
-      "replacement": "Qwen/Qwen3.5-9B"
+      "replacement": "Qwen/Qwen3.5-9B",
+      "conflicting_scheduled_date": "2026-09-14"
     },
     {
       "id": "google/gemma-4-31B-it",
-      "removed_at": "2026-09-14",
+      "removed_at": "2026-09-15",
       "dedicated_available": true,
-      "replacement": "zai-org/GLM-5.3-Flash"
+      "replacement": "zai-org/GLM-5.3-Flash",
+      "conflicting_scheduled_date": "2026-09-14"
     },
     {
       "id": "thinkingmachines/Inkling-Small",
-      "removed_at": "2026-09-14",
+      "removed_at": "2026-09-15",
       "dedicated_available": true,
-      "replacement": "zai-org/GLM-5.3-Flash"
+      "replacement": "zai-org/GLM-5.3-Flash",
+      "conflicting_scheduled_date": "2026-09-14"
     },
     {
       "id": "intfloat/multilingual-e5-large-instruct",
-      "removed_at": "2026-09-14",
-      "dedicated_available": false
+      "removed_at": "2026-09-15",
+      "dedicated_available": false,
+      "conflicting_scheduled_date": "2026-09-14"
     },
     {
       "id": "nvidia/Nemotron-3-ultra-550b-a55b",
       "removed_at": "2026-08-27",
-      "dedicated_available": true
+      "dedicated_available": false
     },
     {
       "id": "pearl-ai/gemma-4-31b-it",
@@ -529,17 +545,32 @@
     }
   ],
   "uncertainties": [
-    "A hyphen in Together's function-calling or structured-output table is recorded as null, not false.",
-    "Account-specific model access and effective rate limits were not tested because TOGETHER_API_KEY was unavailable.",
-    "Serverless recommendations can change independently of dedicated endpoint availability.",
-    "Qwen/Qwen3.8-2.4T-A95B cached_input: the serverless models table and the pricing page disagree ($0.50 vs $0.25 per 1M tokens as of 2026-09-23). This record keeps the serverless_models table value per source_precedence.",
-    "The deprecations page still files openai/gpt-oss-20b, google/gemma-4-31B-it, thinkingmachines/Inkling-Small, and intfloat/multilingual-e5-large-instruct under 'Scheduled deprecations' (removal date 2026-09-14), but none of the four appears on the 2026-09-23 serverless models page, so they are recorded under recent_removals. Dedicated-endpoint availability follows the deprecations page."
+    "No TOGETHER_API_KEY, account access or effective rate limits were tested.",
+    "Deprecation history says September 15 for four prior removals while the scheduled table still says September 14; both dates are retained.",
+    "Qwen3.8 cached input conflicts: serverless model table $0.50 versus pricing $0.25 per 1M; declared model-table precedence retained.",
+    "Nemotron3.5 ASR conflicts: model table $0.0015 versus pricing $0.0045/audio minute; declared model-table precedence retained.",
+    "GLM-5.2 context conflicts: serverless table 1,048,575 versus reasoning guide 512K; model-table precedence retained.",
+    "Current reasoning guide does not establish GLM-5.3-Flash or Qwen3.7-Plus API reasoning bindings; their flags are null.",
+    "The legacy api.together.xyz alias was not reverified; current docs use api.together.ai. Provider-wide embedding API support does not imply a current serverless embedding model."
   ],
   "global_notes": {
     "performance": "Together recommendations are vendor guidance. Benchmark finalists on representative prompts and record p50/p95 latency, tokens per second, error rate, and cost.",
     "deprecations": "The deprecations page outranks a catalog row when availability conflicts.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
   },
-  "scheduled_removals": [],
-  "provenance_note": "Re-verified 2026-09-23 against all 11 listed sources. Changes vs the 2026-09-07 capture: openai/gpt-oss-120b context_window_tokens corrected 128000 -> 131072 (https://docs.together.ai/docs/serverless/models); zai-org/GLM-5.2 and zai-org/GLM-5.3-Flash context_window_tokens corrected 1000000 -> 1048575 (same source); zai-org/GLM-5.3 added as a current model, now the recommended coding-agent pick per https://docs.together.ai/docs/inference/recommended-models (GLM-5.2 lost the coding_agents/function_calling best_fit tags because recommended_models no longer names it); Qwen/Qwen3.8-2.4T-A95B pricing corrected input 2.5 -> 2.0 and output 6.25 -> 6.0 (serverless_models table); nvidia/nemotron-3.5-asr-streaming-0.6b price corrected 0.0015 -> 0.0045 usd_per_audio_minute (https://www.together.ai/pricing). All other model rows, recent_removals, and scheduled_removals were re-checked and reproduced unchanged. The historical removal table reproduced unchanged."
+  "scheduled_removals": [
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "removal_date": "2026-10-22",
+      "replacement": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "dedicated_available": true
+    },
+    {
+      "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "removal_date": "2026-10-22",
+      "replacement": "meta-models/Muse-Glimmer-30B",
+      "dedicated_available": true
+    }
+  ],
+  "provenance_note": "Reverified 2026-10-19: https://docs.together.ai/docs/serverless/models supplies retained chat contexts/prices/tools/schema flags and the exact meta-models/Muse-Glimmer-30B route; https://docs.together.ai/docs/deprecations independently names that replacement and October 22 removals. https://docs.together.ai/docs/serverless/rate-limits supplies current demand/contract guidance. Pricing conflicts with https://www.together.ai/pricing are explicit. Capability guides verify provider contracts and specifically listed reasoning models; absent bindings stay null. All original listed public URLs were fetched. No TOGETHER_API_KEY or inference request was used."
 }

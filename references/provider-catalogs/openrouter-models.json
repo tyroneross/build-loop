@@ -2,15 +2,15 @@
   "schema_version": 1,
   "provider": "openrouter",
   "display_name": "OpenRouter",
-  "captured_at": "2026-09-23",
-  "review_after": "2026-10-07",
+  "captured_at": "2026-10-19",
+  "review_after": "2026-10-20",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "dynamic_aggregator_snapshot",
   "coverage": {
     "scope": "Provider controls, live aggregate counts, actionable expiration dates, and representative popular text models.",
     "exhaustive_models": false,
     "exhaustive_source": "https://openrouter.ai/api/v1/models?output_modalities=all",
-    "reason": "OpenRouter listed 581 models at capture time. Copying the full response would become stale faster than the documented live API."
+    "reason": "OpenRouter listed 685 models in this anonymous response; the samples are curated and non-exhaustive."
   },
   "source_precedence": [
     "models_api",
@@ -37,98 +37,98 @@
     {
       "id": "models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "popular_models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all&sort=most-popular",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "single_model_api",
       "url": "https://openrouter.ai/docs/guides/overview/models",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "mimo_model_page",
       "url": "https://openrouter.ai/xiaomi/mimo-v2.5-20260422/apps",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "model_page"
     },
     {
       "id": "provider_routing",
       "url": "https://openrouter.ai/docs/guides/routing/provider-selection",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "model_fallbacks",
       "url": "https://openrouter.ai/docs/guides/routing/model-fallbacks",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "structured_outputs",
       "url": "https://openrouter.ai/docs/guides/features/structured-outputs",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "tool_calling",
       "url": "https://openrouter.ai/docs/guides/features/tool-calling",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "reasoning",
       "url": "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "multimodal",
       "url": "https://openrouter.ai/docs/guides/overview/multimodal/overview",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "latency",
       "url": "https://openrouter.ai/docs/features/latency-and-performance",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "pricing",
       "url": "https://openrouter.ai/pricing",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "faq",
       "url": "https://openrouter.ai/docs/faq",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "byok",
       "url": "https://openrouter.ai/docs/guides/overview/auth/byok",
-      "captured_at": "2026-09-23",
+      "captured_at": "2026-10-19",
       "tier": "T1",
       "kind": "documentation"
     }
@@ -136,55 +136,23 @@
   "runtime_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all",
     "access_mode": "unauthenticated public endpoint; no credential sent or retained",
-    "response_sha256": "7a4e4ddb12b5647fe5b398c82d55467b73c651cf5a31b27c75d3c03a515e5018",
-    "model_count": 620,
+    "response_sha256": "1de58d261ec4965f5beec79ac311b774d0d07018080423849a1ced84ad1d407d",
+    "model_count": 685,
     "capability_counts": {
-      "tools": 389,
-      "structured_outputs": 376,
-      "reasoning": 329,
-      "image_input": 364,
-      "audio_input": 78
+      "tools": 401,
+      "structured_outputs": 397,
+      "reasoning": 344,
+      "image_input": 411,
+      "audio_input": 87
     },
-    "expiration_date_count": 24,
+    "expiration_date_count": 20,
     "actionable_expirations": [
       {
-        "id": "nex-agi/nex-n2.5-mini:free",
-        "expiration_date": "2026-09-25"
-      },
-      {
-        "id": "nex-agi/nex-n2.5-pro:free",
-        "expiration_date": "2026-09-25"
-      },
-      {
-        "id": "deepseek/deepseek-v3.2",
-        "expiration_date": "2026-09-28"
-      },
-      {
-        "id": "deepseek/deepseek-v3.2-exp",
-        "expiration_date": "2026-09-28"
-      },
-      {
-        "id": "deepseek/deepseek-v3.1-terminus",
-        "expiration_date": "2026-09-28"
-      },
-      {
-        "id": "deepseek/deepseek-r1-distill-llama-70b",
-        "expiration_date": "2026-09-28"
-      },
-      {
-        "id": "minimax/minimax-m2.1",
-        "expiration_date": "2026-10-08"
-      },
-      {
-        "id": "baidu/ernie-4.5-vl-424b-a47b",
-        "expiration_date": "2026-10-08"
-      },
-      {
-        "id": "google/gemini-2.5-flash-lite",
+        "id": "google/gemini-2.5-flash",
         "expiration_date": "2026-10-20"
       },
       {
-        "id": "google/gemini-2.5-flash",
+        "id": "google/gemini-2.5-flash-lite",
         "expiration_date": "2026-10-20"
       },
       {
@@ -200,6 +168,50 @@
         "expiration_date": "2026-10-20"
       },
       {
+        "id": "qwen/qwen3.5-9b",
+        "expiration_date": "2026-10-21"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5",
+        "expiration_date": "2026-10-21"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5-pro",
+        "expiration_date": "2026-10-21"
+      },
+      {
+        "id": "poolside/laguna-s-2.1",
+        "expiration_date": "2026-10-31"
+      },
+      {
+        "id": "poolside/laguna-s-2.1:free",
+        "expiration_date": "2026-10-31"
+      },
+      {
+        "id": "poolside/laguna-xs-2.1",
+        "expiration_date": "2026-10-31"
+      },
+      {
+        "id": "poolside/laguna-xs-2.1:free",
+        "expiration_date": "2026-10-31"
+      },
+      {
+        "id": "nousresearch/hermes-3-llama-3.1-405b",
+        "expiration_date": "2026-11-02"
+      },
+      {
+        "id": "nousresearch/hermes-3-llama-3.1-70b",
+        "expiration_date": "2026-11-02"
+      },
+      {
+        "id": "bytedance-seed/seed-1.6",
+        "expiration_date": "2026-11-11"
+      },
+      {
+        "id": "bytedance-seed/seed-1.6-flash",
+        "expiration_date": "2026-11-11"
+      },
+      {
         "id": "bytedance-seed/seed-2.0-code",
         "expiration_date": "2026-11-11"
       },
@@ -208,43 +220,32 @@
         "expiration_date": "2026-11-11"
       },
       {
-        "id": "bytedance-seed/seed-1.6-flash",
-        "expiration_date": "2026-11-11"
-      },
-      {
-        "id": "bytedance-seed/seed-1.6",
-        "expiration_date": "2026-11-11"
-      },
-      {
-        "id": "z-ai/glm-4.5",
-        "expiration_date": "2026-12-31"
-      },
-      {
         "id": "dots-studio/dots-3-note-preview:free",
         "expiration_date": "2026-12-31"
       },
       {
-        "id": "google/gemini-2.5-flash-image",
-        "expiration_date": "2027-03-15"
+        "id": "z-ai/glm-4.5",
+        "expiration_date": "2026-12-31"
       }
     ],
     "sentinel_expirations": {
       "value": "2098-12-31",
-      "count": 4,
+      "count": 0,
       "interpretation": "Far-future values are retained as provider metadata but are not treated as actionable shutdown dates."
-    }
+    },
+    "expired_but_listed": []
   },
   "popular_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all&sort=most-popular",
     "sort_semantics": "most tokens processed in the last week",
-    "response_sha256": "f369ef469377de1105988a07ea73ffb2c8e213fc7d4661b0c471191ef1f31fac",
-    "model_count": 620
+    "response_sha256": "993a0f4fd91c9acf3500fdb83a784e99f5813e38e3dddf7838081ba4837bb673",
+    "model_count": 685
   },
   "provider_features": {
     "api": {
       "base_url": "https://openrouter.ai/api/v1",
       "openai_compatible": true,
-      "models_api": "public catalog; authentication was available for this capture"
+      "models_api": "unauthenticated public endpoint; no credential sent"
     },
     "routing": {
       "provider_order": true,
@@ -260,7 +261,8 @@
         "p75",
         "p90",
         "p99"
-      ]
+      ],
+      "privacy_scope": "ZDR filters inference endpoints; tool backends are not filtered. Account/guardrail ZDR cannot be disabled by a request."
     },
     "capabilities": {
       "tool_calling": "model and provider dependent; filter supported_parameters and set require_parameters=true",
@@ -282,26 +284,29 @@
       "scope": "account, model, and upstream-provider dependent",
       "free_models_without_10_usd_purchased": "50 requests/day total",
       "free_models_with_at_least_10_usd_purchased": "1000 requests/day total",
-      "production_rule": "read live limits and provider responses; do not use free routes for production capacity"
+      "production_rule": "read live limits and provider responses; do not use free routes for production capacity",
+      "free_models_requests_per_minute": 20
     },
     "commercial_terms": {
       "inference_pricing": "the Models API pricing object reports the top provider under default conditions; pricing.overrides carries conditional exceptions",
-      "credit_purchase_fee_percent": 5.5,
-      "credit_purchase_minimum_fee_usd": 0.8,
+      "credit_purchase_minimum_fee_usd": null,
       "byok_fee_percent_after_waiver": 5.0,
-      "byok_waiver": "FAQ and BYOK docs now agree: the BYOK fee waiver is a plan-level monthly list-price inference-cost allowance, not a request count. Pay-as-you-go plans get the first $25,000/month of list-price inference with no BYOK fee; Enterprise gets $200,000/month. The 5% fee applies only above that allowance. This supersedes the prior '1M BYOK requests/month' reading, which the live docs no longer state."
+      "byok_waiver": "Standard and Business include $25,000/month list-price inference before the 5% BYOK fee; Enterprise allowances are custom.",
+      "credit_purchase_fee_percent_by_plan": {
+        "standard": 5.5,
+        "business": 8
+      }
     }
   },
   "model_samples": [
     {
-      "id": "z-ai/glm-5.3-flash",
+      "id": "deepseek/deepseek-v4.1-flash",
       "popular_rank": 1,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
-          "image",
           "text",
-          "video"
+          "image"
         ],
         "output": [
           "text"
@@ -309,8 +314,9 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.15,
-        "output": 0.5
+        "input": 0.0304,
+        "output": 0.08,
+        "cached_input": 0.0016
       },
       "capabilities": {
         "tools": true,
@@ -322,13 +328,14 @@
       ]
     },
     {
-      "id": "deepseek/deepseek-v4.1-flash",
+      "id": "z-ai/glm-5.3-flash",
       "popular_rank": 2,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
+          "text",
           "image",
-          "text"
+          "video"
         ],
         "output": [
           "text"
@@ -336,8 +343,9 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.14,
-        "output": 0.42
+        "input": 0.048,
+        "output": 0.16,
+        "cached_input": 0.006
       },
       "capabilities": {
         "tools": true,
@@ -350,7 +358,7 @@
     },
     {
       "id": "tencent/hy4-preview",
-      "popular_rank": 3,
+      "popular_rank": 5,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
@@ -362,8 +370,107 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.834,
-        "output": 2.501
+        "input": 0.7506,
+        "output": 2.2509,
+        "cached_input": 0.0378
+      },
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": true,
+        "reasoning": true
+      },
+      "sources": [
+        "popular_models_api"
+      ],
+      "conditional_pricing": {
+        "unit": "usd_per_token",
+        "overrides": [
+          {
+            "utc_start": 0,
+            "utc_end": 1600,
+            "prompt": "0.000000834",
+            "completion": "0.000002501",
+            "input_cache_read": "0.000000042"
+          },
+          {
+            "utc_start": 1600,
+            "utc_end": 0,
+            "prompt": "0.0000007506",
+            "completion": "0.0000022509",
+            "input_cache_read": "0.0000000378"
+          }
+        ],
+        "note": "Evaluate reported time/token conditions before estimating a request."
+      }
+    },
+    {
+      "id": "tencent/hy3",
+      "popular_rank": 13,
+      "context_window_tokens": 262144,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.0825,
+        "output": 0.33,
+        "cached_input": 0.020625
+      },
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": true,
+        "reasoning": true
+      },
+      "sources": [
+        "popular_models_api"
+      ],
+      "conditional_pricing": {
+        "unit": "usd_per_token",
+        "overrides": [
+          {
+            "utc_start": 0,
+            "utc_end": 1600,
+            "prompt": "0.000000132",
+            "completion": "0.000000528",
+            "input_cache_read": "0.000000033"
+          },
+          {
+            "utc_start": 1600,
+            "utc_end": 0,
+            "prompt": "0.0000000825",
+            "completion": "0.00000033",
+            "input_cache_read": "0.000000020625"
+          }
+        ],
+        "note": "Evaluate reported time/token conditions before estimating a request."
+      }
+    },
+    {
+      "id": "google/gemini-3.8-flash",
+      "popular_rank": 21,
+      "context_window_tokens": 1048576,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.825,
+        "output": 4.125,
+        "cached_input": 0.0825
       },
       "capabilities": {
         "tools": true,
@@ -376,7 +483,7 @@
     },
     {
       "id": "openai/gpt-5.6-luna",
-      "popular_rank": 4,
+      "popular_rank": 22,
       "context_window_tokens": 1050000,
       "modalities": {
         "input": [
@@ -391,7 +498,8 @@
       "pricing": {
         "unit": "usd_per_million_tokens",
         "input": 0.2,
-        "output": 1.2
+        "output": 1.2,
+        "cached_input": 0.02
       },
       "capabilities": {
         "tools": true,
@@ -400,72 +508,32 @@
       },
       "sources": [
         "popular_models_api"
-      ]
-    },
-    {
-      "id": "tencent/hy3",
-      "popular_rank": 8,
-      "context_window_tokens": 262144,
-      "modalities": {
-        "input": [
-          "text"
+      ],
+      "conditional_pricing": {
+        "unit": "usd_per_token",
+        "overrides": [
+          {
+            "min_prompt_tokens": 272000,
+            "prompt": "0.0000004",
+            "completion": "0.0000018",
+            "input_cache_read": "0.00000004",
+            "input_cache_write": "0.0000005"
+          }
         ],
-        "output": [
-          "text"
-        ]
-      },
-      "pricing": {
-        "unit": "usd_per_million_tokens",
-        "input": 0.132,
-        "output": 0.528
-      },
-      "capabilities": {
-        "tools": true,
-        "structured_outputs": true,
-        "reasoning": true
-      },
-      "sources": [
-        "popular_models_api"
-      ]
-    },
-    {
-      "id": "google/gemini-3.8-flash",
-      "popular_rank": 11,
-      "context_window_tokens": 1048576,
-      "modalities": {
-        "input": [
-          "audio",
-          "file",
-          "image",
-          "text",
-          "video"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "pricing": {
-        "unit": "usd_per_million_tokens",
-        "input": 0.75,
-        "output": 3.75
-      },
-      "capabilities": {
-        "tools": true,
-        "structured_outputs": true,
-        "reasoning": true
-      },
-      "sources": [
-        "popular_models_api"
-      ]
+        "note": "Evaluate reported time/token conditions before estimating a request."
+      }
     }
   ],
   "uncertainties": [
-    "This capture used the unauthenticated public endpoint. Per-account routing, provider allow-lists, and negotiated pricing can differ from these values."
+    "No credential or inference request was used; account routing, access and negotiated prices were not tested.",
+    "The former $0.80 minimum credit fee was not re-established and is null.",
+    "Historical expiration metadata can be withdrawn while a model remains listed; use the current response rather than assuming every earlier expiry became a removal."
   ],
   "global_notes": {
     "performance": "Popular rank and OpenRouter routing metrics are operational signals, not independent quality benchmarks or SLAs.",
     "pricing": "Model prices are the Models API top-provider values under default conditions, can have conditional overrides, and can differ from promotional model-page prices or a pinned provider route.",
     "selection": "Query the live API with capability filters, apply provider data-policy requirements, and benchmark the finalists on the actual workload.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
-  }
+  },
+  "provenance_note": "Reverified 2026-10-19: anonymous https://openrouter.ai/api/v1/models?output_modalities=all and the most-popular query supplied counts, sample metadata, prices and expiration records; exact response hashes are recorded. https://openrouter.ai/docs/guides/overview/models defines pricing and sort semantics. https://openrouter.ai/docs/guides/routing/provider-selection and https://openrouter.ai/pricing verified routing/privacy/performance and current commercial/free-limit controls. All listed public sources were fetched; this does not establish account access or end-to-end inference acceptance."
 }
