@@ -1920,3 +1920,59 @@ class TestRecursiveFullCoverage(unittest.TestCase):
             actual = gate._broad_tests_for_changed(root, ["scripts/task_surface.py"])
             self.assertEqual({Path(f).relative_to(root.resolve()).as_posix() for f in actual},
                              {"scripts/pkg/test_task_nested.py", "tests/deep/test_task_other.py"})
+
+
+class TestTypeScriptRuntimeRouting(unittest.TestCase):
+    def test_authoritative_typescript_tests_and_manifests_share_runtime_suite(self):
+        import self_mod_verify as gate
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_test = root / "tests/test_typescript_runtime.py"
+            runtime_test.parent.mkdir()
+            runtime_test.write_text("def test_runtime(): pass\n")
+            for changed in ("src/config.ts", "src/traces/storage.ts", "tests/config.test.cjs",
+                            "tests/traces/storage.test.cjs", "package.json", "package-lock.json"):
+                with self.subTest(changed=changed):
+                    self.assertEqual(gate._tests_for_changed(root, [changed]), [str(runtime_test.resolve())])
+            self.assertEqual(gate._tests_for_changed(root, ["src/config.ts", "package.json"]),
+                             [str(runtime_test.resolve())])
+
+    def test_generated_documentation_and_outside_sources_do_not_route(self):
+        import self_mod_verify as gate
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            runtime_test = root / "tests/test_typescript_runtime.py"
+            runtime_test.parent.mkdir()
+            runtime_test.write_text("def test_runtime(): pass\n")
+            (root / "src").mkdir()
+            (root / "src/escape.ts").symlink_to(Path(outside) / "source.ts")
+            changed = ["dist/src/config.ts", "dist/src/config.js", "src/vendor/model.ts",
+                       "tests/vendor/test.cjs", "docs/src/config.ts", "docs/package.json",
+                       "README.md", "src/escape.ts", str(Path(outside) / "source.ts")]
+            self.assertEqual(gate._tests_for_changed(root, changed), [])
+
+
+    def test_changed_cli_runs_runtime_marker_but_excludes_other_integrations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "pyproject.toml").write_text(
+                "[tool.pytest.ini_options]\n"
+                "addopts = \"-m 'not integration'\"\n"
+                "markers = ['integration: service integration', 'typescript_runtime: local runtime']\n"
+            )
+            runtime_test = root / "tests/test_typescript_runtime.py"
+            runtime_test.write_text(
+                "import pytest\nfrom pathlib import Path\n"
+                "@pytest.mark.integration\n@pytest.mark.typescript_runtime\n"
+                "def test_runtime():\n    Path('runtime-ran').write_text('yes')\n"
+                "@pytest.mark.integration\n"
+                "def test_service():\n    raise AssertionError('unrelated integration ran')\n"
+            )
+            result = _run(["--workdir", str(root), "--scope", "changed",
+                           "--changed-files", "src/config.ts", "--json"])
+            payload = _payload(result.stdout)
+            self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
+            self.assertEqual(payload["passed"], 1)
+            self.assertTrue((root / "runtime-ran").exists())

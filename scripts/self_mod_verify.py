@@ -288,19 +288,18 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
             p = workdir / p
         p = p.resolve()
 
-        # Only Python files are pytest targets. A changed doc whose basename
-        # happens to start with `test_` (e.g. docs/scripts/test_foo.md, the
-        # per-script doc convention) must NOT be handed to pytest — pytest
-        # exits 4 ("file or directory not found"/usage) on a .md path, which
-        # the gate would surface as verdict=error. Non-.py changes map to no
-        # test target (verdict no_tests, exit 0) unless a sibling test exists.
-        if p.suffix != ".py":
-            continue
-
-        # A mirror copy under a generated tree (dist/, build/, vendor/, ...) is
-        # build output, not a gate target — and collecting it alongside its
-        # scripts/ twin aborts the run with "import file mismatch".
+        # Resolve containment before language routing: generated mirrors and
+        # outside symlink targets never acquire authoritative test ownership.
         if not p.is_relative_to(workdir.resolve()) or _in_non_gate_tree(p, workdir):
+            continue
+        rel = p.relative_to(workdir.resolve())
+        if ((rel.parts[:1] == ("src",) and p.suffix == ".ts")
+                or (rel.parts[:1] == ("tests",) and p.suffix == ".cjs")
+                or rel.as_posix() in {"package.json", "package-lock.json"}):
+            _add_by_name("test_typescript_runtime.py")
+            continue
+        # Other non-Python files, including documentation, are not pytest targets.
+        if p.suffix != ".py":
             continue
 
         if p.name.startswith("test_"):
@@ -1408,6 +1407,10 @@ def _verify_inner(
             )
         cmd = runner_base + full_suite_pytest_args(test_files, use_timeout=has_timeout)
     else:
+        # This local runtime integration has a dedicated JS CI owner. Include
+        # only its explicit marker here; unrelated service integrations stay out.
+        if any(Path(filename).name == "test_typescript_runtime.py" for filename in test_files):
+            cmd += ["-m", "not integration or typescript_runtime"]
         cmd += test_files
 
     # --- Run pytest ---

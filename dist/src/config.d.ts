@@ -7,9 +7,7 @@
  */
 import type { MemoryConfig } from './types';
 export type { MemoryConfig } from './types';
-/**
- * Get configuration from environment variables and defaults
- */
+/** Get and validate the final configuration, allowing overrides to replace bad env values. */
 export declare function getConfig(overrides?: Partial<MemoryConfig>): MemoryConfig;
 /**
  * Get paths for different memory components

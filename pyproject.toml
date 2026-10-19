@@ -65,6 +65,7 @@ python_files = ["test_*.py"]
 # covers local default runs.
 addopts = "-m 'not integration'"
 markers = [
+    "typescript_runtime: local builtin TypeScript runtime suite (also integration)",
     "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
     "live: test that requires a live external service (Ollama/qwen on :11434, embed/rerank daemon, Postgres); auto-skipped when the service is unreachable",
     "db: test that requires psycopg (.[db] extra) and/or a live Postgres instance; auto-skipped when psycopg is not installed",

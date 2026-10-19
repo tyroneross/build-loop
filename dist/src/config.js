@@ -51,33 +51,57 @@ exports.getLogPaths = getLogPaths;
 exports.getTracePaths = getTracePaths;
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
-/**
- * Get configuration from environment variables and defaults
- */
+/** Parse the whole decimal value; final validation runs after overrides merge. */
+function environmentNumber(name, fallback) {
+    const value = process.env[name];
+    if (!value)
+        return fallback;
+    return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)
+        ? Number(value) : NaN;
+}
+function environmentBoolean(name, fallback) {
+    const value = process.env[name];
+    if (!value)
+        return fallback;
+    return value === 'true' ? true : value === 'false' ? false : value;
+}
+function requireObject(value, name) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new TypeError(`${name} must be an object`);
+    }
+}
+function requireInteger(value, name, minimum) {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) {
+        throw new TypeError(`${name} must be a safe integer >= ${minimum}`);
+    }
+}
+/** Get and validate the final configuration, allowing overrides to replace bad env values. */
 function getConfig(overrides) {
-    // Check environment variable for mode
-    const mode = process.env.CLAUDE_MEMORY_MODE || 'local';
-    // Determine memory path based on mode
-    let memoryPath;
-    if (mode === 'shared') {
-        // Shared mode: Use home directory
-        const customPath = process.env.CLAUDE_MEMORY_PATH;
-        memoryPath = customPath || path.join(os.homedir(), '.claude-memory');
-    }
-    else {
-        // Local mode: Use current working directory
-        const customPath = process.env.CLAUDE_MEMORY_PATH;
-        memoryPath = customPath || path.join(process.cwd(), '.claude/memory');
-    }
+    const mode = overrides?.storageMode ?? (process.env.CLAUDE_MEMORY_MODE || 'local');
     const config = {
         storageMode: mode,
-        memoryPath,
-        autoMine: process.env.CLAUDE_MEMORY_AUTO_MINE === 'true',
-        defaultSimilarityThreshold: parseFloat(process.env.CLAUDE_MEMORY_THRESHOLD || '0.5'),
-        defaultMaxResults: parseInt(process.env.CLAUDE_MEMORY_MAX_RESULTS || '5', 10),
-        ...overrides
+        memoryPath: process.env.CLAUDE_MEMORY_PATH || (mode === 'shared'
+            ? path.join(os.homedir(), '.claude-memory')
+            : path.join(process.cwd(), '.claude/memory')),
+        autoMine: environmentBoolean('CLAUDE_MEMORY_AUTO_MINE', false),
+        defaultSimilarityThreshold: environmentNumber('CLAUDE_MEMORY_THRESHOLD', 0.5),
+        defaultMaxResults: environmentNumber('CLAUDE_MEMORY_MAX_RESULTS', 5),
+        ...overrides,
     };
-    return config;
+    if (config.storageMode !== 'local' && config.storageMode !== 'shared') {
+        throw new TypeError('storageMode must be local or shared');
+    }
+    if (typeof config.memoryPath !== 'string' || !config.memoryPath.trim() || config.memoryPath.includes('\0')) {
+        throw new TypeError('memoryPath must be a nonempty path without NUL characters');
+    }
+    if (typeof config.autoMine !== 'boolean')
+        throw new TypeError('autoMine must be a boolean');
+    if (typeof config.defaultSimilarityThreshold !== 'number' || !Number.isFinite(config.defaultSimilarityThreshold)
+        || config.defaultSimilarityThreshold < 0 || config.defaultSimilarityThreshold > 1) {
+        throw new TypeError('defaultSimilarityThreshold must be a finite number in [0, 1]');
+    }
+    requireInteger(config.defaultMaxResults, 'defaultMaxResults', 0);
+    return { ...config, storageMode: config.storageMode, autoMine: config.autoMine };
 }
 /**
  * Get paths for different memory components
@@ -112,9 +136,7 @@ function displayConfig(config) {
  * - CLAUDE_MEMORY_AUTO_ADJUST: Auto-adjust tier if over budget (true|false, default: true)
  */
 function getTokenConfig(overrides) {
-    const totalBudget = parseInt(process.env.CLAUDE_MEMORY_TOKEN_BUDGET || '2500', 10);
-    const tier = process.env.CLAUDE_MEMORY_TIER || 'compact';
-    const autoAdjust = process.env.CLAUDE_MEMORY_AUTO_ADJUST !== 'false';
+    const totalBudget = environmentNumber('CLAUDE_MEMORY_TOKEN_BUDGET', 2500);
     const config = {
         budget: {
             total: totalBudget,
@@ -123,17 +145,34 @@ function getTokenConfig(overrides) {
                 incidents: Math.floor(totalBudget * 0.6),
                 metadata: Math.floor(totalBudget * 0.1),
             },
-            perItem: {
-                pattern: 120,
-                incident: 200,
-                summary: 100,
-            },
+            perItem: { pattern: 120, incident: 200, summary: 100 },
         },
-        defaultTier: tier,
-        autoAdjust,
+        defaultTier: process.env.CLAUDE_MEMORY_TIER || 'compact',
+        autoAdjust: environmentBoolean('CLAUDE_MEMORY_AUTO_ADJUST', true),
         ...overrides,
     };
-    return config;
+    if (config.defaultTier !== 'summary' && config.defaultTier !== 'compact' && config.defaultTier !== 'full') {
+        throw new TypeError('defaultTier must be summary, compact or full');
+    }
+    if (typeof config.autoAdjust !== 'boolean')
+        throw new TypeError('autoAdjust must be a boolean');
+    requireObject(config.budget, 'budget');
+    requireInteger(config.budget.total, 'budget.total', 1);
+    requireObject(config.budget.allocated, 'budget.allocated');
+    let remaining = config.budget.total;
+    for (const key of ['patterns', 'incidents', 'metadata']) {
+        const allocation = config.budget.allocated[key];
+        requireInteger(allocation, `budget.allocated.${key}`, 0);
+        // Subtract rather than summing, so even safe integers cannot overflow the sum.
+        if (allocation > remaining)
+            throw new TypeError('budget allocations must not exceed total');
+        remaining -= allocation;
+    }
+    requireObject(config.budget.perItem, 'budget.perItem');
+    for (const key of ['pattern', 'incident', 'summary']) {
+        requireInteger(config.budget.perItem[key], `budget.perItem.${key}`, 1);
+    }
+    return { ...config, defaultTier: config.defaultTier, autoAdjust: config.autoAdjust };
 }
 /**
  * Display token configuration

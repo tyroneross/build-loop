@@ -87,7 +87,7 @@
     "claude:prune-cache": "python3 scripts/prune_plugin_cache.py --source . --host claude",
     "claude:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host claude",
     "claude:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --host claude --apply",
-    "test:traces": "npm run build && node --test tests/traces/storage.test.cjs"
+    "test:traces": "npm run build && node --test tests/config.test.cjs tests/traces/storage.test.cjs"
   },
   "keywords": [
     "build-loop",
