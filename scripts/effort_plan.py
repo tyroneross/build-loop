@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Measured effort estimates for a build-loop plan.
+
+Phase 2 calls `plan` with the plan's chunks. Each chunk gets a typical and
+slow-case estimate from transcript-miner's effort lookup (past jobs timed by
+the active minutes their agent session spent). The script then lays the chunks
+into dispatch waves from their dependencies and reports:
+
+  - the critical path (the wall-clock floor if each wave runs in parallel)
+  - the serial total (what a single agent doing everything would take)
+  - coordination notes: low-confidence estimates, lopsided waves, and an
+    integration checkpoint after every wave that runs chunks in parallel
+
+`--record` stores a prediction (with the orchestrator's gut estimate, made
+BEFORE the lookup) so `close` at Report can score both against the actual.
+
+Degrades, never blocks: if the effort tool or its store is missing, it prints
+`status: unavailable` with the reason and exits 0.
+
+Chunk file (JSON list):
+  [{"id": "c1", "platform": "python", "kind": "feature", "lines": 200,
+    "depends_on": []}, ...]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+EFFORT_SCRIPT = Path(os.environ.get(
+    "BUILD_LOOP_EFFORT_SCRIPT",
+    str(Path.home() / "dev" / "git-folder" / "transcript-miner" / "scripts" / "effort.py")))
+STATE_FILE = Path(".build-loop") / "effort.json"
+LOW_N = 5
+LOPSIDED = 3.0  # longest chunk in a wave at least this many times the shortest
+
+
+def run_effort(args: list[str]) -> dict | None:
+    if not EFFORT_SCRIPT.exists():
+        return None
+    proc = subprocess.run([sys.executable, str(EFFORT_SCRIPT), *args],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def lookup(chunk: dict) -> dict | None:
+    args = ["lookup", "--json"]
+    for key in ("platform", "kind"):
+        if chunk.get(key):
+            args += [f"--{key}", str(chunk[key])]
+    if chunk.get("lines"):
+        args += ["--lines", str(int(chunk["lines"]))]
+    return run_effort(args)
+
+
+def waves(chunks: list[dict]) -> list[list[str]]:
+    """Topological levels: wave N holds chunks whose dependencies all sit in
+    earlier waves. Raises ValueError on a cycle or an unknown dependency."""
+    ids = {c["id"] for c in chunks}
+    deps = {c["id"]: set(c.get("depends_on") or []) for c in chunks}
+    for cid, d in deps.items():
+        unknown = d - ids
+        if unknown:
+            raise ValueError(f"chunk {cid} depends on unknown {sorted(unknown)}")
+    placed: set[str] = set()
+    out: list[list[str]] = []
+    while len(placed) < len(ids):
+        ready = sorted(cid for cid in ids - placed if deps[cid] <= placed)
+        if not ready:
+            raise ValueError(f"dependency cycle among {sorted(ids - placed)}")
+        out.append(ready)
+        placed |= set(ready)
+    return out
+
+
+def critical_path(chunks: list[dict], est: dict[str, float]) -> tuple[float, list[str]]:
+    """Longest dependency chain by estimated minutes."""
+    by_id = {c["id"]: c for c in chunks}
+    memo: dict[str, tuple[float, list[str]]] = {}
+
+    def best(cid: str) -> tuple[float, list[str]]:
+        if cid not in memo:
+            prev = [best(d) for d in by_id[cid].get("depends_on") or []]
+            base = max(prev, key=lambda p: p[0]) if prev else (0.0, [])
+            memo[cid] = (base[0] + est.get(cid, 0.0), base[1] + [cid])
+        return memo[cid]
+
+    return max((best(c["id"]) for c in chunks), key=lambda p: p[0], default=(0.0, []))
+
+
+def build_plan(chunks: list[dict], lookups: dict[str, dict | None]) -> dict:
+    typ = {cid: (r or {}).get("typical_min", 0.0) for cid, r in lookups.items()}
+    slow = {cid: (r or {}).get("slow_min", 0.0) for cid, r in lookups.items()}
+    layered = waves(chunks)
+    crit_min, crit_ids = critical_path(chunks, typ)
+    crit_slow, _ = critical_path(chunks, slow)
+    notes: list[str] = []
+    for cid, r in lookups.items():
+        if not r or not r.get("n"):
+            notes.append(f"{cid}: no past jobs match; estimate unknown, size it by hand")
+        elif r["n"] < LOW_N or not r["scope"].startswith("platform"):
+            notes.append(f"{cid}: low confidence (n={r['n']}, matched on {r['scope']})")
+    for i, wave in enumerate(layered, 1):
+        if len(wave) < 2:
+            continue
+        times = sorted((typ[c], c) for c in wave if typ[c])
+        if len(times) >= 2 and times[0][0] and times[-1][0] / times[0][0] >= LOPSIDED:
+            notes.append(f"wave {i}: {times[-1][1]} (~{times[-1][0]} min) is "
+                         f"{times[-1][0] / times[0][0]:.0f}x {times[0][1]}; dispatch it first "
+                         "or split it so the wave finishes together")
+        notes.append(f"wave {i}: {len(wave)} chunks run in parallel; integrate and run "
+                     "tests before wave " + str(i + 1) if i < len(layered)
+                     else f"wave {i}: {len(wave)} chunks run in parallel; integrate and run tests before Review")
+    return {
+        "status": "ok",
+        "chunks": [{"id": c["id"], "typical_min": typ[c["id"]], "slow_min": slow[c["id"]],
+                    "n": (lookups[c["id"]] or {}).get("n", 0),
+                    "scope": (lookups[c["id"]] or {}).get("scope")} for c in chunks],
+        "waves": layered,
+        "critical_path": {"ids": crit_ids, "typical_min": round(crit_min, 1),
+                          "slow_min": round(crit_slow, 1)},
+        "serial_total": {"typical_min": round(sum(typ.values()), 1),
+                         "slow_min": round(sum(slow.values()), 1)},
+        "notes": notes,
+    }
+
+
+def render(plan: dict) -> str:
+    if plan["status"] != "ok":
+        return f"status: {plan['status']} — {plan.get('reason', '')}"
+    cp, st = plan["critical_path"], plan["serial_total"]
+    lines = [f"critical path {cp['typical_min']} min (slow {cp['slow_min']}): "
+             f"{' -> '.join(cp['ids'])}",
+             f"serial total {st['typical_min']} min (slow {st['slow_min']})"]
+    for i, w in enumerate(plan["waves"], 1):
+        lines.append(f"wave {i}: {', '.join(w)}")
+    for c in plan["chunks"]:
+        lines.append(f"  {c['id']}: {c['typical_min']} min (slow {c['slow_min']}, n={c['n']})")
+    lines += [f"note: {n}" for n in plan["notes"]]
+    return "\n".join(lines)
+
+
+def cmd_plan(args) -> int:
+    chunks = json.loads(Path(args.chunks).read_text())
+    if not EFFORT_SCRIPT.exists():
+        plan = {"status": "unavailable", "reason": f"effort tool not found at {EFFORT_SCRIPT}"}
+    else:
+        lookups = {c["id"]: lookup(c) for c in chunks}
+        if all(r is None for r in lookups.values()):
+            plan = {"status": "unavailable",
+                    "reason": "effort lookup failed; run `effort.py index` to build the store"}
+        else:
+            try:
+                plan = build_plan(chunks, lookups)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+    if plan["status"] == "ok" and args.record:
+        if args.gut is None:
+            print("error: --record needs --gut (your estimate made BEFORE this lookup)",
+                  file=sys.stderr)
+            return 2
+        lines = sum(int(c.get("lines") or 0) for c in chunks)
+        platforms = {c.get("platform") for c in chunks if c.get("platform")}
+        pred_args = ["predict", "--json", "--job", args.job or "build-loop run",
+                     "--gut", str(args.gut), "--lines", str(lines),
+                     "--commits", str(len(chunks))]
+        if len(platforms) == 1:
+            pred_args += ["--platform", platforms.pop()]
+        pred = run_effort(pred_args)
+        if pred:
+            plan["prediction_id"] = pred["id"]
+            state = Path(args.workdir) / STATE_FILE
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text(json.dumps({"prediction_id": pred["id"], "recorded_at": int(time.time()),
+                                         "gut_min": args.gut, "plan": plan}, indent=2))
+    print(json.dumps(plan, indent=2) if args.json else render(plan))
+    return 0
+
+
+def cmd_close(args) -> int:
+    state = Path(args.workdir) / STATE_FILE
+    if not state.exists():
+        print("status: nothing to close (no recorded prediction for this run)")
+        return 0
+    pid = json.loads(state.read_text()).get("prediction_id")
+    if not EFFORT_SCRIPT.exists() or pid is None:
+        print("status: unavailable — effort tool or prediction id missing")
+        return 0
+    proc = subprocess.run([sys.executable, str(EFFORT_SCRIPT), "close", str(pid),
+                           *(["--note", args.note] if args.note else [])],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    print(proc.stdout.strip() or proc.stderr.strip())
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("plan", help="estimate chunks, waves, critical path")
+    p.add_argument("--chunks", required=True, help="JSON list of chunks")
+    p.add_argument("--workdir", default=".")
+    p.add_argument("--record", action="store_true", help="store a prediction to score at Report")
+    p.add_argument("--gut", type=float, help="orchestrator's estimate in minutes, made first")
+    p.add_argument("--job", help="one-line description for the ledger")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_plan)
+    p = sub.add_parser("close", help="score the recorded prediction against the actual")
+    p.add_argument("--workdir", default=".")
+    p.add_argument("--note")
+    p.set_defaults(fn=cmd_close)
+    args = ap.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -28,7 +28,7 @@ status: {status}
 **Field reference:**
 
 - `classify`: SAFE (no side-effects) | RISKY (touches infra/schema/auth) | DECISION (needs user confirmation) | PRODUCTION (live-traffic impact)
-- `effort`: XS (<1h) | S (1–4h) | M (half-day) | L (1–2 days) | XL (>2 days). No dollar costs — t-shirt sizing only.
+- `effort`: agent minutes from `scripts/effort_plan.py` (typical / slow case), else XS (<5 min) | S (5–30) | M (30–90) | L (90–240) | XL (>240). Agent minutes, not human hours. No dollar costs.
 - `status`: open | in-progress | done
 - `source`: free-form — who/what surfaced this item (e.g. "user steering 2026-05-30", "Phase 6 Learn run-abc", "self-review")
 
