@@ -195,3 +195,24 @@ class NewSectionsInBuildTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_combined_signals_match_public_extractors_with_one_source_open(tmp_path,monkeypatch):
+    import retrospective.sections as sections
+    import builtins
+    rows = [_rec('user',[{'type':'text','text':'Please fix parsing'}]),
+            _rec('assistant',[_tool_use('one','Skill',{'skill':'build-loop:run'})]),
+            _rec('user',[_tool_result('one','Error: broken',True)])]
+    source=_write(tmp_path,rows)
+    expected={'prompts':sections.extract_user_prompts(source),
+              'usage':sections.extract_tool_usage(source),
+              'automation':sections.extract_tool_sequences(source),
+              'issues':sections.extract_issue_signals(source)}
+    opens=[]
+    original=Path.open
+    def counted(path,*args,**kwargs):
+        if path==source:opens.append(1)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'open',counted)
+    assert sections.collect_transcript_signals(source)==expected
+    assert len(opens)==1

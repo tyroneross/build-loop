@@ -250,20 +250,8 @@ def iter_user_turns_from_jsonl(transcript_path: Path) -> Iterable[tuple[int, str
 
     user_turn_idx = -1
     prior_assistant_acted = False
-    try:
-        text = transcript_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or not line.startswith("{"):
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
+    from transcript_adapter import iter_events
+    for obj in iter_events(transcript_path, include_provenance=True):
         # Skip hook-injected / command-scaffolding / skill-load records.
         # Claude Code marks these with top-level isMeta=true even though
         # role stays "user" (Stop-hook feedback, slash-command templates,

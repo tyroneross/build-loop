@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -40,11 +40,6 @@ from tool_trace import summarize_path as summarize_tool_trace
 _NORMALIZE_STRIP_RE = re.compile(r"[^a-z0-9\s]+")
 _WHITESPACE_RE = re.compile(r"\s+")
 _NORMALIZE_LEN = 100  # first N chars of the normalized text used for clustering
-_CODEX_META_PREFIXES = (
-    "<recommended_plugins>",
-    "# AGENTS.md instructions for ",
-    "<environment_context>",
-)
 
 
 def _normalize(text: str) -> str:
@@ -56,146 +51,21 @@ def _normalize(text: str) -> str:
     return s[:_NORMALIZE_LEN]
 
 
-def _codex_text(value: Any) -> str:
-    """Flatten Codex response-item text/output blocks without model inference."""
-    if isinstance(value, str):
-        return value
-    if not isinstance(value, list):
-        return ""
-    parts: list[str] = []
-    for block in value:
-        if isinstance(block, str):
-            parts.append(block)
-        elif isinstance(block, dict) and block.get("type") in {"input_text", "output_text", "text"}:
-            text = block.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return "\n".join(parts).strip()
-
-
-def _codex_input(value: Any) -> dict[str, Any]:
-    """Parse structured Codex call arguments; retain opaque inputs losslessly."""
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, dict):
-            return parsed
-        return {"raw": value}
-    return {}
-
-
-def _codex_output_is_error(output: str) -> bool:
-    """Return true only for direct, deterministic Codex tool-failure evidence.
-
-    Tool output often contains source code, audits, or prior logs with words
-    such as ``ERROR``. Searching the entire payload therefore creates false
-    failures. Accept explicit structured failure fields or a failure marker at
-    the start of the result instead.
-    """
-    stripped = output.lstrip()
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        parsed = None
-    if isinstance(parsed, dict):
-        exit_code = parsed.get("exit_code")
-        if isinstance(exit_code, int) and exit_code != 0:
-            return True
-        if parsed.get("isError") is True or (parsed.get("ok") is False and parsed.get("error")):
-            return True
-    return bool(re.match(
-        r"(?:ERROR:|Error:|Traceback \(most recent call last\)|"
-        r"Script failed\b|Process exited with code [1-9]\b|ToolCallError\b)",
-        stripped,
-    ))
+from transcript_adapter import _codex_event, iter_events
 
 
 def _normalize_transcript_record(rec: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalize Codex ``response_item`` records to the Claude transcript shape.
-
-    The downstream extractors stay host-neutral by consuming one small common
-    shape. Developer messages are intentionally excluded, and known Codex
-    context-injection records are marked meta so they cannot become user
-    prompts or enforce-candidates.
-    """
-    if rec.get("type") != "response_item":
-        return rec
-    payload = rec.get("payload")
-    if not isinstance(payload, dict):
-        return None
-    ptype = payload.get("type")
-    timestamp = rec.get("timestamp")
-    if ptype == "message":
-        role = payload.get("role")
-        if role not in {"user", "assistant"}:
-            return None
-        text = _codex_text(payload.get("content"))
-        normalized = {
-            "type": role,
-            "timestamp": timestamp,
-            "message": {"role": role, "content": [{"type": "text", "text": text}]},
-        }
-        if role == "user" and text.startswith(_CODEX_META_PREFIXES):
-            normalized["isMeta"] = True
-        return normalized
-    if ptype in {"custom_tool_call", "function_call"}:
-        return {
-            "type": "assistant",
-            "timestamp": timestamp,
-            "message": {"content": [{
-                "type": "tool_use",
-                "id": payload.get("call_id") or payload.get("id"),
-                "name": payload.get("name") or "",
-                "input": _codex_input(payload.get("input", payload.get("arguments"))),
-            }]},
-        }
-    if ptype in {"custom_tool_call_output", "function_call_output"}:
-        output = _codex_text(payload.get("output"))
-        return {
-            "type": "user",
-            "timestamp": timestamp,
-            "message": {"content": [{
-                "type": "tool_result",
-                "tool_use_id": payload.get("call_id"),
-                "content": output,
-                "is_error": _codex_output_is_error(output),
-            }]},
-        }
-    return None
+    return _codex_event(rec) if rec.get("type") in {"response_item", "event_msg"} else rec
 
 
-def _iter_transcript_records(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
-    """Yield each normalized record from a Claude Code transcript JSONL.
-
-    Blank lines, undecodable lines, and records `_normalize_transcript_record`
-    rejects are skipped. A missing or unreadable file yields nothing rather than
-    raising, so callers stay total.
-
-    Three extractors each carried their own copy of this loop; a reader fix had
-    to land in three places to take effect, and the nesting it forced put all
-    three over the complexity threshold.
-    """
+def _iter_transcript_records(transcript_jsonl):
+    """Read the shared canonical event stream, or consume an existing stream."""
     if transcript_jsonl is None:
         return
-    try:
-        with open(transcript_jsonl, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                rec = _normalize_transcript_record(rec)
-                if rec is not None:
-                    yield rec
-    except OSError:
-        return
+    if isinstance(transcript_jsonl, (str, Path)):
+        yield from iter_events(Path(transcript_jsonl))
+    else:
+        yield from transcript_jsonl
 
 
 def _content_blocks(rec: dict[str, Any]) -> list[Any]:
@@ -328,111 +198,81 @@ def _canonical_tool_label(rec: dict[str, Any]) -> str:
     return name
 
 
-def extract_tool_usage(transcript_jsonl: Path | None) -> dict[str, Any]:
-    """Deterministic per-tool / per-plugin / per-skill / per-subagent usage.
+class _ToolUsage:
+    """Retain counts and correlation IDs, never the original tool payloads."""
+    def __init__(self):
+        self.tools, self.plugins, self.subagents = Counter(), Counter(), Counter()
+        self.ids, self.error_ids = {}, []
 
-    Returns::
-
-        {
-          "tools":      {label: count},   # canonical labels, most-used first
-          "plugins":    {plugin: count},  # owning plugin/skill-namespace
-          "subagents":  {type: count},
-          "errored":    {label: count},   # tool_result is_error attributed back
-          "total_uses": int,
-        }
-    """
-    uses: list[dict[str, Any]] = []
-    id_to_label: dict[str, str] = {}
-    error_ids: list[str] = []
-    for rec in _iter_assistant_tool_uses(transcript_jsonl):
-        if rec.get("kind") == "use":
-            uses.append(rec)
-            if rec.get("id"):
-                id_to_label[rec["id"]] = _canonical_tool_label(rec)
-        elif rec.get("kind") == "error" and rec.get("tool_use_id"):
-            error_ids.append(rec["tool_use_id"])
-
-    tools: Counter[str] = Counter()
-    plugins: Counter[str] = Counter()
-    subagents: Counter[str] = Counter()
-    for rec in uses:
+    def consume(self, rec):
+        if rec.get("kind") == "error":
+            if rec.get("tool_use_id"):
+                self.error_ids.append(rec["tool_use_id"])
+            return
         label = _canonical_tool_label(rec)
-        tools[label] += 1
+        self.tools[label] += 1
+        if rec.get("id"):
+            self.ids[rec["id"]] = label
         name = rec.get("name") or ""
         inp = rec.get("input") if isinstance(rec.get("input"), dict) else {}
         if name == "Skill":
             skill = inp.get("skill") or inp.get("command") or ""
-            owner = str(skill).split(":", 1)[0] if skill else ""
-            if owner:
-                plugins[owner] += 1
+            if skill:
+                self.plugins[str(skill).split(":", 1)[0]] += 1
         elif name in ("Task", "Agent"):
             sub = str(inp.get("subagent_type") or "")
             if sub:
-                subagents[sub] += 1  # full type, e.g. "build-loop:implementer"
+                self.subagents[sub] += 1
                 if ":" in sub:
-                    plugins[sub.split(":", 1)[0]] += 1
+                    self.plugins[sub.split(":", 1)[0]] += 1
         else:
-            p = _tool_plugin_label(name)
-            if p:
-                plugins[p] += 1
+            plugin = _tool_plugin_label(name)
+            if plugin:
+                self.plugins[plugin] += 1
 
-    errored: Counter[str] = Counter()
-    for eid in error_ids:
-        label = id_to_label.get(eid)
-        if label:
-            errored[label] += 1
-
-    def _ordered(c: Counter[str]) -> dict[str, int]:
-        return dict(c.most_common())
-
-    return {
-        "tools":      _ordered(tools),
-        "plugins":    _ordered(plugins),
-        "subagents":  _ordered(subagents),
-        "errored":    _ordered(errored),
-        "total_uses": sum(tools.values()),
-    }
+    def result(self):
+        errors = Counter(self.ids[eid] for eid in self.error_ids if eid in self.ids)
+        return {"tools": dict(self.tools.most_common()), "plugins": dict(self.plugins.most_common()),
+                "subagents": dict(self.subagents.most_common()), "errored": dict(errors.most_common()),
+                "total_uses": sum(self.tools.values())}
 
 
-def extract_tool_sequences(
-    transcript_jsonl: Path | None,
-    *,
-    window: int = 3,
-    min_repeat: int = 3,
-) -> list[dict[str, Any]]:
-    """Recurring consecutive tool n-grams — automation candidates.
+class _ToolSequences:
+    def __init__(self, window=3, min_repeat=3):
+        if window < 1:
+            raise ValueError("sequence window must be positive")
+        self.window, self.min_repeat = window, min_repeat
+        self.recent, self.grams = deque(maxlen=window), Counter()
 
-    A sequence of ``window`` consecutive tool labels that repeats ``>=
-    min_repeat`` times is a candidate for a script/hook. Sequences composed
-    ENTIRELY of generic core tools (the universal edit-test loop) are dropped
-    as permanent noise; a sequence keeps its candidacy only if it contains at
-    least one Skill / subagent / MCP / plugin tool that carries content.
+    def consume(self, rec):
+        if rec.get("kind") != "use":
+            return
+        self.recent.append(_canonical_tool_label(rec))
+        if len(self.recent) == self.window:
+            self.grams[tuple(self.recent)] += 1
 
-    Returns clusters sorted by count desc: ``{"sequence": [labels], "count": n}``.
-    """
-    labels = [
-        _canonical_tool_label(r)
-        for r in _iter_assistant_tool_uses(transcript_jsonl)
-        if r.get("kind") == "use"
-    ]
-    if len(labels) < window:
-        return []
-    grams: Counter[tuple[str, ...]] = Counter()
-    for i in range(len(labels) - window + 1):
-        grams[tuple(labels[i:i + window])] += 1
+    def result(self):
+        results = []
+        for gram, count in self.grams.most_common():
+            if count >= self.min_repeat and not all(label in _GENERIC_TOOLS for label in gram):
+                results.append({"sequence": list(gram), "count": count})
+                if len(results) >= _AUTOMATION_CANDIDATE_CAP:
+                    break
+        return results
 
-    def _is_generic(gram: tuple[str, ...]) -> bool:
-        # A gram is generic only if EVERY step is a bare core tool.
-        return all(g in _GENERIC_TOOLS for g in gram)
 
-    out: list[dict[str, Any]] = []
-    for gram, count in grams.most_common():
-        if count < min_repeat or _is_generic(gram):
-            continue
-        out.append({"sequence": list(gram), "count": count})
-        if len(out) >= _AUTOMATION_CANDIDATE_CAP:
-            break
-    return out
+def extract_tool_usage(transcript_jsonl):
+    usage = _ToolUsage()
+    for item in _iter_assistant_tool_uses(transcript_jsonl):
+        usage.consume(item)
+    return usage.result()
+
+
+def extract_tool_sequences(transcript_jsonl, *, window=3, min_repeat=3):
+    sequences = _ToolSequences(window, min_repeat)
+    for item in _iter_assistant_tool_uses(transcript_jsonl):
+        sequences.consume(item)
+    return sequences.result()
 
 
 def _error_result_excerpt(blk: dict[str, Any]) -> str:
@@ -461,24 +301,41 @@ def _iter_error_results(transcript_jsonl: Path | None) -> Iterable[dict[str, Any
                 yield blk
 
 
-def extract_issue_signals(transcript_jsonl: Path | None) -> list[str]:
-    """App/build issue signals from the transcript — errored tool results and
-    error markers in tool output. Deterministic; the LLM body traces each to a
-    root cause in §9. Deduped, capped at ``_ISSUE_SIGNAL_CAP``."""
-    signals: list[str] = []
-    seen: set[str] = set()
-    for blk in _iter_error_results(transcript_jsonl):
-        excerpt = _error_result_excerpt(blk)
-        if not excerpt:
-            continue
-        key = excerpt[:60].lower()
-        if key in seen:
-            continue
+def _add_issue(block, signals, seen):
+    if len(signals) >= _ISSUE_SIGNAL_CAP:
+        return
+    excerpt = _error_result_excerpt(block)
+    key = excerpt[:60].lower()
+    if excerpt and key not in seen:
         seen.add(key)
         signals.append(excerpt)
+
+
+def extract_issue_signals(transcript_jsonl):
+    signals, seen = [], set()
+    for block in _iter_error_results(transcript_jsonl):
+        _add_issue(block, signals, seen)
         if len(signals) >= _ISSUE_SIGNAL_CAP:
             break
     return signals
+
+
+def collect_transcript_signals(transcript_jsonl):
+    """Feed all four reducers from one canonical stream without materializing it."""
+    prompts, issues, seen = [], [], set()
+    usage, sequences = _ToolUsage(), _ToolSequences()
+    for record in _iter_transcript_records(transcript_jsonl):
+        if record.get("type") == "user" and not record.get("isMeta"):
+            text = _human_text((record.get("message") or {}).get("content"))
+            if text:
+                prompts.append({"ts": record.get("timestamp"), "text": text})
+        for item in _iter_assistant_tool_uses((record,)):
+            usage.consume(item)
+            sequences.consume(item)
+        for block in _content_blocks(record):
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                _add_issue(block, issues, seen)
+    return {"prompts": prompts, "usage": usage.result(), "automation": sequences.result(), "issues": issues}
 
 
 def cluster_repeated_prompts(
@@ -1064,7 +921,8 @@ def build(
     intent_md = (intent_md or "") if context_bound else ""
     plan_md = (plan_md or "") if context_bound else ""
 
-    prompts = extract_user_prompts(transcript_jsonl)
+    signals = collect_transcript_signals(transcript_jsonl)
+    prompts = signals["prompts"]
     clusters = cluster_repeated_prompts(prompts, threshold=prompted_threshold)
     run_records = _runs_for_run_id(state_json, run_id)
     last_run = run_records[-1] if run_records else {}
@@ -1073,9 +931,9 @@ def build(
 
     # Deterministic transcript signals (free — no LLM). Feed §10, §11, and the
     # app-issue enrichment of §4/§9.
-    usage = extract_tool_usage(transcript_jsonl)
-    automation = extract_tool_sequences(transcript_jsonl)
-    issue_signals = extract_issue_signals(transcript_jsonl)
+    usage = signals["usage"]
+    automation = signals["automation"]
+    issue_signals = signals["issues"]
     trace_summary = summarize_tool_trace(trace_jsonl, run_id) if trace_jsonl else {
         "tool_calls": 0, "tool_errors": 0, "error_rate": 0.0,
         "repeated_calls": 0, "provider_429s": 0, "p95_duration_ms": None,

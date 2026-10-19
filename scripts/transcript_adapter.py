@@ -30,10 +30,10 @@ API-level ``response_item``. They are not equivalent for our purpose:
     context (``<recommended_plugins>``, thread-coordination preambles).
 
 The consumers mine human intent -- corrections, steering, decisions -- so the
-user/assistant text comes from ``event_msg`` (clean) and only the tool traffic
-comes from ``response_item`` (which is the only place it exists). Taking
-``response_item`` for prose would feed injected boilerplate to the miner and
-score it as user intent.
+user/assistant text prefers ``event_msg`` (clean) when both representations
+exist. Response-only rollouts use API prose while marking known context records
+as meta. Tool traffic comes from ``response_item``. Consumers must retain the
+meta/origin distinction before mining owner intent.
 
 ``role=developer`` records are system injections, never human turns, and are
 dropped.
@@ -46,6 +46,7 @@ import json
 import os
 import re
 import hashlib
+import secrets
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -114,7 +115,9 @@ def detect_format(path: Path) -> str:
                     continue
                 if obj.get("type") in {"event_msg", "response_item", "turn_context", "session_meta"}:
                     return CODEX
-                if "sessionId" in obj or ("message" in obj and "type" in obj):
+                if ("sessionId" in obj or ("message" in obj and "type" in obj)
+                        or obj.get("role") in {"user", "assistant"}
+                        or obj.get("type") in {"user", "assistant"}):
                     return CLAUDE
     except OSError:
         return UNKNOWN
@@ -261,74 +264,205 @@ def _tool_input(raw: Any) -> dict[str, Any]:
     return {"command": text, "raw": text}
 
 
+def _codex_text(value: Any) -> str:
+    """Flatten Codex response-item text/output blocks without model inference."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for block in value:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") in {"input_text", "output_text", "text"}:
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _codex_output_is_error(output: str) -> bool:
+    """Return true only for direct, deterministic Codex tool-failure evidence.
+
+    Tool output often contains source code, audits, or prior logs with words
+    such as ``ERROR``. Searching the entire payload therefore creates false
+    failures. Accept explicit structured failure fields or a failure marker at
+    the start of the result instead.
+    """
+    stripped = output.lstrip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        exit_code = parsed.get("exit_code")
+        if isinstance(exit_code, int) and exit_code != 0:
+            return True
+        if parsed.get("isError") is True or (parsed.get("ok") is False and parsed.get("error")):
+            return True
+    return bool(re.match(
+        r"(?:ERROR:|Error:|Traceback \(most recent call last\)|"
+        r"Script failed\b|Process exited with code [1-9]\b|ToolCallError\b)",
+        stripped,
+    ))
+
+
+_CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
+                        "<environment_context>", "<external_codex_apps_open_page>")
+PARSER_VERSION = "2"
+MAX_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_RECORD_BYTES = 8 * 1024 * 1024
+
+
+class TranscriptReadError(OSError):
+    """Source reading failed; no complete extraction can be published."""
+
+
+class TranscriptLimitError(ValueError):
+    """Input exceeded an explicit ingestion budget; coverage is unavailable."""
+
+
 def _codex_event(obj: dict[str, Any]) -> dict[str, Any] | None:
-    kind = obj.get("type")
-    payload = obj.get("payload")
+    kind, payload = obj.get("type"), obj.get("payload")
     if not isinstance(payload, dict):
         return None
     ptype = payload.get("type")
-
-    if kind == "event_msg":
-        if ptype == "user_message":
-            text = str(payload.get("message") or "").strip()
-            return _turn("user", _text_block(text)) if text else None
-        if ptype == "agent_message":
-            text = str(payload.get("message") or "").strip()
-            return _turn("assistant", _text_block(text)) if text else None
-        return None
-
-    if kind == "response_item":
-        if ptype in {"custom_tool_call", "function_call"}:
-            raw = payload.get("input") or payload.get("arguments") or ""
-            return _turn("assistant", [{
-                "type": "tool_use",
+    event = None
+    if kind == "event_msg" and ptype in {"user_message", "agent_message"}:
+        role = "user" if ptype == "user_message" else "assistant"
+        text = str(payload.get("message") or "").strip()
+        if text:
+            event = _turn(role, _text_block(text))
+    elif kind == "response_item":
+        if ptype == "message" and payload.get("role") in {"user", "assistant"}:
+            role = payload["role"]
+            text = _codex_text(payload.get("content"))
+            if text:
+                event = _turn(role, _text_block(text))
+                if role == "user" and text.startswith(_CODEX_META_PREFIXES):
+                    event["isMeta"] = True
+        elif ptype in {"custom_tool_call", "function_call"}:
+            event = _turn("assistant", [{"type": "tool_use",
+                "id": payload.get("call_id") or payload.get("id"),
                 "name": payload.get("name") or "exec",
-                "input": _tool_input(raw),
-            }])
-        if ptype in {"custom_tool_call_output", "function_call_output"}:
-            text = _joined_output_text(payload.get("output"))
-            return _turn("user", [{"type": "tool_result", "content": text}]) if text else None
-    return None
+                "input": _tool_input(payload.get("input", payload.get("arguments", "")))}])
+        elif ptype in {"custom_tool_call_output", "function_call_output"}:
+            output = _codex_text(payload.get("output"))
+            event = _turn("user", [{"type": "tool_result", "tool_use_id": payload.get("call_id"),
+                "content": output, "is_error": _codex_output_is_error(output)}])
+    if event is not None:
+        event["timestamp"] = obj.get("timestamp")
+    return event
 
 
-def iter_events(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield Claude-shaped rows from a transcript of either host.
+def iter_events(path: Path, *, include_provenance: bool = False, require_complete: bool = False) -> Iterator[dict[str, Any]]:
+    """One streaming parse; UI prose wins over its adjacent API representation.
 
-    Claude transcripts pass through untouched, so wiring a consumer through
-    this adapter cannot change existing behavior.
+    Buffer at most one prose record while choosing between representations.
+    Response-only rollouts remain readable; known injected context is excluded.
+    Claude pass-through is unchanged unless provenance is explicitly requested.
     """
     path = Path(path)
-    fmt = detect_format(path)
-    if fmt == UNKNOWN:
-        return
+    consumed = 0
     try:
-        with path.open(errors="replace") as fh:
-            for line in fh:
-                obj = _loads(line)
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            raise TranscriptLimitError("transcript exceeds source byte budget")
+        fmt = UNKNOWN
+        pending = None
+        pending_origin = None
+        source_session = None
+        with path.open("rb") as handle:
+            line_number = 0
+            consumed = 0
+            while raw := handle.readline(MAX_RECORD_BYTES + 1):
+                line_number += 1
+                consumed += len(raw)
+                if len(raw) > MAX_RECORD_BYTES or consumed > MAX_SOURCE_BYTES:
+                    raise TranscriptLimitError("transcript exceeds record/source byte budget")
+                obj = _loads(raw.decode("utf-8", errors="replace"))
                 if obj is None:
                     continue
+                if fmt == UNKNOWN:
+                    if obj.get("type") in {"event_msg", "response_item", "session_meta", "turn_context"}:
+                        fmt = CODEX
+                    elif ("sessionId" in obj or ("message" in obj and "type" in obj)
+                          or obj.get("role") in {"user", "assistant"}
+                          or obj.get("type") in {"user", "assistant"}):
+                        fmt = CLAUDE
+                    else:
+                        continue
                 if fmt == CLAUDE:
-                    yield obj
+                    if "message" not in obj and "content" in obj:
+                        role = obj.get("role") or obj.get("type")
+                        event = {k:v for k,v in obj.items() if k not in {"role", "content"}}
+                        event.update({"type": role, "message": {"role": role, "content": obj["content"]}})
+                    else:
+                        event = dict(obj) if include_provenance else obj
                 else:
+                    payload = obj.get("payload")
+                    if obj.get("type") == "session_meta" and isinstance(payload, dict):
+                        source_session = payload.get("id") or payload.get("session_id")
                     event = _codex_event(obj)
-                    if event is not None:
-                        yield event
-    except OSError:
+                    if event is None:
+                        continue
+                if include_provenance:
+                    original = event.get("_source")
+                    valid_origin = (isinstance(original, dict)
+                                    and original.get("host") in {CLAUDE, CODEX}
+                                    and type(original.get("record_index")) is int
+                                    and original["record_index"] > 0
+                                    and isinstance(original.get("origin"), str)
+                                    and isinstance(original.get("session_id"), (str, type(None))))
+                    if not valid_origin:
+                        event["_source"] = {"host": fmt, "session_id": source_session or obj.get("sessionId"),
+                                             "record_index": line_number, "origin": obj.get("type")}
+                    event["_container"] = {"path": str(path.resolve()), "record_index": line_number, "host": fmt}
+                if fmt == CLAUDE:
+                    yield event
+                    continue
+                blocks = event.get("message", {}).get("content", [])
+                prose = len(blocks) == 1 and blocks[0].get("type") == "text"
+                if event.get("isMeta"):
+                    continue
+                if prose:
+                    origin = obj.get("type")
+                    if pending is not None:
+                        same_text = pending["message"]["content"][0].get("text") == blocks[0].get("text")
+                        if pending["type"] == event["type"] and pending_origin != origin and same_text:
+                            if origin == "event_msg":
+                                pending, pending_origin = event, origin
+                            continue
+                        yield pending
+                    pending, pending_origin = event, origin
+                else:
+                    if pending is not None:
+                        yield pending
+                        pending = pending_origin = None
+                    yield event
+        if pending is not None:
+            yield pending
+    except OSError as exc:
+        if consumed or require_complete:
+            raise TranscriptReadError("transcript read incomplete") from exc
         return
 
 
 def normalize_to_file(src: Path, dest: Path) -> int:
-    """Write a Claude-shaped copy of ``src``; return the row count.
-
-    Consumers that take a PATH (the Stop sweeps, the miner) get a normalized
-    temp file rather than a new API, so no consumer has to change its contract.
-    """
+    """Publish a complete reusable normalized artifact, never partial output."""
+    dest = Path(dest)
+    temporary = dest.with_name(f".{dest.name}.{os.getpid()}.{secrets.token_hex(4)}.part")
     count = 0
-    with Path(dest).open("w", encoding="utf-8") as fh:
-        for event in iter_events(src):
-            fh.write(json.dumps(event) + "\n")
-            count += 1
-    return count
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            for event in iter_events(src, include_provenance=True, require_complete=True):
+                handle.write(json.dumps(event) + "\n")
+                count += 1
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, dest)
+        return count
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 # A normalized rollout runs to multiple MB, four Stop sweeps fire per session,
@@ -336,62 +470,90 @@ def normalize_to_file(src: Path, dest: Path) -> int:
 # cache is keyed by SOURCE FILE so the four sweeps share one normalization
 # instead of writing four copies, and stale entries are reaped on every call.
 CACHE_TTL_DAYS = 2
+CACHE_MAX_BYTES = 128 * 1024 * 1024
+CACHE_MAX_ENTRIES = 128
 
 
-def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS) -> None:
+def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS, *, keep: Path | None = None) -> None:
     import time
-
     cutoff = time.time() - ttl_days * 86400
-    try:
-        for old in cache_dir.glob("normalized-*.jsonl"):
-            try:
-                if old.stat().st_mtime < cutoff:
-                    old.unlink()
-            except OSError:
-                continue
-    except OSError:
-        return
+    files = []
+    for candidate in cache_dir.glob("normalized-*.jsonl"):
+        try:
+            stat = candidate.stat()
+            if stat.st_mtime < cutoff and candidate != keep:
+                candidate.unlink()
+            else:
+                files.append((stat.st_mtime, stat.st_size, candidate))
+        except OSError:
+            continue
+    total = sum(size for _, size, _ in files)
+    count = len(files)
+    for _, size, candidate in sorted(files):
+        if total <= CACHE_MAX_BYTES and count <= CACHE_MAX_ENTRIES:
+            break
+        if candidate == keep:
+            continue
+        try:
+            candidate.unlink()
+            total -= size
+            count -= 1
+        except OSError:
+            continue
 
 
-def normalized_cache_path(source: Path, cache_dir: Path) -> Path:
-    import hashlib
+def _source_revision(source: Path) -> str:
+    if source.stat().st_size > MAX_SOURCE_BYTES:
+        raise TranscriptLimitError("transcript exceeds source byte budget")
+    digest = hashlib.sha256()
+    consumed = 0
+    with source.open("rb") as handle:
+        while block := handle.read(64 * 1024):
+            consumed += len(block)
+            if consumed > MAX_SOURCE_BYTES:
+                raise TranscriptLimitError("growing transcript exceeds source byte budget")
+            digest.update(block)
+    return digest.hexdigest()
 
-    digest = hashlib.sha256(str(Path(source).resolve()).encode()).hexdigest()[:16]
+
+def normalized_cache_path(source: Path, cache_dir: Path, *, revision: str | None = None) -> Path:
+    identity = f"{Path(source).resolve()}\0{PARSER_VERSION}\0{revision or _source_revision(source)}"
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:32]
     return Path(cache_dir) / f"normalized-{digest}.jsonl"
 
 
 def normalize_cached(source: Path, cache_dir: Path) -> Path | None:
-    """Normalize ``source`` into ``cache_dir``, reusing a fresh result.
+    """Coalesce normalization under one owner; content and parser revisions key reuse.
 
-    Four sweeps race here, so the write is atomic (temp + rename): a reader can
-    only ever see a complete file, never a half-written one.
+    The cache lock also serializes eviction/publication, bounding aggregate bytes.
+    A changed-during-read source is not published as a verified revision.
     """
-    source = Path(source)
-    cache_dir = Path(cache_dir)
+    from atomic_io import LockedFile
+    source, cache_dir = Path(source), Path(cache_dir)
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return None
-    _reap(cache_dir)
-    dest = normalized_cache_path(source, cache_dir)
-    try:
-        if dest.is_file() and dest.stat().st_mtime >= source.stat().st_mtime:
+        with LockedFile(cache_dir / "normalization"):
+            _reap(cache_dir)
+            before = source.stat()
+            revision = _source_revision(source)
+            dest = normalized_cache_path(source, cache_dir, revision=revision)
+            if not dest.is_file():
+                if normalize_to_file(source, dest) == 0:
+                    dest.unlink(missing_ok=True)
+                    return None
+            after = source.stat()
+            if (before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                dest.unlink(missing_ok=True)
+                return None
+            if dest.stat().st_size > CACHE_MAX_BYTES:
+                dest.unlink()
+                return None
+            os.utime(dest, None)
+            _reap(cache_dir, keep=dest)
             return dest
-    except OSError:
-        pass
-    tmp = dest.with_suffix(f".{os.getpid()}.part")
-    try:
-        if normalize_to_file(source, tmp) == 0:
-            tmp.unlink(missing_ok=True)
-            return None
-        os.replace(tmp, dest)
-    except OSError:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except (OSError, TimeoutError, TranscriptLimitError):
         return None
-    return dest
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -230,3 +230,138 @@ def test_empty_source_produces_no_cache_entry(tmp_path: Path) -> None:
     empty = tmp_path / "empty.jsonl"
     empty.write_text("", encoding="utf-8")
     assert ta.normalize_cached(empty, tmp_path / "cache") is None
+
+
+def test_response_only_prose_preserves_ids_timestamps_errors_and_provenance(tmp_path):
+    rows = [
+        {"type":"session_meta", "payload":{"id":"session-one"}},
+        {"type":"response_item", "timestamp":"2026-10-19T12:00:00Z", "payload":{
+            "type":"message", "role":"user", "content":[{"type":"input_text","text":"Please fix parsing"}]}},
+        {"type":"response_item", "timestamp":"2026-10-19T12:00:01Z", "payload":{
+            "type":"function_call", "name":"exec", "call_id":"call-one", "arguments":"{}"}},
+        {"type":"response_item", "timestamp":"2026-10-19T12:00:02Z", "payload":{
+            "type":"function_call_output", "call_id":"call-one", "output":"Process exited with code 2"}},
+    ]
+    events = list(ta.iter_events(_write(tmp_path/'one.jsonl',rows),include_provenance=True))
+    assert events[0]['message']['content'][0]['text']=='Please fix parsing'
+    assert events[0]['timestamp']=='2026-10-19T12:00:00Z'
+    assert events[0]['_source']['session_id']=='session-one'
+    assert events[0]['_source']['record_index']==2
+    assert events[1]['message']['content'][0]['id']=='call-one'
+    assert events[2]['message']['content'][0]['tool_use_id']=='call-one'
+    assert events[2]['message']['content'][0]['is_error'] is True
+
+
+def test_prose_deduplicates_only_equivalent_representations(tmp_path):
+    response = lambda text: {'type':'response_item','payload':{'type':'message','role':'user',
+                                                'content':[{'type':'input_text','text':text}]}}
+    ui = lambda text: {'type':'event_msg','payload':{'type':'user_message','message':text}}
+    for rows in ([response('same'),ui('same')],[ui('same'),response('same')]):
+        assert len(list(ta.iter_events(_write(tmp_path/'same.jsonl',rows))))==1
+    rows=[response('first'),ui('second')]
+    assert len(list(ta.iter_events(_write(tmp_path/'different.jsonl',rows))))==2
+
+
+def test_cache_detects_same_size_rewrite_with_restored_mtime(tmp_path):
+    import os
+    src=_write(tmp_path/'source.jsonl',[{'type':'event_msg','payload':{'type':'user_message','message':'alpha'}}])
+    before=src.stat()
+    first=ta.normalize_cached(src,tmp_path/'cache')
+    src.write_text(src.read_text().replace('alpha','bravo'))
+    os.utime(src,ns=(before.st_atime_ns,before.st_mtime_ns))
+    second=ta.normalize_cached(src,tmp_path/'cache')
+    assert first!=second
+    assert 'bravo' in second.read_text()
+
+
+def test_concurrent_requests_normalize_once(tmp_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    src=_write(tmp_path/'source.jsonl',CODEX_ROWS)
+    calls=[]
+    original=ta.normalize_to_file
+    def counted(*args):
+        calls.append(1)
+        return original(*args)
+    monkeypatch.setattr(ta,'normalize_to_file',counted)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results=list(pool.map(lambda _:ta.normalize_cached(src,tmp_path/'cache'),range(4)))
+    assert len(set(results))==1 and results[0] is not None
+    assert len(calls)==1
+
+
+def test_cache_parser_revision_and_capacity(tmp_path,monkeypatch):
+    src=_write(tmp_path/'source.jsonl',CODEX_ROWS)
+    cache=tmp_path/'cache'
+    first=ta.normalize_cached(src,cache)
+    monkeypatch.setattr(ta,'PARSER_VERSION','test-new-version')
+    second=ta.normalize_cached(src,cache)
+    assert first!=second
+    monkeypatch.setattr(ta,'CACHE_MAX_ENTRIES',2)
+    for index in range(3):
+        ta.normalize_cached(_write(tmp_path/f'{index}.jsonl',CODEX_ROWS),cache)
+    assert len(list(cache.glob('normalized-*.jsonl')))<=2
+    monkeypatch.setattr(ta,'CACHE_MAX_BYTES',second.stat().st_size if second.exists() else 2000)
+    ta.normalize_cached(src,cache)
+    assert sum(p.stat().st_size for p in cache.glob('normalized-*.jsonl'))<=ta.CACHE_MAX_BYTES
+
+
+def test_changed_during_normalization_is_not_published(tmp_path,monkeypatch):
+    src=_write(tmp_path/'source.jsonl',CODEX_ROWS)
+    original=ta.normalize_to_file
+    def changing(source,dest):
+        count=original(source,dest)
+        with source.open('a') as handle:handle.write('\n')
+        return count
+    monkeypatch.setattr(ta,'normalize_to_file',changing)
+    cache=tmp_path/'cache'
+    assert ta.normalize_cached(src,cache) is None
+    assert not list(cache.glob('normalized-*.jsonl'))
+
+
+def test_input_budget_is_explicit_and_publishes_no_partial_artifact(tmp_path,monkeypatch):
+    import pytest
+    src=_write(tmp_path/'source.jsonl',CODEX_ROWS)
+    monkeypatch.setattr(ta,'MAX_RECORD_BYTES',10)
+    with pytest.raises(ta.TranscriptLimitError):list(ta.iter_events(src))
+    assert ta.normalize_cached(src,tmp_path/'cache') is None
+    assert not list((tmp_path/'cache').glob('*.part'))
+
+
+def test_midstream_read_failure_never_publishes_partial_normalization(tmp_path,monkeypatch):
+    import io
+    import pytest
+    src=_write(tmp_path/'source.jsonl',CLAUDE_ROWS)
+    content=src.read_bytes()
+    original=Path.open
+    class BrokenReader(io.BytesIO):
+        calls=0
+        def readline(self,*args):
+            self.calls+=1
+            if self.calls>1:raise OSError('injected midstream read failure')
+            return super().readline(*args)
+    def failing_open(path,*args,**kwargs):
+        if path==src and args and args[0]=='rb':return BrokenReader(content)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'open',failing_open)
+    dest=tmp_path/'normalized.jsonl'
+    with pytest.raises(ta.TranscriptReadError):ta.normalize_to_file(src,dest)
+    assert not dest.exists()
+    cache=tmp_path/'cache'
+    assert ta.normalize_cached(src,cache) is None
+    assert not list(cache.glob('normalized-*.jsonl'))
+    assert not list(cache.glob('*.part'))
+
+
+def test_normalized_round_trip_preserves_source_and_records_container(tmp_path):
+    src=_write(tmp_path/'source.jsonl',[{'type':'session_meta','payload':{'id':'source-session'}},
+        {'type':'response_item','payload':{'type':'message','role':'user',
+            'content':[{'type':'input_text','text':'Always use stable IDs'}]}}])
+    first=list(ta.iter_events(src,include_provenance=True))[0]
+    dest=tmp_path/'normalized.jsonl'
+    ta.normalize_to_file(src,dest)
+    reread=list(ta.iter_events(dest,include_provenance=True))[0]
+    assert reread['_source']==first['_source']
+    assert reread['_source']['host']=='codex'
+    assert reread['_source']['record_index']==2
+    assert reread['_container']['path']==str(dest.resolve())
+    assert reread['_container']['record_index']==1
