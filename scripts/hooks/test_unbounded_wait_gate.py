@@ -13,7 +13,10 @@ import importlib.util
 import io
 import json
 import unittest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 _SPEC = importlib.util.spec_from_file_location(
     "unbounded_wait_gate", Path(__file__).with_name("unbounded_wait_gate.py")
@@ -44,6 +47,30 @@ class Blocks(unittest.TestCase):
 
 
 class Allows(unittest.TestCase):
+    def test_loop_examples_are_data_in_a_source_ingest_write(self) -> None:
+        for command in (
+            "curl --data-urlencode 'text=while true; do sleep 30; done' https://example.invalid",
+            'printf "%s" "until [ -f done ]; do sleep 5; done" > guide.md',
+            r'curl --data-urlencode "text=example \"while true; do sleep 30; done\" end" https://example.invalid',
+            "python3 - <<'PY'\ntext = 'while true; do sleep 30; done'\nPY",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(gate.evaluate(command))
+
+    def test_shell_strings_and_command_substitutions_remain_executable(self) -> None:
+        for command in ("bash -c 'while true; do sleep 30; done'",
+                        "bash -lc 'while true; do sleep 30; done'",
+                        "eval 'while true; do sleep 30; done'",
+                        "bash <<'SH'\nwhile true; do sleep 30; done\nSH",
+                        "echo foo#bar; while true; do sleep 30; done",
+                        "echo ${name#prefix}; while true; do sleep 30; done",
+                        "echo ok # comment with break\nwhile true; do sleep 30; done",
+                        r'echo "\""; while true; do sleep 30; done',
+                        r'while true; do printf "\""; sleep 30; done',
+                        'echo "$(while true; do sleep 30; done)"'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(gate.evaluate(command))
+
     def test_the_idiom_build_loop_already_ships(self) -> None:
         # agents/architecture-scout.md:180 — bounded, with an escape.
         cmd = (
@@ -219,15 +246,7 @@ class ConditionPollWithNoIterationBound(unittest.TestCase):
         self.assertIsNone(
             gate.evaluate('while read -r line; do echo "$line"; sleep 1; done < f.txt'))
 
-    def test_known_hole_the_word_break_in_a_comment_defeats_the_escape_check(self) -> None:
-        """Documented, not fixed — deliberately.
-
-        `_ESCAPE` is a text match, so the word `break` anywhere (a comment, a
-        quoted string) reads as an exit path. Tightening it to real syntax needs
-        a shell parser; a regex that tries will start rejecting legitimate
-        commands, and a gate with false positives gets bypassed, which costs more
-        than this hole does. Pinned so the behaviour is a known limitation rather
-        than a surprise, and so a future parser-based fix has a test to flip.
-        """
-        cmd = "until [ -s out.txt ]; do sleep 5; done  # no bound, no break"
-        self.assertIsNone(gate.evaluate(cmd), "documents the hole; flip when fixed")
+    def test_comment_or_literal_break_does_not_supply_an_exit(self) -> None:
+        for cmd in ("until [ -s out.txt ]; do sleep 5; done  # no bound, no break",
+                    'while true; do echo "break"; sleep 5; done'):
+            self.assertIsNotNone(gate.evaluate(cmd))

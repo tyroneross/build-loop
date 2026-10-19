@@ -140,7 +140,7 @@ def test_slow_gate_returns_explicit_incomplete_check(plugin):
     proc = run_gate(plugin, "import time\ntime.sleep(3)\nprint('{}')\n")
     assert proc.returncode == 0
     hso = json.loads(proc.stdout)["hookSpecificOutput"]
-    assert hso["permissionDecision"] == "ask"
+    assert hso["permissionDecision"] == "deny"
     assert "checks did not finish" in hso["permissionDecisionReason"]
 
 
@@ -155,13 +155,13 @@ def test_completed_deny_and_exit_two_survive_supervisor(plugin):
 def test_invalid_or_oversized_gate_output_never_becomes_allow(plugin, output):
     proc = run_gate(plugin, f"print({output!r})\n")
     assert proc.returncode == 0
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_gate_signal_or_failed_exec_never_becomes_allow(plugin):
     proc = run_gate(plugin, "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)\n")
     assert proc.returncode == 0
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_registered_bash_dispatcher_bounds_input_read(plugin):
@@ -176,7 +176,7 @@ def test_registered_bash_dispatcher_bounds_input_read(plugin):
         proc.stdin.write('{"tool_name":"Bash"')
         proc.stdin.flush()
         assert proc.wait(timeout=2) == 0
-        assert json.loads(proc.stdout.read())["hookSpecificOutput"]["permissionDecision"] == "ask"
+        assert json.loads(proc.stdout.read())["hookSpecificOutput"]["permissionDecision"] == "deny"
     finally:
         proc.stdin.close()
         if proc.poll() is None:

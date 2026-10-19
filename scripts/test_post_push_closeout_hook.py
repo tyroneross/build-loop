@@ -33,7 +33,7 @@ HOOK = REPO_ROOT / "hooks" / "post-push-closeout.sh"
 
 
 def _run_hook(workdir: Path, tool_input: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    """Run the hook with TOOL_INPUT set and CLAUDE_PROJECT_DIR pointed at workdir.
+    """Run the registered hook with native JSON stdin and no TOOL_INPUT variable.
 
     CLAUDE_PLUGIN_ROOT is the real hook contract: the hook exports
     PYTHONPATH=${PLUGIN_ROOT}/scripts internally.  No PYTHONPATH rigging here —
@@ -41,20 +41,27 @@ def _run_hook(workdir: Path, tool_input: str, extra_env: dict[str, str] | None =
     """
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
-        "TOOL_INPUT": tool_input,
         "CLAUDE_PROJECT_DIR": str(workdir),
         "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT),
         "HOME": str(workdir),
         **(extra_env or {}),
     }
     return subprocess.run(
-        ["bash", str(HOOK)],
+        ["bash", "-c", _registered_command()],
+        input=json.dumps({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                          "cwd": str(workdir), "tool_input": {"command": tool_input}}),
         capture_output=True,
         text=True,
         env=env,
         cwd=str(workdir),
         timeout=15,
     )
+
+
+def _registered_command() -> str:
+    doc = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text())
+    return next(h["command"] for group in doc["hooks"]["PostToolUse"]
+                for h in group["hooks"] if "post-push-closeout.sh" in h["command"])
 
 
 def _wait_for_log(closeout_dir: Path, timeout_s: float = 8.0) -> list[Path]:
@@ -90,6 +97,15 @@ class TestHookExists(unittest.TestCase):
 
 
 class TestGating(unittest.TestCase):
+    def test_quoted_push_and_tool_output_do_not_trigger_closeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wd = Path(tmp)
+            (wd / ".build-loop" / "closeout").mkdir(parents=True)
+            for command in ('echo "git push origin main"',
+                            "python3 - <<'PY'\nprint('git push')\nPY"):
+                self.assertEqual(_run_hook(wd, command).returncode, 0)
+            self.assertEqual(list((wd / ".build-loop/closeout").glob("postpush-*")), [])
+
     def test_non_push_command_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             wd = Path(tmp)

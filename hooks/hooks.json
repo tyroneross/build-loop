@@ -149,12 +149,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -f .build-loop/state.json ] || exit 0; python3 -c \"import json,sys; s=json.load(open('.build-loop/state.json')); p7=s.get('phases',{}).get('fact_check',{}).get('completed',False); active=s.get('active',False); sys.exit(0 if (not active or p7) else 1)\" 2>/dev/null && exit 0; echo \"$TOOL_INPUT\" | grep -qE '\\b(git\\s+push|npm\\s+publish|vercel\\s+deploy|gh\\s+release)\\b' && echo 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.'; exit 0",
-            "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/post-push-closeout.sh\" </dev/null >/dev/null 2>&1; exit 0",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/post-push-closeout.sh\" >/dev/null 2>&1; exit 0",
             "timeout": 2
           }
         ]
@@ -175,11 +170,6 @@
       {
         "matcher": "",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; printf '{}'",
-            "timeout": 2
-          },
           {
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/stop_finalize.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",

@@ -287,6 +287,8 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 **Load `skills/build-loop/references/capability-routing.md`** for the full routing table, trigger conditions (pyramid-principle, prompt-builder, deepagents), plugin/hook/skill/agent mandatory routing, external-knowledge sources, and sub-routers.
 
+**Hook changes:** before adding or changing a hook registration or handler, read the [hook design checklist](../plugin-builder/references/hooks-reference.md#keep-the-active-hook-set-small). Prefer reusing an existing owner, narrowing its trigger or moving costly work to an explicit task/CI check. Preserve required safety checks.
+
 ## Phase 1: Assess — State, Goal, and Criteria
 
 Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, assess clean-sheet vs current-constraints approach lenses, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/context/current.md` via `scripts/context_snapshot.py`, `.build-loop/intent.md`, and `.build-loop/goal.md`.

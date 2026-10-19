@@ -24,24 +24,34 @@
 
 set -u
 
-# PostToolUse passes the tool command; Claude Code exposes it as $TOOL_INPUT
-# (matching the sibling Bash matcher in hooks.json). Fall back to reading stdin
-# JSON if the env var is absent (host portability).
-CMD="${TOOL_INPUT:-}"
-if [ -z "$CMD" ]; then
-    # Best-effort: some hosts deliver the payload on stdin as JSON.
-    STDIN_JSON="$(cat 2>/dev/null || true)"
-    CMD="$STDIN_JSON"
-fi
-
-# Only act on a real `git push`. Anchor on the verb pair to avoid matching
-# `git push --help`-style noise loosely; a trailing `--dry-run` push still
-# closes out harmlessly (closeout is idempotent + fail-open).
-printf '%s' "$CMD" | grep -qE '\bgit[[:space:]]+push\b' || exit 0
+INPUT="$(cat 2>/dev/null)" || exit 0
+# Cheap prefilter only; the shared classifier below decides whether it is code.
+case "$INPUT" in *git*push*) ;; *) exit 0 ;; esac
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PROJECT_DIR}}"
 _HOOK_DIR="$(dirname "$0")"
+
+# Claude supplies one JSON event on stdin, not a TOOL_INPUT variable. Parse
+# only tool_input.command so quoted output or documentation cannot fire this
+# observer. Reuse the pre-action classifier rather than adding another parser.
+_py=""
+[ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
+[ -n "$_py" ] || exit 0
+CMD="$(printf '%s' "$INPUT" | PYTHONPATH="${PLUGIN_ROOT}/scripts/hooks" "$_py" -c '
+import json, sys
+from git_command_classifier import classify_command
+try:
+    event = json.load(sys.stdin)
+    command = event.get("tool_input", {}).get("command", "")
+    if (event.get("hook_event_name") == "PostToolUse"
+            and event.get("tool_name") == "Bash"
+            and isinstance(command, str) and "push" in classify_command(command)):
+        print(command)
+except (ValueError, AttributeError, TypeError):
+    pass
+' 2>/dev/null)" || exit 0
+[ -n "$CMD" ] || exit 0
 
 # Attribution audit: files the owner's credit-link gaps as backlog items for
 # the pushed repo (see skills/attribution-standard/SKILL.md). Fully detached so

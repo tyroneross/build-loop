@@ -125,7 +125,18 @@ def test_main_writes_annotation_via_cli(tmp_path):
     state_path.parent.mkdir(parents=True, exist_ok=True)
     update_execution_state(state_path, "start",
         run_id="r1", queued_chunks=["c1"], file_ownership={"c1": ["a"]})
-    rc = main(["--workdir", str(tmp_path), "--mark-incomplete-as-crashed"])
+    rc = main(["--workdir", str(tmp_path), "--mark-incomplete-as-crashed",
+               "--signal", "verified_process_exit"])
     assert rc == 0
     state = json.loads(state_path.read_text())
     assert state["execution"]["crashed_at"] is not None
+
+
+def test_retained_old_stop_registration_cannot_mark_a_live_run_crashed(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    update_execution_state(state_path, "start", run_id="peer-active",
+                           queued_chunks=["c1"], file_ownership={"c1": ["a"]})
+    before = state_path.read_bytes()
+    assert main(["--workdir", str(tmp_path), "--mark-incomplete-as-crashed"]) == 0
+    assert state_path.read_bytes() == before

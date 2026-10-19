@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""M4 — Best-effort Stop hook annotation for crash detection.
+"""Legacy explicit crash annotation helper; not an ordinary Stop handler.
 
-When invoked from Claude Code's Stop hook, this script atomically annotates
+When explicitly invoked by recovery tooling, this script atomically annotates
 .build-loop/state.json.execution with crashed_at + crash_signal IF the
 execution block exists and phase != 'report'. Otherwise it exits 0
 without touching the file.
 
-This is the SECONDARY crash-detection signal. The primary signal is
-heartbeat staleness checked at next-run start (resume_resolver.py). The
-Stop hook is best-effort: a 529 mid-tool-stream may not flush this hook,
-network drops and SIGKILL won't either. When it fires, it's a cleaner
-signal than heartbeat staleness; when it doesn't, the heartbeat path
-still works.
+Ordinary Stop means a turn ended, not that the process crashed. Its automatic
+registration was removed after it marked an unfinished peer run as crashed.
+Heartbeat staleness at next-run start (resume_resolver.py) owns automatic crash
+detection. This compatibility helper does not validate session ownership;
+explicit callers must establish the affected run before invoking it.
 
 Per build-loop's hook design rules, this script:
   - exits 0 always (never blocks Stop)
@@ -84,12 +83,16 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Best-effort Stop hook crash annotation (M4).")
+    p = argparse.ArgumentParser(description="Explicit crash annotation; ordinary Stop is ignored.")
     p.add_argument("--workdir", required=True)
     p.add_argument("--mark-incomplete-as-crashed", action="store_true",
-                   help="Annotate state.json.execution.crashed_at if phase != 'report' (default behavior)")
-    p.add_argument("--signal", default="stop_hook", help="Value for crash_signal field (default: stop_hook)")
+                   help="Legacy compatibility flag; an explicit crash signal is also required")
+    p.add_argument("--signal", default="stop_hook", help="Verified crash signal; default stop_hook does nothing")
     args = p.parse_args(argv)
+    # Existing hosts can retain the removed Stop registration until reload.
+    # Keep that old invocation harmless after the handler bytes are updated.
+    if args.signal == "stop_hook":
+        return 0
     try:
         annotate_if_incomplete(Path(args.workdir).resolve(), signal=args.signal)
     except Exception:

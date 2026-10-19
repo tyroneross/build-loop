@@ -28,7 +28,7 @@
 set -euo pipefail
 
 # Host cancellation discards every gate result. Finish before its 20s deadline
-# and request a retry rather than silently allowing an unfinished audit.
+# and deny this attempt with a retry instruction if required checks cannot finish.
 _DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_DISPATCH_DIR/../../hooks/_bounded_hook.sh"
 bl_bound_hook "${BUILD_LOOP_BASH_DEADLINE_MS:-18000}" 18000 gate "$BASH" "$0" "$@"
