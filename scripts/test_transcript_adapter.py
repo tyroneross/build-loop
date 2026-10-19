@@ -652,3 +652,24 @@ def test_complete_reader_accepts_supported_metadata_and_reasoning_prefixes(tmp_p
     events = list(ta.iter_events(_write(tmp_path / "prefixes.jsonl", rows), require_complete=True))
     assert len(events) == 1
     assert events[0]["message"]["content"][0]["id"] == "a"
+
+
+def test_discovery_json_retains_source_on_normalization_failure(tmp_path, monkeypatch, capsys):
+    source = _write(tmp_path / 'rollout.jsonl', [
+        {'type':'session_meta', 'payload':{'id':'session'}},
+        {'type':'response_item', 'payload':{'type':'local_shell_call', 'call_id':'one'}}])
+    monkeypatch.setattr(ta, 'find_codex_transcript', lambda cwd: source)
+    args = ['--find-codex-session', str(tmp_path), '--cache-dir', str(tmp_path/'cache')]
+    assert ta.main(args + ['--json']) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt == {'source_path':str(source), 'normalized_path':None,
+                       'status':'normalization_unavailable'}
+    assert ta.main(args) == 1
+    assert capsys.readouterr().out == ''
+    source.write_text(json.dumps({'type':'response_item', 'payload':{
+        'type':'function_call', 'call_id':'one', 'name':'exec', 'arguments':'{}'}}) + '\n')
+    assert ta.main(args + ['--json']) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['source_path'] == str(source)
+    assert receipt['status'] == 'normalized'
+    assert Path(receipt['normalized_path']).is_file()

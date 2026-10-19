@@ -741,7 +741,19 @@ def main(argv: list[str] | None = None) -> int:
         # consumer parses the Claude shape, so handing back a raw Codex path
         # would just move the silent no-op one step downstream.
         if args.cache_dir:
-            cached = normalize_cached(found, args.cache_dir, lease_owner_pid=args.lease_owner_pid)
+            try:
+                cached = normalize_cached(found, args.cache_dir, lease_owner_pid=args.lease_owner_pid)
+            except (ImportError, OSError, ValueError):
+                if not args.json:
+                    raise
+                cached = None
+            if args.json:
+                # Source resolution succeeded even when normalization did not.
+                # Keep that identity available to the existing failure receipt.
+                print(json.dumps({"source_path": str(found),
+                                  "normalized_path": str(cached) if cached else None,
+                                  "status": "normalized" if cached else "normalization_unavailable"}))
+                return 0
             if cached is None:
                 return 1
             print(cached)

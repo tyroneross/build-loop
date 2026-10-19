@@ -367,6 +367,34 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
 
+    def test_discovered_unsupported_source_records_coverage_then_reuses_original_locator(self):
+        from unittest.mock import patch
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, capture_output=True)
+        sessions = self.root / 'fakehome/.codex/sessions'
+        sessions.mkdir(parents=True)
+        source = sessions / 'rollout-discovered.jsonl'
+        metadata = {'type':'session_meta', 'payload':{'id':'abc', 'cwd':str(self.workdir)}}
+        payload = json.dumps({'cwd':str(self.workdir), 'session_id':'abc'})
+        for hooks_path in (HOOKS_JSON, REPO / '.codex/hooks.json'):
+            with self.subTest(host=str(hooks_path)):
+                self.record.unlink(missing_ok=True)
+                source.write_text(json.dumps(metadata) + '\n' + json.dumps(
+                    {'type':'response_item', 'payload':{'type':'local_shell_call','call_id':'one'}}) + '\n')
+                with patch(__name__ + '.HOOKS_JSON', hooks_path):
+                    self._assert_hook_contract(self._run('all', payload))
+                skipped = self._records('trace-skip', timeout_s=3)
+                self.assertTrue(skipped, 'discovered normalization failure lost coverage')
+                self.assertEqual(skipped[0]['source'], str(source))
+                self.record.unlink(missing_ok=True)
+                source.write_text(json.dumps(metadata) + '\n' + json.dumps(
+                    {'type':'response_item', 'payload':{'type':'function_call','call_id':'one','name':'exec','arguments':'{}'}}) + '\n')
+                with patch(__name__ + '.HOOKS_JSON', hooks_path):
+                    self._assert_hook_contract(self._run('all', payload))
+                rows = self._records('traces', timeout_s=3)
+                self.assertTrue(rows)
+                args = rows[0]['argv']
+                self.assertEqual(args[args.index('--source-locator') + 1], str(source))
+
     def test_normalization_failure_cannot_rediscover_a_peer_or_drop_cost_event(self) -> None:
         adapter = self.root / "scripts/transcript_adapter.py"
         adapter.unlink()  # fixture symlink only; never edit the real adapter

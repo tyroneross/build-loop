@@ -179,14 +179,25 @@ fi
 if [ -z "$TRANSCRIPT" ] && [ "$TRANSCRIPT_PROVIDED" != "1" ]; then
     _adapter="${PLUGIN_ROOT}/scripts/transcript_adapter.py"
     if [ -f "$_adapter" ]; then
-        TRANSCRIPT="$("$_py" "$_adapter" --find-codex-session "$CWD" \
-            --cache-dir "$STATE_DIR/transcript-cache" --lease-owner-pid "$$" 2>/dev/null)" || TRANSCRIPT=""
+        _lookup="$("$_py" "$_adapter" --find-codex-session "$CWD" --json \
+            --cache-dir "$STATE_DIR/transcript-cache" --lease-owner-pid "$$" 2>/dev/null)" || _lookup=""
+        _paths="$(printf '%s' "$_lookup" | "$_py" -c '
+import json,sys
+try:
+    receipt = json.load(sys.stdin)
+    for key in ("source_path", "normalized_path"):
+        print(" ".join(str(receipt.get(key) or "").splitlines()))
+except (ValueError, AttributeError):
+    pass
+' 2>/dev/null)" || _paths=""
+        ORIGINAL_TRANSCRIPT="$(printf '%s\n' "$_paths" | sed -n '1p')"
+        TRANSCRIPT="$(printf '%s\n' "$_paths" | sed -n '2p')"
     fi
 fi
 
 # An explicit path belongs to this event even if text normalization failed.
 # Never rediscover another session, and keep original cost attribution usable.
-[ -n "$TRANSCRIPT" ] || [ "$TRANSCRIPT_PROVIDED" = "1" ] || _noop
+[ -n "$TRANSCRIPT" ] || [ "$TRANSCRIPT_PROVIDED" = "1" ] || [ -n "$ORIGINAL_TRANSCRIPT" ] || _noop
 
 _run_one() {
     [ "$1" = "traces" ] || [ -n "$TRANSCRIPT" ] || return 0
