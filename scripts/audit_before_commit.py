@@ -1204,7 +1204,12 @@ def _recent_trajectory(root: Path) -> str:
     age_min = (_dt.datetime.now(_dt.timezone.utc) - run_ts).total_seconds() / 60
     if age_min > TRAJECTORY_FRESH_MIN:
         return f"_(last run {int(age_min)} min old — beyond {TRAJECTORY_FRESH_MIN} min window)_\n"
-    chunks = last.get("chunks") or last.get("phases", {}).get("execute", {}).get("chunks") or []
+    chunks = last.get("chunks")
+    if not isinstance(chunks, list) or not chunks:
+        phases = last.get("phases")
+        execute = phases.get("execute") if isinstance(phases, dict) else None
+        nested = execute.get("chunks") if isinstance(execute, dict) else None
+        chunks = nested if isinstance(nested, list) else []
     out = [f"- goal: {(last.get('goal') or '')[:160]}", f"- chunks: {len(chunks)}"]
     decisions = last.get("judge_decisions") or []
     if decisions:

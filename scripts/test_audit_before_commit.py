@@ -28,6 +28,31 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+class RecentTrajectoryShapeTests(unittest.TestCase):
+    def test_status_phases_and_legacy_chunks_render_without_mutating_state(self):
+        cases = [
+            ({"phases": {"assess": "complete", "execute": "complete"}}, 0),
+            ({"phases": {"execute": {"chunks": ["one", "two"]}}}, 2),
+            ({"chunks": ["top"], "phases": {"execute": "complete"}}, 1),
+            ({}, 0),
+            ({"phases": None}, 0),
+            ({"phases": "complete"}, 0),
+            ({"phases": {"execute": {"chunks": "status text"}}}, 0),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / ".build-loop/state.json"
+            state.parent.mkdir()
+            for shape, expected in cases:
+                with self.subTest(shape=shape):
+                    original = json.dumps({"runs": [{"date": _now_iso(), "goal": "actual run shape", **shape}]})
+                    state.write_text(original)
+                    rendered = abc._recent_trajectory(root)
+                    self.assertIn(f"- chunks: {expected}", rendered)
+                    self.assertIn("actual run shape", rendered)
+                    self.assertEqual(state.read_text(), original)
+
+
 class RecordRunsJudgeEntryMembershipTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
