@@ -72,7 +72,7 @@ The [Claude reference](https://code.claude.com/docs/en/hooks) documents event-sp
 
 ## Treat host adapters as separate contracts
 
-Read the active configuration layers and installed host behavior before assuming a hook works. Keep the host/version, enabled source, handler, event, matcher, decision shape and native-call evidence together.
+Read the active configuration layers and installed host behavior before assuming a hook works. The per-host table (config files, event casing, default timeout, block shape, failure default, trust gate) for Claude Code, Codex, Cursor and Muse Code lives in `skills/plugin-builder/references/hooks-reference.md` "Host differences"; update it there rather than here. Keep the host/version, enabled source, handler, event, matcher, decision shape and native-call evidence together.
 
 The [Codex reference](https://developers.openai.com/codex/hooks/) requires review of non-managed hook definitions, documents tool coverage exceptions, and currently says that PreToolUse `permissionDecision: "ask"` is unsupported and lets the call continue after reporting failure. Do not copy a Claude approval response into Codex. Follow the host's supported approval path and verify the result on the actual tool path. Native subagents may share a parent session ID, so correlate worker identity separately.
 

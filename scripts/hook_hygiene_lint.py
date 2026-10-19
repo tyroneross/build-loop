@@ -8,8 +8,9 @@ Operationalizes the rules from
 and ``skills/plugin-builder/references/hooks-reference.md`` "Reliability:
 minimal PATH, fail-open, advisory-only" into an enforceable WARN-level check.
 
-Hooks fire in a subprocess with a minimal PATH (``/usr/bin:/bin``). Bare
-binaries outside that set fail with exit 127. Under ``set -e`` / ``set -euo
+A hook inherits the PATH of whatever started the host; a host started as a
+macOS app gets ``/usr/bin:/bin:/usr/sbin:/sbin``. Bare binaries outside that
+set fail with exit 127 there. Under ``set -e`` / ``set -euo
 pipefail`` an unguarded binary in a command substitution aborts the whole
 script before any later guard runs. Advisory hooks that emit ``deny`` /
 ``block`` violate the facilitator/never-block charter.
@@ -333,8 +334,8 @@ def rule_hh001(cmd: str, ctx: dict[str, Any]) -> list[dict[str, Any]]:
             "command": _truncate(cmd),
             "script_path": None,
             "message": (
-                f"Bare invocation of `{bin_name}` — hooks run under a minimal "
-                f"PATH (/usr/bin:/bin) and binaries outside it exit 127. "
+                f"Bare invocation of `{bin_name}` — a host started as an app "
+                f"gives hooks PATH=/usr/bin:/bin:/usr/sbin:/sbin, where it exits 127. "
                 f"Use an absolute path, `${{CLAUDE_PLUGIN_ROOT}}/…`, or guard "
                 f"with `command -v {bin_name} >/dev/null 2>&1 || exit 0`."
             ),
@@ -396,7 +397,7 @@ def rule_hh002(cmd: str, ctx: dict[str, Any],
                     "message": (
                         f"`set -e`/`set -euo pipefail` combined with unguarded "
                         f"`{risky[0]}` in a command substitution — when the "
-                        f"binary is missing from the hook's minimal PATH, the "
+                        f"binary is missing from the host's PATH, the "
                         f"substitution returns 127 and `set -e` aborts the "
                         f"whole script before any later `|| true` runs. Guard "
                         f"the binary (`command -v {risky[0]} >/dev/null || "
