@@ -242,9 +242,24 @@ def _strip_shell_comment(line: str) -> str:
     return line[:cut] + " " * (len(line) - cut)
 
 
+# `<<EOF` / `<<-'EOF'` ... terminator line. The body is input to the command,
+# so none of its words are commands.
+HEREDOC_RE = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^\s*\2\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def _strip_heredoc_bodies(cmd: str) -> str:
+    return HEREDOC_RE.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
+
+
 def _strip_guards(cmd: str) -> str:
-    # Strip quoted literals FIRST so guard regexes don't match inside strings.
-    out = _strip_quoted_literals(cmd)
+    # Drop heredoc bodies, then quoted literals, so guard regexes and the token
+    # scan never read data as code. A quoted literal becomes `@` filler rather
+    # than spaces: `"$BIN" hook` must keep `hook` in argument position.
+    out = QUOTED_SQ_RE.sub(lambda m: "@" * len(m.group(0)), _strip_heredoc_bodies(cmd))
+    out = QUOTED_DQ_RE.sub(lambda m: "@" * len(m.group(0)), out)
     for pat in GUARD_PATTERNS:
         out = pat.sub("  ", out)
     return out

@@ -170,6 +170,35 @@ class HH001BareBinaryTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def _hh001_binaries(self, command: str) -> list:
+        path = _write_json({"hooks": {"Stop": [
+            {"matcher": "", "hooks": [{"type": "command", "command": command}]}
+        ]}})
+        try:
+            payload = json.loads(run_script(path).stdout)
+            return [f["evidence"]["binary"] for f in payload["findings"]
+                    if f["rule_id"] in ("HH001", "HH003")]
+        finally:
+            os.unlink(path)
+
+    def test_heredoc_body_is_data_not_commands(self) -> None:
+        # Real ~/.claude/settings.json shape (2026-10-19): 7 Python keywords in
+        # the heredoc body were reported as bare binaries, plus an HH003.
+        cmd = ("python3 << 'EOF'\nimport json, sys\ntry:\n    raw = sys.stdin.read()\n"
+               "except ValueError:\n    raw = ''\nprint(json.dumps({}))\nEOF")
+        self.assertEqual(self._hh001_binaries(cmd), [])
+
+    def test_argument_after_quoted_command_is_not_a_command(self) -> None:
+        # `"$BIN" hook ...`: the quoted program was blanked, so its first
+        # argument looked like the command word.
+        cmd = ('if [ -x "${PTYD_BIN:-}" ] && "$PTYD_BIN" hook claude-x; then '
+               "exit 0; fi; exit 0")
+        self.assertEqual(self._hh001_binaries(cmd), [])
+
+    def test_bare_node_after_heredoc_still_flagged(self) -> None:
+        cmd = "cat <<EOF\nnot a command\nEOF\nnode -v"
+        self.assertEqual(self._hh001_binaries(cmd), ["node", None])
+
     def test_plugin_root_path_not_flagged(self) -> None:
         path = _write_json({"hooks": {"SessionStart": [
             {"matcher": "", "hooks": [
