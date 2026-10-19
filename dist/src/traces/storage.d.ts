@@ -4,7 +4,7 @@
  * Handles reading/writing traces to filesystem with indexing.
  * Supports lazy loading of full trace data.
  */
-import type { UnifiedTrace, TraceIndex, TraceSource, TraceCategory, TraceSeverity, TraceCollection } from './types';
+import type { UnifiedTrace, TraceIndex, TraceSource, TraceCategory, TraceSeverity, TraceCollection, TraceCoverage } from './types';
 import type { MemoryConfig } from '../types';
 /**
  * Generate a unique trace ID
@@ -33,6 +33,18 @@ export declare function loadFullTrace(trace_id: string, config?: MemoryConfig): 
  * Load all traces (summaries only)
  */
 export declare function loadAllTraces(config?: MemoryConfig): Promise<UnifiedTrace[]>;
+/** Explicit partial-result API. Legacy array APIs remain strict so JSON cannot
+ * silently discard coverage attached to an array. Callers must adopt this API
+ * to display healthy rows alongside invalid-record coverage. */
+export declare function loadTraceResults(config?: MemoryConfig): Promise<{
+    traces: UnifiedTrace[];
+    coverage: TraceCoverage;
+}>;
+export declare class PartialTraceError extends Error {
+    readonly coverage: TraceCoverage;
+    readonly traces: UnifiedTrace[];
+    constructor(coverage: TraceCoverage, traces: UnifiedTrace[]);
+}
 /**
  * Load traces by source
  */
@@ -52,7 +64,9 @@ export declare function loadTracesForIncident(incident_id: string, config?: Memo
 /**
  * Load or initialize trace index
  */
-export declare function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex>;
+export declare function loadTraceIndex(config?: MemoryConfig): Promise<TraceIndex & {
+    coverage: TraceCoverage;
+}>;
 /**
  * Create a trace collection
  */
@@ -74,5 +88,6 @@ export declare function getTraceStats(config?: MemoryConfig): Promise<{
     by_severity: Record<string, number>;
     oldest_trace: number;
     newest_trace: number;
+    coverage: TraceCoverage;
 }>;
 //# sourceMappingURL=storage.d.ts.map

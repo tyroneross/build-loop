@@ -61,7 +61,10 @@ test('unpublished crash remnants are ignored; published missing raw is explicit 
   assert.equal((await storage.loadTraceIndex(config)).total_traces,1);
   const kept=await storage.loadTraceSummary('kept',config);
   await fs.unlink(kept.full_data_path);
-  await assert.rejects(storage.loadTraceIndex(config),/ENOENT/);
+  const invalid=await storage.loadTraceIndex(config);
+  assert.equal(invalid.coverage.complete,false);
+  assert.match(invalid.coverage.invalid[0].reason,/ENOENT/);
+  await assert.rejects(storage.loadTraceSummary('kept',config),storage.PartialTraceError);
 });
 test('legacy index recovers only known raw location and ignores injected locator',async t => {
   const config = await fixture(t);
@@ -134,8 +137,9 @@ test('public readers reject actual FIFOs without waiting for a writer', {skip:pr
     const code=`const assert=require('node:assert/strict'),s=require(process.argv[1]),c=JSON.parse(process.argv[2]),kind=process.argv[3];
       (async()=>{if(kind==='log'){const r=await require(process.argv[5]).readProjectLogs({source:'path',path:process.argv[4]});
         assert.equal(r.coverage.complete,false);assert.match(r.coverage.skipped_files[0].reason,/regular file/);}
-      else {const operation=kind==='index'?s.loadTraceIndex(c):kind==='collection'?s.loadCollection('COL_pipe',c):s.loadFullTrace('pipe-raw',c);
-        await assert.rejects(operation,/Invalid or oversized trace file/);}})().catch(e=>{console.error(e);process.exitCode=1});`;
+      else if(kind==='index'){const r=await s.loadTraceIndex(c);assert.equal(r.coverage.complete,false);assert.match(r.coverage.invalid[0].reason,/Invalid or oversized/);}
+      else {const operation=kind==='collection'?s.loadCollection('COL_pipe',c):s.loadFullTrace('pipe-raw',c);
+        await assert.rejects(operation,/Invalid or oversized/);}})().catch(e=>{console.error(e);process.exitCode=1});`;
     await child(code,[modulePath,JSON.stringify(config),kind,pipe,logModule]);
   }
 });
@@ -222,4 +226,71 @@ test('all retrieval views preserve canonical OTLP summaries in one metadata pass
   const collection=await storage.createCollection('canonical durations',[parsed.trace_id,parsed.trace_id],undefined,config);
   assert.equal(reads,1);assert.equal(collection.summary.slowest_operation,parsed.operation);
   assert.deepEqual(await storage.loadFullTrace(parsed.trace_id,config),{raw:true});
+});
+
+test('corrupt metadata, missing raw and invalid edges have explicit isolated coverage',async t=>{
+  const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+  for(const id of ['healthy','missing-raw','bad-edge'])await storage.storeTrace(trace(id),{id},config);
+  const raw=(await storage.loadTraceSummary('missing-raw',config)).full_data_path;
+  await fs.unlink(raw);
+  await fs.writeFile(path.join(root,'metadata','broken.json'),'{broken');
+  await fs.symlink(path.join(root,'never-created'),path.join(root,'metadata','dangling.json'));
+  const edges=path.join(root,'correlations','bad-edge');await fs.mkdir(edges,{recursive:true});
+  await fs.writeFile(path.join(edges,'incident.json'),JSON.stringify({trace_id:'different',incident_id:'incident'}));
+  const result=await storage.loadTraceResults(config);
+  assert.deepEqual(result.traces.map(t=>t.trace_id).sort(),['bad-edge','healthy']);
+  assert.equal(result.coverage.complete,false);assert.equal(result.coverage.invalid.length,4);
+  for(const id of ['broken','dangling','missing-raw','bad-edge'])assert.ok(result.coverage.invalid.some(v=>v.trace_id===id));
+  assert.equal(JSON.parse(JSON.stringify(result)).coverage.invalid.length,4);
+  const index=await storage.loadTraceIndex(config);
+  assert.equal(index.total_traces,2);assert.equal(index.coverage.invalid.length,4);
+  assert.equal((await storage.getTraceStats(config)).coverage.complete,false);
+  await assert.rejects(storage.loadAllTraces(config),error=>{
+    assert.ok(error instanceof storage.PartialTraceError);assert.equal(error.traces.length,2);
+    assert.equal(error.coverage.invalid.length,4);return true;
+  });
+  for(const id of ['broken','dangling','missing-raw','bad-edge']){
+    await assert.rejects(storage.loadTraceSummary(id,config),storage.PartialTraceError);
+  }
+  assert.deepEqual(await storage.loadFullTrace('healthy',config),{id:'healthy'});
+  await storage.correlateTraceToIncident('healthy','healthy-incident',config);
+  assert.deepEqual((await storage.loadTraceSummary('healthy',config)).incident_ids,['healthy-incident']);
+  // Lazy raw JSON validation fails only the requested payload, not its neighbor.
+  const rawHealthy=(await storage.loadTraceSummary('healthy',config)).full_data_path;
+  await fs.writeFile(rawHealthy,'{corrupt raw');
+  await assert.rejects(storage.loadFullTrace('healthy',config),SyntaxError);
+  assert.equal((await storage.loadTraceSummary('healthy',config)).trace_id,'healthy');
+});
+
+test('direct ID lookup does not scan unrelated metadata or correlation directories',async t=>{
+  const config=await fixture(t),root=path.join(config.memoryPath,'traces');
+  await storage.storeTrace(trace('target'),{target:true},config);
+  await storage.storeTrace(trace('other'),undefined,config);
+  await fs.writeFile(path.join(root,'metadata','other.json'),'{broken');
+  const originalReadDir=fs.readdir,originalOpen=fs.open;let opened=0;
+  fs.readdir=async function(file,...args){
+    if(file===path.join(root,'metadata')||file===path.join(root,'correlations'))throw new Error('unrelated corpus traversal');
+    return originalReadDir.call(this,file,...args);
+  };
+  fs.open=async function(file,...args){if(String(file).includes('/metadata/'))opened++;return originalOpen.call(this,file,...args);};
+  t.after(()=>{fs.readdir=originalReadDir;fs.open=originalOpen;});
+  assert.equal((await storage.loadTraceSummary('target',config)).trace_id,'target');assert.equal(opened,1);
+});
+
+test('generated IDs use UUID entropy even with a frozen clock and Math.random',()=>{
+  const OriginalDate=Date,originalRandom=Math.random;
+  global.Date=class extends OriginalDate {constructor(...args){super(...(args.length?args:[1700000000000]));}};
+  Math.random=()=>0.125;
+  try{
+    for(const generate of [storage.generateTraceId,storage.generateCollectionId]){
+      const ids=Array.from({length:100},generate);assert.equal(new Set(ids).size,100);
+      for(const id of ids)assert.match(id,/_[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    }
+  }finally{global.Date=OriginalDate;Math.random=originalRandom;}
+});
+
+test('compiled package root exposes explicit partial-result adoption API',()=>{
+  const api=require('../../dist/src/index.js');
+  assert.equal(api.loadTraceResults,storage.loadTraceResults);
+  assert.equal(api.PartialTraceError,storage.PartialTraceError);
 });

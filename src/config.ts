@@ -40,6 +40,11 @@ function requireInteger(value: unknown, name: string, minimum: number): asserts 
   }
 }
 
+/** Optional properties explicitly set to undefined inherit their defaults. */
+function definedOverrides<T extends object>(value?: Partial<T>): Partial<T> {
+  return Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item !== undefined)) as Partial<T>;
+}
+
 /** Get and validate the final configuration, allowing overrides to replace bad env values. */
 export function getConfig(overrides?: Partial<MemoryConfig>): MemoryConfig {
   const mode = overrides?.storageMode ?? (process.env.CLAUDE_MEMORY_MODE || 'local');
@@ -51,7 +56,7 @@ export function getConfig(overrides?: Partial<MemoryConfig>): MemoryConfig {
     autoMine: environmentBoolean('CLAUDE_MEMORY_AUTO_MINE', false),
     defaultSimilarityThreshold: environmentNumber('CLAUDE_MEMORY_THRESHOLD', 0.5),
     defaultMaxResults: environmentNumber('CLAUDE_MEMORY_MAX_RESULTS', 5),
-    ...overrides,
+    ...definedOverrides(overrides),
   };
   if (config.storageMode !== 'local' && config.storageMode !== 'shared') {
     throw new TypeError('storageMode must be local or shared');
@@ -136,7 +141,7 @@ export function getTokenConfig(overrides?: Partial<TokenConfig>): TokenConfig {
     },
     defaultTier: process.env.CLAUDE_MEMORY_TIER || 'compact',
     autoAdjust: environmentBoolean('CLAUDE_MEMORY_AUTO_ADJUST', true),
-    ...overrides,
+    ...definedOverrides(overrides),
   };
   if (config.defaultTier !== 'summary' && config.defaultTier !== 'compact' && config.defaultTier !== 'full') {
     throw new TypeError('defaultTier must be summary, compact or full');
