@@ -12,11 +12,11 @@ import wake_scheduler as ws  # noqa: E402
 
 
 def test_cache_safe_delay_avoids_deadzone():
-    assert ws.cache_safe_delay(30) == 60        # clamp up to floor
+    assert ws.cache_safe_delay(30) == 30        # keep short deadlines
     assert ws.cache_safe_delay(60) == 60
     assert ws.cache_safe_delay(270) == 270      # warm window kept
-    assert ws.cache_safe_delay(300) == 1200     # dead-zone → push up
-    assert ws.cache_safe_delay(600) == 1200
+    assert ws.cache_safe_delay(300) == 270      # earlier check preserves deadline
+    assert ws.cache_safe_delay(600) == 270
     assert ws.cache_safe_delay(1200) == 1200
     assert ws.cache_safe_delay(5000) == 3600    # clamp to ceiling
 
@@ -83,3 +83,15 @@ def test_self_wake_carries_reinjection_ref():
 
 def test_main_exit_zero():
     assert ws.main(["--tool", "codex", "--wait-kind", "external", "--json"]) == 0
+
+
+def test_task_deadline_bounds_effective_wake():
+    result = ws.plan_wake("codex", ws.EXTERNAL, desired_seconds=900, max_delay_seconds=30)
+    assert result["requested_seconds"] == 900
+    assert result["delay_seconds"] == 30
+    assert result["max_delay_seconds"] == 30
+
+
+def test_positive_requested_check_is_never_postponed():
+    for desired in (1, 20, 60, 270, 271, 300, 600, 900, 1199, 1200, 3600, 5000):
+        assert 0 < ws.cache_safe_delay(desired) <= desired

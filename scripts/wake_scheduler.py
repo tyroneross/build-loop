@@ -48,17 +48,17 @@ EXTERNAL = "external"          # CI, remote queue, external API the harness can'
 PEER_ACK = "peer_ack"          # waiting on a rally peer (Codex etc.)
 
 CACHE_WARM_CEIL = 270          # stay under the 300s prompt-cache TTL
-CACHE_DEADZONE_TOP = 1200      # if past warm, commit to >= 20min (amortize the miss)
-CLAMP_MIN, CLAMP_MAX = 60, 3600
+CACHE_DEADZONE_TOP = 1200      # past this, retain the requested longer wait
+CLAMP_MIN, CLAMP_MAX = 1, 3600
 
 
 def cache_safe_delay(desired: int) -> int:
-    """Snap a desired wait away from the 300s cache dead-zone, then clamp [60,3600]."""
+    """Prefer an earlier cache-warm check; never postpone a positive request."""
     d = max(CLAMP_MIN, int(desired))
     if d <= CACHE_WARM_CEIL:
         pass                                  # warm window — keep
     elif d < CACHE_DEADZONE_TOP:
-        d = CACHE_DEADZONE_TOP                # in the dead-zone — push up to amortize
+        d = CACHE_WARM_CEIL                   # round DOWN; deadlines beat cache economics
     return min(d, CLAMP_MAX)
 
 
@@ -131,6 +131,7 @@ def plan_wake(
     next_action: str | None = None,
     action_class: str | None = None,   # test override; else resolved via autonomy_gate
     desired_seconds: int = 270,
+    max_delay_seconds: int | None = None,
     survive_shutdown: bool = False,
     intent_path: str | None = None,
     prompt_ref: str | None = None,
@@ -171,12 +172,17 @@ def plan_wake(
         return envelope
 
     # 3) Self-wake via the best available timed/poll tier.
-    delay = cache_safe_delay(desired_seconds)
+    requested = max(CLAMP_MIN, int(desired_seconds))
+    bounded = min(requested, max(CLAMP_MIN, int(max_delay_seconds))) if max_delay_seconds is not None else requested
+    delay = cache_safe_delay(bounded)
     envelope.update({
         "decision": "self_wake",
         "tier": tier,
         "directive": directive,
         "delay_seconds": delay,
+        "requested_seconds": requested,
+        "max_delay_seconds": max_delay_seconds,
+        "delay_reason": "earlier cache-warm check" if delay < bounded else "requested/deadline bound",
         "cache_warm": delay <= CACHE_WARM_CEIL,
         "reinject_prompt_ref": prompt_ref or "(carry intent.md + plan.md — never rely on memory)",
     })
@@ -189,6 +195,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--wait-kind", default=EXTERNAL, choices=[TRACKED, EXTERNAL, PEER_ACK])
     p.add_argument("--next-action", default=None, help="Pending command to classify for reversibility")
     p.add_argument("--desired-seconds", type=int, default=270)
+    p.add_argument("--max-delay-seconds", type=int, default=None,
+                   help="Earlier task/budget deadline in seconds; never extended for caching")
     p.add_argument("--survive-shutdown", action="store_true")
     p.add_argument("--intent", default=None, help="Path to .build-loop/intent.md")
     p.add_argument("--prompt-ref", default=None)
@@ -202,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     env = plan_wake(
         a.tool, a.wait_kind, next_action=a.next_action, desired_seconds=a.desired_seconds,
         survive_shutdown=a.survive_shutdown, intent_path=a.intent, prompt_ref=a.prompt_ref,
-        workdir=a.workdir,
+        workdir=a.workdir, max_delay_seconds=a.max_delay_seconds,
     )
     print(json.dumps(env, indent=2) if a.json else f"{env['decision']} via {env.get('tier')} ({env.get('directive')})")
     return 0
