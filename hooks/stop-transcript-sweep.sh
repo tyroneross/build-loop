@@ -56,6 +56,18 @@
 set -u
 
 SWEEP="${1:-}"
+# Foreground work is only stdin capture + detached dispatch. Hashing, parsing,
+# cache waits and consumers belong to the existing worker invocation.
+if [ "${2:-}" != "--worker" ]; then
+    PAYLOAD="$(cat 2>/dev/null)" || PAYLOAD=""
+    _BL_STOP_PAYLOAD="$PAYLOAD" nohup "$BASH" "$0" "$SWEEP" --worker </dev/null >/dev/null 2>&1 &
+    printf '{}'
+    exit 0
+fi
+# Reuse the existing process-group supervisor to bound detached consumers too.
+_WORKER_HOOK_DIR="$(dirname "$0")"
+. "$_WORKER_HOOK_DIR/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_TRANSCRIPT_WORKER_MS:-120000}" 120000 advisory "$BASH" "$0" "$SWEEP" --worker
 
 # Always emit valid no-op hook JSON and exit 0, whatever happened.
 _noop() {
@@ -69,7 +81,7 @@ _noop() {
 # Empty stdin is NORMAL on a host that supplies no Stop payload (Codex). The
 # old `[ -n "$PAYLOAD" ] || _noop` here made every non-Claude host a silent
 # no-op before the transcript was ever looked for.
-PAYLOAD="$(cat 2>/dev/null || true)"
+PAYLOAD="${_BL_STOP_PAYLOAD:-}"
 
 # Resolve python3 without depending on a populated PATH (shared helper).
 _HOOK_DIR="$(dirname "$0")"
@@ -90,7 +102,7 @@ export _BL_STOP_PAYLOAD
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
     _BL_SWEEP_SCRIPTS="${PLUGIN_ROOT}/scripts" \
-    _BL_SWEEP_CACHE="$STATE_DIR/transcript-cache" "$_py" - <<'PY' 2>/dev/null
+    _BL_SWEEP_CACHE="$STATE_DIR/transcript-cache" _BL_SWEEP_OWNER_PID="$$" _BL_SWEEP_MODE="$SWEEP" "$_py" - <<'PY' 2>/dev/null
 import json, os, sys
 from pathlib import Path
 try:
@@ -107,7 +119,18 @@ def safe(v):
 
 transcript = safe(d.get("transcript_path"))
 provided = bool(transcript)
-if transcript:
+mode = os.environ["_BL_SWEEP_MODE"]
+if provided and mode in {"all", "cost-ledger"}:
+    # Dispatch the original billing event before any extraction/cache wait.
+    import subprocess
+    try:
+        cost = subprocess.Popen([sys.executable, str(Path(os.environ["_BL_SWEEP_SCRIPTS"]) / "cost_ledger_hook.py")],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cost.stdin.write(os.environ["_BL_STOP_PAYLOAD"].encode())
+        cost.stdin.close()
+    except OSError:
+        pass
+if transcript and mode != "cost-ledger":
     # A native Codex payload already contains its rollout path. Normalize it
     # here too; the cwd-discovery fallback below only covers a missing path.
     sys.path.insert(0, os.environ["_BL_SWEEP_SCRIPTS"])
@@ -119,15 +142,18 @@ if transcript:
         try:
             if adapter.detect_format(Path(transcript)) == adapter.CODEX:
                 transcript = str(adapter.normalize_cached(
-                    Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"])
+                    Path(transcript), Path(os.environ["_BL_SWEEP_CACHE"]),
+                    lease_owner_pid=int(os.environ["_BL_SWEEP_OWNER_PID"])
                 ) or "")
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError, TypeError):
             transcript = ""  # preserve event identity even if adapter IO fails
 print(transcript)
 print(safe(d.get("cwd")))
 print("1" if provided else "0")
 PY
 )" || _parsed=""
+
+[ "$SWEEP" != cost-ledger ] || _noop
 
 TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
 CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
@@ -142,7 +168,7 @@ if [ -z "$TRANSCRIPT" ] && [ "$TRANSCRIPT_PROVIDED" != "1" ]; then
     _adapter="${PLUGIN_ROOT}/scripts/transcript_adapter.py"
     if [ -f "$_adapter" ]; then
         TRANSCRIPT="$("$_py" "$_adapter" --find-codex-session "$CWD" \
-            --cache-dir "$STATE_DIR/transcript-cache" 2>/dev/null)" || TRANSCRIPT=""
+            --cache-dir "$STATE_DIR/transcript-cache" --lease-owner-pid "$$" 2>/dev/null)" || TRANSCRIPT=""
     fi
 fi
 
@@ -174,24 +200,18 @@ _run_one() {
             --log-file "${STATE_DIR}/findings-scan.log" \
             </dev/null >/dev/null 2>&1 &
         ;;
-    cost-ledger)
-        # cost_ledger_hook.py parses the Stop payload itself (it needs
-        # session_id + cwd + transcript_path), so hand it the RAW payload on
-        # stdin rather than argv. printf writes and exits; the sweep stays
-        # detached.
-        printf '%s' "$PAYLOAD" \
-            | nohup "$_py" "${PLUGIN_ROOT}/scripts/cost_ledger_hook.py" \
-                >/dev/null 2>&1 &
-        ;;
     esac
 }
 
 if [ "$SWEEP" = "all" ]; then
-    for one in decisions corrections findings cost-ledger; do
+    for one in decisions corrections findings; do
         _run_one "$one"
     done
 else
     _run_one "$SWEEP"
 fi
-
+wait
+case "$TRANSCRIPT" in
+    "$STATE_DIR"/transcript-cache/.normalized-*.lease-$$-*.jsonl) rm -f -- "$TRANSCRIPT" ;;
+esac
 _noop

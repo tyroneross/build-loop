@@ -390,7 +390,7 @@ def detect_candidates(transcript_path: Path | str | None = None, *, text_turns: 
         candidates = detector.scan_turn(content, idx, prior_assistant_acted=prior)
         for candidate in candidates:
             candidate.extras.update({"speaker": "user", "origin": origin,
-                                     "source_locator": str(p), "scope_basis":
+                                     "source_locator": origin.get("path") if isinstance(origin.get("path"), str) and origin["path"] else str(p), "scope_basis":
                                      "explicit_cross_project" if candidate.scope == "global" else "project_default"})
         results.extend(candidates)
     return _dedup(results)

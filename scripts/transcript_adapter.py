@@ -78,7 +78,7 @@ def session_key(path: Path) -> str:
                 if not row:
                     continue
                 payload = row.get("payload")
-                candidate = (payload.get("id") if row.get("type") == "session_meta"
+                candidate = ((payload.get("id") or payload.get("session_id")) if row.get("type") == "session_meta"
                              and isinstance(payload, dict) else row.get("sessionId") or
                              (row["_source"].get("session_id") if isinstance(row.get("_source"), dict) else None))
                 if isinstance(candidate, str) and candidate.strip():
@@ -312,11 +312,21 @@ def _codex_output_is_error(output: str) -> bool:
     except json.JSONDecodeError:
         parsed = None
     if isinstance(parsed, dict):
-        exit_code = parsed.get("exit_code")
-        if isinstance(exit_code, int) and exit_code != 0:
+        metadata = parsed.get("metadata")
+        exit_code = parsed.get("exit_code", metadata.get("exit_code") if isinstance(metadata, dict) else None)
+        if type(exit_code) is int and exit_code != 0:
             return True
         if parsed.get("isError") is True or (parsed.get("ok") is False and parsed.get("error")):
             return True
+    # Only a recognized transport header may precede an exit status. Once
+    # output starts, an error-looking line is ordinary command output/data.
+    lines = stripped.split("\n", 8)[:8]
+    if lines and re.match(r"^(?:Chunk ID|Wall time):", lines[0]):
+        for line in lines:
+            if re.fullmatch(r"(?:Process exited with code|Exit code:)\s*[1-9]\d*", line.strip()):
+                return True
+            if not re.match(r"^(?:Chunk ID:|Wall time:|Original token count:|Process exited with code 0$|Exit code:\s*0$)", line):
+                break
     return bool(re.match(
         r"(?:ERROR:|Error:|Traceback \(most recent call last\)|"
         r"Script failed\b|Process exited with code [1-9]\b|ToolCallError\b)",
@@ -325,8 +335,8 @@ def _codex_output_is_error(output: str) -> bool:
 
 
 _CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
-                        "<environment_context>", "<external_codex_apps_open_page>")
-PARSER_VERSION = "3"
+                        "<environment_context>", "<external_codex_apps_open_page>", "<user_instructions>")
+PARSER_VERSION = "4"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 
@@ -399,9 +409,13 @@ def _codex_event(obj: dict[str, Any]) -> dict[str, Any] | None:
                 "name": payload.get("name") or "exec",
                 "input": _tool_input(payload.get("input", payload.get("arguments", "")))}])
         elif ptype in {"custom_tool_call_output", "function_call_output"}:
-            output = _codex_text(payload.get("output"))
+            raw_output = payload.get("output")
+            output = json.dumps(raw_output) if isinstance(raw_output, dict) else _codex_text(raw_output)
             event = _turn("user", [{"type": "tool_result", "tool_use_id": payload.get("call_id"),
-                "content": output, "is_error": _codex_output_is_error(output)}])
+                "content": output, "is_error": any(_codex_output_is_error(text) for text in (
+                    [block.get("text", "") for block in payload.get("output", []) if isinstance(block, dict) and block.get("type") in {"text", "input_text", "output_text"}
+                     and isinstance(block.get("text"), str)]
+                    if isinstance(payload.get("output"), list) else [output]))}])
     if event is not None:
         event["timestamp"] = obj.get("timestamp")
     return event
@@ -468,7 +482,8 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                                     and isinstance(original.get("session_id"), (str, type(None))))
                     if not valid_origin:
                         event["_source"] = {"host": fmt, "session_id": source_session or obj.get("sessionId"),
-                                             "record_index": line_number, "origin": obj.get("type")}
+                                             "record_index": line_number, "origin": obj.get("type"),
+                                             "path": str(path.resolve())}
                     event["_container"] = {"path": str(path.resolve()), "record_index": line_number, "host": fmt}
                 if fmt == CLAUDE:
                     yield event
@@ -504,11 +519,15 @@ def normalize_to_file(src: Path, dest: Path) -> int:
     """Publish a complete reusable normalized artifact, never partial output."""
     dest = Path(dest)
     temporary = dest.with_name(f".{dest.name}.{os.getpid()}.{secrets.token_hex(4)}.part")
-    count = 0
+    count = published_bytes = 0
     try:
         with temporary.open("x", encoding="utf-8") as handle:
             for event in iter_events(src, include_provenance=True, require_complete=True):
-                handle.write(json.dumps(event) + "\n")
+                serialized = json.dumps(event) + "\n"  # ensure_ascii keeps character/byte lengths equal
+                published_bytes += len(serialized)
+                if len(serialized) > MAX_RECORD_BYTES or published_bytes > MAX_SOURCE_BYTES:
+                    raise TranscriptLimitError("normalized artifact exceeds reader byte budget")
+                handle.write(serialized)
                 count += 1
             handle.flush()
             os.fsync(handle.fileno())
@@ -527,32 +546,65 @@ CACHE_MAX_BYTES = 128 * 1024 * 1024
 CACHE_MAX_ENTRIES = 128
 
 
+CACHE_LOCK_TIMEOUT_S = 0.5
+PART_TTL_SECONDS = 300
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _cache_usage(cache_dir: Path) -> tuple[int, int]:
+    # Hardlink leases retain an artifact without double-counting its inode.
+    inodes = {}
+    for pattern in ("normalized-*.jsonl", ".normalized-*.lease-*.jsonl", ".normalized-*.part"):
+        for candidate in cache_dir.glob(pattern):
+            try:
+                info = candidate.stat()
+                inodes[(info.st_dev, info.st_ino)] = info.st_size
+            except OSError:
+                continue
+    return sum(inodes.values()), len(inodes)
+
+
 def _reap(cache_dir: Path, ttl_days: int = CACHE_TTL_DAYS, *, keep: Path | None = None) -> None:
     import time
-    cutoff = time.time() - ttl_days * 86400
+    now = time.time()
+    for candidate in cache_dir.glob(".normalized-*"):
+        try:
+            if candidate.name.endswith(".part"):
+                match = re.search(r"\.(\d+)\.[^.]+\.part$", candidate.name)
+                live = bool(match and _pid_alive(int(match[1])))
+                if not live and candidate.stat().st_mtime < now - PART_TTL_SECONDS:
+                    candidate.unlink()
+            elif ".lease-" in candidate.name:
+                match = re.search(r"\.lease-(\d+)-", candidate.name)
+                if match and not _pid_alive(int(match[1])):
+                    candidate.unlink()
+        except OSError:
+            continue
     files = []
     for candidate in cache_dir.glob("normalized-*.jsonl"):
         try:
-            stat = candidate.stat()
-            if stat.st_mtime < cutoff and candidate != keep:
+            info = candidate.stat()
+            if info.st_mtime < now - ttl_days * 86400 and candidate != keep:
                 candidate.unlink()
             else:
-                files.append((stat.st_mtime, stat.st_size, candidate))
+                files.append((info.st_mtime, candidate))
         except OSError:
             continue
-    total = sum(size for _, size, _ in files)
-    count = len(files)
-    for _, size, candidate in sorted(files):
-        if total <= CACHE_MAX_BYTES and count <= CACHE_MAX_ENTRIES:
+    for _, candidate in sorted(files):
+        size, count = _cache_usage(cache_dir)
+        if size <= CACHE_MAX_BYTES and count <= CACHE_MAX_ENTRIES:
             break
-        if candidate == keep:
-            continue
-        try:
-            candidate.unlink()
-            total -= size
-            count -= 1
-        except OSError:
-            continue
+        if candidate != keep:
+            candidate.unlink(missing_ok=True)
 
 
 def _source_revision(source: Path) -> str:
@@ -573,7 +625,7 @@ def normalized_cache_path(source: Path, cache_dir: Path, *, revision: str | None
     return Path(cache_dir) / f"normalized-{digest}.jsonl"
 
 
-def normalize_cached(source: Path, cache_dir: Path) -> Path | None:
+def normalize_cached(source: Path, cache_dir: Path, *, lease_owner_pid: int | None = None) -> Path | None:
     """Coalesce normalization under one owner; content and parser revisions key reuse.
 
     The cache lock also serializes eviction/publication, bounding aggregate bytes.
@@ -583,7 +635,7 @@ def normalize_cached(source: Path, cache_dir: Path) -> Path | None:
     source, cache_dir = Path(source), Path(cache_dir)
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        with LockedFile(cache_dir / "normalization"):
+        with LockedFile(cache_dir / "normalization", timeout_s=CACHE_LOCK_TIMEOUT_S):
             _reap(cache_dir)
             before = source.stat()
             revision = _source_revision(source)
@@ -602,7 +654,25 @@ def normalize_cached(source: Path, cache_dir: Path) -> Path | None:
                 return None
             os.utime(dest, None)
             _reap(cache_dir, keep=dest)
-            return dest
+            size, count = _cache_usage(cache_dir)
+            if size > CACHE_MAX_BYTES or count > CACHE_MAX_ENTRIES:
+                dest.unlink(missing_ok=True)
+                return None  # Active readers retain their revision; never borrow another.
+            # Legacy path-returning callers also retain their revision until
+            # their process exits. Detached workers explicitly release theirs
+            # once every consumer finishes, keeping the common path shorter.
+            owner = os.getpid() if lease_owner_pid is None else lease_owner_pid
+            if type(owner) is not int or owner <= 0 or not _pid_alive(owner):
+                return None
+            lease = dest.with_name(f".{dest.stem}.lease-{owner}-shared.jsonl")
+            if not lease.exists() and sum(1 for _ in cache_dir.glob(".normalized-*.lease-*.jsonl")) >= CACHE_MAX_ENTRIES:
+                return None
+            try:
+                os.link(dest, lease)
+            except FileExistsError:
+                if not os.path.samefile(dest, lease):
+                    return None
+            return lease
     except (OSError, TimeoutError, TranscriptLimitError):
         return None
 
@@ -617,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, help="write a normalized JSONL copy here")
     parser.add_argument("--cache-dir", type=Path,
                         help="normalize into a shared, self-reaping cache and print its path")
+    parser.add_argument("--lease-owner-pid", type=int, help="pin normalized bytes until the detached consumer finishes")
     parser.add_argument("--json", action="store_true", help="print a detection receipt")
     args = parser.parse_args(argv)
 
@@ -628,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
         # consumer parses the Claude shape, so handing back a raw Codex path
         # would just move the silent no-op one step downstream.
         if args.cache_dir:
-            cached = normalize_cached(found, args.cache_dir)
+            cached = normalize_cached(found, args.cache_dir, lease_owner_pid=args.lease_owner_pid)
             if cached is None:
                 return 1
             print(cached)

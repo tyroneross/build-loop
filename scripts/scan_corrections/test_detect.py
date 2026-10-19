@@ -524,3 +524,12 @@ def test_canonical_origin_preserved_without_changing_suppression_identity(tmp_pa
     assert candidate.extras["origin"]["session_id"] == "source-1"
     assert candidate.extras["origin"]["record_index"] == 2
     assert candidate.extras["scope_basis"] == "project_default"
+
+
+def test_cached_candidate_points_to_original_durable_source(tmp_path):
+    import transcript_adapter as adapter
+    source=tmp_path/'original.jsonl'
+    source.write_text(json.dumps({'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':'Always preserve source identity.'}]}})+'\n')
+    cached=adapter.normalize_cached(source,tmp_path/'cache')
+    candidates=detect_candidates(cached)
+    assert candidates and all(c.extras['source_locator']==str(source.resolve()) for c in candidates)
