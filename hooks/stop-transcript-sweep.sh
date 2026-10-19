@@ -97,14 +97,12 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/build-loop"
 # containing quotes or shell metacharacters cannot inject.
 _BL_STOP_PAYLOAD="$PAYLOAD"
 export _BL_STOP_PAYLOAD
-# Three lines: normalized transcript_path, cwd, then explicit-path presence.
+# Three lines: original transcript_path, cwd, then explicit-path presence.
 # Newlines are stripped
 # from the values so the line framing can't be spoofed by a crafted payload.
 _parsed="$(
-    _BL_SWEEP_SCRIPTS="${PLUGIN_ROOT}/scripts" \
-    _BL_SWEEP_CACHE="$STATE_DIR/transcript-cache" _BL_SWEEP_OWNER_PID="$$" _BL_SWEEP_MODE="$SWEEP" "$_py" - <<'PY' 2>/dev/null
-import json, os, sys
-from pathlib import Path
+    "$_py" - <<'PY' 2>/dev/null
+import json, os
 try:
     d = json.loads(os.environ.get("_BL_STOP_PAYLOAD", "") or "{}")
     if not isinstance(d, dict):
@@ -119,18 +117,39 @@ def safe(v):
 
 transcript = safe(d.get("transcript_path"))
 provided = bool(transcript)
-mode = os.environ["_BL_SWEEP_MODE"]
-if provided and mode in {"all", "cost-ledger"}:
-    # Dispatch the original billing event before any extraction/cache wait.
-    import subprocess
-    try:
-        cost = subprocess.Popen([sys.executable, str(Path(os.environ["_BL_SWEEP_SCRIPTS"]) / "cost_ledger_hook.py")],
-                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        cost.stdin.write(os.environ["_BL_STOP_PAYLOAD"].encode())
-        cost.stdin.close()
-    except OSError:
-        pass
-if transcript and mode != "cost-ledger":
+print(transcript)
+print(safe(d.get("cwd")))
+print("1" if provided else "0")
+PY
+)" || _parsed=""
+
+TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
+CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
+TRANSCRIPT_PROVIDED="$(printf '%s\n' "$_parsed" | sed -n '3p')"
+[ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+# Billing remains a direct shell child so the shared process-group deadline
+# covers its full lifetime. Send the original event before expensive parsing.
+if [ "$TRANSCRIPT_PROVIDED" = "1" ]; then
+    case "$SWEEP" in
+        all|cost-ledger)
+            printf '%s' "$PAYLOAD" | nohup "$_py" "${PLUGIN_ROOT}/scripts/cost_ledger_hook.py" >/dev/null 2>&1 &
+            ;;
+    esac
+fi
+if [ "$SWEEP" = cost-ledger ]; then
+    wait
+    _noop
+fi
+
+if [ -n "$TRANSCRIPT" ]; then
+    TRANSCRIPT="$(
+        _BL_SWEEP_SOURCE="$TRANSCRIPT" _BL_SWEEP_SCRIPTS="${PLUGIN_ROOT}/scripts" \
+        _BL_SWEEP_CACHE="$STATE_DIR/transcript-cache" _BL_SWEEP_OWNER_PID="$$" "$_py" - <<'PY_NORMALIZE' 2>/dev/null
+import os, sys
+from pathlib import Path
+transcript = os.environ["_BL_SWEEP_SOURCE"]
+if transcript:
     # A native Codex payload already contains its rollout path. Normalize it
     # here too; the cwd-discovery fallback below only covers a missing path.
     sys.path.insert(0, os.environ["_BL_SWEEP_SCRIPTS"])
@@ -148,17 +167,9 @@ if transcript and mode != "cost-ledger":
         except (OSError, ValueError, ImportError, TypeError):
             transcript = ""  # preserve event identity even if adapter IO fails
 print(transcript)
-print(safe(d.get("cwd")))
-print("1" if provided else "0")
-PY
-)" || _parsed=""
-
-[ "$SWEEP" != cost-ledger ] || _noop
-
-TRANSCRIPT="$(printf '%s\n' "$_parsed" | sed -n '1p')"
-CWD="$(printf '%s\n' "$_parsed" | sed -n '2p')"
-TRANSCRIPT_PROVIDED="$(printf '%s\n' "$_parsed" | sed -n '3p')"
-[ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
+PY_NORMALIZE
+    )" || TRANSCRIPT=""
+fi
 
 # No transcript in the payload: resolve the host's own session from CWD and
 # normalize it to the Claude shape every sweep below parses. One call does both
