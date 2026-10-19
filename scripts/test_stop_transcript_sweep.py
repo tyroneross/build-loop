@@ -66,6 +66,10 @@ SWEEP_MARKERS = {
 _RECORDER = '''#!/usr/bin/env python3
 import json, os, sys
 rec = {{"sweep": {sweep!r}, "argv": sys.argv[1:]}}
+if "--transcript" in sys.argv:
+    from pathlib import Path
+    transcript = Path(sys.argv[sys.argv.index("--transcript") + 1])
+    rec["transcript_rows"] = [json.loads(line) for line in transcript.read_text().splitlines() if line.strip()]
 if {read_stdin!r}:
     try:
         rec["stdin"] = sys.stdin.read()
@@ -144,6 +148,19 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.record = self.root / "record.jsonl"
 
     def tearDown(self) -> None:
+        # Detached worker can finish sibling recorders after the first assertion.
+        # Wait for a quiet completed fixture before removing its source tree.
+        deadline = time.monotonic() + 3
+        changed = time.monotonic()
+        previous = None
+        while time.monotonic() < deadline:
+            signature = self.record.stat().st_mtime_ns if self.record.exists() else None
+            if signature != previous:
+                previous, changed = signature, time.monotonic()
+            leases = list((self.root / "fakehome/.local/state/build-loop/transcript-cache").glob(".normalized-*.lease-*.jsonl"))
+            if not leases and time.monotonic() - changed > .25:
+                break
+            time.sleep(.02)
         self.tmp.cleanup()
 
     # ---- helpers -------------------------------------------------------
@@ -169,6 +186,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         env["CLAUDE_PLUGIN_ROOT"] = str(self.root)
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
         env["BL_TEST_RECORD"] = str(self.record)
+        env["BUILD_LOOP_TRANSCRIPT_WORKER_MS"] = str(getattr(self, "worker_budget_ms", 120000))
         env["HOME"] = str(self.root / "fakehome")
         env["XDG_STATE_HOME"] = str(self.root / "fakehome" / ".local" / "state")
         return subprocess.run(
@@ -272,9 +290,9 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertEqual(len(set(normalized_paths)), 1)
         normalized = normalized_paths[0]
         self.assertNotEqual(normalized, self.transcript)
-        turns = [json.loads(line) for line in normalized.read_text().splitlines()]
+        turns = self._records("decisions")[0]["transcript_rows"]
         self.assertEqual([row["message"]["role"] for row in turns], ["user", "assistant"])
-        self.assertIn("Keep the output short.", normalized.read_text())
+        self.assertIn("Keep the output short.", json.dumps(turns))
         # Billing attribution must retain the original host path and identity.
         rows = self._records("cost-ledger")
         self.assertTrue(rows)
@@ -291,7 +309,7 @@ class StopSweepHostContractTests(unittest.TestCase):
                 adapter.write_text(
                     "from pathlib import Path\nCODEX = 'codex'\n"
                     "def detect_format(path): return CODEX\n"
-                    f"def normalize_cached(source, cache): {behavior}\n"
+                    f"def normalize_cached(source, cache, **kwargs): {behavior}\n"
                     "if __name__ == '__main__':\n"
                     f"    Path({str(discovery)!r}).write_text('unexpected discovery')\n"
                     f"    print({str(self.transcript)!r})\n"
@@ -303,6 +321,71 @@ class StopSweepHostContractTests(unittest.TestCase):
                 self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
                 self.assertFalse(discovery.exists(), "explicit path must never fall back to another session")
                 self.assertEqual({row["sweep"] for row in self._records()}, {"cost-ledger"})
+
+    def test_foreground_returns_while_normalization_is_blocked_and_cost_is_delivered(self) -> None:
+        adapter = self.root / "scripts/transcript_adapter.py"
+        adapter.unlink()
+        release = self.root / "release-worker"
+        started = self.root / "worker-started"
+        adapter.write_text(
+            "from pathlib import Path\nimport time\nCODEX='codex'\n"
+            "def detect_format(path): return CODEX\n"
+            "def normalize_cached(source, cache, **kwargs):\n"
+            f" Path({str(started)!r}).touch()\n"
+            " deadline=time.monotonic()+4\n"
+            f" while not Path({str(release)!r}).exists() and time.monotonic()<deadline: time.sleep(.02)\n"
+            " return None\n")
+        before = time.monotonic()
+        cp = self._run("all", self._payload())
+        elapsed = time.monotonic() - before
+        try:
+            self._assert_hook_contract(cp)
+            self.assertLess(elapsed, 1.5, "foreground waited for extraction")
+            rows = self._records("cost-ledger", timeout_s=2)
+            self.assertTrue(rows, "original billing event waited for extraction")
+            self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
+        finally:
+            release.touch()
+
+    def test_hung_billing_is_bounded_and_text_consumers_still_finish(self) -> None:
+        import signal
+        from unittest.mock import patch
+        self.worker_budget_ms = 1000
+        billing = self.root / "scripts/cost_ledger_hook.py"
+        billing.write_text("import os,sys,time,json\n"
+            "payload=sys.stdin.read()\n"
+            "with open(os.environ['BL_TEST_RECORD'],'a') as f: f.write(json.dumps({'sweep':'cost-ledger','argv':[],'stdin':payload,'pid':os.getpid()})+'\\n')\n"
+            "time.sleep(10)\n")
+        for mode in ("all", "cost-ledger"):
+            with self.subTest(mode=mode):
+                self.record.unlink(missing_ok=True)
+                command = 'bash "$CLAUDE_PLUGIN_ROOT/hooks/stop-transcript-sweep.sh" ' + mode
+                with patch(__name__ + '._hook_command', return_value=command):
+                    cp = self._run(mode, self._payload())
+                self._assert_hook_contract(cp)
+                rows = self._records('cost-ledger', timeout_s=2)
+                self.assertTrue(rows)
+                pid = rows[0]['pid']
+                try:
+                    self.assertEqual(json.loads(rows[0]['stdin']), json.loads(self._payload()))
+                    if mode == 'all':
+                        for consumer in ('decisions','corrections','findings'):
+                            self.assertTrue(self._records(consumer, timeout_s=2), consumer)
+                    deadline = time.monotonic() + 3
+                    alive = True
+                    while time.monotonic() < deadline:
+                        try: os.kill(pid, 0)
+                        except ProcessLookupError:
+                            alive = False
+                            break
+                        time.sleep(.02)
+                    self.assertFalse(alive, 'billing child outlived the worker deadline')
+                finally:
+                    # A RED baseline leaves this exact owned fixture running.
+                    command = subprocess.run(['ps','-p',str(pid),'-o','command='], capture_output=True, text=True).stdout
+                    if str(billing) in command:
+                        try: os.kill(pid, signal.SIGTERM)
+                        except ProcessLookupError: pass
 
     # ---- fail-open / never-block contract ------------------------------
 

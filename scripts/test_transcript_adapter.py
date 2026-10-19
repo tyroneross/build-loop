@@ -460,3 +460,126 @@ def test_unavailable_nonblocking_support_fails_closed_before_open(tmp_path,monke
     monkeypatch.setattr(ta.os,'open',lambda *args,**kwargs:pytest.fail('blocking fallback open'))
     with pytest.raises(ta.TranscriptReadError):
         with ta._open_regular_binary(source):pass
+
+
+def test_codex_real_multiblock_status_and_bounded_headers(tmp_path):
+    # Actual authorized rollout's structural shape: multiple text blocks each
+    # contain one unified-exec JSON result, including a nonzero exit code.
+    row={"type":"response_item","payload":{"type":"function_call_output","call_id":"actual-shape",
+        "output":[{"type":"text","text":json.dumps({"chunk_id":"redacted","exit_code":1,"original_token_count":1,"output":"redacted","wall_time_seconds":0.1})},
+                  {"type":"text","text":json.dumps({"chunk_id":"other","exit_code":0,"original_token_count":1,"output":"ok","wall_time_seconds":0.1})}]}}
+    event=next(ta.iter_events(_write(tmp_path/'actual.jsonl',[row])))
+    assert event['message']['content'][0]['is_error'] is True
+    for output in [json.dumps({'output':'redacted','metadata':{'exit_code':2}}),
+                   'Chunk ID: fixture\nWall time: 0.1 seconds\nProcess exited with code 2\nFinal output:\nredacted',
+                   'Chunk ID: fixture\nWall time: 0.1 seconds\nExit code: 12\nOutput:\nredacted']:
+        assert ta._codex_output_is_error(output)
+    for output in ['Chunk ID: fixture\nWall time: 0.1 seconds\nProcess exited with code 0\nFinal output:\nProcess exited with code 2',
+                   'source example\nProcess exited with code 2',
+                   'Chunk ID: fixture\nFinal output:\nExit code: 2']:
+        assert not ta._codex_output_is_error(output)
+
+
+def test_original_source_locator_survives_cache_and_second_normalization(tmp_path):
+    source=_write(tmp_path/'original.jsonl',[{'type':'session_meta','payload':{'session_id':'original-session'}},
+        {'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':'Always keep provenance.'}]}}])
+    cached=ta.normalize_cached(source,tmp_path/'cache')
+    assert ta.session_key(source)=='original-session'
+    first=next(ta.iter_events(cached,include_provenance=True))
+    assert first['_source']['path']==str(source.resolve())
+    second=tmp_path/'second.jsonl';ta.normalize_to_file(cached,second)
+    assert next(ta.iter_events(second,include_provenance=True))['_source']==first['_source']
+
+
+def test_user_instructions_context_excluded_without_losing_response_only_human(tmp_path):
+    rows=[{'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':text}]}}
+          for text in ['<user_instructions>Always inject context.</user_instructions>','Please fix the parser.']]
+    events=list(ta.iter_events(_write(tmp_path/'source.jsonl',rows)))
+    assert [ta.human_text(r['message']['content']) for r in events]==['Please fix the parser.']
+
+
+def test_lease_survives_competing_publication_and_budget_reap(tmp_path,monkeypatch):
+    import os
+    source=_write(tmp_path/'one.jsonl',CODEX_ROWS);cache=tmp_path/'cache'
+    leased=ta.normalize_cached(source,cache)
+    expected=leased.read_bytes()
+    monkeypatch.setattr(ta,'CACHE_MAX_ENTRIES',1)
+    other=_write(tmp_path/'two.jsonl',CLAUDE_ROWS)
+    assert ta.normalize_cached(other,cache) is None  # readers own the entire cap
+    assert leased.read_bytes()==expected
+    assert ta._cache_usage(cache)[1]<=1
+    leased.unlink()
+    assert ta.normalize_cached(other,cache) is not None
+
+
+def test_orphan_parts_reclaimed_but_live_writer_parts_retained(tmp_path):
+    import os,time,subprocess,sys
+    cache=tmp_path/'cache';cache.mkdir()
+    child=subprocess.Popen([sys.executable,'-c','pass']);child.wait()
+    dead=cache/f'.normalized-old.jsonl.{child.pid}.dead.part';dead.write_text('orphan')
+    live=cache/f'.normalized-live.jsonl.{os.getpid()}.live.part';live.write_text('active')
+    for p in (dead,live):os.utime(p,(time.time()-600,time.time()-600))
+    ta._reap(cache)
+    assert not dead.exists() and live.read_text()=='active'
+
+
+def test_cache_lock_contention_is_bounded(tmp_path):
+    import time
+    from atomic_io import LockedFile
+    source=_write(tmp_path/'source.jsonl',CODEX_ROWS);cache=tmp_path/'cache'
+    with LockedFile(cache/'normalization'):
+        before=time.monotonic()
+        assert ta.normalize_cached(source,cache) is None
+        assert time.monotonic()-before<1.5
+
+
+def test_dead_worker_lease_is_reaped_without_touching_active_reader(tmp_path):
+    import os,subprocess,sys
+    source=_write(tmp_path/'source.jsonl',CODEX_ROWS);cache=tmp_path/'cache'
+    active=ta.normalize_cached(source,cache,lease_owner_pid=os.getpid())
+    child=subprocess.Popen([sys.executable,'-c','pass']);child.wait()
+    dead=cache/f'.normalized-fixture.lease-{child.pid}-dead.jsonl'
+    os.link(active,dead)
+    ta._reap(cache)
+    assert not dead.exists() and active.exists()
+    active.unlink()
+
+
+def test_structured_tool_result_and_malformed_blocks_keep_safe_status(tmp_path):
+    rows=[{'type':'response_item','payload':{'type':'function_call_output','call_id':'dict',
+           'output':{'output':'redacted','metadata':{'exit_code':3}}}},
+          {'type':'response_item','payload':{'type':'function_call_output','call_id':'bad',
+           'output':[{'type':'text','text':None},{'type':'image','text':'ERROR: unrelated image caption'}]}}]
+    events=list(ta.iter_events(_write(tmp_path/'source.jsonl',rows)))
+    assert [event['message']['content'][0]['is_error'] for event in events]==[True,False]
+
+
+def test_killed_normalizer_parts_are_reclaimed_without_deleting_live_writer(tmp_path):
+    import os,time,subprocess,sys
+    cache=tmp_path/'cache';cache.mkdir()
+    source=tmp_path/'source.jsonl';source.write_text('{}\n')
+    ready=tmp_path/'ready'
+    code=f"import sys,time;sys.path.insert(0,{str(Path(__file__).resolve().parent)!r});from pathlib import Path;import transcript_adapter as a\ndef records(*args,**kwargs):\n yield {{'type':'user','message':{{'role':'user','content':'fixture'}}}}\n Path({str(ready)!r}).touch()\n time.sleep(10)\na.iter_events=records\na.normalize_to_file(Path({str(source)!r}),Path({str(cache/'normalized-killed.jsonl')!r}))"
+    child=subprocess.Popen([sys.executable,'-c',code],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    try:
+        deadline=time.monotonic()+3
+        while not ready.exists() and time.monotonic()<deadline:time.sleep(.01)
+        assert ready.exists()
+        child.kill();child.wait(timeout=2)
+        parts=list(cache.glob('.normalized-*.part'));assert len(parts)==1
+        live=cache/f'.normalized-live.jsonl.{os.getpid()}.live.part';live.write_text('live')
+        for part in [*parts,live]:os.utime(part,(time.time()-600,time.time()-600))
+        ta._reap(cache)
+        assert not parts[0].exists() and live.exists()
+    finally:
+        if child.poll() is None:child.kill();child.wait(timeout=2)
+        child.stderr.close()
+
+
+def test_normalized_publication_respects_downstream_record_budget(tmp_path,monkeypatch):
+    import pytest
+    source=_write(tmp_path/'source.jsonl',[{'type':'user','message':{'role':'user','content':'fixture'}}])
+    monkeypatch.setattr(ta,'MAX_RECORD_BYTES',source.stat().st_size+1)
+    dest=tmp_path/'normalized.jsonl'
+    with pytest.raises(ta.TranscriptLimitError):ta.normalize_to_file(source,dest)
+    assert not dest.exists() and not list(tmp_path.glob('*.part'))
