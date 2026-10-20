@@ -119,7 +119,7 @@ def publish_once(path, data):
     try:
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
             temporary = Path(output.name)
-            json.dump(data, output)
+            json.dump(data, output, allow_nan=False)
             output.flush()
             os.fsync(output.fileno())
         os.link(temporary, path)

@@ -125,6 +125,14 @@ class RepairBoundaries(unittest.TestCase):
                 self.assertEqual(json.loads(out.call_args[0][0])["status"], "ok")
                 self.assertEqual(state.read_bytes(), original)
 
+    def test_nonfinite_prediction_is_not_published(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "effort.json"
+            with self.assertRaises(ValueError):
+                ep.publish_once(path, {"gut_min": float("nan")})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(Path(d).iterdir()), [])
+
     def test_failed_publication_leaves_no_partial_target(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "result.json"
