@@ -701,8 +701,15 @@ def test_lenient_projection_preserves_prose_and_incomplete_coverage(tmp_path):
         tool_trace.ingest_transcript(tmp_path, projected)
     assert tool_trace.ingestion_incomplete(tool_trace.summarize(tmp_path))
     # The actual SessionEnd entrypoint must receive the same usable prose.
-    from hooks.session_end_retro_sweep import normalize_transcript
-    retro_source, _ = normalize_transcript(source, tmp_path / 'retro-cache')
+    # Rally's standalone hooks.py may be on sys.path during full collection;
+    # load this exact entrypoint without relying on the ambiguous hooks name.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "session_end_retro_projection_under_test",
+        Path(__file__).parent / "hooks/session_end_retro_sweep.py")
+    sweep = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sweep)
+    retro_source, _ = sweep.normalize_transcript(source, tmp_path / 'retro-cache')
     assert retro_source != source
     assert 'Always preserve my decision.' in retro_source.read_text()
 
