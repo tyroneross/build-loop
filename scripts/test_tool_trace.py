@@ -489,3 +489,17 @@ def test_malformed_run_identity_cannot_hide_current_failure(tmp_path):
             'ingestion':{'receipts':[{'run_id':identity,'status':'skipped'}]}}})
     assert not trace.ingestion_incomplete({'coverage':{'run_filter':'ours',
         'ingestion':{'receipts':[{'run_id':'peer','status':'skipped'}]}}})
+
+
+def test_malformed_receipt_timestamp_cannot_hide_failure(tmp_path):
+    import time
+    path = tmp_path / trace.TRACE_PATH
+    path.parent.mkdir(parents=True)
+    coverage = trace._coverage_path(path)
+    for timestamp in (False, True, None, "0", [], {}):
+        coverage.write_text(json.dumps({"receipts": [{"run_id": "ours",
+            "status": "skipped", "updated_at_unix": timestamp}]}))
+        assert trace.ingestion_incomplete(trace.summarize(tmp_path, "ours", recent_seconds=60))
+    coverage.write_text(json.dumps({"receipts": [{"run_id": "ours",
+        "status": "skipped", "updated_at_unix": int(time.time()) - 3600}]}))
+    assert not trace.ingestion_incomplete(trace.summarize(tmp_path, "ours", recent_seconds=60))

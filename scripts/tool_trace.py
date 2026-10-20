@@ -521,7 +521,7 @@ def ingestion_incomplete(summary: dict) -> bool:
             return True
         if not _run_matches_or_unknown(receipt.get("run_id"), run_id):
             continue
-        if cutoff and isinstance(receipt.get("updated_at_unix"), int) and receipt["updated_at_unix"] < cutoff:
+        if cutoff and type(receipt.get("updated_at_unix")) is int and receipt["updated_at_unix"] < cutoff:
             continue
         if receipt.get("status") != "ingested":
             return True
