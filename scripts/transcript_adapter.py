@@ -336,7 +336,7 @@ def _codex_output_is_error(output: str) -> bool:
 
 _CODEX_META_PREFIXES = ("<recommended_plugins>", "# AGENTS.md instructions for ",
                         "<environment_context>", "<external_codex_apps_open_page>", "<user_instructions>")
-PARSER_VERSION = "6"
+PARSER_VERSION = "7"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 
@@ -452,7 +452,7 @@ def _supported_codex_record(obj: dict[str, Any]) -> bool:
     return False
 
 
-def iter_events(path: Path, *, include_provenance: bool = False, require_complete: bool = False) -> Iterator[dict[str, Any]]:
+def iter_events(path: Path, *, include_provenance: bool = False, require_complete: bool = False, diagnostics: dict | None = None) -> Iterator[dict[str, Any]]:
     """One streaming parse; UI prose wins over its adjacent API representation.
 
     Buffer at most one prose record while choosing between representations.
@@ -480,6 +480,13 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                         unsupported += 1
                     continue
                 kind = obj.get("type")
+                if kind == "transcript_coverage":
+                    # Projection metadata survives re-normalization and cannot
+                    # turn an incomplete source into complete trace coverage.
+                    unsupported += 1
+                    if diagnostics is not None and isinstance(obj.get("source_path"), str):
+                        diagnostics["source_path"] = obj["source_path"]
+                    continue
                 if isinstance(kind, str) and kind in _METADATA_RECORDS:
                     continue
                 row_format = (CODEX if isinstance(kind, str) and kind in _CODEX_RECORDS
@@ -547,30 +554,40 @@ def iter_events(path: Path, *, include_provenance: bool = False, require_complet
                     yield event
         if pending is not None:
             yield pending
+        if diagnostics is not None:
+            diagnostics["unsupported_records"] = unsupported
         if require_complete and unsupported:
             raise TranscriptReadError(f"unsupported transcript records: {unsupported}")
     except OSError as exc:
         if isinstance(exc, TranscriptReadError):
             raise
-        if consumed or require_complete:
+        if consumed or require_complete or diagnostics is not None:
             raise TranscriptReadError("transcript read incomplete") from exc
         return
 
 
 def normalize_to_file(src: Path, dest: Path) -> int:
-    """Publish a complete reusable normalized artifact, never partial output."""
+    """Publish usable turns atomically, retaining incomplete-source provenance."""
     dest = Path(dest)
     temporary = dest.with_name(f".{dest.name}.{os.getpid()}.{secrets.token_hex(4)}.part")
     count = published_bytes = 0
+    diagnostics = {}
     try:
         with temporary.open("x", encoding="utf-8") as handle:
-            for event in iter_events(src, include_provenance=True, require_complete=True):
+            for event in iter_events(src, include_provenance=True, diagnostics=diagnostics):
                 serialized = json.dumps(event) + "\n"  # ensure_ascii keeps character/byte lengths equal
                 published_bytes += len(serialized)
                 if len(serialized) > MAX_RECORD_BYTES or published_bytes > MAX_SOURCE_BYTES:
                     raise TranscriptLimitError("normalized artifact exceeds reader byte budget")
                 handle.write(serialized)
                 count += 1
+            if diagnostics.get("unsupported_records"):
+                marker = json.dumps({"type": "transcript_coverage", "complete": False,
+                    "unsupported_records": diagnostics["unsupported_records"],
+                    "source_path": diagnostics.get("source_path", str(Path(src).resolve()))}) + "\n"
+                if published_bytes + len(marker) > MAX_SOURCE_BYTES:
+                    raise TranscriptLimitError("normalized artifact exceeds reader byte budget")
+                handle.write(marker)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, dest)

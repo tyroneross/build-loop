@@ -204,6 +204,8 @@ _run_one() {
     case "$1" in
     traces)
         if [ -n "$TRANSCRIPT" ]; then
+            # Strict ingestion rejects an incomplete projection's persistent
+            # coverage marker; reuse the shared bytes without reparsing source.
             local trace_args=(--workdir "$CWD" ingest --transcript "$TRANSCRIPT" --session-id "$SESSION_ID")
             if [ -n "$ORIGINAL_TRANSCRIPT" ]; then
                 trace_args+=(--source-locator "$ORIGINAL_TRANSCRIPT")

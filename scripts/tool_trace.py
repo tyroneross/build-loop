@@ -520,7 +520,7 @@ def ingestion_incomplete(summary: dict) -> bool:
             continue
         if receipt.get("status") != "ingested":
             return True
-    return bool(coverage.get("invalid_trace_records"))
+    return bool(coverage.get("invalid_trace_records_in_window", coverage.get("invalid_trace_records")))
 
 
 def summarize_path(
@@ -533,16 +533,35 @@ def summarize_path(
     tools: Counter = Counter()
     hashes: Counter = Counter()
     durations: list[float] = []
-    diagnostics = {"invalid_records": 0}
+    diagnostics = {"invalid_records": 0, "invalid_records_in_window": 0}
+    cutoff_ns = time.time_ns() - recent_seconds * 1_000_000_000 if recent_seconds is not None else None
     remaining = [MAX_HISTORY_BYTES]
     retained = [path, *(path.with_suffix(path.suffix + f".{i}") for i in range(1, ROTATED_FILES + 1))]
-    rows = (row for history in retained for row in _iter_trace_rows(history, remaining=remaining, diagnostics=diagnostics))
-    for row in rows:
+    def retained_rows():
+        for history in retained:
+            try:
+                source_recent = cutoff_ns is None or history.stat().st_mtime_ns >= cutoff_ns
+            except FileNotFoundError:
+                continue
+            invalid = {"invalid_records": 0}
+            for row in _iter_trace_rows(history, remaining=remaining, diagnostics=invalid):
+                yield row, source_recent
+            diagnostics["invalid_records"] += invalid["invalid_records"]
+            if source_recent:
+                # Broken JSON cannot establish a run/time. File mtime bounds
+                # its possible recency conservatively, including rotations.
+                diagnostics["invalid_records_in_window"] += invalid["invalid_records"]
+    for row, source_recent in retained_rows():
         attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
         status = row.get("status")
         if (not isinstance(attrs.get("gen_ai.tool.name"), str) or not _valid_span_status(row)
                 or not isinstance(attrs.get("gen_ai.tool.call.arguments.sha256"), (str, type(None)))):
             diagnostics["invalid_records"] += 1
+            timestamp = row.get("end_time_unix_nano") or row.get("start_time_unix_nano")
+            relevant_run = not run_id or attrs.get("build_loop.run_id") in (None, run_id)
+            relevant_time = cutoff_ns is None or (timestamp >= cutoff_ns if type(timestamp) is int else source_recent)
+            if relevant_run and relevant_time:
+                diagnostics["invalid_records_in_window"] += 1
             continue
         if row.get("event") != "reconciled":
             continue
@@ -575,7 +594,8 @@ def summarize_path(
                      "retained_rotations": ROTATED_FILES,
                      "recent_cutoff_unix": int(time.time()) - recent_seconds if recent_seconds is not None else None,
                      "ingestion": _read_receipts(_coverage_path(path)),
-                     "invalid_trace_records": diagnostics["invalid_records"]},
+                     "invalid_trace_records": diagnostics["invalid_records"],
+                     "invalid_trace_records_in_window": diagnostics["invalid_records_in_window"]},
     }
 
 
