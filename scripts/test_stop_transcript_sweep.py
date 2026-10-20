@@ -367,6 +367,34 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertEqual(json.loads(rows[0]["stdin"]), json.loads(self._payload()))
 
+    def test_unsupported_tool_keeps_registered_mining_and_strict_trace_receipt(self):
+        # Use the real strict trace consumer; recorder stubs still inspect the
+        # exact projected content received by every mining consumer.
+        (self.root / "scripts/tool_trace.py").write_text(
+            "import sys\nsys.path.insert(0," + repr(str(REPO / "scripts")) + ")\n"
+            "from tool_trace import main\nraise SystemExit(main())\n")
+        session = json.loads(self._payload())["session_id"]
+        self.transcript.write_text("\n".join(json.dumps(row) for row in [
+            {"type":"session_meta","payload":{"id":session,"cwd":str(self.workdir)}},
+            {"type":"event_msg","payload":{"type":"user_message","message":"Decision: preserve the user's prose."}},
+            {"type":"response_item","payload":{"type":"local_shell_call","call_id":"unknown"}},
+            {"type":"event_msg","payload":{"type":"agent_message","message":"Confirmed finding: keep usable prose."}},
+        ]) + "\n")
+        self._assert_hook_contract(self._run("all", self._payload()))
+        for sweep in ("decisions", "corrections", "findings"):
+            rows = self._records(sweep)
+            self.assertTrue(rows, sweep)
+            self.assertIn("preserve the user's prose", json.dumps(rows[0]["transcript_rows"]))
+        coverage = self.workdir / ".build-loop/telemetry/tool-traces.coverage.json"
+        deadline = time.monotonic() + 3
+        while not coverage.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(coverage.exists())
+        receipt = json.loads(coverage.read_text())["receipts"][0]
+        self.assertEqual(receipt["status"], "skipped")
+        self.assertEqual(receipt["source_locator"], str(self.transcript))
+        self.assertEqual(receipt["error_type"], "TranscriptReadError")
+
     def test_discovered_unsupported_source_records_coverage_then_reuses_original_locator(self):
         from unittest.mock import patch
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True, capture_output=True)

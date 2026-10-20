@@ -623,7 +623,10 @@ def test_complete_reader_rejects_cross_host_tool_records(tmp_path):
         source = _write(tmp_path / "mixed.jsonl", rows)
         with pytest.raises(ta.TranscriptReadError, match="unsupported transcript records"):
             list(ta.iter_events(source, require_complete=True))
-        assert ta.normalize_cached(source, tmp_path / "cache") is None
+        projected = ta.normalize_cached(source, tmp_path / "cache")
+        assert projected is not None
+        with pytest.raises(ta.TranscriptReadError):
+            list(ta.iter_events(projected, require_complete=True))
 
 
 def test_complete_reader_rejects_unknown_nested_codex_records(tmp_path):
@@ -673,3 +676,40 @@ def test_discovery_json_retains_source_on_normalization_failure(tmp_path, monkey
     assert receipt['source_path'] == str(source)
     assert receipt['status'] == 'normalized'
     assert Path(receipt['normalized_path']).is_file()
+
+
+def test_lenient_projection_preserves_prose_and_incomplete_coverage(tmp_path):
+    import pytest
+    source = _write(tmp_path / 'source.jsonl', [
+        {'type':'session_meta','payload':{'id':'s','cwd':str(tmp_path)}},
+        {'type':'event_msg','payload':{'type':'user_message','message':'Always preserve my decision.'}},
+        {'type':'response_item','payload':{'type':'local_shell_call','call_id':'unknown'}},
+        {'type':'event_msg','payload':{'type':'agent_message','message':'I will preserve this decision.'}},
+    ])
+    projected = ta.normalize_cached(source, tmp_path / 'cache')
+    assert projected is not None
+    assert 'Always preserve my decision.' in projected.read_text()
+    assert len(list(ta.iter_events(projected))) == 2
+    with pytest.raises(ta.TranscriptReadError):
+        list(ta.iter_events(projected, require_complete=True))
+    again = tmp_path / 'again.jsonl'
+    ta.normalize_to_file(projected, again)
+    with pytest.raises(ta.TranscriptReadError):
+        list(ta.iter_events(again, require_complete=True))
+    import tool_trace
+    with pytest.raises(ta.TranscriptReadError):
+        tool_trace.ingest_transcript(tmp_path, projected)
+    assert tool_trace.ingestion_incomplete(tool_trace.summarize(tmp_path))
+    # The actual SessionEnd entrypoint must receive the same usable prose.
+    from hooks.session_end_retro_sweep import normalize_transcript
+    retro_source, _ = normalize_transcript(source, tmp_path / 'retro-cache')
+    assert retro_source != source
+    assert 'Always preserve my decision.' in retro_source.read_text()
+
+
+def test_lenient_normalization_keeps_missing_source_as_read_failure(tmp_path):
+    import pytest
+    destination = tmp_path / 'normalized.jsonl'
+    with pytest.raises(ta.TranscriptReadError):
+        ta.normalize_to_file(tmp_path / 'missing.jsonl', destination)
+    assert not destination.exists()

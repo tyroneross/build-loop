@@ -433,3 +433,41 @@ def test_summary_counts_errors_in_retained_rotations(tmp_path):
     summary = trace.summarize(tmp_path)
     assert summary['tool_calls'] == 1
     assert summary['tool_errors'] == 1
+
+
+def test_old_invalid_trace_diagnostic_does_not_poison_recent_window(tmp_path):
+    import os, time
+    path = tmp_path / trace.TRACE_PATH
+    path.parent.mkdir(parents=True)
+    old = path.with_suffix('.jsonl.1')
+    old.write_text('{truncated\n')
+    old_time = time.time() - 3600
+    os.utime(old, (old_time, old_time))
+    current = trace.build_span(workdir=tmp_path, session_id='s', tool_name='Bash', tool_use_id='current', phase='reconciled')
+    path.write_text(json.dumps(current) + '\n')
+    recent = trace.summarize(tmp_path, recent_seconds=60)
+    assert recent['coverage']['invalid_trace_records'] == 1
+    assert not trace.ingestion_incomplete(recent)
+    assert trace.ingestion_incomplete(trace.summarize(tmp_path))
+    # A recently written invalid line has no trustworthy timestamp/run: fail safe.
+    with path.open('a') as handle:
+        handle.write('{recently truncated\n')
+    assert trace.ingestion_incomplete(trace.summarize(tmp_path, recent_seconds=60))
+
+
+def test_invalid_span_with_other_run_or_old_timestamp_is_diagnostic_only(tmp_path):
+    import time
+    path = tmp_path / trace.TRACE_PATH
+    path.parent.mkdir(parents=True)
+    row = {'event':'reconciled','status':{'code':'INVALID'},
+           'end_time_unix_nano':time.time_ns(),
+           'attributes':{'build_loop.run_id':'peer','gen_ai.tool.name':'Bash'}}
+    path.write_text(json.dumps(row) + '\n')
+    assert not trace.ingestion_incomplete(trace.summarize(tmp_path, 'ours', recent_seconds=60))
+    row['attributes']['build_loop.run_id'] = 'ours'
+    row['end_time_unix_nano'] = time.time_ns() - 3600 * 1_000_000_000
+    path.write_text(json.dumps(row) + '\n')
+    assert not trace.ingestion_incomplete(trace.summarize(tmp_path, 'ours', recent_seconds=60))
+    row['end_time_unix_nano'] = time.time_ns()
+    path.write_text(json.dumps(row) + '\n')
+    assert trace.ingestion_incomplete(trace.summarize(tmp_path, 'ours', recent_seconds=60))
