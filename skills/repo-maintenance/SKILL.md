@@ -145,6 +145,10 @@ Give every worktree, branch, stash, dirty path set, sibling source, and artifact
 
 Before mutation, create dated annotated recovery tags for pre-integration `main`, every branch head, and every stash commit under `archive/pre-closeout-YYYY-MM-DD/`. Preserve dirty state including untracked files. Prefer fast-forward integration; re-run the canonical verifier on exact final `main` after the last mutation.
 
+### Merging several branches
+
+Triggers: "merge these branches", "land all ready branches", "multi merge", "merge plan". Plan order and batches before merging anything; do not merge one at a time. First check for a native queue (e.g. Easy Terminal: `bin/et` containing "merge plan" means use `et merge plan` / `et merge next --batch N`). Otherwise run `python3 "$REPO_MAINTENANCE_ROOT/scripts/merge_plan.py" --repo "$PWD" --auto --batch 3 --json` (read-only). Choosing N, bisecting a failed batch and trade-offs: [references/merge-planning.md](references/merge-planning.md).
+
 ### Grade the base, not the test result
 
 Before assigning `integrate` to any branch, score it. A passing suite describes the branch **at its own base**, and says nothing about merging into today's `main`:
