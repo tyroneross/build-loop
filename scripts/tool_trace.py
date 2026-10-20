@@ -503,6 +503,11 @@ def _iter_trace_rows(path: Path, *, remaining: list[int] | None = None, diagnost
         return
 
 
+def _run_matches_or_unknown(value, run_filter):
+    """Only a nonempty string establishes a different run identity."""
+    return not run_filter or not isinstance(value, str) or not value.strip() or value == run_filter
+
+
 def ingestion_incomplete(summary: dict) -> bool:
     """Known ingestion failures invalidate a zero-error inference; absence is unknown."""
     coverage = summary.get("coverage") or {}
@@ -514,7 +519,7 @@ def ingestion_incomplete(summary: dict) -> bool:
     for receipt in ingestion.get("receipts") or []:
         if not isinstance(receipt, dict):
             return True
-        if run_id and receipt.get("run_id") not in (None, run_id):
+        if not _run_matches_or_unknown(receipt.get("run_id"), run_id):
             continue
         if cutoff and isinstance(receipt.get("updated_at_unix"), int) and receipt["updated_at_unix"] < cutoff:
             continue
@@ -558,7 +563,7 @@ def summarize_path(
                 or not isinstance(attrs.get("gen_ai.tool.call.arguments.sha256"), (str, type(None)))):
             diagnostics["invalid_records"] += 1
             timestamp = row.get("end_time_unix_nano") or row.get("start_time_unix_nano")
-            relevant_run = not run_id or attrs.get("build_loop.run_id") in (None, run_id)
+            relevant_run = _run_matches_or_unknown(attrs.get("build_loop.run_id"), run_id)
             relevant_time = cutoff_ns is None or (timestamp >= cutoff_ns if type(timestamp) is int else source_recent)
             if relevant_run and relevant_time:
                 diagnostics["invalid_records_in_window"] += 1

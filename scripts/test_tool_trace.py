@@ -471,3 +471,21 @@ def test_invalid_span_with_other_run_or_old_timestamp_is_diagnostic_only(tmp_pat
     row['end_time_unix_nano'] = time.time_ns()
     path.write_text(json.dumps(row) + '\n')
     assert trace.ingestion_incomplete(trace.summarize(tmp_path, 'ours', recent_seconds=60))
+
+
+def test_malformed_run_identity_cannot_hide_current_failure(tmp_path):
+    import time
+    path = tmp_path / trace.TRACE_PATH
+    path.parent.mkdir(parents=True)
+    for identity in ([], {}, False, 0, '', '   '):
+        row = {'event':'reconciled','status':{'code':'INVALID'},
+               'end_time_unix_nano':time.time_ns(),
+               'attributes':{'build_loop.run_id':identity,'gen_ai.tool.name':'Bash'}}
+        path.write_text(json.dumps(row) + '\n')
+        summary = trace.summarize(tmp_path, 'ours', recent_seconds=60)
+        assert summary['coverage']['invalid_trace_records_in_window'] == 1
+        assert trace.ingestion_incomplete(summary)
+        assert trace.ingestion_incomplete({'coverage':{'run_filter':'ours',
+            'ingestion':{'receipts':[{'run_id':identity,'status':'skipped'}]}}})
+    assert not trace.ingestion_incomplete({'coverage':{'run_filter':'ours',
+        'ingestion':{'receipts':[{'run_id':'peer','status':'skipped'}]}}})
