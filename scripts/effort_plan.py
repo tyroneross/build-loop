@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import tempfile
 import os
 import subprocess
 import sys
@@ -52,7 +54,8 @@ def run_effort(args: list[str]) -> dict | None:
     if proc.returncode != 0:
         return None
     try:
-        return json.loads(proc.stdout)
+        result = json.loads(proc.stdout)
+        return result if isinstance(result, dict) else None
     except json.JSONDecodeError:
         return None
 
@@ -102,8 +105,31 @@ def critical_path(chunks: list[dict], est: dict[str, float]) -> tuple[float, lis
     return max((best(c["id"]) for c in chunks), key=lambda p: p[0], default=(0.0, []))
 
 
+def valid_estimate(value):
+    return (isinstance(value, dict) and type(value.get("n")) is int and value["n"] > 0
+            and isinstance(value.get("scope"), str)
+            and all(type(value.get(k)) in (int, float) and math.isfinite(value[k]) and value[k] >= 0
+                    for k in ("typical_min", "slow_min")))
+
+
+def publish_once(path, data):
+    """Publish fully written JSON without replacing another writer's result."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            json.dump(data, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def build_plan(chunks: list[dict], lookups: dict[str, dict | None]) -> dict:
-    missing = [c["id"] for c in chunks if not lookups.get(c["id"]) or not lookups[c["id"]].get("n") or any(not isinstance(lookups[c["id"]].get(k), (int, float)) for k in ("typical_min", "slow_min"))]
+    missing = [c["id"] for c in chunks if not valid_estimate(lookups.get(c["id"]))]
     if missing:
         return {"status": "unavailable", "reason": "missing measured estimates: " + ", ".join(missing), "waves": waves(chunks)}
     typ = {cid: (r or {}).get("typical_min", 0.0) for cid, r in lookups.items()}
@@ -157,13 +183,28 @@ def render(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def cmd_plan(args) -> int:
+def _cmd_plan(args) -> int:
     chunks = json.loads(Path(args.chunks).read_text())
+    if not isinstance(chunks, list) or not chunks:
+        raise ValueError("chunks must be a nonempty list")
+    ids = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not isinstance(chunk.get("id"), str) or not chunk["id"]:
+            raise ValueError("each chunk requires a nonempty id")
+        ids.append(chunk["id"])
+        if "lines" in chunk and (type(chunk["lines"]) is not int or chunk["lines"] < 0):
+            raise ValueError("chunk lines must be a nonnegative integer")
+        deps = chunk.get("depends_on", [])
+        if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+            raise ValueError("depends_on must be a list of ids")
+    if len(set(ids)) != len(ids):
+        raise ValueError("chunk ids must be unique")
+    waves(chunks)
     if not EFFORT_SCRIPT.exists():
         plan = {"status": "unavailable", "reason": f"effort tool not found at {EFFORT_SCRIPT}"}
     else:
         lookups = {c["id"]: lookup(c) for c in chunks}
-        if all(not r or not r.get("n") for r in lookups.values()):
+        if all(not valid_estimate(r) for r in lookups.values()):
             plan = {"status": "unavailable",
                     "reason": "effort lookup failed; run `effort.py index` to build the store"}
         else:
@@ -183,17 +224,15 @@ def cmd_plan(args) -> int:
         state = Path(args.workdir) / STATE_FILE / args.run_id / "effort.json"
         state.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with state.open("x") as output:
-                json.dump({"run_id": args.run_id, "recorded_at": time.time(),
-                           "gut_min": args.gut, "plan": plan}, output, indent=2)
+            publish_once(state, {"run_id": args.run_id, "recorded_at": time.time(),
+                                 "gut_min": args.gut, "plan": plan})
         except FileExistsError:
-            print("error: this run already has a recorded prediction", file=sys.stderr)
-            return 2
+            print("warning: keeping this run's first prediction", file=sys.stderr)
     print(json.dumps(plan, indent=2) if args.json else render(plan))
     return 0
 
 
-def cmd_close(args) -> int:
+def _cmd_close(args) -> int:
     if not args.run_id or Path(args.run_id).name != args.run_id or args.run_id in (".", ".."):
         print("status: nothing to close (no valid --run-id)")
         return 0
@@ -203,7 +242,7 @@ def cmd_close(args) -> int:
         return 0
     receipt = state.with_name("effort-result.json")
     if receipt.exists():
-        print(receipt.read_text().strip())
+        print(json.dumps(json.loads(receipt.read_text())))
         return 0
     data = json.loads(state.read_text())
     actual = max(0.0, (time.time() - data["recorded_at"]) / 60)
@@ -213,12 +252,27 @@ def cmd_close(args) -> int:
               "gut_ratio": data["gut_min"] / actual if actual else None,
               "lookup_ratio": lookup_min / actual if actual else None}
     try:
-        with receipt.open("x") as output:
-            json.dump(result, output, indent=2)
+        publish_once(receipt, result)
     except FileExistsError:
         result = json.loads(receipt.read_text())
     print(json.dumps(result))
     return 0
+
+
+def _degrade(fn, args):
+    try:
+        return fn(args)
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+        print(json.dumps({"status": "unavailable", "reason": str(exc)}))
+        return 0
+
+
+def cmd_plan(args):
+    return _degrade(_cmd_plan, args)
+
+
+def cmd_close(args):
+    return _degrade(_cmd_close, args)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -111,5 +111,63 @@ class RecordedPlan(unittest.TestCase):
             self.assertIsNone(ep.run_effort(["lookup"]))
 
 
+class RepairBoundaries(unittest.TestCase):
+    def test_replan_prints_plan_and_preserves_first_prediction(self):
+        with tempfile.TemporaryDirectory() as d:
+            chunks = Path(d) / "chunks.json"
+            chunks.write_text(json.dumps(CHUNKS))
+            argv = ["plan", "--chunks", str(chunks), "--workdir", d, "--run-id", "replan", "--record", "--gut", "20", "--json"]
+            with mock.patch.object(ep, "EFFORT_SCRIPT", Path(__file__)), mock.patch.object(ep, "lookup", return_value=lk(2,3)), mock.patch("builtins.print") as out:
+                self.assertEqual(ep.main(argv), 0)
+                state = Path(d) / ".build-loop/runs/replan/effort.json"
+                original = state.read_bytes()
+                self.assertEqual(ep.main(argv), 0)
+                self.assertEqual(json.loads(out.call_args[0][0])["status"], "ok")
+                self.assertEqual(state.read_bytes(), original)
+
+    def test_failed_publication_leaves_no_partial_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "result.json"
+            with mock.patch.object(ep.os, "link", side_effect=OSError("disk unavailable")):
+                with self.assertRaises(OSError): ep.publish_once(path, {"payload": "x" * 50000})
+            self.assertFalse(path.exists())
+            self.assertEqual(list(Path(d).iterdir()), [])
+
+    def test_concurrent_publication_keeps_one_complete_result(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "result.json"
+            def write(value):
+                try: ep.publish_once(path, {"payload": value * 50000})
+                except FileExistsError: return "lost"
+                return "won"
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(write, ("a", "b")))
+            self.assertEqual(sorted(outcomes), ["lost", "won"])
+            self.assertIn(json.loads(path.read_text())["payload"], ("a" * 50000, "b" * 50000))
+            self.assertEqual(len(list(Path(d).iterdir())), 1)
+
+    def test_invalid_saved_json_degrades(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / ".build-loop/runs/bad/effort.json"
+            state.parent.mkdir(parents=True); state.write_text("{")
+            with mock.patch("builtins.print") as out:
+                self.assertEqual(ep.main(["close", "--workdir", d, "--run-id", "bad"]), 0)
+                self.assertEqual(json.loads(out.call_args[0][0])["status"], "unavailable")
+
+    def test_malformed_chunks_and_lookup_replies_degrade(self):
+        for reply in ([], {"n": "five"}, {"n": 2, "scope": None}, {"n": 2, "scope": "all", "typical_min": True, "slow_min": 3}):
+            with self.subTest(reply=reply), tempfile.TemporaryDirectory() as d:
+                chunks = Path(d) / "chunks.json"; chunks.write_text(json.dumps(CHUNKS))
+                with mock.patch.object(ep, "EFFORT_SCRIPT", Path(__file__)), mock.patch.object(ep, "lookup", return_value=reply), mock.patch("builtins.print") as out:
+                    self.assertEqual(ep.main(["plan", "--chunks", str(chunks), "--json"]), 0)
+                    self.assertEqual(json.loads(out.call_args[0][0])["status"], "unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            chunks = Path(d) / "chunks.json"; chunks.write_text('[{"id":"one","lines":"invalid"}]')
+            with mock.patch("builtins.print") as out:
+                self.assertEqual(ep.main(["plan", "--chunks", str(chunks)]), 0)
+                self.assertEqual(json.loads(out.call_args[0][0])["status"], "unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
