@@ -13,6 +13,7 @@ Plan the order and batches before merging two or more branches. Merging one at a
 If the repo has its own queue, use it instead of `merge_plan.py`.
 
 - Easy Terminal: `et merge plan` and `et merge next --batch N`. Detect it with `grep -q "merge plan" bin/et` (or `et merge --help`).
+- Easy Terminal readiness: finished branches enter the queue through `et merge submit --branch B --sha S --tests "<results>"` (detect with `grep -q "merge submit" bin/et`); `et merge entries` lists them. A queue entry is the only readiness signal; a prose "Ready to integrate:" note is not read.
 - Otherwise check for a hosted queue (GitHub merge queue, Mergify, Trunk) in repo settings or config.
 - No native queue: run
 
