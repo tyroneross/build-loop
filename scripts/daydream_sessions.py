@@ -393,6 +393,15 @@ def mine_sessions(config: dict | None = None, *, sources: list[dict | str] | Non
     for source in selected[:limits["max_documents"]]:
         spec = {"path": source} if isinstance(source, (str, Path)) else dict(source)
         path = Path(spec.get("path", "")).expanduser().absolute()
+        # Preserve final-component symlink rejection, but canonicalize parent
+        # aliases such as /tmp -> /private/tmp before emitting shared locators.
+        if not path.is_symlink():
+            try:
+                path = path.resolve()
+            except (OSError, RuntimeError):
+                # The bounded reader below records unreadable/looping sources
+                # as rejected documents rather than aborting the whole run.
+                pass
         if str(path) in seen_paths:
             continue
         seen_paths.add(str(path))

@@ -56,7 +56,7 @@ def terms(text: str) -> set[str]:
     return set(TOKEN.findall(text.lower())) - STOP
 
 
-def read_bounded(path: Path, root: Path, limit: int, on_read=None) -> bytes:
+def read_bounded(path: Path, root: Path, limit: int, on_read=None, expected_size=None) -> bytes:
     """Reject symlink components and special files, including the final open."""
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= HARD_LIMITS["max_file_bytes"]:
         raise ValueError("invalid read limit")
@@ -73,6 +73,8 @@ def read_bounded(path: Path, root: Path, limit: int, on_read=None) -> bytes:
         before = os.fstat(handle.fileno())
         if not stat.S_ISREG(before.st_mode):
             raise ValueError("non_regular")
+        if expected_size is not None and before.st_size != expected_size:
+            raise ValueError("stale evidence: source size changed")
         if before.st_size > limit:
             raise ValueError("file_budget")
         data = handle.read(limit)
@@ -107,7 +109,8 @@ def inventory(roots: list[Path], max_files: int, max_bytes: int,
         try:
             names = git_files(root)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            receipt["gaps"].append({"root": str(root), "reason": type(exc).__name__})
+            reason = str(exc) if isinstance(exc, ValueError) else "git_inventory_unavailable"
+            receipt["gaps"].append({"root": str(root), "reason": reason})
             continue
         receipt["roots"].append({"path": str(root), "tracked_markdown": len(names)})
         for name in names:
@@ -208,10 +211,17 @@ def analyze(docs: list[dict], min_support: int = 3) -> list[dict]:
             if target.scheme or target.netloc or not target.path or target.path.startswith("/"):
                 continue
             dest = Path(doc["path"]).parent / unquote(target.path)
-            if not dest.resolve().is_relative_to(Path(doc["root"])):
+            try:
+                if not dest.resolve().is_relative_to(Path(doc["root"])):
+                    continue
+                missing = not dest.exists()
+            except (OSError, ValueError):
+                # A malformed/unreadable target is a review candidate, never
+                # authority to abort analysis of the remaining source corpus.
+                missing = True
+            if not missing:
                 continue
-            if not dest.exists():
-                broken.append(evidence(doc, doc["text"][:match.start()].count("\n") + 1))
+            broken.append(evidence(doc, doc["text"][:match.start()].count("\n") + 1))
     if broken:
         add("broken-local-links", "Repair unresolved local Markdown targets", "automation", broken,
             caveat="Generated or deliberately absent targets require review; no automatic rewrite.")
@@ -260,8 +270,15 @@ def validate_shape(report: dict) -> set[str]:
     allowed = {str(Path(r["path"]).resolve()) for r in report["coverage"]["roots"]}
     if len(allowed) > 32:
         raise ValueError("too many report roots")
+    paths, total = set(), 0
     for ref in manifest:
-        locator(ref, allowed)
+        safe = locator(ref, allowed)
+        if safe["path"] in paths:
+            raise ValueError("duplicate manifest path")
+        paths.add(safe["path"])
+        total += safe["bytes"]
+    if total > report["limits"]["max_bytes"]:
+        raise ValueError("manifest exceeds byte budget")
     return allowed
 
 
@@ -284,6 +301,8 @@ def locator(ref: dict, allowed: set[str]) -> dict:
 
 def validate_report(report: dict) -> None:
     allowed = validate_shape(report)
+    manifest = {ref["path"]: (ref["sha256"], ref["bytes"]) for ref in report["manifest"]}
+    checked = set()
     for finding in report["findings"]:
         if finding.get("draft_kind") not in {"skill", "automation", "plugin"}:
             raise ValueError("invalid draft kind")
@@ -293,10 +312,15 @@ def validate_report(report: dict) -> None:
             raise ValueError("finding has no evidence")
         for ref in finding["evidence"] + finding.get("reuse_candidates", []):
             ref = locator(ref, allowed)
+            if manifest.get(ref["path"]) != (ref["sha256"], ref["bytes"]):
+                raise ValueError("evidence absent from manifest")
+            if ref["path"] in checked:
+                continue
             root, path = Path(ref["root"]).resolve(), Path(ref["path"])
-            data = read_bounded(path, root, report["limits"]["max_file_bytes"])
+            data = read_bounded(path, root, report["limits"]["max_file_bytes"], expected_size=ref["bytes"])
             if digest(data) != ref["sha256"]:
                 raise ValueError("stale evidence; rescan before drafting")
+            checked.add(ref["path"])
 
 
 def create_bundle(report: dict, output: Path) -> None:
@@ -377,13 +401,13 @@ def search_report(report: dict, query: str, limit: int, chars: int) -> dict:
     for raw in report["manifest"]:
         ref = locator(raw, allowed)
         try:
-            data = read_bounded(Path(ref["path"]), Path(ref["root"]), report["limits"]["max_file_bytes"])
+            data = read_bounded(Path(ref["path"]), Path(ref["root"]), report["limits"]["max_file_bytes"], expected_size=ref["bytes"])
             if digest(data) != ref["sha256"]:
                 gaps.append({"path": ref["path"], "reason": "stale"})
                 continue
             text = data.decode("utf-8")
-        except (OSError, ValueError, UnicodeError):
-            gaps.append({"path": ref["path"], "reason": "unavailable"})
+        except (OSError, ValueError, UnicodeError) as exc:
+            gaps.append({"path": ref["path"], "reason": "stale" if str(exc).startswith("stale evidence") else "unavailable"})
             continue
         found = wanted & terms(text)
         if found:

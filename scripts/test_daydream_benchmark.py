@@ -139,5 +139,17 @@ class ExportTests(unittest.TestCase):
                 import_export(receipt, LAB, database)
 
 
+class PrivateParentTests(unittest.TestCase):
+    def test_new_export_ancestors_are_private(self):
+        import daydream_benchmark as module
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            output = root / 'new' / 'nested' / 'evidence.json'
+            module._atomic(output, '{}')
+            self.assertEqual((root / 'new').stat().st_mode & 0o777, 0o700)
+            self.assertEqual(output.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+
 if __name__ == '__main__':
     unittest.main()

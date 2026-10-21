@@ -144,5 +144,15 @@ class ReviewTests(unittest.TestCase):
                 validate_assessment(review, packet)
 
 
+class InvalidPacketTests(unittest.TestCase):
+    def test_invalid_incident_does_not_spend_valid_packet_slot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, report = make_source(Path(temp).resolve())
+            report['incidents'].insert(0, {'incident_id': 'invalid', 'signal': 'correction_heuristic'})
+            result = build_review_packets(report, max_packets=1)
+            self.assertEqual(len(result['packets']), 1)
+            self.assertEqual(result['gaps'][0]['reason'], 'invalid_or_duplicate_incident_id')
+
+
 if __name__ == '__main__':
     unittest.main()

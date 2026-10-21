@@ -129,7 +129,16 @@ def evidence_rows(report: dict) -> list[dict]:
 
 
 def _atomic(path: Path, content: str):
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    missing, parent = [], path.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            if not directory.is_dir():
+                raise
     fd, temporary = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as handle:

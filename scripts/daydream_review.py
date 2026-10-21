@@ -141,10 +141,14 @@ def build_review_packets(report: dict, max_packets=8, max_chars=24000) -> dict:
     for incident in candidates:
         if selected >= max_packets:
             break
-        selected += 1
         key = incident.get('incident_id')
         if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{64}', key) or key in seen:
+            gap = {'reason': 'invalid_or_duplicate_incident_id'}
+            if len(_dump(result | {'gaps': result['gaps'] + [gap]})) + 128 <= max_chars:
+                result['gaps'].append(gap)
+            result['truncated'] = True
             continue
+        selected += 1
         seen.add(key)
         try:
             ref = incident['evidence'][0]

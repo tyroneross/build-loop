@@ -187,3 +187,34 @@ def test_bundle_does_not_copy_untrusted_report_fields(repo, tmp_path):
     output = tmp_path / "bundle"
     daydream.create_bundle(report, output)
     assert all(payload not in path.read_text() for path in output.rglob("*") if path.is_file())
+
+
+def test_overlong_link_target_cannot_abort_other_findings(repo):
+    tracked(repo, "bad.md", "[hostile](" + "x" * 5000 + ")\n")
+    tracked(repo, "good.md", "[missing](absent.md)\n")
+    report = daydream.scan([repo])
+    finding = next(f for f in report["findings"] if f["key"] == "broken-local-links")
+    assert finding["support"]["files"] == 2
+
+
+def test_grown_files_rejected_before_body_read(repo):
+    path = tracked(repo, "a.md", "retrieval")
+    report = daydream.scan([repo])
+    path.write_text("x" * 100000)
+    result = daydream.search_report(report, "retrieval", 3, 1000)
+    assert result["gaps"][0]["reason"] == "stale"
+    report["manifest"] *= 2
+    with pytest.raises(ValueError, match="duplicate manifest"):
+        daydream.search_report(report, "retrieval", 3, 1000)
+
+
+def test_manifest_total_budget_and_root_reason(repo):
+    tracked(repo, "a.md", "retrieval")
+    report = daydream.scan([repo])
+    report["limits"]["max_bytes"] = 1
+    with pytest.raises(ValueError, match="manifest exceeds"):
+        daydream.search_report(report, "retrieval", 3, 1000)
+    sub = repo / "child"
+    sub.mkdir()
+    rejected = daydream.scan([sub])
+    assert rejected["coverage"]["gaps"][0]["reason"] == "root must be the Git repository root"

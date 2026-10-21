@@ -366,5 +366,37 @@ class SessionMiningTests(unittest.TestCase):
         self.assertEqual(report["counts"]["signals"], {"correction_heuristic": 2})
 
 
+class CanonicalSourceTests(unittest.TestCase):
+    def test_parent_alias_emits_canonical_reviewable_source(self):
+        from daydream_review import build_review_packets
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            real = root / "real"
+            real.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            path = real / "session.jsonl"
+            rows = [{"schema": ds.NORMALIZED_SCHEMA, "session_id": "one", "role": role, "content": text}
+                    for role, text in [("user", "Please explain the interface."),
+                                       ("assistant", "Here is the explanation."),
+                                       ("user", "No, actually explain the encoding.")]]
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            report = ds.mine_sessions({"discover": False}, sources=[{
+                "path": str(alias / path.name), "host": "muse", "format": "normalized"}])
+            self.assertEqual(report["documents"][0]["path"], str(path))
+            packets = build_review_packets(report)
+            self.assertEqual(len(packets["packets"]), 1)
+            self.assertEqual(packets["gaps"], [])
+
+    def test_normalized_host_means_normalized_even_for_native_capable_hosts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp).resolve() / "normalized.jsonl"
+            path.write_text(json.dumps({"schema": ds.NORMALIZED_SCHEMA,
+                "session_id": "one", "role": "user", "content": "Explain this."}) + "\n")
+            for host in ("codex", "claude", "rosslabs"):
+                with self.subTest(host=host), redirect_stdout(io.StringIO()):
+                    self.assertEqual(ds.main(["--source", str(path), "--normalized-host", host]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
