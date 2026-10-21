@@ -59,6 +59,20 @@
 9. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
 
 **Optimization checklist** (review the plan for these before proceeding):
+- For a minimum, maximum, timeout, retry/iteration cap, rate limit or other
+  restriction, compare its expected benefit with its cost. Identify the protected
+  failure or required contract, units and scope, and what happens at the boundary.
+  Cite measurements or name a plausible assumption as provisional. Explain what
+  extra valid work a looser limit could admit and what time, memory, risk or
+  contention it could add; for a minimum, explain what it prevents from ending
+  sooner. Check below/at/above the boundary and define a useful signal for
+  reconsidering an assumption. Keep this reasoning in existing plan/review notes;
+  do not add a registry, mandatory experiment count or new runtime gate.
+  Prefer removing a redundant restriction or deriving it from the actual parent
+  resource/authority boundary. Host defaults and recommendations are not hard
+  maxima. Preserve explicit safety, legal and user-authority requirements; data
+  absence alone does not justify unbounded work. A timeout needs cancellation,
+  cleanup and an honest partial/failure result, not merely a larger number.
 - Have Phase 1 early-risk findings been verified and resolved or assigned to a
   specific first check? Order read-only local gates before builds and full
   suites. State which repo-owned preflight commands were inspected and which

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -119,34 +120,29 @@ def test_shipped_hooks_json_passes_the_lint():
     )
 
 
-def test_millisecond_shaped_timeout_flags_hb003(tmp_path):
-    """The field is seconds, so a ms-shaped value is hours. Make it unrepresentable.
-
-    This is the defect that put 30 entries in this repo's hooks.json at 1000-30000,
-    i.e. 16 minutes to 8.3 hours. Blocking hooks (UserPromptSubmit/PreToolUse/Stop)
-    make that budget the user's liveness guarantee, so past the 60s host default it
-    guards nothing at all.
-    """
+@pytest.mark.parametrize("budget", [60, 120, 600, 30000])
+def test_duration_alone_does_not_establish_an_invalid_budget(tmp_path, budget):
+    """Long work can be intentional; units and benefit require workload context."""
     doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "echo hi", "timeout": 30000},
+        {"type": "command", "command": "echo hi", "timeout": budget},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
-    hb003 = [f for f in findings if f["rule_id"] == "HB003"]
-    assert hb003, findings
-    assert hb003[0]["severity"] == "error"
-    assert "SECONDS" in hb003[0]["message"]
+    assert findings == []
 
 
-def test_timeout_at_the_ceiling_is_allowed(tmp_path):
-    """60s is the Claude Code default; at the ceiling is fine, over it is not."""
+@pytest.mark.parametrize("budget", [0, -1, True, "5", float("nan"), float("inf")])
+def test_invalid_durations_remain_findings(tmp_path, budget):
     doc = {"hooks": {"Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "echo hi", "timeout": hbl.MAX_HOOK_TIMEOUT_S},
+        {"type": "command", "command": "echo hi", "timeout": budget},
     ]}]}}
     findings = hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path)
-    assert not [f for f in findings if f["rule_id"] == "HB003"], findings
+    assert [f["rule_id"] for f in findings] == ["HB002"]
 
 
-def test_shipped_hooks_json_declares_no_millisecond_budgets():
-    """Regression pin on the real file: all 30 conversions must stay converted."""
-    findings = hbl.lint_hooks(REPO / "hooks" / "hooks.json", repo_root=REPO)
-    assert not [f for f in findings if f["rule_id"] == "HB003"], findings
+@pytest.mark.parametrize("timeout", [None, 2])
+def test_async_timeout_is_not_an_enforced_child_deadline(tmp_path, timeout):
+    entry = {"type": "command", "command": "timeout 120 worker", "async": True}
+    if timeout is not None:
+        entry["timeout"] = timeout
+    doc = {"hooks": {"PostToolUse": [{"hooks": [entry]}]}}
+    assert hbl.lint_hooks(_write(tmp_path, doc), repo_root=tmp_path) == []

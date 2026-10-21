@@ -41,12 +41,12 @@ class Blocks(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertIsNotNone(gate.evaluate(cmd))
 
-    def test_long_bare_sleep(self) -> None:
-        self.assertIsNotNone(gate.evaluate("sleep 300"))
-        self.assertIsNotNone(gate.evaluate("sleep 120"))
-
 
 class Allows(unittest.TestCase):
+    def test_finite_wait_has_no_universal_duration_cutoff(self) -> None:
+        for seconds in (119, 120, 121, 300):
+            self.assertIsNone(gate.evaluate(f"sleep {seconds}; verify_late_delivery"))
+
     def test_loop_examples_are_data_in_a_source_ingest_write(self) -> None:
         for command in (
             "curl --data-urlencode 'text=while true; do sleep 30; done' https://example.invalid",
@@ -165,10 +165,6 @@ class HostResumeHint(unittest.TestCase):
         msg = gate.evaluate(self.INFINITE, env={})
         self.assertNotIn("ScheduleWakeup", msg)
         self.assertIn("coordination_watch.py", msg)
-
-    def test_long_bare_sleep_also_carries_the_hint(self) -> None:
-        msg = gate.evaluate("sl" + "eep 300", env={"CLAUDE_PLUGIN_ROOT": "/x"})
-        self.assertIn("ScheduleWakeup", msg)
 
     def test_allowed_commands_get_no_hint(self) -> None:
         # The hint rides on a rejection; it must never appear on a clean command.

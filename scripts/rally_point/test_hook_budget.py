@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,9 +34,23 @@ def test_inner_timeout_strictly_under_budget():
     assert parent == 2.5 and child == 1.8               # 3.0-0.5, 3.0-1.2
 
 
-def test_floor_when_budget_tiny():
-    # Even a pathologically small budget never yields a sub-floor timeout.
-    assert hb.inner_timeout_seconds(hb.MARGIN_CHILD, {"RALLY_HOOK_BUDGET_MS": "200"}) == hb.FLOOR_SECONDS
+@pytest.mark.parametrize("budget", [1, 100, 200, 1000, 1200, 1700, 2400, 3000, 6000])
+def test_short_budgets_cannot_invert_nested_timeouts(budget):
+    env = {"RALLY_HOOK_BUDGET_MS": str(budget)}
+    parent = hb.inner_timeout_seconds(hb.MARGIN_PARENT, env)
+    child = hb.inner_timeout_seconds(hb.MARGIN_CHILD, env)
+    assert 0 < child < parent < budget / 1000
+
+
+@pytest.mark.parametrize("margin", [0, -1, float("nan"), float("inf")])
+def test_reserve_must_be_a_usable_duration(margin):
+    with pytest.raises(ValueError):
+        hb.inner_timeout_seconds(margin)
+
+
+@pytest.mark.parametrize("margin", [1e-320, 1e308])
+def test_representable_extreme_reserves_stay_inside_parent(margin):
+    assert 0 < hb.inner_timeout_seconds(margin, {"RALLY_HOOK_BUDGET_MS": "200"}) < 0.2
 
 
 def test_scales_with_larger_budget():

@@ -26,9 +26,9 @@ binary's real budget ever differs from 3000ms, exporting this keeps us in sync.
 from __future__ import annotations
 
 import os
+import math
 
 DEFAULT_BUDGET_MS = 3000
-FLOOR_SECONDS = 1.0
 
 # Margin tiers (seconds) reserved below the budget. Larger margin = tighter
 # inner timeout. Nest these so a parent process (smaller margin) always
@@ -52,7 +52,16 @@ def budget_ms(env: dict[str, str] | None = None) -> int:
 def inner_timeout_seconds(margin: float = MARGIN_PARENT, env: dict[str, str] | None = None) -> float:
     """Largest safe timeout for a subprocess invoked under the hook budget.
 
-    Always strictly less than the budget; never below FLOOR_SECONDS so a
-    genuinely-needed call still has a chance to complete.
+    Preserve the nominal reserve when it fits. For short parent budgets, scale
+    reserves continuously instead of forcing a child to outlive its parent.
+    The child-margin tier anchors the provisional scale; default 3s budgets
+    retain the existing 2.5s/1.8s hierarchy. This orders numeric deadlines, not
+    startup or sequential work; callers still need their whole-call deadline.
     """
-    return max(FLOOR_SECONDS, budget_ms(env) / 1000.0 - margin)
+    if not math.isfinite(margin) or margin <= 0:
+        raise ValueError("timeout reserve must be finite and positive")
+    outer = budget_ms(env) / 1000.0
+    reserve = min(margin, outer * (margin / (margin + MARGIN_CHILD)))
+    # Keep the invariant at floating-point extremes too; these are representable
+    # neighbors, not another policy floor or duration ceiling.
+    return max(math.nextafter(0.0, 1.0), min(outer - reserve, math.nextafter(outer, 0.0)))

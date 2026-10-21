@@ -19,8 +19,9 @@ the rally path. This lint generalizes the rule across EVERY shipped hook:
 
     every inner subprocess timeout < its declaring hook entry's timeout.
 
-It also flags hook entries that declare NO ``timeout`` at all (the PostToolUse
-Bash entry had none — an unbounded hook can stall a tool call indefinitely).
+It also flags synchronous entries without an explicit budget, so a changing
+host default does not silently choose the project's interactive wait policy.
+Missing timeout inherits a host default; it is not an unbounded wait.
 
 Rules (all severity=warn — build-loop's "judges route, never stop"):
 
@@ -28,15 +29,13 @@ Rules (all severity=warn — build-loop's "judges route, never stop"):
             Reads the referenced script; extracts Python ``timeout=N`` kwargs
             and shell ``timeout N`` invocations (seconds), compares against the
             hook entry's ``timeout`` (seconds).
-    HB002 — hook entry declares no ``timeout`` field
-    HB003 — hook ``timeout`` exceeds MAX_HOOK_TIMEOUT_S. The field is seconds,
-            so a millisecond-shaped value (1000, 5000, 30000) silently becomes
-            16 minutes to 8.3 hours. UserPromptSubmit/PreToolUse/Stop hooks are
-            BLOCKING, so that budget is the user's liveness guarantee: past the
-            host default it is not a guard at all. This rule makes the wrong
-            unit unrepresentable rather than merely discouraged.
-            An unbounded hook. Default harness timeout is implementation-
-            defined; declare one explicitly.
+    HB002 — synchronous hook has no explicit budget, or a duration is invalid
+
+The former HB003 universal 60-second ceiling is retired. A host default is not
+a maximum, and duration alone cannot establish a units mistake. Review long
+budgets against their workload and benefit rather than dividing them by 1000.
+Claude async command hooks do not enforce their per-hook timeout, so HB001
+does not compare their child timeouts against that field.
 
 CLI shape::
 
@@ -55,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -90,12 +90,6 @@ _SCRIPT_REF_RE = re.compile(
 # subprocess's own timeout cannot hold the hook past its budget. `nohup ... &`
 # is the canonical fire-and-forget pattern; a trailing/embedded job-control `&`
 # (not the `&&`/`&>`/`2>&1` operators) also detaches. Such commands are exempt
-# Ceiling for a declared hook timeout, in seconds. 60 is the Claude Code default
-# hook timeout: a budget above it is looser than the host's own fallback and
-# therefore guards nothing. Every hook in this repo measures <=0.39s, so the
-# tightest budget here still carries >=10x headroom.
-MAX_HOOK_TIMEOUT_S = 60
-
 # from HB001 — their inner timeout is intentionally larger than the hook budget.
 _BACKGROUND_RE = re.compile(r"\bnohup\b|(?<![&>])&(?![&>])")
 
@@ -167,9 +161,12 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
         command = str(entry.get("command", ""))
         outer_s = entry.get("timeout")
         cmd_trunc = command[:200]
+        asynchronous = entry.get("async") is True
 
         # HB002 — no declared timeout.
         if outer_s is None:
+            if asynchronous:
+                continue  # this field is not an enforced async job deadline
             findings.append({
                 "rule_id": "HB002",
                 "severity": "warn",
@@ -178,31 +175,19 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
                 "command": cmd_trunc,
                 "script_path": None,
                 "message": (
-                    "hook entry declares no 'timeout' — an unbounded hook can "
-                    "stall the tool call; declare an explicit timeout (seconds)."
+                    "synchronous hook inherits the host timeout default; "
+                    "choose an explicit workload budget in seconds."
                 ),
                 "evidence": {"outer_timeout_s": None, "inner_timeout_s": None},
             })
             continue
 
         try:
+            if isinstance(outer_s, bool) or not isinstance(outer_s, (int, float)):
+                raise ValueError("duration must be a number")
             outer_s_val = float(outer_s)
-            if outer_s_val > MAX_HOOK_TIMEOUT_S:
-                findings.append({
-                    "rule_id": "HB003",
-                    "severity": "error",
-                    "event": event,
-                    "matcher": matcher,
-                    "command": cmd_trunc,
-                    "script_path": None,
-                    "message": (
-                        f"hook 'timeout' is {outer_s_val:g}s "
-                        f"({outer_s_val / 3600:.1f}h) — over the {MAX_HOOK_TIMEOUT_S}s "
-                        f"ceiling. The field is SECONDS; this looks like a "
-                        f"millisecond value. Divide by 1000."
-                    ),
-                    "evidence": {"outer_timeout_s": outer_s_val, "inner_timeout_s": None},
-                })
+            if not math.isfinite(outer_s_val) or outer_s_val <= 0:
+                raise ValueError("duration must be finite and positive")
         except (TypeError, ValueError):
             findings.append({
                 "rule_id": "HB002",
@@ -211,14 +196,14 @@ def lint_hooks(hooks_path: Path, repo_root: Path | None = None) -> list[dict[str
                 "matcher": matcher,
                 "command": cmd_trunc,
                 "script_path": None,
-                "message": f"hook 'timeout' is not numeric: {outer_s!r}",
+                "message": f"hook 'timeout' must be a finite positive number of seconds: {outer_s!r}",
                 "evidence": {"outer_timeout_s": outer_s, "inner_timeout_s": None},
             })
             continue
 
         # A detached (`nohup ... &`) command returns immediately, so its inner
         # timeouts cannot hold the hook past its budget — exempt from HB001.
-        if _is_backgrounded(command):
+        if asynchronous or _is_backgrounded(command):
             continue
 
         # Collect inner timeouts from the inline command AND any referenced

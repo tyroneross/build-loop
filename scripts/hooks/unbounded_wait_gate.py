@@ -10,10 +10,10 @@ clock, was killed on timeout, and fired a SECOND spurious completion
 notification for a run that had already finished — so the parent had to
 re-verify a finished build to establish that nothing had changed.
 
-The defect is not "sleep" and not "loop". It is **waiting on a duration instead
-of a condition**. A wait whose only exit is the harness timeout is never the
-right shape: the harness already re-invokes an agent when tracked work finishes,
-so the loop is pure waste even when it happens to be short.
+The observed failure had no finite iteration count or visible exit condition.
+The harness already re-invokes an agent when tracked work finishes, so that loop
+added no useful work. Finite delays are governed by task/tool budgets and their
+purpose; this gate imposes no universal minimum or maximum sleep duration.
 
 The rejection also names the resume primitive THIS host actually has, resolved
 through ``scripts/wake_scheduler.py`` (Claude Code gets ``ScheduleWakeup``; Codex,
@@ -93,12 +93,6 @@ _ITERATION_BOUND = re.compile(
     r"|\b(?:while|until)\s+(?:IFS=\S*\s+)?read\b",
     re.IGNORECASE,
 )
-
-_SLEEP = re.compile(r"\bsleep\s+([0-9]+(?:\.[0-9]+)?)\b", re.IGNORECASE)
-
-# A bare sleep this long is a duration-wait, not a pause. Chosen so the common
-# short settle (`sleep 2` after starting a dev server) stays untouched.
-_LONG_BARE_SLEEP_SECONDS = 120.0
 
 _BOUNDED_IDIOM = """  for i in $(seq 1 30); do
     <condition that becomes false when the work is done> || break
@@ -263,15 +257,6 @@ def evaluate(command: str, env: dict[str, str] | None = None) -> str | None:
             "If you must poll something the harness cannot see, bound it and "
             "give it a real exit condition:\n\n" + _BOUNDED_IDIOM
         )
-    else:
-        longest = max((float(m) for m in _SLEEP.findall(command)), default=0.0)
-        if longest >= _LONG_BARE_SLEEP_SECONDS:
-            message = (
-                f"`sleep {longest:g}` is a duration-wait. A sleep that long is "
-                "standing in for a condition you have not written.\n\n"
-                "Wait on the condition instead:\n\n" + _BOUNDED_IDIOM
-            )
-
     if message is None:
         return None
 
