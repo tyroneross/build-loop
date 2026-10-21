@@ -10,6 +10,15 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 
 ---
 
+## Model capacity
+
+When the selected model hits capacity or a rate limit, fall back to Astra, then
+Luna if Astra is unavailable. On Codex these are `gpt-6-astra` and `gpt-6-luna`.
+Keep the task, read/write boundaries and verification duties unchanged; record
+the actual model and vendor. Do not label a same-vendor fallback as cross-vendor
+review. Missing credentials are not capacity failures: use the designated Secrets
+Vault or an existing service connection, and never probe Keychain.
+
 ## web-ui — Web UI build / validation
 
 **Build-loop-owned static fallback.** When no browser/simulator/native-AX path is available, build-loop cannot compute every rendered style value, but it CAN grep the code for specific UI contract and design-rule violations. The checks below are the minimum-viable static-analysis subset.
@@ -496,7 +505,7 @@ Notes:
 - Use API key auth (`--apiKey`), not username/password. Keys in `~/.appstoreconnect/private_keys/AuthKey_<ID>.p8`.
 - 44pt tap targets (HIG). Dynamic Type at every font size. VoiceOver labels on every tappable view.
 - Watch connectivity: use `WCSession` with `transferUserInfo` for background sync, `sendMessage` only when reachable.
-- Do not copy Apple Developer Program credentials into the repo. Read from Keychain or environment.
+- Do not copy Apple Developer Program credentials into the repo. Use the designated Secrets Vault or an already authorized service connection; never probe Keychain or expose credentials in output.
 
 ## web-deploy-verify — Vercel post-deploy verification
 

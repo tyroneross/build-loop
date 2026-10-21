@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1b5ac1705a9cf5d6bb30efb069d9d1ef7c3c62b936c02f05638e82fdf3a38950"
+    "content_sha256": "4a4111de0c16c36efd22083de6b8e0b43cb98b8b2693aa898c749bcd98af5194"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1312,6 +1312,7 @@
       "scripts/coordination_watch.py": "Compatibility wrapper for the embedded agent-rally-watcher namespace.\"\"\"",
       "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
       "scripts/cost_rca.py": "cost_rca.py — deterministic measured-token aggregation for cost-impact RCA.",
+      "scripts/credential_policy.py": "Owner credential policy. Classify commands without reading secret values.\"\"\"",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
       "scripts/dashboard_projection.py": "Read-only projection of Build Loop phase, task, and agent run state.\"\"\"",
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",

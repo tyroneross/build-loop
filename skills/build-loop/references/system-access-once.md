@@ -2,10 +2,19 @@
 
 The agent must stop creating repeated authentication dialogs for one access need. Read-only probes can display dialogs. Authorization, password entry, a successful command and a successful product check are distinct outcomes.
 
+## Credential access is excluded
+
+Keychain credential access is prohibited. This request ledger cannot authorize,
+unlock, retry, or broker it. Use the designated Secrets Vault metadata/injection
+contract or an already authorized service connection; never retrieve secret
+values into agent output. Do not start another authentication flow when that
+route is unavailable. Follow [credential policy](../../../references/credential-policy.md).
+The request/retry protocol below applies to other system access only.
+
 ## Before the first request
 
-1. Prefer source, signing metadata, injected stores and simulator fixtures. Do not read real app Keychain values with an ad hoc Swift/Python interpreter. macOS identifies that interpreter as the requester, creating an avoidable trust prompt.
-2. Choose one stable scope for the protected resource and operation, for example `keychain:com.flodoro.identity:read`. All callers and worktrees reuse it; purpose wording, run IDs and helper paths are not scope components. Do not group unrelated credentials as the same authorization.
+1. Prefer source, signing metadata, injected stores and simulator fixtures. Never probe production Keychain items through a CLI, app, or interpreter.
+2. Choose one stable scope for the protected resource and operation, for example `background-items:registration:read`. All callers and worktrees reuse it; purpose wording, run IDs and helper paths are not scope components. Do not group unrelated credentials as the same authorization.
 3. Run the wrapper with `--check-only`, `--scope`, `--purpose` and `--requester`. This reads metadata only and does not run the supplied command. A hold suppresses both another OS attempt and another agent question.
 4. If no prior request exists and access is necessary, explain once: what needs access, why, which app the dialog will name, and what can continue without it. Never ask for a password in chat. Route the read-only operation through the wrapper. Privileged mutations remain governed by their existing broker and approval rules; this wrapper cannot authorize them.
 

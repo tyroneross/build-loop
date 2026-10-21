@@ -933,6 +933,9 @@ def build_request(
     registry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the machine-readable request record (acceptance criterion 2)."""
+    from credential_policy import REFUSAL, command_reason
+    if (scope or "").casefold().startswith("keychain") or command_reason(shlex.join(argv), cwd=repo):
+        raise ValueError(REFUSAL)
     registry = registry or load_registry()
     argv = resolve_argv(argv)
     entry = match_entry(registry, argv)
