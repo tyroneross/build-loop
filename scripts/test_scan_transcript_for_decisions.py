@@ -496,8 +496,6 @@ class SteeringAnswerExtractionTests(unittest.TestCase):
         self.assertEqual(s._render_turn(obj), "ASSISTANT: let's go with Memory")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class ScanLockFileResolutionTests(unittest.TestCase):
@@ -526,3 +524,7 @@ class ScanLockFileResolutionTests(unittest.TestCase):
         """An empty string would resolve to a path of "" and break flock."""
         os.environ[scan.LOCK_FILE_ENV] = ""
         self.assertEqual(scan.default_lock_file(), scan.DEFAULT_LOCK_FILE)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

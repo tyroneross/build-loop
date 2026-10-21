@@ -401,8 +401,6 @@ class AutonomyGateFlagsTests(unittest.TestCase):
         self.assertTrue(flags["autoExecuteOpenRecs"])
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 # --- Deploy shapes carrying no literal `deploy` token -------------------------
@@ -555,3 +553,7 @@ class BranchDeletionConfirmTests(unittest.TestCase):
         ):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self._env(cmd)["action"], expected)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

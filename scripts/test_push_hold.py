@@ -642,8 +642,6 @@ class TestDeletePushBlocked(_Base):
         self.assertEqual(r["action"], "allow")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestParseIsoTsRobust(unittest.TestCase):
@@ -666,3 +664,7 @@ class TestParseIsoTsRobust(unittest.TestCase):
             self.assertIsNotNone(ph._parse_iso_ts(s), f"must parse {s!r}")
         self.assertIsNone(ph._parse_iso_ts("not-a-timestamp"))
         self.assertIsNone(ph._parse_iso_ts(None))
+
+
+if __name__ == "__main__":
+    unittest.main()

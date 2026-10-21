@@ -648,8 +648,6 @@ class StopHookEnvVarPolicyTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class StopSweepRegistrationIsMeceTests(unittest.TestCase):
@@ -670,3 +668,7 @@ class StopSweepRegistrationIsMeceTests(unittest.TestCase):
 
     def test_the_single_registration_runs_all_mode(self) -> None:
         self.assertIn('.sh" all', _sweep_registrations()[0])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

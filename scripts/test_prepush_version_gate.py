@@ -123,6 +123,13 @@ def test_release_please_block_message_names_every_field_and_its_value(tmp_path: 
     assert "--patch" not in message, "the manual-bump instruction does not apply here"
 
 
+def test_release_please_recovery_advice_preserves_the_recorded_release():
+    message = gate.format_block_message({"mode":"release-please", "fields":{}})
+    assert "bump_version.py --sync" in message
+    assert "recorded version" in message
+    assert "then set .release-please-manifest" not in message
+
+
 def test_legacy_mode_survives_for_repos_without_release_please(tmp_path: Path):
     """This file ships to other repos. Removing release-please's config must
     restore the one-push-one-bump rule exactly."""

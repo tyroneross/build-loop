@@ -743,8 +743,6 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["model"], "sonnet")  # list order preserved
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class EntryPointAgreementTests(unittest.TestCase):
@@ -790,3 +788,7 @@ class EntryPointAgreementTests(unittest.TestCase):
                     f"{rung}: recency reordered the cell — rank must be the "
                     f"only key, or the two entry points diverge again",
                 )
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

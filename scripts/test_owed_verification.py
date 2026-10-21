@@ -590,8 +590,6 @@ class TestCloseGateRefusesOwedReview(_Base):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # ---------------------------------------------------------------------------
@@ -1708,3 +1706,7 @@ class TestVerdictAndVendorEvidence(_Base):
                     json.dumps(payload), encoding="utf-8"
                 )
                 self.assertEqual(ov.check_manifest(self.workdir)["status"], "incomplete")
+
+
+if __name__ == "__main__":
+    unittest.main()

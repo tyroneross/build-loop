@@ -506,8 +506,6 @@ class CoordinationRallyTests(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RepoLedgerIsNeverTouchedByTests(unittest.TestCase):
@@ -563,3 +561,7 @@ class RepoLedgerIsNeverTouchedByTests(unittest.TestCase):
                 (root / ".rally" / "log" / "repo.jsonl").exists(),
                 "the capability probe appended a fact",
             )
+
+
+if __name__ == "__main__":
+    unittest.main()

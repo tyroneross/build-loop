@@ -199,8 +199,6 @@ class ProceduralGovernanceTests(unittest.TestCase):
         self.assertIn("GoneSymbol", target["missing_symbols"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # --- detect_patterns: locked, atomic candidate append -------------------------
@@ -280,3 +278,7 @@ class DetectPatternsAppendTests(unittest.TestCase):
         pg.detect_patterns(self.wd)
         litter = [p.name for p in self.cand.parent.iterdir() if ".tmp" in p.name]
         self.assertEqual(litter, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -271,8 +271,6 @@ class DeploymentPolicyTests(unittest.TestCase):
                 self.assertEqual(data["action"], "confirm")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class QuotedProseIsNotACommandTests(unittest.TestCase):
@@ -461,3 +459,7 @@ class NewlineSeparatesCommandsTests(unittest.TestCase):
         ):
             with self.subTest(cmd=cmd):
                 self.assertFalse(is_deploy_like(cmd))
+
+
+if __name__ == "__main__":
+    unittest.main()

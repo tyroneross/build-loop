@@ -840,8 +840,6 @@ class TestDocExampleAndContentScope(unittest.TestCase):
                         "a real provider key in a doc must still flag")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestSpotCheckCoverage(_DiffScanBase):
@@ -1221,3 +1219,7 @@ class TestSqlStatementDetectorPrecision(unittest.TestCase):
             'db.query(f"MERGE INTO t USING {s}")',
         ]:
             self.assertTrue(self._is_sql(line), f"real SQL missed: {line}")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

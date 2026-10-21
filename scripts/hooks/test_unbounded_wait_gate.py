@@ -198,8 +198,6 @@ class HostResumeHint(unittest.TestCase):
         self.assertEqual(dict(os.environ), before)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ConditionPollWithNoIterationBound(unittest.TestCase):
@@ -246,3 +244,7 @@ class ConditionPollWithNoIterationBound(unittest.TestCase):
         for cmd in ("until [ -s out.txt ]; do sleep 5; done  # no bound, no break",
                     'while true; do echo "break"; sleep 5; done'):
             self.assertIsNotNone(gate.evaluate(cmd))
+
+
+if __name__ == "__main__":
+    unittest.main()

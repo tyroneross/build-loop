@@ -184,5 +184,46 @@ class ReleaseOperationTests(ManifestFixture):
         )
 
 
+
+
+class ReleasePleaseOwnershipTests(ManifestFixture):
+    def setUp(self):
+        super().setUp()
+        self.seed("0.47.1", "0.47.1", "0.47.1", "0.47.1", "0.47.1")
+        write(self.root / "release-please-config.json", {"packages": {".": {}}})
+        write(self.root / ".release-please-manifest.json", {".": "0.47.0"})
+
+    def test_real_manual_bump_is_refused_before_any_manifest_write(self):
+        before = {str(p): p.read_bytes() for p in self.root.rglob("*.json")}
+        with self.assertRaisesRegex(ValueError, "Release Please owns"):
+            bump_version.apply_version("0.47.2", set_canonical=True)
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob("*.json")})
+
+    def test_sync_restores_recorded_release_and_preserves_owner(self):
+        owner = self.root / ".release-please-manifest.json"
+        before = owner.read_bytes()
+        self.assertTrue(any(not x["matches"] for x in bump_version.read_state()["mirrors"]))
+        bump_version.apply_version(bump_version._release_please_version(), set_canonical=False)
+        self.assertEqual(self.versions(), ("0.47.0",) * 5)
+        self.assertEqual(owner.read_bytes(), before)
+        self.assertTrue(all(x["matches"] for x in bump_version.read_state()["mirrors"]))
+
+    def test_cli_refuses_every_manual_mode_before_tag_or_write(self):
+        from unittest.mock import patch
+        for mode in (["--patch"], ["--minor"], ["--major"], ["--set", "0.50.0"], ["--tag"]):
+            with self.subTest(mode=mode), patch("sys.argv", ["bump_version.py", *mode]), patch.object(bump_version, "create_tag") as tag:
+                self.assertEqual(bump_version.main(), 2)
+                tag.assert_not_called()
+
+
+    def test_direct_tag_entrypoint_never_invokes_git_when_release_is_owned(self):
+        from unittest.mock import patch
+        with patch("subprocess.run") as git:
+            result = bump_version.create_tag("0.47.0")
+            self.assertFalse(result["created"])
+            self.assertIn("Release Please owns tags", result["reason"])
+            git.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

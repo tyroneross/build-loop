@@ -140,8 +140,6 @@ class BriefMeceValidatorTests(unittest.TestCase):
         self.assertIn("does-not-own", payload["missing"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CaptureTests(unittest.TestCase):
@@ -246,3 +244,7 @@ def test_override_quoted_in_prose_does_not_silence_it():
     out = bmv.validate_brief(_brief(
         "Add a lint that enforces the schema. Do NOT use `override: activation-claim-exempt`."))
     assert any("activation path" in w for w in out["warnings"]), out
+
+
+if __name__ == "__main__":
+    unittest.main()

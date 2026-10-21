@@ -373,8 +373,6 @@ class RowShapeTests(unittest.TestCase):
                 self.assertIn(f, row, f"missing field {f!r}")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class ExposureFieldTests(unittest.TestCase):
@@ -505,3 +503,7 @@ class ResolvePhaseTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

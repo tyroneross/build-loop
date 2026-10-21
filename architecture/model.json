@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ef1bbad314139c24df9d51c5db89cd0aabd5201d92bdb17ea02671422a33490d"
+    "content_sha256": "250cd661127a8830f43c2559be79397deb207128d7001251d9b534f79095352e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1276,7 +1276,7 @@
       "scripts/build_capability_index.py": "Capability index builder (WP-B item 1) — scripts as tools + consumer ring-2.",
       "scripts/build_capability_registry.py": "Capability registry builder.",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
-      "scripts/bump_version.py": "Single source of truth for build-loop's version across all four manifests.",
+      "scripts/bump_version.py": "Synchronize Build Loop's plugin and npm versions under the configured release owner.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
       "scripts/capability_classifier.py": "Deterministic capability classification for Phase 1 prior-art injection.",
       "scripts/capability_shortlist.py": "Capability shortlist matcher.",

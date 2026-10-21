@@ -138,8 +138,6 @@ class WriteEnforceCandidatesTests(unittest.TestCase):
         self.assertIn("Reject", body)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class DurableSummaryLineTests(unittest.TestCase):
@@ -331,3 +329,7 @@ def test_promote_durable_falls_through_when_enqueue_fails(monkeypatch, tmp_path)
     assert res["status"] != "queued"
     assert res["status"] == "ok"
     assert (mem / "projects" / "demo").exists()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

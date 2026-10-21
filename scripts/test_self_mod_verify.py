@@ -1883,8 +1883,6 @@ class TestGitDerivationErrors(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestRecursiveFullCoverage(unittest.TestCase):
@@ -2029,3 +2027,31 @@ class DeterministicScopeTests(unittest.TestCase):
                 payload = _payload(result.stdout)
                 self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
                 self.assertTrue((root / "regression-ran").exists())
+
+
+class TestDirectUnittestDiscovery(unittest.TestCase):
+    def test_test_classes_precede_direct_unittest_entrypoints(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]
+        paths = subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "scripts", "tests"]).decode().split("\0")
+        late = []
+        for name in paths:
+            path = root / name
+            if not path.name.startswith("test_") or path.suffix != ".py":
+                continue
+            try:
+                tree = ast.parse(path.read_text())
+            except (SyntaxError, UnicodeError):
+                continue  # syntax/collection is covered by the existing collection gate
+            for index, node in enumerate(tree.body):
+                if (isinstance(node, ast.If) and "__name__" in ast.unparse(node.test)
+                        and "__main__" in ast.unparse(node.test)
+                        and any(isinstance(call, ast.Call) and ast.unparse(call.func) == "unittest.main"
+                                for call in ast.walk(node))
+                        and any(isinstance(item, ast.ClassDef) for item in tree.body[index + 1:])):
+                    late.append(name)
+        self.assertEqual(late, [], f"Direct unittest runners cannot discover later classes: {late}")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

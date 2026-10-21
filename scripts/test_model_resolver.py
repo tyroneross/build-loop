@@ -837,8 +837,6 @@ class ImportShimTests(unittest.TestCase):
         self.assertEqual(proc.stdout.split(), ["opus", "opus"])
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class HostRamFitTests(unittest.TestCase):
@@ -907,3 +905,7 @@ class HostRamFitTests(unittest.TestCase):
             too_big = model_resolver._too_large_for_host()
         self.assertNotIn("sonnet", too_big, "a hosted model declares no min_ram_gb")
         self.assertNotIn("opus", too_big)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

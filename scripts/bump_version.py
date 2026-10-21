@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Single source of truth for build-loop's version across all four manifests.
+"""Synchronize Build Loop's plugin and npm versions under the configured release owner.
 
-`.claude-plugin/plugin.json` is canonical. Four other fields must match it:
+Without Release Please, `.claude-plugin/plugin.json` is canonical.
+The Codex, marketplace and npm fields must match it:
 
     .codex-plugin/plugin.json          .version
     .claude-plugin/marketplace.json    .metadata.version
     .claude-plugin/marketplace.json    .plugins[0].version
     .agents/plugins/marketplace.json   .version
+    package.json                      .version
+    package-lock.json                 .version and .packages[""].version
 
 WHY THIS EXISTS. Those five fields were hand-edited, so a bump touched one file
 and forgot three. `scripts/test_plugin_manifest.py` catches the mismatch, but
@@ -27,7 +30,11 @@ Modes:
     --tag            create annotated tag vX.Y.Z at HEAD; writes no manifests
     --json           machine-readable result on stdout
 
-RELEASE MODEL. A push is the unit of release. Local commits carry only their
+RELEASE OWNERSHIP. When Release Please is configured, it owns version increments
+and tags. --check detects drift against its manifest; --sync restores its recorded
+version across all plugin/npm fields. Manual bump/set/tag modes are refused.
+
+LEGACY RELEASE MODEL (without Release Please). A push is the unit of release. Local commits carry only their
 SHA and touch no version field; the number moves once per push. --patch is
 therefore the normal path no matter how many commits are being pushed.
 
@@ -88,6 +95,8 @@ def create_tag(version: str) -> dict:
     object carrying who/when, and because `git describe --tags` — which
     version_advisor.py relies on to find the last bump — reads these.
     """
+    if _release_please_version() is not None:
+        return {"tag": f"v{version}", "created": False, "reason": "Release Please owns tags; use its release PR"}
     import subprocess
     tag = f"v{version}"
     exists = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--verify",
@@ -129,6 +138,16 @@ def _keypath(keys: tuple[object, ...]) -> str:
     return "".join(f"[{k}]" if isinstance(k, int) else f".{k}" for k in keys)
 
 
+def _release_please_version() -> str | None:
+    from prepush_version_gate import release_please_owns_versioning, RP_MANIFEST
+    if not release_please_owns_versioning(REPO_ROOT):
+        return None
+    version = _load(REPO_ROOT / RP_MANIFEST).get(".")
+    if not isinstance(version, str) or not SEMVER.fullmatch(version):
+        raise ValueError("Release Please manifest has no valid recorded version")
+    return version
+
+
 def read_state() -> dict:
     """Canonical version plus every mirror's current value. Never raises."""
     label, path, keys = CANONICAL
@@ -140,7 +159,14 @@ def read_state() -> dict:
         return {"ok": False, "error": f"canonical unreadable: {exc}", "canonical": None, "mirrors": []}
 
     mirrors = []
-    for m_label, m_path, m_keys in MIRRORS:
+    owners = []
+    try:
+        owner = _release_please_version()
+    except (OSError, ValueError, TypeError) as exc:
+        return {"ok": False, "error": str(exc), "canonical": canonical, "mirrors": []}
+    if owner is not None:
+        owners = [("Release Please version owner", REPO_ROOT / ".release-please-manifest.json", (".",))]
+    for m_label, m_path, m_keys in [*MIRRORS, *owners]:
         entry = {
             "label": m_label,
             "path": str(m_path.relative_to(REPO_ROOT)),
@@ -164,6 +190,11 @@ def read_state() -> dict:
 
 def apply_version(version: str, set_canonical: bool) -> list[str]:
     """Write `version` into the mirrors (and the canonical when asked). Returns changes."""
+    owner = _release_please_version()
+    if owner is not None:
+        if version != owner:
+            raise ValueError("Release Please owns version increments; use its release PR")
+        set_canonical = True
     changed: list[str] = []
 
     if set_canonical:
@@ -203,7 +234,7 @@ def main() -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="exit 1 on drift; write nothing")
     mode.add_argument("--sync", action="store_true", help="propagate the canonical version to every mirror")
-    mode.add_argument("--set", metavar="X.Y.Z", help="set all five fields to this version")
+    mode.add_argument("--set", metavar="X.Y.Z", help="set all version fields when Release Please is absent")
     mode.add_argument("--patch", action="store_true", help="bump Z+1 (normal per-push release)")
     mode.add_argument("--minor", action="store_true", help="bump Y+1, Z=0")
     mode.add_argument("--major", action="store_true", help="bump X+1, Y=Z=0")
@@ -216,7 +247,14 @@ def main() -> int:
         print(f"bump_version: {args.set!r} is not X.Y.Z", file=sys.stderr)
         return 2
 
-    state = read_state()
+    try:
+        owner = _release_please_version()
+        if owner is not None and not (args.check or args.sync):
+            raise ValueError("Release Please owns version increments and tags; use --check or --sync")
+        state = read_state()
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"bump_version: {exc}", file=sys.stderr)
+        return 2
     if not state["ok"]:
         print(json.dumps(state) if args.json else f"bump_version: {state['error']}", file=sys.stderr)
         return 2
@@ -253,7 +291,7 @@ def main() -> int:
         version = next_version(state["canonical"], kind)
         mode = kind
     else:
-        version = args.set or state["canonical"]
+        version = args.set or owner or state["canonical"]
         mode = "set" if args.set else "sync"
 
     changed = apply_version(version, set_canonical=bool(args.set or kind))
