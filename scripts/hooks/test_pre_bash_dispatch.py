@@ -106,6 +106,9 @@ def run_dispatch(
         if path_env is not None:
             env["PATH"] = path_env
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root or PLUGIN_ROOT)
+    # Synthetic routing tests must not inherit the host credential helper.
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return subprocess.run(
         ["bash", str(DISPATCH)],
         cwd=session_cwd,
@@ -801,6 +804,9 @@ class PerRepoConfigResolutionTests(unittest.TestCase):
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", f"add {relpath}")
 
+    # Credential policy requires explicit Git -C targeting for network commands.
+    # These fixtures keep testing target config/scanning after that policy check.
+
     # ── push gate ────────────────────────────────────────────────────────────
 
     def test_excludes_come_from_the_pushed_repo_not_the_session_repo(self) -> None:
@@ -818,7 +824,7 @@ class PerRepoConfigResolutionTests(unittest.TestCase):
             config={"securityScan": {"excludeGlobs": ["archive/**"]}},
         )
         self._plant_secret(target, "archive/old-notes.js")
-        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        r = run_dispatch(session, f"git -C {target} push", event_cwd=session)
         self.assertEqual(
             r.returncode, 0,
             "the pushed repo's own excludeGlobs must apply; "
@@ -835,7 +841,7 @@ class PerRepoConfigResolutionTests(unittest.TestCase):
             config={"securityScan": {"excludeGlobs": ["archive/**"]}},
         )
         self._plant_secret(target, "src/auth.ts")
-        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        r = run_dispatch(session, f"git -C {target} push", event_cwd=session)
         self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
         self.assertIn("security scan found HIGH", r.stderr)
 
@@ -846,7 +852,7 @@ class PerRepoConfigResolutionTests(unittest.TestCase):
         session = make_buildloop_repo(self.tmp, name="session")
         target = make_plain_repo(self.tmp, name="target")
         self._plant_secret(target, "archive/old-notes.js")
-        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        r = run_dispatch(session, f"git -C {target} push", event_cwd=session)
         self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
         self.assertIn("security scan found HIGH", r.stderr)
         self.assertNotIn(
@@ -864,7 +870,7 @@ class PerRepoConfigResolutionTests(unittest.TestCase):
             self.tmp, name="target", config='{"securityScan": {,,,}'
         )
         self._plant_secret(target, "archive/old-notes.js")
-        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        r = run_dispatch(session, f"git -C {target} push", event_cwd=session)
         self.assertIn("could not be read", r.stderr)
         self.assertIn(str(target / ".build-loop" / "config.json"), r.stderr)
         self.assertEqual(

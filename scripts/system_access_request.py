@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,9 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from credential_policy import REFUSAL, command_reason
 
 ACTIVE = {"requested", "dispatched"}
 TERMINAL = {"completed", "cancelled", "failed", "blocked"}
@@ -293,6 +297,9 @@ def run_request(args: argparse.Namespace, runner=subprocess.run) -> int:
         return _metadata(directory, command, args)
     if not command or not command[0].strip():
         raise ValueError("supply the system command after --")
+    if _scope_key(args.scope).startswith("keychain") or command_reason(shlex.join(command)):
+        print(REFUSAL, file=sys.stderr)
+        return HELD
     role, request = _claim(directory, command, args)
     if role == "follower":
         print(_message("SYSTEM REQUEST ALREADY WAITING", request), file=sys.stderr)

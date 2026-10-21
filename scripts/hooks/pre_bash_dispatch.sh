@@ -47,6 +47,19 @@ if [ -z "$PLUGIN_ROOT" ]; then
     PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 fi
 
+# Owner credential policy is independent of repository opt-in and convenience
+# kill switches. It never reads secret values or invokes a credential helper.
+if ! _CREDENTIAL_OUT=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/credential_policy.py" 2>/dev/null); then
+    printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Credential policy could not be checked. Use the designated Secrets Vault or an authorized service connection; do not attempt Keychain access."}}'
+    exit 0
+fi
+case "$_CREDENTIAL_OUT" in
+    *'"permissionDecision": "deny"'*|*'"permissionDecision":"deny"'*)
+        printf '%s' "$_CREDENTIAL_OUT"
+        exit 0
+        ;;
+esac
+
 # Honor the global kill switch before doing any work.
 #
 # ONE exception, and it is contractual: the cli-dispatch-consent gate is allowed

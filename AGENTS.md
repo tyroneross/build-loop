@@ -18,6 +18,22 @@ long content and inspect pixels or AX bounds before claiming fit. Build Loop's
 `## UI Container Contract`, `plan_verify.py --ui-target`, and chunk-close
 `layout_probe` gate encode this rule so it survives agent/model changes.
 
+## Credentials: designated Secrets Vault only
+
+Never probe Apple Keychain for stored credentials. Do not initiate Keychain reads,
+writes, migration, unlocks, resets, or authentication retries. Use the designated
+Secrets Vault through metadata-only listing or server-side injection, or an
+already authorized service connection. Never print decrypted values, inspect the
+vault session file, or replace secure storage with plaintext secrets. If the
+approved route is unavailable, leave the dependent feature unavailable and
+continue independent work. General continuation, broker approval, or a retry flag
+does not authorize Keychain access. Automated tests use injected stores and fake
+runners. See [credential policy](references/credential-policy.md).
+
+On model capacity or rate-limit failures, continue on Astra, then Luna if Astra
+is unavailable. Record the actual model/vendor and preserve task authority and
+review scope; a same-vendor fallback is not a cross-vendor review.
+
 ## Autonomy gate — the three things that confirm (governing rule, highest priority)
 
 Once a plan is accepted, the loop does not stop to ask. Exactly three actions require human confirmation; everything else auto-executes:
