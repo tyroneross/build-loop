@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - path fallback
 
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import temporal_membership as tm
-from retrospective.sections import build as build_sections, load_routing_evidence, _run_identifier
+from retrospective.sections import build as build_sections, load_routing_evidence, _run_identifier, _enforce_signals
 from retrospective.write import (
     write_active,
     promote_durable,
@@ -352,8 +352,16 @@ def run(
         active = write_active(workdir, rid, sections,
                               intent_one_line=intent_one, repo=repo,
                               durable_path=durable.get("durable_path"))
-        enforce = write_enforce_candidates(workdir, rid,
-                                            sections.get("enforce_candidates") or [])
+        # Learn counts independent source runs from proposal filenames and
+        # groups unprefixed candidate text. A cohort must preserve both.
+        candidate_groups = ([(member, _enforce_signals([], state, member)) for member in run_ids]
+                            if run_ids is not None else [(rid, sections.get("enforce_candidates") or [])])
+        enforce = {"paths": [], "status": "ok"}
+        for source_id, candidates in candidate_groups:
+            publication = write_enforce_candidates(workdir, source_id, candidates)
+            enforce["paths"].extend(publication.get("paths", []))
+            if publication.get("status") == "degraded":
+                enforce.update(status="degraded", reason=publication.get("reason"))
 
         return {
             "active_path":        active.get("active_path"),
@@ -361,8 +369,8 @@ def run(
             "durable_path":       durable.get("durable_path"),
             "durable_status":     durable.get("status"),
             "enforce_candidates": enforce.get("paths", []),
-            "status":             active.get("status", "ok"),
-            "reason":             active.get("reason"),
+            "status":             "degraded" if enforce.get("status") == "degraded" else active.get("status", "ok"),
+            "reason":             active.get("reason") or enforce.get("reason"),
             "meta":               sections.get("meta") or {},
         }
     except Exception as e:  # noqa: BLE001  — never raise from background dispatch

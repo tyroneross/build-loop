@@ -122,6 +122,7 @@ def render_summary(
     *,
     run_id: str,
     durable_path: str | None = None,
+    active_path: str | None = None,
 ) -> str:
     """Render a ≤5 non-blank-line inline summary.
 
@@ -164,7 +165,8 @@ def render_summary(
     )
     if durable_path:
         out += f"  {DURABLE_LINE_PREFIX} {durable_path}\n"
-    out += f"  full file: .build-loop/retrospectives/{_today_iso()}/{run_id}.md\n"
+    full_path = active_path or f".build-loop/retrospectives/{_today_iso()}/{run_id}.md"
+    out += f"  full file: {full_path}\n"
     return out
 
 
@@ -183,6 +185,16 @@ def _atomic_write(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 # Public API.
 # ---------------------------------------------------------------------------
+
+def _publication_dir(root: Path, run_id: str) -> Path:
+    # Automatic IDs identify immutable source versions. Reuse their existing
+    # output on retry, including after midnight; manual captures retain dates.
+    if re.fullmatch(r"auto-[0-9a-f]{20}", run_id):
+        existing = sorted(root.glob(f"*/{run_id}.md"))
+        if existing:
+            return existing[0].parent
+    return root / _today_iso()
+
 
 def write_active(
     workdir: Path,
@@ -204,8 +216,7 @@ def write_active(
     "status": "degraded", "reason": <str>}``.
     """
     try:
-        date = _today_iso()
-        outdir = workdir / ".build-loop" / "retrospectives" / date
+        outdir = _publication_dir(workdir / ".build-loop" / "retrospectives", run_id)
         active = outdir / f"{run_id}.md"
         summary = outdir / f"{run_id}.summary.md"
         _atomic_write(active, render_full_markdown(
@@ -213,6 +224,7 @@ def write_active(
         ))
         _atomic_write(summary, render_summary(
             sections, run_id=run_id, durable_path=durable_path,
+            active_path=str(active.relative_to(workdir)),
         ))
         return {
             "active_path": str(active),
@@ -290,8 +302,7 @@ def promote_durable(
                             "reason": env.get("reason"), "queue_id": env.get("id")}
         except Exception as _exc:  # noqa: BLE001 — queueing is best-effort; fall through to write
             pass
-        date = _today_iso()
-        outdir = memory_root / "projects" / slug / "retrospectives" / date
+        outdir = _publication_dir(memory_root / "projects" / slug / "retrospectives", run_id)
         if not memory_root.exists():
             return {"durable_path": None, "status": "skipped",
                     "reason": f"memory_root absent: {memory_root}"}
@@ -378,23 +389,42 @@ def write_enforce_candidates(
     """
     if not candidates:
         return {"paths": [], "status": "skipped"}
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", run_id):
+        return {"paths": [], "status": "degraded", "reason": "unsafe candidate source run identity"}
     try:
+        from enforce_retro_signals import _extract_candidate_text
         outdir = workdir / ".build-loop" / "proposals" / "enforce-from-retro"
         outdir.mkdir(parents=True, exist_ok=True)
-        paths: list[str] = []
-        for i, text in enumerate(candidates, start=1):
-            p = outdir / f"{run_id}-{i:02d}.md"
-            body = (
-                f"# Enforce candidate — {run_id} #{i}\n\n"
-                f"_Source: post-push retrospective ({_today_iso()})_\n\n"
-                f"## Candidate\n\n{text}\n\n"
-                f"## Disposition\n\n"
-                f"- [ ] Adopt as default in build-loop\n"
-                f"- [ ] Route to Phase 6 Learn as A/B experiment\n"
-                f"- [ ] Reject — note reason below\n"
-            )
-            _atomic_write(p, body)
-            paths.append(str(p))
-        return {"paths": paths, "status": "ok"}
-    except OSError as e:
-        return {"paths": [], "status": "degraded", "reason": f"OSError: {e}"}
+        from atomic_io import LockedFile
+        with LockedFile(outdir / run_id, timeout_s=0):
+            existing = {}
+            next_index = 1
+            for path in outdir.glob(f"{run_id}-*.md"):
+                match = re.fullmatch(re.escape(run_id) + r"-(\d+)\.md", path.name)
+                if match:
+                    next_index = max(next_index, int(match[1]) + 1)
+                    existing[_extract_candidate_text(path.read_text(encoding="utf-8"))] = path
+            paths: list[str] = []
+            for text in candidates:
+                # Replay preserves a human disposition and the candidate's identity.
+                if text.strip() in existing:
+                    paths.append(str(existing[text.strip()]))
+                    continue
+                i = next_index
+                next_index += 1
+                p = outdir / f"{run_id}-{i:02d}.md"
+                body = (
+                    f"# Enforce candidate — {run_id} #{i}\n\n"
+                    f"_Source: post-push retrospective ({_today_iso()})_\n\n"
+                    f"## Candidate\n\n{text}\n\n"
+                    f"## Disposition\n\n"
+                    f"- [ ] Adopt as default in build-loop\n"
+                    f"- [ ] Route to Phase 6 Learn as A/B experiment\n"
+                    f"- [ ] Reject — note reason below\n"
+                )
+                _atomic_write(p, body)
+                existing[text.strip()] = p
+                paths.append(str(p))
+            return {"paths": paths, "status": "ok"}
+    except (OSError, TimeoutError) as e:
+        return {"paths": [], "status": "degraded", "reason": f"{type(e).__name__}: {e}"}

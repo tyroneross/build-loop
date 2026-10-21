@@ -257,3 +257,115 @@ def test_actual_npm_payload_runs_the_build_writer_and_batch(tmp_path):
     receipt = json.loads((consumer / ".build-loop/retrospectives/cadence.json").read_text())
     assert sorted(receipt["covered_versions"]) == ["pack-0", "pack-1", "pack-2"]
     assert Path(receipt["last_batch"]["active_path"]).is_file()
+
+
+def test_candidate_publication_failure_keeps_real_findings_pending(tmp_path):
+    seed(tmp_path, ['one', 'two', 'three'], judge_decisions=[{
+        'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
+        'variances': ['recorded defect']}])
+    blocked = tmp_path / '.build-loop/proposals/enforce-from-retro'
+    blocked.parent.mkdir(parents=True)
+    blocked.write_text('unavailable publication directory')
+    assert cadence.automatic(tmp_path)['status'] == 'degraded'
+    assert not (tmp_path / '.build-loop/retrospectives/cadence.json').exists()
+    blocked.unlink()
+    result = cadence.automatic(tmp_path, trigger='review')
+    assert result['status'] == 'captured'
+    assert len(list(blocked.glob('*.md'))) == 3
+
+
+def test_checkpoint_retry_across_midnight_reuses_active_and_durable_outputs(tmp_path):
+    from retrospective import write
+    seed(tmp_path, ['one', 'two', 'three'])
+    with patch.object(write, '_today_iso', return_value='2026-10-20'), patch.object(
+            cadence, 'atomic_write_bytes', side_effect=OSError('disk unavailable')):
+        assert cadence.automatic(tmp_path)['status'] == 'degraded'
+    active = list((tmp_path / '.build-loop/retrospectives').glob('*/auto-*.md'))
+    memory = Path(os.environ['BUILD_LOOP_MEMORY_STORE_ROOT'])
+    durable = list(memory.glob('projects/*/retrospectives/*/auto-*.md'))
+    assert len(active) == 2 and len(durable) == 1
+    with patch.object(write, '_today_iso', return_value='2026-10-21'):
+        assert cadence.automatic(tmp_path)['status'] == 'captured'
+    assert list((tmp_path / '.build-loop/retrospectives').glob('*/auto-*.md')) == active
+    assert list(memory.glob('projects/*/retrospectives/*/auto-*.md')) == durable
+    summary = next(p for p in active if p.name.endswith('.summary.md')).read_text()
+    pointer = next(line.split('full file: ', 1)[1] for line in summary.splitlines() if 'full file: ' in line)
+    assert (tmp_path / pointer).is_file()
+
+
+def test_batch_preserves_real_learn_recurrence_and_source_deduplication(tmp_path):
+    from enforce_retro_signals import scan
+    rows = seed(tmp_path, ['one', 'two', 'three'], judge_decisions=[{
+        'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
+        'variances': ['recorded defect']}])
+    assert cadence.automatic(tmp_path)['status'] == 'captured'
+    result = scan(tmp_path)
+    assert len(result['patterns']) == 1, result
+    assert result['patterns'][0]['count'] == 3
+    rows[0]['lessons'].append('late source evidence')
+    (tmp_path / '.build-loop/state.json').write_text(json.dumps({'runs': rows}))
+    assert cadence.automatic(tmp_path, trigger='review')['status'] == 'captured'
+    assert scan(tmp_path)['patterns'][0]['count'] == 3
+
+
+def test_replay_preserves_triage_and_does_not_reassign_candidate_identity(tmp_path):
+    from enforce_retro_signals import scan
+    rows = seed(tmp_path, ['one', 'two', 'three'], judge_decisions=[{
+        'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
+        'variances': ['recorded defect']}])
+    assert cadence.automatic(tmp_path)['status'] == 'captured'
+    proposal = tmp_path / '.build-loop/proposals/enforce-from-retro/one-01.md'
+    decided = proposal.read_text().replace('- [ ] Reject', '- [x] Reject')
+    proposal.write_text(decided)
+    rows[0]['lessons'].append('late source evidence')
+    state = tmp_path / '.build-loop/state.json'
+    state.write_text(json.dumps({'runs': rows}))
+    assert cadence.automatic(tmp_path, trigger='review')['status'] == 'captured'
+    assert proposal.read_text() == decided
+    result = scan(tmp_path)
+    assert result['dispositionedSkipped'] == 1
+    assert result['patterns'][0]['count'] == 2
+    rows[0]['judge_decisions'] = [{**rows[0]['judge_decisions'][0], 'checkpoint_id': 'other-build'}]
+    state.write_text(json.dumps({'runs': rows}))
+    assert cadence.automatic(tmp_path, trigger='review')['status'] == 'captured'
+    assert proposal.read_text() == decided
+    assert 'other-build' in proposal.with_name('one-02.md').read_text()
+
+
+@pytest.mark.parametrize('source_id', ['../../../outside', '../outside', 'absolute'])
+def test_unsafe_candidate_source_cannot_escape_publication_directory(tmp_path, source_id):
+    if source_id == 'absolute':
+        source_id = str(tmp_path / 'outside')
+    seed(tmp_path, [source_id, 'two', 'three'], judge_decisions=[{
+        'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
+        'variances': ['recorded defect']}])
+    assert cadence.automatic(tmp_path)['status'] == 'degraded'
+    assert not (tmp_path / '.build-loop/retrospectives/cadence.json').exists()
+    assert not (tmp_path / 'outside-01.md').exists()
+
+
+def test_manual_and_automatic_publication_cannot_overwrite_each_other(tmp_path):
+    from retrospective import write
+    from enforce_retro_signals import scan
+    seed(tmp_path, ['one', 'two', 'three'], judge_decisions=[{
+        'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
+        'variances': ['recorded defect']}])
+    entered, release = threading.Event(), threading.Event()
+    original = write._atomic_write
+    def pause(path, body):
+        if path.name == 'one-01.md' and 'manual candidate' in body:
+            entered.set()
+            assert release.wait(5)
+        return original(path, body)
+    with patch.object(write, '_atomic_write', side_effect=pause), ThreadPoolExecutor(max_workers=1) as pool:
+        manual = pool.submit(write.write_enforce_candidates, tmp_path, 'one', ['manual candidate'])
+        try:
+            assert entered.wait(5)
+            assert cadence.automatic(tmp_path)['status'] == 'degraded'
+            assert not (tmp_path / '.build-loop/retrospectives/cadence.json').exists()
+        finally:
+            release.set()
+        assert manual.result()['status'] == 'ok'
+    assert cadence.automatic(tmp_path)['status'] == 'captured'
+    assert scan(tmp_path)['patterns'][0]['count'] == 3
+    assert 'manual candidate' in (tmp_path / '.build-loop/proposals/enforce-from-retro/one-01.md').read_text()
