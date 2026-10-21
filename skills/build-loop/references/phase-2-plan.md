@@ -73,6 +73,16 @@
   maxima. Preserve explicit safety, legal and user-authority requirements; data
   absence alone does not justify unbounded work. A timeout needs cancellation,
   cleanup and an honest partial/failure result, not merely a larger number.
+  For content-bearing paths, distinguish complete source storage, extraction,
+  indexing, candidate selection, model context, output and visible previews.
+  Do not silently clip submitted or canonical content, or use word/character
+  count as proof of semantic quality or completeness. Fit finite contexts with
+  source-located chunks or continuation; report omitted regions, failed sources
+  and cap hits with a recovery path. Cache freshness does not prove full-content
+  representation. Validate citations against every source actually supplied.
+  Treat an uncalibrated quality proxy as diagnostic; preserve explicit safety,
+  privacy and user-authority requirements. Reuse existing plan/review evidence
+  and calibrated policies rather than adding another registry or universal cap.
 - Have Phase 1 early-risk findings been verified and resolved or assigned to a
   specific first check? Order read-only local gates before builds and full
   suites. State which repo-owned preflight commands were inspected and which

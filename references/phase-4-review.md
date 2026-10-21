@@ -40,6 +40,17 @@ review but never replace reading the document's audience and current-vs-future s
 
 UI-validator-first when `uiTarget != null` (see `agents/ui-validator.md`); UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE-specific contract gate when server module touched); **pytest-collection gate (`scripts/pytest_collect_gate.py` — full-suite-load check, every run on Python-bearing repos; `fail` routes to Iterate with the broken import as the rubric; closes the changed-area-only blindspot)**; LLM-as-judge; plugin-tests advisory; memory-first gate on every failure. Full procedural detail in `references/phase-gate-checklist.md` §"Sub-step B — Validate".
 
+For changed content pipelines, trace representative evidence through applicable
+stages: input, stored source, extraction/index, eligible candidates, model packet,
+output and citations. Check the boundary behavior named in Phase 2. Where those
+boundaries exist, include a useful fact after the sampled prefix, incomplete
+pagination and a valid later packet source.
+Confirm that failed, skipped or bounded work remains distinguishable from a
+complete empty result, with recoverable locators. Passing checks establish the
+behavior exercised; they do not calibrate a numeric quality threshold or prove
+unseen content was represented. Recheck the actual source and owner before
+closing an older finding or creating a duplicate repair task.
+
 ## Sub-step C — Optimize (opt-in)
 
 Only when a mechanical metric exists. See `references/phase-gate-checklist.md` §"Sub-step C — Optimize".
