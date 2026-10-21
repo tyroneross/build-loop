@@ -297,7 +297,7 @@ def run_request(args: argparse.Namespace, runner=subprocess.run) -> int:
         return _metadata(directory, command, args)
     if not command or not command[0].strip():
         raise ValueError("supply the system command after --")
-    if _scope_key(args.scope).startswith("keychain") or command_reason(shlex.join(command)):
+    if "keychain" in _scope_key(args.scope) or command_reason(shlex.join(command)):
         print(REFUSAL, file=sys.stderr)
         return HELD
     role, request = _claim(directory, command, args)

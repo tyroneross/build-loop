@@ -107,6 +107,18 @@ class CredentialPolicyTests(unittest.TestCase):
             runner.assert_not_called()
             self.assertFalse((state / 'ledger.json').exists())
 
+    def test_explicit_keychain_scopes_refuse_every_prefix_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'state'
+            runner = unittest.mock.Mock(side_effect=AssertionError('dispatched'))
+            for scope in ['Apple Keychain credentials', 'Signing / KEYCHAIN certificate', ' keychain access']:
+                self.assertEqual(access.run_request(args(state, command=['fake-tool'], scope=scope), runner), access.HELD)
+                with patch.object(broker, 'load_registry', side_effect=AssertionError('registry')):
+                    with self.assertRaises(ValueError):
+                        broker.build_request(argv=['fake-tool'], purpose='synthetic', task_id='test', scope=scope)
+            runner.assert_not_called()
+            self.assertFalse((state / 'ledger.json').exists())
+
     def test_broker_refuses_before_registry_or_resolution(self):
         with patch.object(broker, 'load_registry', side_effect=AssertionError('registry')):
             with self.assertRaises(ValueError):
