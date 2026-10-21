@@ -124,6 +124,7 @@ Required before Phase 2 done:
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
 - **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 5, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json`, verify the finding, and repair confirmed issues within the authorized goal before completion.
+- **If the build diff touches Agent Client Protocol code** (changed path matches `acp` or `agent-client-protocol`, or diff text contains `session/prompt`, `session/new`, `session/cancel`, `session/update`, `session/request_permission`, or `agentclientprotocol`; exact command in `skills/build-loop/references/phase-4-review.md` Sub-step A step 1c), load `Skill("build-loop:acp-practice")` and run `skills/acp-practice/references/review-checklist.md`. `❌` → Iterate; `⚠️ untested` → listed in Review-G.
 - After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 
 ### Sub-step B — Validate

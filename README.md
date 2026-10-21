@@ -66,7 +66,7 @@ Throwaway workdirs never write to the canonical store automatically: a run under
 
 ## Reference
 
-Surface counts in this release: 55 skills, 29 agents, and two Claude commands.
+Surface counts in this release: 57 skills, 29 agents, and two Claude commands.
 
 Groundwork exchange validates `.designdoc/build-request.json` and records verified implementation evidence in `.designdoc/implementation-map.json`.
 

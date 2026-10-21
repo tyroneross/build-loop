@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "3576bd9064ec527367fc31ae7f386b1720eb5e8c83555326ec7d29e4849b5a37"
+    "content_sha256": "9759a373836c52a21dbf5c71bf059108d14b71ec0369e74bb8e022f6e8f454db"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1210,6 +1210,10 @@
       }
     },
     "skills": {
+      "acp-practice": {
+        "description": "\"Route, build, and verify Agent Client Protocol (ACP) clients and adapters that drive coding agents over JSON-RPC stdio. Use when choosing ACP vs a PTY for an agent, or a diff touches ACP code (paths or identifiers matching acp, agent-client-protocol, session/prompt). NOT for MCP servers (use mcp-builder) or driving a native TUI in a terminal. Covers Claude, Codex, Cursor, Gemini and OpenCode routing, startup speed,…",
+        "file": "skills/acp-practice/SKILL.md"
+      },
       "agent-rally-point": {
         "description": "\"Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting handoffs or feedback, validating the embedded Rally Point boundary, or changing the future agent-rally-point spin-out surface.\"",
         "file": "skills/agent-rally-point/SKILL.md"

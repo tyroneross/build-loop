@@ -22,10 +22,11 @@ Column meanings:
 - **Invocation** — how an agent reaches it. `internal` skills are not loaded directly by a user; the plugin entrypoint routes to them.
 - **Exposure** — `hidden` is `user-invocable: false`. `public` is `user-invocable: true` plus a non-empty `public-justification:` in the same frontmatter. `public-undeclared` is exposed without a stated reason: the harness resolves visibility as `userInvocable ?? true`, so a skill with no `user-invocable` field is public by default, not hidden.
 
-**56 skills** · 0 public · 0 public-undeclared · 56 hidden
+**57 skills** · 0 public · 0 public-undeclared · 57 hidden
 
 | Skill | When to use | Invocation | Exposure |
 | --- | --- | --- | --- |
+| [`build-loop:acp-practice`](../skills/acp-practice/SKILL.md) | Route, build, and verify Agent Client Protocol (ACP) clients and adapters that drive coding agents over JSON-RPC stdio. Use when choosing ACP vs a PTY for an agent, or a diff touches ACP code (paths or identifiers matching acp, agent-client-protocol, session/prompt). NOT for MCP servers (use mcp-builder) or driving a native TUI in a terminal. Covers Claude, Codex, Cursor, Gemini and OpenCode routing, startup speed, cancel/teardown reliability, session/update rendering, and the Review checklist. | internal — routed to by `build-loop` | hidden |
 | [`build-loop:agent-rally-point`](../skills/agent-rally-point/SKILL.md) | Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting handoffs or feedback, validating the embedded Rally Point boundary, or changing the future agent-rally-point spin-out surface. | internal — routed to by `build-loop` | hidden |
 | [`build-loop:agent-rally-watcher`](../skills/agent-rally-watcher/SKILL.md) | Use when listening for Rally Point changes, wiring coordination watchers, debugging watch-loop behavior, or changing the future agent-rally-watcher spin-out surface. | internal — routed to by `build-loop` | hidden |
 | [`build-loop:api-registry-bridge`](../skills/api-registry-bridge/SKILL.md) | Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to "register this API" or "check the API registry". Consults api-registry plugin; degrades gracefully if plugin is absent. NOT for PRD strategic grounding (use `prd-bridge`) or UI verification (use `ibr-bridge`). | internal — routed to by `build-loop` | hidden |

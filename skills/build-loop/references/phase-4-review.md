@@ -47,6 +47,15 @@ Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violatio
 
 1b. **Stranger test + release-surface scan (auth / admin / owner / debug / gated surfaces).** When the diff touches any such surface, both `independent-auditor` and `security-reviewer` must answer *what can a person who installs the Release build fresh, with their own account or Apple ID, reach?* (full rule in each agent file). On Apple projects (`Package.swift`, `*.xcodeproj`, `project.yml`, or Swift sources) the orchestrator runs `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release_surface_scan.py --path . --files <changed files> --json` and passes the JSON to `security-reviewer` as `release_surface_scan` (that agent has no Bash). The scan is advisory, WARN-level, exit 0: it lists dev-surface markers outside a debug-only `#if`, and the reviewers decide severity. Decide whether a hidden or gated surface should exist in Release at all **before** rating how well it is protected; disclosing a hidden feature to App Review is not a fix. Incident 2026-09-25: a five-tap owner/admin panel gated by client-side trust-on-first-use passed both reviewers, who checked that an existing owner could not be displaced and never modeled a stranger's fresh install.
 
+1c. **ACP checklist (only when the diff touches Agent Client Protocol code).** Run:
+
+   ```bash
+   git diff --name-only <pre_build_sha>..HEAD | grep -Eiq '(^|[/_.-])acp([/_.-]|$)|agent[-_]?client[-_]?protocol' \
+     || git diff -U0 <pre_build_sha>..HEAD | grep -Eq 'session/(new|prompt|cancel|update|load|resume|request_permission)|agent-client-protocol|agentclientprotocol'
+   ```
+
+   Exit 0 → load `Skill("build-loop:acp-practice")` and run `skills/acp-practice/references/review-checklist.md`; record one `ACP-<n>` line per item in Review-G. A `❌` item routes to Iterate; `⚠️ untested` items do not block but must be listed. Exit 1 → skip; nothing is recorded.
+
 2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
 3. **Output**: JSON envelope with `verdict` ∈ {yay, nay, suggest_correction, look_again} + normalized `findings[]` (`severity: critical|high|medium|low`). See `agents/independent-auditor.md` for the full schema.
 4. **Routing** (QM v0.13.0 normalized severities; legacy `major→high`, `minor→medium`, `info→low`):
