@@ -61,6 +61,8 @@ State files (under XDG_STATE_HOME or ~/.local/state):
 """
 from __future__ import annotations
 
+from embed_backend import EMBED_RESPONSE_VERSION, same_model
+
 import argparse
 import json
 import logging
@@ -222,6 +224,7 @@ class _Handler(BaseHTTPRequestHandler):
             "ok": True,
             "backend": _BACKEND_NAME,
             "model": _MODEL_NAME,
+            "protocol_version": EMBED_RESPONSE_VERSION,
             "dim": _DIM,
             "warm": _MODEL_READY,
             "uptime_s": round(time.monotonic() - _START_TS, 3),
@@ -254,6 +257,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.BAD_REQUEST, f"invalid JSON: {e}")
             return
 
+        if not isinstance(payload, dict):
+            self._send_error(HTTPStatus.BAD_REQUEST, "body must be a JSON object")
+            return
         texts = payload.get("texts")
         if not isinstance(texts, list) or not texts:
             self._send_error(HTTPStatus.BAD_REQUEST, "texts must be a non-empty list")
@@ -275,6 +281,10 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
 
+        requested_model = payload.get("model")
+        if requested_model is not None and not same_model(requested_model, _MODEL_NAME):
+            self._send_error(HTTPStatus.CONFLICT, "requested embedding model is unavailable")
+            return
         try:
             embeddings, took_ms = _do_embed(texts)
         except Exception as e:  # noqa: BLE001
@@ -287,6 +297,9 @@ class _Handler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "embeddings": embeddings,
+                "model": _MODEL_NAME,
+                "backend": _BACKEND_NAME,
+                "protocol_version": EMBED_RESPONSE_VERSION,
                 "took_ms": took_ms,
                 "n": len(embeddings),
                 "dim": len(embeddings[0]) if embeddings else _DIM,

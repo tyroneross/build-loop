@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1b5ac1705a9cf5d6bb30efb069d9d1ef7c3c62b936c02f05638e82fdf3a38950"
+    "content_sha256": "3576bd9064ec527367fc31ae7f386b1720eb5e8c83555326ec7d29e4849b5a37"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1598,7 +1598,7 @@
       "scripts/self_review/selfscan.py": "selfscan.py — self-simplification scan for the self_review package.",
       "scripts/semantic_index/__init__.py": "Local SQLite semantic-facts index.",
       "scripts/semantic_index/_bench_hybrid.py": "Quick latency bench for the SQLite hybrid recall path.",
-      "scripts/semantic_index/backfill.py": "Backfill embeddings for semantic_facts rows where ``embedding_json IS NULL``.",
+      "scripts/semantic_index/backfill.py": "Backfill missing embeddings and refresh unknown or mismatched model provenance.",
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
       "scripts/share_presentation_check.py": "Check Build Loop's scoped share-presentation record; never claim render proof.\"\"\"",
       "scripts/skill_index.py": "",

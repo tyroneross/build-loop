@@ -105,7 +105,7 @@ def test_dense_rerank_surfaces_synonym_keyword_misses(tmp_path: Path) -> None:
         project="p",
         embedding=_VEC["auto"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="F2",
         predicate="thing",
@@ -113,7 +113,7 @@ def test_dense_rerank_surfaces_synonym_keyword_misses(tmp_path: Path) -> None:
         project="p",
         embedding=_VEC["thing"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="F3",
         predicate="weather",
@@ -121,7 +121,7 @@ def test_dense_rerank_surfaces_synonym_keyword_misses(tmp_path: Path) -> None:
         project="p",
         embedding=_VEC["rain"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
 
     keyword_results = query_facts(
         query="automobile", project="p", db_path=db, mode="keyword",
@@ -132,7 +132,7 @@ def test_dense_rerank_surfaces_synonym_keyword_misses(tmp_path: Path) -> None:
         db_path=db,
         mode="hybrid",
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
 
     # Control: keyword-only completely MISSES (the query token "automobile"
     # has zero substring hits across F1/F2/F3).
@@ -165,7 +165,7 @@ def test_fallback_to_keyword_when_embed_backend_unavailable(
         project="p",
         embedding=_VEC["auto"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="beta",
         predicate="describes",
@@ -173,7 +173,7 @@ def test_fallback_to_keyword_when_embed_backend_unavailable(
         project="p",
         embedding=_VEC["rain"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
 
     def broken_embed(_text: str) -> list[float]:
         raise RuntimeError("simulated MLX + Ollama outage")
@@ -184,7 +184,7 @@ def test_fallback_to_keyword_when_embed_backend_unavailable(
         db_path=db,
         mode="hybrid",
         embed_fn=broken_embed,
-    )
+     embedding_model="test-fixture")
 
     # Got at least one result back (alpha matches keyword "adapter") and
     # no exception was raised — the headline fallback contract.
@@ -223,7 +223,7 @@ def test_fallback_when_no_candidate_has_embedding(tmp_path: Path) -> None:
         db_path=db,
         mode="hybrid",
         embed_fn=tracker_embed,
-    )
+     embedding_model="test-fixture")
 
     assert out, "must return keyword candidates even with no embeddings"
     assert out[0]["subject"] == "only-keyword-fact"
@@ -263,7 +263,7 @@ def test_init_is_idempotent(tmp_path: Path) -> None:
         project="p",
         embedding=_VEC["auto"],
         db_path=db,
-    )
+     embedding_model="test-fixture")
     # Second init must be a no-op (idempotent) — no schema reset.
     init(db)
     # Third init for good measure (proves N-times idempotency).
@@ -393,7 +393,7 @@ def test_production_path_synonym_hit_without_explicit_embedding(tmp_path: Path) 
         project="p",
         db_path=db,
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="F2",
         predicate="thing",
@@ -401,7 +401,7 @@ def test_production_path_synonym_hit_without_explicit_embedding(tmp_path: Path) 
         project="p",
         db_path=db,
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="F3",
         predicate="weather",
@@ -409,7 +409,7 @@ def test_production_path_synonym_hit_without_explicit_embedding(tmp_path: Path) 
         project="p",
         db_path=db,
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
 
     # Verify embeddings were auto-populated on write.
     conn = sqlite3.connect(str(db))
@@ -436,7 +436,7 @@ def test_production_path_synonym_hit_without_explicit_embedding(tmp_path: Path) 
         db_path=db,
         mode="hybrid",
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
     assert hybrid_results, (
         "production path synonym hit failed — hybrid is dormant. "
         "Auto-embed-on-write + read-path embed_fn must both fire."
@@ -460,7 +460,7 @@ def test_upsert_fact_auto_embed_false_keeps_null(tmp_path: Path) -> None:
         db_path=db,
         embed_fn=_embed_fake,  # provided but ignored
         auto_embed=False,
-    )
+     embedding_model="test-fixture")
     conn = sqlite3.connect(str(db))
     raw = conn.execute(
         "SELECT embedding_json FROM semantic_facts WHERE subject='no-vec'"
@@ -485,7 +485,7 @@ def test_upsert_fact_write_path_swallows_embed_failure(tmp_path: Path) -> None:
         project="p",
         db_path=db,
         embed_fn=broken,
-    )
+     embedding_model="test-fixture")
 
     conn = sqlite3.connect(str(db))
     raw = conn.execute(
@@ -511,7 +511,7 @@ def test_read_semantic_passes_embed_fn_through_to_query_facts(tmp_path: Path) ->
         project="p",
         db_path=db,
         embed_fn=_embed_fake,
-    )
+     embedding_model="test-fixture")
 
     # We must point read_semantic's underlying query_facts at OUR temp DB.
     # The facade resolves the path via semantic_index.default_db_path(); we
@@ -529,6 +529,7 @@ def test_read_semantic_passes_embed_fn_through_to_query_facts(tmp_path: Path) ->
             project="p",
             skip_postgres=True,
             embed_fn=_embed_fake,
+            embedding_model="test-fixture",
         )
     finally:
         si._db_path = original_path_fn

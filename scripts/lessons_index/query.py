@@ -268,8 +268,7 @@ def _cosine_rerank(
     Vectors from a different embedding model are excluded rather than scored.
     Cross-model cosine is meaningless, and because models can share a dimension
     the mismatch is silent — excluding degrades to BM25 instead of ranking on
-    noise. `goal_model=None` (backend didn't report one) keeps the legacy
-    unfiltered behavior.
+    noise. Unknown producer identity preserves the keyword ranking.
     """
     ids = [r["id"] for r in candidates]
     placeholders = ",".join("?" * len(ids))
@@ -279,10 +278,7 @@ def _cosine_rerank(
             [*ids, goal_model],
         ).fetchall()
     else:
-        emb_rows = conn.execute(
-            f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders})",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
-            ids,
-        ).fetchall()
+        return candidates
     emb_map = {row["fact_id"]: _unpack_floats(row["vec"]) for row in emb_rows}
 
     scored = []

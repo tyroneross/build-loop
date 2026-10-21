@@ -2,11 +2,17 @@
 
 Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes.
 
+**After any issue, reassess before retrying.** Return to Assess and follow the
+[canonical search-and-batch rule](skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
+before rerunning the failed build or operation.
+
 **Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
 
 Phase 6 uses one proof-bearing command: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Complete its returned work orders through `attest`; a complete receipt is required.
 
 Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report.
+
+Follow [AGENTS.md — no Keychain automation](AGENTS.md#owner-instruction-no-keychain-automation). General continuation never renews Keychain authorization.
 
 ## Principles
 

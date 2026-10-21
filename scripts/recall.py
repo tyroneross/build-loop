@@ -100,6 +100,7 @@ def hybrid_search_facts(
     domain: str | None = None,
     goal: str | None = None,
     confidence_source: str | None = None,
+    embedding_model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run hybrid search over semantic_facts.
 
@@ -110,6 +111,9 @@ def hybrid_search_facts(
     Each filter prefers the typed column but falls back to JSONB metadata
     so retrieval still works if the v2 migration hasn't been applied yet.
     """
+    from embed_backend import model_aliases, PG_EMBEDDING_SPACE_FILTER
+    if not model_aliases(embedding_model):
+        return []
     schema = _safe_schema(schema)
     emb = vector_literal(embedding)
     where_clauses = [
@@ -117,7 +121,8 @@ def hybrid_search_facts(
         "embedding IS NOT NULL",
         "confidence >= %s",
     ]
-    params: list[Any] = [emb, q, q, q, emb, q, q, q, confidence_floor]
+    where_clauses.append(PG_EMBEDDING_SPACE_FILTER)
+    params: list[Any] = [emb, q, q, q, emb, q, q, q, confidence_floor, model_aliases(embedding_model)]
 
     # Allowlist of fields that may be interpolated into the WHERE clause.
     # Any caller passing a `field` outside this set will raise ValueError.
@@ -215,8 +220,13 @@ def hybrid_search_episodes(
     embedding: list[float],
     schema: str,
     limit: int,
+    *,
+    embedding_model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Episode-events hybrid search: cosine + ts_rank."""
+    """Episode-events hybrid search: cosine + ts_rank, within one verified space."""
+    from embed_backend import model_aliases, PG_EMBEDDING_SPACE_FILTER
+    if not model_aliases(embedding_model):
+        return []
     schema = _safe_schema(schema)
     emb = vector_literal(embedding)
     sql = (
@@ -228,11 +238,11 @@ def hybrid_search_episodes(
         "    ts_rank(to_tsvector('english', coalesce(raw_content,'')), "
         "            plainto_tsquery('english', %s)) AS ts_rank_score "
         f"FROM {schema}.episode_events "
-        "WHERE embedding IS NOT NULL "
+        "WHERE embedding IS NOT NULL AND " + PG_EMBEDDING_SPACE_FILTER + " "
         "ORDER BY (1 - (embedding <=> %s::vector)) DESC "
         "LIMIT %s"
     )
-    return query(sql, (emb, q, emb, int(limit)))
+    return query(sql, (emb, q, model_aliases(embedding_model), emb, int(limit)))
 
 
 def neighbor_expand(
@@ -408,11 +418,14 @@ def run_search(
     if mode == "vector_only":
         t0 = _time.monotonic()
         embedding = _embed(query)
+        from embed_backend import embedding_provenance
+        query_model = embedding_provenance()["embedding_model_version"]
         leg_stats["embed_ms"] = int((_time.monotonic() - t0) * 1000)
 
         t0 = _time.monotonic()
         facts = hybrid_search_facts(
             query, embedding, schema, limit, confidence_floor,
+            embedding_model=query_model,
             project=project, projects=projects, tool=tool, model=model,
             task_category=task_category, author=author,
             domain=domain, goal=goal, confidence_source=confidence_source,
@@ -445,11 +458,14 @@ def run_search(
     # Vector leg (cosine over embedding column).
     t0 = _time.monotonic()
     embedding = _embed(query)
+    from embed_backend import embedding_provenance
+    query_model = embedding_provenance()["embedding_model_version"]
     leg_stats["embed_ms"] = int((_time.monotonic() - t0) * 1000)
 
     t0 = _time.monotonic()
     vector_hits = hybrid_search_facts(
         query, embedding, schema, PER_LEG_OVERFETCH, confidence_floor,
+        embedding_model=query_model,
         project=project, projects=projects, tool=tool, model=model,
         task_category=task_category, author=author,
         domain=domain, goal=goal, confidence_source=confidence_source,
@@ -740,7 +756,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             t0 = _time.monotonic()
             embedding = _embed(args.query)  # cached by embed_backend after run_search
-            episodes = hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
+            from embed_backend import embedding_provenance
+            episodes = hybrid_search_episodes(args.query, embedding, args.schema, args.limit,
+                embedding_model=embedding_provenance()["embedding_model_version"])
             timing["episodes_ms"] = int((_time.monotonic() - t0) * 1000)
             if episodes:
                 t0 = _time.monotonic()

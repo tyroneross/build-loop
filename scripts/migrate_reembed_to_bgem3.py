@@ -30,6 +30,7 @@ Exit:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -83,16 +84,16 @@ def _row_text(row: dict) -> str:
 
 def list_stale(schema: str, target_model: str) -> list[dict]:
     """Return rows whose embedding_model_version != target_model (or NULL)."""
+    from embed_backend import PG_EMBEDDING_SPACE_FILTER, model_aliases
     schema = _safe_schema(schema)
     sql = (
         "SELECT id::text AS id, subject, predicate, object, "
         "       embedding_model_version "
         f"FROM {schema}.semantic_facts "
         "WHERE embedding IS NOT NULL "
-        "  AND (embedding_model_version IS NULL "
-        "       OR embedding_model_version <> %s)"
+        "  AND NOT COALESCE(" + PG_EMBEDDING_SPACE_FILTER + ", false)"
     )
-    return query(sql, (target_model,))
+    return query(sql, (model_aliases(target_model),))
 
 
 def reembed_batch(schema: str, rows: list[dict], target_model: str) -> int:
@@ -102,21 +103,21 @@ def reembed_batch(schema: str, rows: list[dict], target_model: str) -> int:
     schema = _safe_schema(schema)
     texts = [_row_text(r) for r in rows]
     vecs = embed(texts)  # batched
-    if not isinstance(vecs, list) or len(vecs) != len(rows):
-        raise RuntimeError(f"embed batch returned {len(vecs)} vectors for {len(rows)} rows")
+    from embed_backend import same_model, embedding_provenance
+    provenance = embedding_provenance()
+    if not same_model(provenance["embedding_model_version"], target_model):
+        raise RuntimeError("actual embedding model differs from migration target")
+    from embed_backend import validate_embeddings
+    vecs = validate_embeddings(vecs, len(rows))
     n = 0
     for row, vec in zip(rows, vecs):
-        if not isinstance(vec, list) or len(vec) != EMBED_DIM:
-            raise RuntimeError(
-                f"embed returned dim={len(vec) if isinstance(vec, list) else type(vec).__name__}, "
-                f"expected {EMBED_DIM}"
-            )
         execute(
             f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
             "   SET embedding = %s::vector, "
-            "       embedding_model_version = %s "
+            "       embedding_model_version = %s, "
+            "       metadata = (CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata ELSE '{}'::jsonb END) || %s::jsonb "
             " WHERE id::text = %s",
-            (vector_literal(vec), target_model, row["id"]),
+            (vector_literal(vec), provenance["embedding_model_version"], json.dumps(provenance), row["id"]),
         )
         n += 1
     return n

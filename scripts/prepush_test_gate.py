@@ -178,6 +178,7 @@ FULL_SUITE_EXCLUDED_TREES = ("dist", "build", "node_modules", "vendor", ".venv")
 def full_suite_pytest_args(
     targets: Iterable[str] = FULL_SUITE_TARGETS, *, use_timeout: bool = True,
     include_typescript_runtime: bool = False,
+    include_full_deselections: bool = True,
 ) -> list[str]:
     """One deterministic full profile; callers may supply discovered file targets.
 
@@ -193,8 +194,9 @@ def full_suite_pytest_args(
         args += ["--ignore-glob", f"**/{tree}/**"]
     if use_timeout:
         args += ["--timeout=60", "--timeout-method=thread"]
-    for node_id in _FULL_DESELECT:
-        args += ["--deselect", node_id]
+    if include_full_deselections:
+        for node_id in _FULL_DESELECT:
+            args += ["--deselect", node_id]
     return args
 
 

@@ -72,7 +72,8 @@ def _setup_test_schema() -> None:
           valid_from TIMESTAMPTZ DEFAULT now(),
           valid_to TIMESTAMPTZ,
           embedding VECTOR(1024),
-          metadata JSONB
+          metadata JSONB,
+          embedding_model_version TEXT
         );
         CREATE TABLE {SCHEMA_TEST}.fact_conflicts (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -93,15 +94,16 @@ def _setup_test_schema() -> None:
 def _insert_existing_fact(subject: str, predicate: str, obj: str) -> None:
     sys.path.insert(0, str(HERE))
     from db import execute, vector_literal  # type: ignore
-    from embed_backend import embed  # type: ignore
+    from embed_backend import embed, embedding_provenance  # type: ignore
 
     text = f"{subject} {predicate}: {obj}"
     emb = embed(text)
+    provenance = embedding_provenance()
     execute(
         f"INSERT INTO {SCHEMA_TEST}.semantic_facts "
-        "(subject, predicate, object, confidence, status, embedding, metadata) "
-        "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb)",
-        (subject, predicate, obj, 0.75, vector_literal(emb), json.dumps({"seed": True})),
+        "(subject, predicate, object, confidence, status, embedding, metadata, embedding_model_version) "
+        "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, %s)",
+        (subject, predicate, obj, 0.75, vector_literal(emb), json.dumps({"seed": True, **provenance}), provenance["embedding_model_version"]),
     )
 
 

@@ -123,7 +123,7 @@ def test_probe_returns_daemon_backend_when_warm(monkeypatch):
         monkeypatch,
         {
             "ok": True,
-            "warm": True,
+            "warm": True, "protocol_version": 1,
             "backend": "mlx",
             "model": "mlx-community/mxbai-embed-large-v1",
             "dim": 1024,
@@ -174,9 +174,9 @@ def test_select_backend_uses_daemon_when_available(monkeypatch):
         monkeypatch,
         {
             "ok": True,
-            "warm": True,
-            "backend": "mlx",
-            "model": "mlx-community/mxbai-embed-large-v1",
+            "warm": True, "protocol_version": 1,
+            "backend": "ollama",
+            "model": "bge-m3",
             "dim": 1024,
         },
     )
@@ -193,13 +193,14 @@ def test_select_backend_uses_daemon_when_available(monkeypatch):
 def test_embed_routes_through_daemon_when_available(monkeypatch):
     """End-to-end: embed("foo") with a healthy daemon issues an HTTP
     POST to the daemon and returns the daemon's vector unchanged."""
+    monkeypatch.setattr(eb_mod, "EMBED_DIM", 4)
     _patch_urlopen_health(
         monkeypatch,
         {
             "ok": True,
-            "warm": True,
-            "backend": "mlx",
-            "model": "mlx-community/mxbai-embed-large-v1",
+            "warm": True, "protocol_version": 1,
+            "backend": "ollama",
+            "model": "bge-m3",
             "dim": 4,  # tiny to keep the test obvious
         },
     )
@@ -225,6 +226,7 @@ def test_embed_routes_through_daemon_when_available(monkeypatch):
                     return json.dumps(
                         {
                             "ok": True,
+                            "model": "bge-m3", "protocol_version": 1,
                             "embeddings": [[0.1, 0.2, 0.3, 0.4]],
                             "took_ms": 7,
                             "n": 1,
@@ -250,9 +252,10 @@ def test_embed_routes_through_daemon_when_available(monkeypatch):
 
 def test_embed_batch_routes_through_daemon(monkeypatch):
     """Batch embed routes through /embed with the full text list."""
+    monkeypatch.setattr(eb_mod, "EMBED_DIM", 2)
     _patch_urlopen_health(
         monkeypatch,
-        {"ok": True, "warm": True, "backend": "mlx", "model": "x", "dim": 2},
+        {"ok": True, "warm": True, "protocol_version": 1, "backend": "ollama", "model": "bge-m3", "dim": 2},
     )
 
     captured: dict[str, Any] = {}
@@ -272,6 +275,7 @@ def test_embed_batch_routes_through_daemon(monkeypatch):
                     return json.dumps(
                         {
                             "ok": True,
+                            "model": "bge-m3", "protocol_version": 1,
                             "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                             "took_ms": 9,
                             "n": 2,
@@ -302,9 +306,10 @@ def test_daemon_503_falls_back_to_inprocess_on_next_process(monkeypatch):
     This test asserts the failure mode is loud rather than silent;
     embed() should propagate the RuntimeError to its caller.
     """
+    monkeypatch.setattr(eb_mod, "EMBED_DIM", 4)
     _patch_urlopen_health(
         monkeypatch,
-        {"ok": True, "warm": True, "backend": "mlx", "model": "x", "dim": 4},
+        {"ok": True, "warm": True, "protocol_version": 1, "backend": "ollama", "model": "bge-m3", "dim": 4},
     )
 
     class _FakeConn:

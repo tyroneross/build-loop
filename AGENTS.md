@@ -2,6 +2,10 @@
 
 Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
 
+**After any issue, reassess before retrying.** Return to Assess and follow the
+[canonical search-and-batch rule](skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
+before rerunning the failed build or operation.
+
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
 ## UI container rule for every host
@@ -49,6 +53,17 @@ Exit codes: `0` completed · `1` denied/cancelled/timeout/failed · `2` refused 
 **On a `1`, do not retry.** A denial, cancellation, or timeout is cached and replayed, so an immediate retry cannot produce a different answer — it can only produce another dialog. This is the exact 2026-08-20 failure: one Codex turn ran `sfltool dumpbtm` twice, 14 seconds apart, because a refused read returned empty output that was indistinguishable from "no matches". Report the denial and continue with the rest of the work.
 
 Claude Code enforces this through a PreToolUse hook. Codex and other hosts follow it as protocol. Full contract, registry format, and risk-class behaviour when the coordinator is unavailable: `skills/build-loop/references/privileged-request-broker.md`.
+
+## Owner instruction: no Keychain automation
+
+As of 2026-10-21, do not initiate Apple Keychain reads, writes, migration,
+unlocks, resets, credential probes, or authentication prompts for Build Loop,
+Ambient, or other Mac-app work unless Tyrone explicitly requests Keychain use
+again. Preserve credentials and data; never substitute plaintext secret storage.
+Use already authorized service connections or leave the feature unavailable.
+General instructions to continue or fix connections do not renew authorization.
+Use ad-hoc local signing when suitable; stored signing keys require explicit
+authorization.
 
 ## System-access prompts — one request per access need
 

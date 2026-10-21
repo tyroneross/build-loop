@@ -68,7 +68,7 @@ def test_backfill_picks_up_null_rows(tmp_path: Path) -> None:
     conn.close()
     assert pre == 2
 
-    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec)
+    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, embedding_model="test-fixture")
     assert isinstance(result, BackfillResult)
     assert result.scanned == 2
     assert result.embedded == 2
@@ -101,9 +101,9 @@ def test_backfill_idempotent_second_run_is_noop(tmp_path: Path) -> None:
         db_path=db,
         auto_embed=False,
     )
-    first = backfill_embeddings(db_path=db, embed_fn=_fixed_vec)
+    first = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, embedding_model="test-fixture")
     assert first.embedded == 1
-    second = backfill_embeddings(db_path=db, embed_fn=_fixed_vec)
+    second = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, embedding_model="test-fixture")
     assert second.scanned == 0
     assert second.embedded == 0
     assert second.failed == 0
@@ -127,7 +127,7 @@ def test_backfill_per_row_failure_isolation(tmp_path: Path) -> None:
             raise RuntimeError("simulated row-1 failure")
         return _fixed_vec(text)
 
-    result = backfill_embeddings(db_path=db, embed_fn=flaky_embed)
+    result = backfill_embeddings(db_path=db, embed_fn=flaky_embed, embedding_model="test-fixture")
     assert result.scanned == 3
     assert result.embedded == 2
     assert result.failed == 1
@@ -174,7 +174,7 @@ def test_backfill_skips_empty_text(tmp_path: Path) -> None:
         calls["n"] += 1
         return _fixed_vec(text)
 
-    result = backfill_embeddings(db_path=db, embed_fn=tracker)
+    result = backfill_embeddings(db_path=db, embed_fn=tracker, embedding_model="test-fixture")
     # Subject 'only-subject' alone is non-empty text — it embeds.
     assert result.scanned == 1
     assert calls["n"] == 1
@@ -226,17 +226,17 @@ def test_backfill_max_rows_cap(tmp_path: Path) -> None:
             auto_embed=False,
         )
 
-    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, max_rows=2)
+    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, max_rows=2, embedding_model="test-fixture")
     assert result.scanned == 2
     assert result.embedded == 2
 
     # Three rows still NULL; next call drains them.
-    result2 = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, max_rows=10)
+    result2 = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, max_rows=10, embedding_model="test-fixture")
     assert result2.scanned == 3
     assert result2.embedded == 3
 
     # Third call is the idempotent no-op.
-    result3 = backfill_embeddings(db_path=db, embed_fn=_fixed_vec)
+    result3 = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, embedding_model="test-fixture")
     assert result3.scanned == 0
 
 
@@ -244,7 +244,7 @@ def test_backfill_nonexistent_db_is_clean_noop(tmp_path: Path) -> None:
     """Fresh installs hit this before any write. Don't crash; don't flag
     backend-unavailable; just return zeros."""
     db = tmp_path / "does-not-exist.sqlite"
-    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec)
+    result = backfill_embeddings(db_path=db, embed_fn=_fixed_vec, embedding_model="test-fixture")
     assert result.scanned == 0
     assert result.embedded == 0
     assert result.failed == 0
@@ -263,7 +263,7 @@ def test_backfill_does_not_touch_already_embedded_rows(tmp_path: Path) -> None:
         project="proj",
         db_path=db,
         embedding=fixed,
-    )
+     embedding_model="test-fixture")
     upsert_fact(
         subject="no-vec",
         predicate="p",
@@ -279,7 +279,7 @@ def test_backfill_does_not_touch_already_embedded_rows(tmp_path: Path) -> None:
         calls["texts"].append(text)
         return _fixed_vec(text)
 
-    result = backfill_embeddings(db_path=db, embed_fn=tracker)
+    result = backfill_embeddings(db_path=db, embed_fn=tracker, embedding_model="test-fixture")
     assert result.scanned == 1  # only the NULL row
     assert result.embedded == 1
 

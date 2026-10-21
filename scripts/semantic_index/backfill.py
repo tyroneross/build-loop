@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Backfill embeddings for semantic_facts rows where ``embedding_json IS NULL``.
+"""Backfill missing embeddings and refresh unknown or mismatched model provenance.
 
 The P1 auto-embed-on-write change (``upsert_fact(auto_embed=True)``)
 only covers rows written AFTER the upgrade. Pre-upgrade rows — and rows
@@ -86,6 +86,7 @@ def _iter_null_rows(
     conn: sqlite3.Connection,
     batch_size: int,
     after_rowid: int = 0,
+    target_model: str | None = None,
 ) -> list[tuple[int, str, str, str]]:
     """Fetch up to ``batch_size`` rows with NULL embedding_json AND
     ``rowid > after_rowid``.
@@ -101,15 +102,26 @@ def _iter_null_rows(
     fields ``_embed_text_for_fact`` consumes. Bounded by ``batch_size``
     so memory and commit-window scale predictably with large DBs.
     """
+    from embed_backend import model_aliases
+    aliases = model_aliases(target_model)
+    identity_filter = "embedding_json IS NULL"
+    params = [after_rowid, batch_size]
+    if aliases:
+        identity_filter = ("embedding_json IS NULL OR NOT COALESCE("
+            "CASE WHEN json_valid(metadata_json) THEN json_type(metadata_json) = 'object' AND "
+            "json_type(metadata_json, '$.embedding_identity_verified') = 'true' AND "
+            "json_extract(metadata_json, '$.embedding_model_version') IN (?, ?) "
+            "ELSE 0 END, 0)")
+        params = aliases + params
     cur = conn.execute(
-        """
+        f"""
         SELECT rowid, subject, predicate, object
         FROM semantic_facts
-        WHERE embedding_json IS NULL AND rowid > ?
+        WHERE ({identity_filter}) AND rowid > ?
         ORDER BY rowid ASC
         LIMIT ?
         """,
-        (after_rowid, batch_size),
+        params,
     )
     return [
         (int(r[0]), str(r[1] or ""), str(r[2] or ""), str(r[3] or ""))
@@ -121,12 +133,13 @@ def backfill_embeddings(
     *,
     db_path: str | Path | None = None,
     embed_fn: Optional[Callable[[str], list[float]]] = None,
+    embedding_model: str | None = None,
     batch_size: int = 50,
     max_rows: Optional[int] = None,
 ) -> BackfillResult:
     """Embed every ``embedding_json IS NULL`` row in place.
 
-    Idempotency: rows with non-NULL ``embedding_json`` are never re-
+    Idempotency: rows with verified matching model provenance are never re-
     embedded. Re-running on a fully-backfilled DB scans zero rows and
     returns ``embedded=0`` — safe to schedule periodically.
 
@@ -146,12 +159,20 @@ def backfill_embeddings(
         # write. Not an error; not a backend-unavailable state either.
         return result
 
-    if embed_fn is None:
-        embed_fn = _resolve_default_embed_fn()
-        if embed_fn is None:
-            result.backend_unavailable = True
-            result.error = "embed_backend import failed"
-            return result
+    from embed_backend import model_key, active_model, embedding_provenance, same_model
+    injected = embed_fn is not None
+    try:
+        if not injected:
+            embed_fn = _resolve_default_embed_fn()
+            if embed_fn is None:
+                raise RuntimeError("embed_backend import failed")
+        target = model_key(embedding_model if injected else active_model())
+        if target is None:
+            raise RuntimeError("custom embed_fn requires an explicit embedding_model")
+    except Exception as exc:
+        result.backend_unavailable = True
+        result.error = str(exc)
+        return result
 
     conn = connect(path)
     try:
@@ -163,7 +184,7 @@ def backfill_embeddings(
             limit = batch_size
             if rows_left is not None:
                 limit = min(batch_size, rows_left)
-            batch = _iter_null_rows(conn, limit, after_rowid=cursor_rowid)
+            batch = _iter_null_rows(conn, limit, after_rowid=cursor_rowid, target_model=target)
             if not batch:
                 break
 
@@ -185,28 +206,26 @@ def backfill_embeddings(
                             f"rowid={rowid}: {type(e).__name__}: {e}"
                         )
                     continue
-                if not isinstance(vec, list) or not vec:
-                    result.failed += 1
-                    if len(result.sample_failures) < 5:
-                        result.sample_failures.append(
-                            f"rowid={rowid}: embed returned {type(vec).__name__}"
-                        )
-                    continue
+                from semantic_index.hybrid import _parse_embedding
+                vec = _parse_embedding(vec)
                 try:
-                    payload = json.dumps(
-                        [float(x) for x in vec], ensure_ascii=False, sort_keys=True
+                    if vec is None:
+                        raise ValueError("embed returned an invalid finite numeric vector")
+                    provenance = ({"embedding_model_version": target, "embedding_identity_verified": True}
+                                  if injected else embedding_provenance())
+                    if not same_model(provenance["embedding_model_version"], target):
+                        raise RuntimeError("embedding producer changed during backfill")
+                    conn.execute(
+                        "UPDATE semantic_facts SET embedding_json = ?, metadata_json = "
+                        "json_set(CASE WHEN json_valid(metadata_json) THEN CASE WHEN json_type(metadata_json) = 'object' THEN metadata_json ELSE '{}' END ELSE '{}' END, "
+                        "'$.embedding_model_version', ?, '$.embedding_identity_verified', json('true')) WHERE rowid = ?",
+                        (json.dumps(vec, allow_nan=False), target, rowid),
                     )
-                except (TypeError, ValueError) as e:
+                except (ValueError, TypeError, RuntimeError) as exc:
                     result.failed += 1
                     if len(result.sample_failures) < 5:
-                        result.sample_failures.append(
-                            f"rowid={rowid}: non-numeric vector: {e}"
-                        )
+                        result.sample_failures.append(f"rowid={rowid}: {exc}")
                     continue
-                conn.execute(
-                    "UPDATE semantic_facts SET embedding_json = ? WHERE rowid = ?",
-                    (payload, rowid),
-                )
                 result.embedded += 1
             conn.commit()  # per-batch commit → resumable if killed
     finally:

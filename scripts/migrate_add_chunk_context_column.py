@@ -36,6 +36,7 @@ Exit:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -139,12 +140,10 @@ def backfill(
     summary["router_model"] = target
 
     try:
-        from embed_backend import active_model, embed  # type: ignore  # noqa: PLC0415
+        from embed_backend import embedding_provenance, embed  # type: ignore  # noqa: PLC0415
     except Exception as e:  # noqa: BLE001
         summary["action"] = f"embed-import-failed: {e}"
         return summary
-
-    model_id = active_model()
 
     # Process serially for now — most local models can't handle parallel
     # POSTs cleanly, and the corpus is small (~10–20 rows). Batch flag
@@ -169,6 +168,7 @@ def backfill(
         embed_text = f"{ctx}\n\n{body}"
         try:
             vec = embed(embed_text)
+            provenance = embedding_provenance()
         except Exception as e:  # noqa: BLE001
             print(f"backfill: embed failed for id={row['id']}: {e}", file=sys.stderr)
             summary["errors"] += 1
@@ -178,9 +178,10 @@ def backfill(
             execute(
                 f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 f"SET chunk_context = %s, embedding = %s::vector, "
-                f"    embedding_model_version = %s "
+                f"    embedding_model_version = %s, "
+                "metadata = (CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata ELSE '{}'::jsonb END) || %s::jsonb "
                 f"WHERE id::text = %s",
-                (ctx, vector_literal(vec), model_id, row["id"]),
+                (ctx, vector_literal(vec), provenance["embedding_model_version"], json.dumps(provenance), row["id"]),
             )
             summary["filled"] += 1
         except Exception as e:  # noqa: BLE001

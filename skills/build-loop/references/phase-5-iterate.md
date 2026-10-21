@@ -89,6 +89,12 @@ Results re-enter Sub-step B for re-validation. For Validate failures (no queue e
 
 **UI re-validate hook (when uiTarget != null)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, invoke headless IBR for affected renderable surfaces when installed, following `../../../references/ibr-ui-verification-policy.md`. Run `ui-validator` in parallel for web, with native AX or simulator/browser evidence as the fallback. If no renderable surface can be resolved, record the gap and fall back to `audit-design-rules.mjs`.
 
+**Before any retry, return to Assess.** Apply the canonical
+[reassess-before-retrying rule](../SKILL.md#question-led-inspections-and-investigations)
+to tooling failures and Review findings alike: search the failure class across
+the codebase, verify related sites, update the plan and repair the affected batch
+before rerunning the failed build or operation.
+
 **Infra self-heal before counting an attempt (C-HEAL / self_heal_safe_issues).** When an Iterate attempt's own tooling, hook, or Bash command FAILS (infra error — non-zero exit that is not a graded-criterion failure, e.g. a pre-commit hook crash, a lint runner that throws on a binary file, a script that errors on a missing env var): ROOT-CAUSE and FIX that infra error first. Classify via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action), commit, then resume the Iterate attempt. RISKY/DECISION/PRODUCTION → isolate/surface per the normal routing table. An infra self-heal does NOT burn the iterate budget; only a graded-criterion failure (test/lint/validate failure against the rubric) burns a count. This prevents `--no-verify` bypasses and other workarounds from masking fixable infra errors.
 
 Per attempt:

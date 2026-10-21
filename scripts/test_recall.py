@@ -84,12 +84,15 @@ KNOWN_FACTS = [
 def insert_known_facts() -> None:
     for subject, predicate, obj in KNOWN_FACTS:
         emb = _embed_via_backend(obj)
+        from embed_backend import embedding_provenance
+        provenance = embedding_provenance()
         emb_lit = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
         sql = (
             f"INSERT INTO {TEST_SCHEMA}.semantic_facts "
-            f"(subject, predicate, object, confidence, status, embedding) "
+            f"(subject, predicate, object, confidence, status, embedding, metadata, embedding_model_version) "
             f"VALUES ($STX${subject}$STX$, $STX${predicate}$STX$, "
-            f"$STX${obj}$STX$, 1.0, 'active', '{emb_lit}'::vector);"
+            f"$STX${obj}$STX$, 1.0, 'active', '{emb_lit}'::vector, "
+            f"$JSON${json.dumps(provenance)}$JSON$::jsonb, '{provenance['embedding_model_version']}');"
         )
         psql_exec(sql)
 

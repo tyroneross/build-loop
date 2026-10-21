@@ -147,6 +147,12 @@ Routing detail extracted to `references/phase-4-review.md`. Sub-step procedural 
 
 ### Phase 5: Iterate (up to 5x classic, up to 25 autonomous)
 
+Before retrying any failed build or operation, return to Assess and follow the
+[canonical reassess-before-retrying rule](../skills/build-loop/SKILL.md#question-led-inspections-and-investigations).
+Search the failure class across the codebase, confirm affected sites, update the
+plan and repair the batch before resuming Execute/Review.
+
+
 Full protocol: `references/iterate-protocol.md`. Highlights:
 
 - Diagnose the system cause before fixing — start with plain-language failure, then trace to the first controllable system control that failed.

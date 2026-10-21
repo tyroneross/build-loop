@@ -1980,3 +1980,52 @@ class TestTypeScriptRuntimeRouting(unittest.TestCase):
                     self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
                     self.assertEqual(payload["passed"], 1)
                     self.assertTrue((root / "runtime-ran").exists())
+
+
+class DeterministicScopeTests(unittest.TestCase):
+    def test_changed_broad_and_full_never_run_live_or_service_tests(self):
+        """Actual CLI scopes must share the same service exclusion contract."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/test_sample.py').write_text(
+                "import pytest\nfrom pathlib import Path\n"
+                "def test_local(): Path('local-ran').write_text('yes')\n"
+                "@pytest.mark.live\n"
+                "def test_live(): raise AssertionError('live service selected')\n"
+                "@pytest.mark.integration\n"
+                "def test_service(): raise AssertionError('service integration selected')\n"
+            )
+            for scope, changed in [('changed',['scripts/sample.py']),
+                                   ('auto',[f'scripts/sample_{i}.py' for i in range(5)]),
+                                   ('full',[])]:
+                with self.subTest(scope=scope):
+                    (root/'local-ran').unlink(missing_ok=True)
+                    if scope == 'auto':
+                        # Broad area expansion maps the same sample-owned test.
+                        changed.append('scripts/sample.py')
+                    result = _run(['--workdir',str(root),'--scope',scope,
+                                   *(['--changed-files',*changed] if changed else []),'--json'])
+                    payload = _payload(result.stdout)
+                    self.assertEqual(payload['verdict'],'pass',(payload,result.stderr))
+                    self.assertEqual(payload['passed'],1)
+                    self.assertTrue((root/'local-ran').exists())
+
+
+    def test_targeted_scope_keeps_directly_mapped_full_suite_deselections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "scripts/semantic_index"
+            directory.mkdir(parents=True)
+            (directory / "test_hybrid.py").write_text(
+                "from pathlib import Path\n"
+                "def test_read_semantic_passes_embed_fn_through_to_query_facts():\n"
+                "    Path('regression-ran').write_text('yes')\n"
+            )
+            for scope in ("changed", "auto"):
+                (root / "regression-ran").unlink(missing_ok=True)
+                result = _run(["--workdir", str(root), "--scope", scope,
+                               "--changed-files", "scripts/semantic_index/hybrid.py", "--json"])
+                payload = _payload(result.stdout)
+                self.assertEqual(payload["verdict"], "pass", (payload, result.stderr))
+                self.assertTrue((root / "regression-ran").exists())

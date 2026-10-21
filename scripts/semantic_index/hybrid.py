@@ -10,10 +10,9 @@ the keyword scorer misses.
 
 Pipeline (default):
   1. Keyword candidate generation (legacy SQLite scorer, overfetched).
-  2. Embed the query via ``embed_backend.embed`` (MLX default, Ollama
-     fallback, daemon-aware).
+  2. Embed the query through the selected, verified backend/model.
   3. For each candidate that has a persisted embedding (``embedding_json``
-     column), compute cosine similarity to the query vector.
+     column) with verified matching model provenance, compute cosine similarity.
   4. Final score = ``keyword_score + cosine_sim``. Rows without a
      persisted embedding keep their keyword-only score.
 
@@ -42,12 +41,10 @@ from typing import Any, Callable, Optional, Sequence
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity between two equal-length float vectors.
 
-    Returns 0.0 when either vector is zero-length or zero-norm. Tolerates
-    short reads (caller may pass an embedding from a different model
-    version with a shorter dimension) by truncating to the shorter length.
+    Returns 0.0 for empty, zero-norm, or unequal-length vectors.
     """
-    n = min(len(a), len(b))
-    if n == 0:
+    n = len(a)
+    if n == 0 or len(b) != n:
         return 0.0
     dot = 0.0
     na = 0.0
@@ -64,35 +61,26 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 def _parse_embedding(raw: Any) -> Optional[list[float]]:
-    """Parse the embedding_json column value into a Python list of floats.
-
-    Returns None when the column is NULL, empty, or unparseable. Defensive
-    by design: a corrupt embedding row must not crash recall.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, list):
+    """Parse one finite numeric vector; malformed data has no dense score."""
+    if isinstance(raw, (str, bytes, bytearray)):
         try:
-            return [float(x) for x in raw]
-        except (TypeError, ValueError):
+            raw = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
             return None
-    if isinstance(raw, (bytes, bytearray)):
+    if not isinstance(raw, list) or not raw:
+        return None
+    result = []
+    for value in raw:
+        if type(value) not in (int, float):
+            return None
         try:
-            raw = raw.decode("utf-8")
-        except UnicodeDecodeError:
+            number = float(value)
+        except OverflowError:
             return None
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(parsed, list):
-        return None
-    try:
-        return [float(x) for x in parsed]
-    except (TypeError, ValueError):
-        return None
+        if not math.isfinite(number):
+            return None
+        result.append(number)
+    return result
 
 
 def _safe_embed_query(
@@ -118,40 +106,38 @@ def _safe_embed_query(
         vec = embed_fn(query)
     except Exception:  # noqa: BLE001  graceful: backend raised at call time.
         return None
-    if not isinstance(vec, list) or not vec:
-        return None
-    return vec
+    return _parse_embedding(vec)
 
 
-def rerank_candidates(
-    candidates: list[tuple[float, sqlite3.Row]],
-    query_embedding: list[float],
-) -> list[tuple[float, sqlite3.Row]]:
-    """Add cosine boost to candidate scores.
+def prepare_candidates(candidates, embedding_model):
+    """Read each row's provenance and vector once; retain keyword fallback."""
+    from embed_backend import same_model
+    prepared = []
+    for score, row in candidates:
+        try:
+            metadata = json.loads(row["metadata_json"]) if "metadata_json" in row.keys() else {}
+        except (ValueError, TypeError):
+            metadata = {}
+        trusted = (isinstance(metadata, dict) and metadata.get("embedding_identity_verified") is True
+                   and same_model(metadata.get("embedding_model_version"), embedding_model))
+        vector = _parse_embedding(row["embedding_json"]) if trusted and "embedding_json" in row.keys() else None
+        if score > 0 or vector is not None:
+            prepared.append((float(score), row, vector))
+    return prepared
 
-    Returns a new list sorted by (boosted_score DESC). Candidates without a
-    parseable embedding keep their original keyword score (no cosine
-    boost), so they don't lose ground to no-embedding rows in the pure
-    keyword case.
 
-    Score formula: ``final = keyword_score + cosine(query, candidate)``.
-    Additive rather than weighted-mix because (a) the keyword score is a
-    small integer (token match count) and the cosine is in [-1,1] — the
-    addition naturally lets a strong cosine match (≈0.7+) rescue a
-    candidate that only matched on 1 keyword token; (b) anything with the
-    same keyword score now ranks by semantic similarity. No weighted
-    tuning needed; we never trade keyword precision away.
-    """
-    boosted: list[tuple[float, sqlite3.Row]] = []
-    for keyword_score, row in candidates:
-        emb = _parse_embedding(row["embedding_json"] if "embedding_json" in row.keys() else None)
-        if emb is None:
-            boosted.append((float(keyword_score), row))
-            continue
-        sim = _cosine(query_embedding, emb)
-        boosted.append((float(keyword_score) + sim, row))
-    boosted.sort(key=lambda item: item[0], reverse=True)
-    return boosted
+def rerank_prepared(prepared, query_embedding):
+    ranked = []
+    for score, row, vector in prepared:
+        compatible = vector is not None and len(vector) == len(query_embedding)
+        if score > 0 or compatible:
+            ranked.append((score + (_cosine(query_embedding, vector) if compatible else 0.0), row))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
+def rerank_candidates(candidates, query_embedding, *, embedding_model=None):
+    return rerank_prepared(prepare_candidates(candidates, embedding_model), query_embedding)
 
 
 def has_any_embedding(candidates: list[tuple[float, sqlite3.Row]]) -> bool:

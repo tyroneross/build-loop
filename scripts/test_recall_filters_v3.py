@@ -49,6 +49,7 @@ class RecallFilterSQLTests(unittest.TestCase):
         return self.recall.hybrid_search_facts(
             q=kw.pop("q", "any query"),
             embedding=emb,
+            embedding_model="bge-m3",
             schema=kw.pop("schema", "personal_memory"),
             limit=kw.pop("limit", 5),
             confidence_floor=kw.pop("confidence_floor", 0.75),

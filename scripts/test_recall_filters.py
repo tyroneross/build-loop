@@ -110,17 +110,19 @@ KNOWN_FACTS = [
 def insert_facts() -> None:
     for f in KNOWN_FACTS:
         emb = _embed_via_backend(f["object"])
+        from embed_backend import embedding_provenance
+        actual_model = embedding_provenance()["embedding_model_version"]
         emb_lit = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
         sql = (
             f"INSERT INTO {TEST_SCHEMA}.semantic_facts "
             "(subject, predicate, object, confidence, status, embedding, metadata, "
-            " project, tool, model, task_category, author) "
+            " project, tool, model, task_category, author, embedding_model_version) "
             "VALUES ($STX${subj}$STX$, $STX${pred}$STX$, $STX${obj}$STX$, "
             "        1.0, 'active', '{emb}'::vector, "
-            "        jsonb_build_object('project', '{prj}'), "
-            "        '{prj}', '{tool}', '{model}', '{tc}', '{auth}');"
+            "        jsonb_build_object('project', '{prj}', 'embedding_identity_verified', true, 'embedding_model_version', '{actual_model}'), "
+            "        '{prj}', '{tool}', '{model}', '{tc}', '{auth}', '{actual_model}');"
         ).format(
-            subj=f["subject"], pred=f["predicate"], obj=f["object"], emb=emb_lit,
+            subj=f["subject"], pred=f["predicate"], obj=f["object"], emb=emb_lit, actual_model=actual_model,
             prj=f["project"], tool=f["tool"], model=f["model"], tc=f["task_category"], auth=f["author"],
         )
         psql_exec(sql)

@@ -85,7 +85,7 @@ CATEGORY_KEYWORDS = [
                       "model-availability", "dispatch fallback", "re-resolve",
                       "taxonomy", "segment", "model resolver", "model_resolver",
                       "classify model", "model_overrides", "model overrides",
-                      "transcript", "pattern-miner", "pattern miner",
+                      "transcript", "pattern-miner", "pattern miner", "daydream",
                       "slice", "acp",
                       # Cross-vendor dispatch surfaces: gating a shell-out to
                       # another vendor's LLM CLI is dispatch infrastructure,

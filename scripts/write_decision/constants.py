@@ -111,8 +111,8 @@ VALID_GOALS = {
 # The literal here covers two cases: (1) tests that don't exercise the
 # embedder at all, and (2) doc-only writes that pre-date the bge-m3
 # Phase A migration. Phase A's Ollama default is bge-m3; the MLX default
-# remains mxbai-embed-large-v1.
-DEFAULT_EMBEDDING_MODEL_VERSION = "mxbai-embed-large-v1"
+# is optional and requires an explicit compatible model.
+DEFAULT_EMBEDDING_MODEL_VERSION = "bge-m3"
 
 VALID_EVENT_KINDS = {
     "run_completed",

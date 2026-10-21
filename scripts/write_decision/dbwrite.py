@@ -205,7 +205,7 @@ def db_dualwrite(
     we use it verbatim instead of regenerating.
     """
     try:
-        from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+        from embed_backend import embed as _embed, embedding_provenance  # type: ignore  # noqa: PLC0415
 
         # Phase D: best-effort chunk_context. Caller-provided wins to
         # avoid double-generation when the writer pre-populated fm.
@@ -216,6 +216,8 @@ def db_dualwrite(
         )
         try:
             embedding = _embed(embed_text)
+            provenance = embedding_provenance()
+            fm = {**fm, **provenance}
         except Exception as e:  # noqa: BLE001
             log(f"db dual-write: embed unavailable ({e}); skipping db row for decision {decision_id}")
             return
@@ -230,6 +232,7 @@ def db_dualwrite(
         predicate = fm.get("primary_tag") or "decision"
         obj_summary = fm.get("title") or ""
         metadata = _build_metadata(decision_id, fm, chunk_context)
+        metadata.update(provenance)
         # Schema is operator-controlled (CLI flag), not user input. Validate shape
         # to keep the f-string interpolation safe; psycopg cannot bind table names.
         if not re.match(r"^[a-z][a-z0-9_]*$", schema):

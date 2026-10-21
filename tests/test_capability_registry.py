@@ -464,3 +464,7 @@ def test_cache_into_state_appends(tmp_path: Path) -> None:
         "P16: activeCapabilities must be a phase-keyed dict, not a flat list"
     assert "1" in state["activeCapabilities"]
     assert state["activeCapabilities"]["1"][-1]["shortlist"] == ["foo", "bar"]
+
+
+def test_daydream_discovery_routes_to_meta() -> None:
+    assert bcr._classify_category("daydream", "Bounded, local evidence discovery. Scanning never applies recommendations.", "scripts/daydream.py") == "meta"

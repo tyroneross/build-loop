@@ -24,6 +24,7 @@ end-to-end against a live database.
 from __future__ import annotations
 
 import os
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -88,7 +89,7 @@ def synthetic_fact_in_db():
     then clean up. The fact carries a UUID-prefixed subject so concurrent
     test runs don't collide."""
     from db import execute, vector_literal  # type: ignore
-    from embed_backend import active_model, embed  # type: ignore
+    from embed_backend import active_model, embed, embedding_provenance  # type: ignore
 
     schema = os.environ.get("AGENT_MEMORY_SCHEMA", "build_loop_memory")
     fact_id = str(uuid.uuid4())
@@ -110,7 +111,7 @@ def synthetic_fact_in_db():
             vector_literal(vec),
             model_id,
             "build-loop",
-            '{"confidence": "explicit", "tags": ["architecture", "acceptance-test"]}',
+            json.dumps({"confidence":"explicit", "tags":["architecture","acceptance-test"], **embedding_provenance()}),
         ),
     )
     yield fact_id
@@ -227,7 +228,7 @@ def synthetic_fact_with_chunk_context():
       - the contextual_prepend router is unavailable
     """
     from db import execute, query, vector_literal  # type: ignore
-    from embed_backend import active_model, embed  # type: ignore
+    from embed_backend import active_model, embed, embedding_provenance  # type: ignore
 
     schema = os.environ.get("AGENT_MEMORY_SCHEMA", "build_loop_memory")
 
@@ -270,7 +271,7 @@ def synthetic_fact_with_chunk_context():
         (
             fact_id, test_subject, predicate, obj,
             vector_literal(vec), model_id, "build-loop",
-            '{"confidence": "explicit", "tags": ["architecture", "phase-d-acceptance"]}',
+            json.dumps({"confidence":"explicit", "tags":["architecture","phase-d-acceptance"], **embedding_provenance()}),
             chunk_context,
         ),
     )

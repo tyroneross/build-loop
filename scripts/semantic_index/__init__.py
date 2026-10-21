@@ -168,12 +168,8 @@ def _safe_embed_for_write(
         vec = embed_fn(text)
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(vec, list) or not vec:
-        return None
-    try:
-        return [float(x) for x in vec]
-    except (TypeError, ValueError):
-        return None
+    from .hybrid import _parse_embedding
+    return _parse_embedding(vec)
 
 
 def upsert_fact(
@@ -193,6 +189,7 @@ def upsert_fact(
     source_prefix: str | None = None,
     embedding: list[float] | None = None,
     embed_fn: Any = None,
+    embedding_model: str | None = None,
     auto_embed: bool = True,
     db_path: str | Path | None = None,
 ) -> None:
@@ -225,9 +222,26 @@ def upsert_fact(
 
     # Auto-embed on write when caller didn't supply a vector. Best-effort;
     # backend down → store NULL, fall back to keyword recall, never raise.
+    computed_default = embedding is None and auto_embed and embed_fn is None
     if embedding is None and auto_embed:
         text = _embed_text_for_fact(subject, predicate, object_text)
         embedding = _safe_embed_for_write(text, embed_fn)
+    else:
+        from .hybrid import _parse_embedding
+        embedding = _parse_embedding(embedding)
+    metadata["embedding_identity_verified"] = False
+    if embedding is not None:
+        if computed_default:
+            try:
+                from embed_backend import embedding_provenance
+                metadata.update(embedding_provenance())
+            except Exception:
+                embedding = None
+        elif embedding_model:
+            from embed_backend import model_key
+            identity = model_key(embedding_model)
+            if identity:
+                metadata.update(embedding_model_version=identity, embedding_identity_verified=True)
 
     conn = connect(db_path)
     try:
@@ -290,6 +304,7 @@ def upsert_lesson(
     confidence: float | None = None,
     confidence_source: str | None = None,
     embedding: list[float] | None = None,
+    embedding_model: str | None = None,
     embed_fn: Any = None,
     auto_embed: bool = True,
     db_path: str | Path | None = None,
@@ -323,6 +338,7 @@ def upsert_lesson(
         domain=domain,
         source_prefix=subject_prefix,
         embedding=embedding,
+        embedding_model=embedding_model,
         embed_fn=embed_fn,
         auto_embed=auto_embed,
         db_path=db_path,
@@ -352,6 +368,7 @@ def query_facts(
     project: str | None = None,
     db_path: str | Path | None = None,
     mode: str = "hybrid",
+    embedding_model: str | None = None,
     embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
     """Recall facts. Default mode is **hybrid** (keyword candidates → embedding rerank).
@@ -408,26 +425,29 @@ def query_facts(
             # legacy "must have at least one token hit" behavior.
             if mode != "hybrid":
                 continue
-            if not _row_has_embedding(row):
-                continue
         candidates.append((float(score), row))
 
     use_hybrid = mode == "hybrid" and bool(query and query.strip())
     if use_hybrid:
-        from .hybrid import (  # noqa: PLC0415
-            _safe_embed_query,
-            has_any_embedding,
-            rerank_candidates,
-        )
-
-        if has_any_embedding(candidates):
+        from .hybrid import _safe_embed_query, prepare_candidates, rerank_prepared
+        from embed_backend import active_model, model_key, same_model
+        try:
+            query_model = model_key(embedding_model if embed_fn is not None else active_model())
+        except Exception:
+            query_model = None
+        prepared = prepare_candidates(candidates, query_model)
+        if any(vector is not None for _, _, vector in prepared):
             query_emb = _safe_embed_query(query, embed_fn)
-            if query_emb is not None:
-                ranked = rerank_candidates(candidates, query_emb)
-            else:
-                ranked = _keyword_sort(candidates)
+            if embed_fn is None:
+                try:
+                    if not same_model(active_model(), query_model):
+                        query_emb = None
+                except Exception:
+                    query_emb = None
         else:
-            ranked = _keyword_sort(candidates)
+            query_emb = None
+        ranked = (rerank_prepared(prepared, query_emb) if query_emb is not None else
+                  _keyword_sort([(score, row) for score, row, _ in prepared if score > 0]))
     else:
         ranked = _keyword_sort(candidates)
 

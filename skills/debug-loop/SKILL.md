@@ -111,10 +111,15 @@ Start with plain language before implementation detail. State what failed in nor
 
 ## Phase 3: FIX — Implement Targeted Change
 
-**Goal**: Make the minimal change that addresses the hypothesized root cause.
+**Goal**: Remove the confirmed failure class across its affected scope.
+
+Return to Assess before repairing or retrying, following the canonical
+[reassess-before-retrying rule](../build-loop/SKILL.md#question-led-inspections-and-investigations).
+Search for related patterns, confirm affected siblings and consumers, and update
+the existing plan before applying the repair batch.
 
 1. **Fix the root cause, not the symptom** — if you're adding a null check instead of fixing why something is null, you're fixing the symptom
-2. **Minimal changes** — touch only what's needed. Don't refactor, don't improve, don't clean up
+2. **Repair the affected batch** — fix all confirmed sites and related enhancements within the authorized goal, preferably through a shared owner. Keep unrelated cleanup separate.
 3. **Note exactly what was changed and why** — this becomes the evidence trail
 
 **Output**: List of changes with rationale
@@ -215,9 +220,9 @@ When any criterion fails or the critique is CHALLENGED, iterate:
 
 1. **Diagnose why the criterion failed** — don't blind retry
 2. **Revise the hypothesis** if verification disproved it
-3. **Create targeted fix plan** for failed criteria only
+3. **Return to Assess and update the plan** using the canonical search-and-batch rule; cover all confirmed affected sites
 4. **Execute fix**
-5. **Re-verify ONLY failed criteria** — don't re-run passing checks
+5. **Verify failed and affected criteria** — check the repaired family and relevant integrations; reuse evidence for unaffected criteria
 6. **Re-score and re-critique**
 
 ### Convergence Detection

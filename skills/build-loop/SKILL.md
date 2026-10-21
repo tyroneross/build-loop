@@ -192,14 +192,26 @@ Check the real receipt reader and downstream incomplete-coverage decision, with
 a valid other-run/old-timestamp control. Checking only the reported field or
 matching function names does not establish this scope.
 
-Before expensive final validation, reconcile the related findings and unresolved
-questions and batch confirmed repairs when practical. Select validation for the
-affected behavior and integration boundary using the existing review policy. New
-evidence can justify expanding validation; a small repair alone does not require
-restarting every review or test. Never suppress a newly confirmed issue to keep
-the batch closed. Independent review challenges both the proposed explanation
-and whether the investigation's scope and evidence support it. Passing a prompt
-rehearsal does not prove that future agents will always apply this method.
+**Reassess before retrying (standard path).** After any issue, pause the failed
+build or operation and return to Assess with the new evidence. Name the failed
+assumption, then run a fast codebase search (`rg`, symbol references, keywords or
+an existing scan script) for the same pattern and related issues. Follow the
+producer, sibling implementations and downstream consumers; matching text alone
+does not establish a shared cause. Verify which hits are affected, update the
+existing plan, and batch the confirmed, authorized repairs or related enhancements
+across that scope before retrying. Correct the common owner or shared mechanism
+where possible. Reproduce the original failure and check the affected family and
+integration boundary, then resume Execute/Review. New evidence that changes the
+failure class returns to Assess again; do not repeat isolated patches while
+known related defects remain. Record the search, scope, exclusions and results in
+the existing investigation notes. Keep unrelated cleanup outside the batch and
+honor existing authority gates.
+
+Choose validation for the affected behavior using the existing review policy;
+a small repair alone does not require restarting every review or test. Never
+suppress a newly confirmed issue to keep the batch closed. Independent review
+challenges the explanation, search scope and evidence. Passing a prompt rehearsal
+does not prove that future agents will always apply this method.
 
 ### Root cause before done (C-RCA / root_cause_before_done)
 

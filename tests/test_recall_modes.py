@@ -27,6 +27,8 @@ def _mock_embed_and_legs(monkeypatch):
     """Mock _embed + the three leg helpers so run_search exercises the
     dispatch logic without touching Postgres or Ollama."""
     monkeypatch.setattr(recall_mod, "_embed", _fake_embed)
+    import embed_backend
+    monkeypatch.setattr(embed_backend, "active_model", lambda: "test-fixture")
 
     def _fake_hybrid_facts(q, embedding, schema, limit, floor, **kwargs):
         # Return `limit` rows for vector leg.

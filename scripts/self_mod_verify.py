@@ -1387,36 +1387,22 @@ def _verify_inner(
         }
         return result, EXIT_INCONCLUSIVE
 
-    # --- Build pytest command ---
-    # Full scope: serial (no xdist), per-test timeout so hangs fail cleanly,
-    # and the shared deterministic profile to exclude live/model integrations.
-    # auto/changed scope: fast path — no extra flags needed.
-    # `-rf` emits the "FAILED <nodeid>" short-summary lines that _FAILED_ITEM_RE
-    # parses into failed_tests[]; `--color=no` strips ANSI so the `^FAILED` regex
-    # matches (pytest can force color even when output is captured, e.g. PY_COLORS
-    # or a consumer repo's `color=yes`; a CLI flag overrides both). Without these,
-    # `-q` printed the count ("N failed") but failed_tests came back empty.
-    cmd = runner_base + ["-q", "-rf", "--color=no", "-p", "no:cacheprovider", "--tb=short"]
-    if scope == "full":
-        has_timeout = _runner_has_pytest_timeout(runner_base, cwd=workdir)
-        if not has_timeout:
-            print(
-                "self_mod_verify: pytest-timeout not installed in the runner "
-                "interpreter; proceeding WITHOUT per-test hang protection. "
-                "Install it with `uv sync --extra test` to restore the guard.",
-                file=sys.stderr,
-            )
-        cmd = runner_base + full_suite_pytest_args(
-            test_files, use_timeout=has_timeout,
-            include_typescript_runtime=any(
-                Path(filename).name == "test_typescript_runtime.py" for filename in test_files),
+    # Every scope uses the existing deterministic profile. Mapped/area selection
+    # changes coverage, never permission to contact live/model services.
+    has_timeout = scope == "full" and _runner_has_pytest_timeout(runner_base, cwd=workdir)
+    if scope == "full" and not has_timeout:
+        print(
+            "self_mod_verify: pytest-timeout not installed in the runner "
+            "interpreter; proceeding WITHOUT per-test hang protection. "
+            "Install it with `uv sync --extra test` to restore the guard.",
+            file=sys.stderr,
         )
-    else:
-        # This local runtime integration has a dedicated JS CI owner. Include
-        # only its explicit marker here; unrelated service integrations stay out.
-        if any(Path(filename).name == "test_typescript_runtime.py" for filename in test_files):
-            cmd += ["-m", "(not integration or typescript_runtime) and not live"]
-        cmd += test_files
+    cmd = runner_base + full_suite_pytest_args(
+        test_files, use_timeout=has_timeout,
+        include_full_deselections=scope == "full",
+        include_typescript_runtime=any(
+            Path(filename).name == "test_typescript_runtime.py" for filename in test_files),
+    )
 
     # --- Run pytest ---
     timed_out = False

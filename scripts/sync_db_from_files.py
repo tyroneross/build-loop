@@ -144,6 +144,9 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
 
     try:
         embedding = _embed(text)
+        from embed_backend import embedding_provenance
+        provenance = embedding_provenance()
+        fm = {**fm, **provenance}
     except Exception as e:  # noqa: BLE001
         log(f"skip: embed failed for {path}: {e}")
         return False
@@ -153,6 +156,7 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
     predicate = fm.get("primary_tag") or "decision"
     obj_summary = fm.get("title") or ""
     metadata = {
+        **provenance,
         "decision_id": decision_id,
         "canonical_id": fm.get("canonical_id"),
         "entity": fm.get("entity"),

@@ -11,7 +11,7 @@ V3 adds 7 new fields on top of v2:
     - confirmation_count      (int >= 0; default 0)
     - valid_until             (ISO date or null; default null)
     - causal_parent_id        (decision_id or null; default null)
-    - embedding_model_version (string; default mxbai-embed-large-v1)
+    - embedding_model_version (string; default bge-m3)
 
   MECE-axis (2):
     - domain                  (enum: ui|api|data|search|auth|build|infra|
@@ -164,7 +164,7 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(fm["confirmation_count"], 0)
         self.assertIsNone(fm["valid_until"])
         self.assertIsNone(fm["causal_parent_id"])
-        self.assertEqual(fm["embedding_model_version"], "mxbai-embed-large-v1")
+        self.assertEqual(fm["embedding_model_version"], "bge-m3")
         self.assertEqual(fm["domain"], "unknown")
         self.assertEqual(fm["goal"], "unknown")
 

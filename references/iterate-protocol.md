@@ -4,6 +4,11 @@
 
 Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on demand at Phase 5.
 
+Before retrying a failed build or operation, return to Assess and apply the
+[canonical search-and-batch rule](../skills/build-loop/SKILL.md#question-led-inspections-and-investigations).
+Verify related sites, update the plan and repair the confirmed affected batch
+before re-entering Execute/Review, including when repairing evidence gaps.
+
 ## End-of-run continuation gate
 
 Before any additional follow-up or queue pickup, run `autonomy_supervisor.py --workdir "$PWD" continuation --goal "<intent>"`. No-regrets is on unless explicitly disabled. Follow `references/keep-going-policy.md`; accepted-plan fixes still run. Backlog needs reviewed class-aware promotion at a planning boundary.

@@ -615,6 +615,8 @@ def is_duplicate(text: str, embed_model: str, schema: str | None = None) -> bool
     try:
         try:
             embedding = _embed(text)
+            from embed_backend import embedding_provenance, model_aliases, PG_EMBEDDING_SPACE_FILTER
+            provenance = embedding_provenance()
         except Exception as e:  # noqa: BLE001
             log(f"scan: embed unavailable for dedup ({e}); treating as new")
             return False
@@ -626,11 +628,11 @@ def is_duplicate(text: str, embed_model: str, schema: str | None = None) -> bool
         sql = (
             "SELECT 1 - (embedding <=> %s::vector) AS sim "
             f"FROM {schema}.semantic_facts "
-            "WHERE status = 'active' "
+            "WHERE status = 'active' AND " + PG_EMBEDDING_SPACE_FILTER + " "
             "ORDER BY embedding <=> %s::vector "
             "LIMIT 1"
         )
-        row = query_one(sql, (emb, emb))
+        row = query_one(sql, (emb, model_aliases(provenance["embedding_model_version"]), emb))
         if row is None or row.get("sim") is None:
             return False
         sim = float(row["sim"])

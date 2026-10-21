@@ -286,6 +286,7 @@ def _upsert_lesson(
     lesson: dict,
     project: str | None,
     embedding: list[float] | None,
+    embedding_metadata: dict | None = None,
     subject_prefix: str = "lesson:nav:",
 ) -> None:
     """DELETE-then-INSERT a single lesson row in one transaction.
@@ -313,6 +314,9 @@ def _upsert_lesson(
         "synced_at": _now_iso(),
         "schema_version": SCHEMA_VERSION,
     }
+
+    if embedding is not None and embedding_metadata:
+        metadata.update(embedding_metadata)
 
     # Files affected → array column when present, else empty list.
     ctx = lesson.get("context") or {}
@@ -348,10 +352,10 @@ def _upsert_lesson(
                 f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
                 " project, tool, task_category, files_touched, "
-                " confidence_source, domain) "
+                " confidence_source, domain, embedding_model_version) "
                 "VALUES (%s, %s, %s, %s, 'active', NULL, %s::jsonb, "
                 " %s, %s, %s, %s, "
-                " %s, %s);"
+                " %s, %s, %s);"
             )
             params = (
                 subject,
@@ -365,16 +369,17 @@ def _upsert_lesson(
                 files_affected,
                 confidence_source,
                 DOMAIN,
+                metadata.get("embedding_model_version"),
             )
         else:
             sql = (
                 f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
                 " project, tool, task_category, files_touched, "
-                " confidence_source, domain) "
+                " confidence_source, domain, embedding_model_version) "
                 "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
                 " %s, %s, %s, %s, "
-                " %s, %s);"
+                " %s, %s, %s);"
             )
             params = (
                 subject,
@@ -389,6 +394,7 @@ def _upsert_lesson(
                 files_affected,
                 confidence_source,
                 DOMAIN,
+                metadata.get("embedding_model_version"),
             )
         cur.execute(sql, params)
 
@@ -461,22 +467,18 @@ def _default_schema() -> str:
     return os.environ.get("AGENT_MEMORY_SCHEMA") or "personal_memory"
 
 
-def _embed_safely(text: str, errors: list[str], lesson_id: str) -> list[float] | None:
-    """Call embed_backend; on any failure log to ``errors`` and return None."""
+def _embed_safely(text: str, errors: list[str], lesson_id: str) -> tuple[list[float] | None, dict]:
+    """Carry actual producer identity with the computed vector."""
     if not text or not text.strip():
-        return None
+        return None, {}
     try:
-        from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"embed_unavailable:{lesson_id}")
-        _log(f"WARN: embed_backend import failed for {lesson_id}: {exc}")
-        return None
-    try:
-        return _embed(text)
-    except Exception as exc:  # noqa: BLE001
+        from embed_backend import embed, embedding_provenance
+        vector = embed(text)
+        return vector, embedding_provenance()
+    except Exception as exc:
         errors.append(f"embed_failed:{lesson_id}")
         _log(f"WARN: embedding {lesson_id} failed: {exc}")
-        return None
+        return None, {}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -627,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 for lesson in project_lessons:
                     lid = str(lesson.get("id", ""))
-                    embedding = _embed_safely(
+                    embedding, provenance = _embed_safely(
                         str(lesson.get("pattern", "") or ""), errors, lid
                     )
                     try:
@@ -637,6 +639,7 @@ def main(argv: list[str] | None = None) -> int:
                             lesson=lesson,
                             project=project_tag,
                             embedding=embedding,
+                            embedding_metadata=provenance,
                             subject_prefix=subject_prefix,
                         )
                         postgres_mirrored += 1
@@ -647,7 +650,7 @@ def main(argv: list[str] | None = None) -> int:
                         _append_sync_error(workdir, msg)
                 for lesson in global_lessons:
                     lid = str(lesson.get("id", ""))
-                    embedding = _embed_safely(
+                    embedding, provenance = _embed_safely(
                         str(lesson.get("pattern", "") or ""), errors, lid
                     )
                     try:
@@ -657,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
                             lesson=lesson,
                             project=None,
                             embedding=embedding,
+                            embedding_metadata=provenance,
                             subject_prefix=subject_prefix,
                         )
                         global_postgres_mirrored += 1

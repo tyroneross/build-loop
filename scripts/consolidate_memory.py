@@ -122,13 +122,15 @@ def _process_candidate(
 ) -> tuple[str, dict]:
     """Classify and apply dedup logic. Returns (action, details)."""
     from db import execute, query, vector_literal  # type: ignore  # noqa: PLC0415
-    from embed_backend import embed  # type: ignore  # noqa: PLC0415
+    from embed_backend import embed, embedding_provenance, model_aliases, PG_EMBEDDING_SPACE_FILTER  # type: ignore  # noqa: PLC0415
 
     schema = _safe_schema(schema)
     text = _candidate_text(c)
 
     try:
         embedding = embed(text)
+        provenance = embedding_provenance()
+        c = {**c, **provenance}
     except Exception as e:  # noqa: BLE001
         return "ERROR", {"error": f"embed failed: {e}"}
 
@@ -137,12 +139,13 @@ def _process_candidate(
         "SELECT id::text AS id, subject, predicate, object, confidence, status, "
         "       (1 - (embedding <=> %s::vector)) AS cosine_sim "
         f"FROM {schema}.semantic_facts "
-        "WHERE status = 'active' AND embedding IS NOT NULL "
+        "WHERE status = 'active' AND embedding IS NOT NULL AND "
+        + PG_EMBEDDING_SPACE_FILTER + " "
         "ORDER BY embedding <=> %s::vector ASC "
         "LIMIT 1"
     )
     emb_lit = vector_literal(embedding)
-    rows = query(sql, (emb_lit, emb_lit))
+    rows = query(sql, (emb_lit, model_aliases(provenance["embedding_model_version"]), emb_lit))
 
     candidate_conf = c.get("confidence") or "inferred"
     candidate_conf_f = _CONF_FLOAT.get(candidate_conf, 0.5)
@@ -190,14 +193,16 @@ def _do_insert(c: dict, embedding: list[float], schema: str) -> None:
     schema = _safe_schema(schema)
     metadata = {
         "source": "consolidate_memory",
+        "embedding_model_version": c.get("embedding_model_version"),
+        "embedding_identity_verified": c.get("embedding_identity_verified") is True,
         "tags": c.get("tags") or [],
         "source_episode_id": c.get("source_episode_id"),
         "candidate_metadata": c.get("metadata") or {},
     }
     execute(
         f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
-        "(subject, predicate, object, confidence, status, embedding, metadata) "
-        "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb)",
+        "(subject, predicate, object, confidence, status, embedding, metadata, embedding_model_version) "
+        "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, %s)",
         (
             c["subject"],
             c["predicate"],
@@ -205,6 +210,7 @@ def _do_insert(c: dict, embedding: list[float], schema: str) -> None:
             _CONF_FLOAT.get(c.get("confidence") or "inferred", 0.5),
             vector_literal(embedding),
             json.dumps(metadata, ensure_ascii=False),
+            c.get("embedding_model_version"),
         ),
     )
 
@@ -216,6 +222,8 @@ def _do_update(target_id: str, c: dict, embedding: list[float], schema: str) -> 
     schema = _safe_schema(schema)
     metadata = {
         "source": "consolidate_memory",
+        "embedding_model_version": c.get("embedding_model_version"),
+        "embedding_identity_verified": c.get("embedding_identity_verified") is True,
         "tags": c.get("tags") or [],
         "source_episode_id": c.get("source_episode_id"),
         "merged_from_candidate": True,
@@ -224,13 +232,14 @@ def _do_update(target_id: str, c: dict, embedding: list[float], schema: str) -> 
     execute(
         f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         "SET object = %s, confidence = %s, embedding = %s::vector, "
-        "    metadata = %s::jsonb, valid_from = now() "
+        "    metadata = %s::jsonb, embedding_model_version = %s, valid_from = now() "
         "WHERE id = %s::uuid",
         (
             c["object"],
             _CONF_FLOAT.get(c.get("confidence") or "inferred", 0.5),
             vector_literal(embedding),
             json.dumps(metadata, ensure_ascii=False),
+            c.get("embedding_model_version"),
             target_id,
         ),
     )
@@ -243,6 +252,8 @@ def _record_conflict(existing_id: str, c: dict, embedding: list[float], schema: 
     schema = _safe_schema(schema)
     metadata = {
         "source": "consolidate_memory",
+        "embedding_model_version": c.get("embedding_model_version"),
+        "embedding_identity_verified": c.get("embedding_identity_verified") is True,
         "tags": c.get("tags") or [],
         "source_episode_id": c.get("source_episode_id"),
         "candidate_metadata": c.get("metadata") or {},
@@ -250,8 +261,8 @@ def _record_conflict(existing_id: str, c: dict, embedding: list[float], schema: 
     # Insert proposed fact and capture the new ID
     new_row = query_one(
         f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
-        "(subject, predicate, object, confidence, status, embedding, metadata) "
-        "VALUES (%s, %s, %s, %s, 'proposed', %s::vector, %s::jsonb) "
+        "(subject, predicate, object, confidence, status, embedding, metadata, embedding_model_version) "
+        "VALUES (%s, %s, %s, %s, 'proposed', %s::vector, %s::jsonb, %s) "
         "RETURNING id::text AS id",
         (
             c["subject"],
@@ -260,6 +271,7 @@ def _record_conflict(existing_id: str, c: dict, embedding: list[float], schema: 
             _CONF_FLOAT.get(c.get("confidence") or "inferred", 0.5),
             vector_literal(embedding),
             json.dumps(metadata, ensure_ascii=False),
+            c.get("embedding_model_version"),
         ),
     )
     new_id = (new_row or {}).get("id")
