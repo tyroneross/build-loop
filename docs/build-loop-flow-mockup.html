@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c9bdaefe9fe842eb7040f28239dbb8651a3ae1734ea3138a379564f5225931ef"
+    "content_sha256": "3c19bef4cc194e3a6a02d20a53b7222a532631d14c968b4eeaf3ec8c08c2a58d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1294,6 +1294,10 @@
         "description": "\"Measure a database before changing it, and prove an object is dead before retiring it. Use when a build creates or alters a table, column, or index; when a query is slow or the user asks why the database is slow; or when someone proposes dropping an empty table. NOT for worktree or data-plane isolation (use data-plane-worktrees). Runs the read-only attribution set, reads the runtime counters, and applies the retire…",
         "file": "skills/database-practice/SKILL.md"
       },
+      "daydream": {
+        "description": "Discover source-linked recurring coding friction and successful patterns; mine selected local sessions by host, model and effort; draft improvements and feed observational evidence to Benchmark Lab. Use through Build Loop when asked to daydream, mine reusable patterns, or learn from coding history.",
+        "file": "skills/daydream/SKILL.md"
+      },
       "debug-loop": {
         "description": "Iteratively investigate and fix a live, currently-broken bug. Use when a fix didn't hold, `/build-loop:debug` is invoked, or the user wants it debugged right now. Not for checking whether this bug happened before (use `debugging-memory` first) or a post-fix blameless analysis (use `root-cause-analysis`).",
         "file": "skills/debug-loop/SKILL.md"
@@ -1540,6 +1544,10 @@
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
       "scripts/dashboard_projection.py": "Read-only projection of Build Loop phase, task, and agent run state.\"\"\"",
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
+      "scripts/daydream.py": "Bounded, local evidence discovery. Scanning never applies recommendations.",
+      "scripts/daydream_benchmark.py": "Export observational Daydream segments to Benchmark Lab's local model-log API.",
+      "scripts/daydream_review.py": "Private, bounded review digests from source-verified local coding sessions.",
+      "scripts/daydream_sessions.py": "Bounded local session mining; observations never become model quality rankings.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
       "scripts/decision_log.py": "Append a sourced decision to a project's private running log.\"\"\"",

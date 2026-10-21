@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 55 skills · 470 scripts · 24 hooks** (auto-discovered c9bdaefe)
+**29 agents · 56 skills · 474 scripts · 24 hooks** (auto-discovered 3c19bef4)
 
 <details><summary>agents</summary>
 
@@ -73,6 +73,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `cost-rca`
 - `data-plane-worktrees`
 - `database-practice`
+- `daydream`
 - `debug-loop`
 - `debugging-memory`
 - `decision-queue`
@@ -218,6 +219,10 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/credential_preflight.py`
 - `scripts/dashboard_projection.py`
 - `scripts/data_plane.py`
+- `scripts/daydream.py`
+- `scripts/daydream_benchmark.py`
+- `scripts/daydream_review.py`
+- `scripts/daydream_sessions.py`
 - `scripts/db.py`
 - `scripts/db_substrate_lint.py`
 - `scripts/decision_log.py`

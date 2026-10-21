@@ -30,6 +30,7 @@ Intent → internal mode:
 - **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
 - **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
 - **Drain proposals**: "drain proposals", "review the proposal backlog", "what proposals are open" → the `drain-proposals` skill. Interactive and never auto-applies; every item needs an explicit apply / reject / defer.
+- **Daydream / mine coding patterns**: "daydream", "find reusable patterns", "learn from coding sessions", or "mine transcripts for improvements" → `daydream`. Scan explicit local evidence, separate corrections from added scope and verified success, segment by recorded model/effort/harness, draft improvements, and export observational evidence to Benchmark Lab when requested. Preserve coverage gaps and the existing experiment/promotion lifecycle.
 
 **Design intent:** one command for humans, plain-language routing, everything else agent-invoked within build-loop. If a request doesn't match a mode, run treats it as a Build task or asks one clarifying question — it never makes the user pick a command.
 
