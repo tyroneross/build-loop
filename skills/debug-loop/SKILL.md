@@ -29,6 +29,13 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
 
 ## Phase 1: INVESTIGATE — Gather Evidence and Trace Root Cause
 
+Follow [Question-led inspections and investigations](../build-loop/SKILL.md#question-led-inspections-and-investigations).
+Choose checks that can distinguish explanations, then establish full span by
+following the failed assumption across equivalent decisions and the real
+producer-to-consumer path. Explaining every reported symptom does not establish
+that related sites are unaffected. Retain the decisive question, evidence and
+decision in this phase's existing output; carry material unknowns into critique.
+
 **Goal**: Understand what's actually failing and why, not just what it looks like.
 
 1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Its native search reads the project's structured `.claude/memory/` store.
@@ -299,7 +306,7 @@ MEMORY SEARCH → INVESTIGATE → HYPOTHESIZE → FIX → VERIFY → SCORE
 
 | Anti-Pattern | What to Do Instead |
 |-------------|-------------------|
-| Accepting the first explanation | Branch first — identify 2+ plausible causes before pursuing any |
+| Accepting the first explanation | Test material alternatives with a discriminating check; do not invent branches to meet a quota |
 | Fixing the symptom | Trace to root cause, fix there |
 | "This should fix it" | Run the tests, show the output |
 | Retrying the same approach | If it failed once with the same evidence, it'll fail again. Change the hypothesis |

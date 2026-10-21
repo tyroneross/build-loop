@@ -157,7 +157,54 @@ Verify suspected risks before changing behavior. Explicit read-only, report-only
 
 For final Review JSON, classify each finding with boolean `confirmed` and `in_scope` fields: `confirmed` means supported by reproduction or direct source evidence; `in_scope` means authorized for repair by this run. Include the supporting evidence and scope rationale. Run `scripts/review_finding_gate.py --require-classification` on these classified findings. An unresolved confirmed, in-scope finding blocks completion at every severity; closure requires a fixed/resolved state and verification proof. Record a genuinely blocked run as partial, never as a successful review.
 
+### Question-led inspections and investigations
+
+Start with the decision the inspection must support. Ask questions that could
+change that decision, then choose the cheapest reliable observation that
+distinguishes the plausible answers. These are questions for the agent to
+investigate with source, logs, tests or research; ask the user only for material
+information the available evidence cannot resolve. Existing authority gates apply.
+
+Use these prompts to find the next useful question, not as a form to fill out:
+
+| Question | What the answer must establish |
+|---|---|
+| **What do we need to decide, and is the premise true?** | Define expected behavior or the inspection goal. Verify the claimed event against the record, including the agent's own earlier statements. A question's wording, a prior explanation or a reviewer verdict is not proof. |
+| **What does this observation actually prove?** | Name its source, revision/instance, units, time window and coverage where relevant. Separate observed facts, inference and unknowns; distinguish absent, unreadable, incomplete and successful-empty results. |
+| **What else could explain this, and what would distinguish the explanations?** | Seek a counterexample or discriminating check, including evidence against the favored explanation. Do not invent alternatives to meet a quota or treat agreement between dependent sources as independent confirmation. |
+| **Where else does the same assumption decide an outcome?** | State the required behavior as a rule, then follow the relevant producers, transformations/caches, sibling decisions, alternate implementations and consumers. Search by the assumption and its effect as well as symbol references; inspect only applicable paths. |
+| **What lets the real failure escape, and would this repair change that result?** | Trace the original input through the actual entrypoint to the consuming decision. Check malformed/missing values, a valid control and the relevant integration context. Distinguish source tests from installed/runtime acceptance. In an ordinary inspection, ask how the proposed improvement would change the actual user or caller outcome. |
+| **What remains uncertain, and could it change our decision?** | Choose the next check by consequence, uncertainty and effort. Stop expanding when the material question is answered within a justified boundary; record unresolved paths and their impact instead of claiming exhaustive coverage. |
+
+For a consequential conclusion, retain the decisive **question → evidence →
+decision** in the existing investigation notes or review. Include the examined
+scope and why exclusions are safe. An unanswered material question remains open;
+do not turn it into a confident cause, an approval request or a new mechanism.
+When an explanation contradicts the record, correct the premise before explaining
+why it happened. Explaining an agent's failure also requires evidence about the
+workflow; an assertion that the agent "missed it" does not establish a system cause.
+
+**Full span follows the failed assumption.** For example, if failed ingestion can
+disappear from a recent-window result, ask which decisions can exclude it. Both
+run identity and timestamp filters need trustworthy values; malformed identity
+and boolean timestamps cannot prove that a failure belongs elsewhere or is old.
+Check the real receipt reader and downstream incomplete-coverage decision, with
+a valid other-run/old-timestamp control. Checking only the reported field or
+matching function names does not establish this scope.
+
+Before expensive final validation, reconcile the related findings and unresolved
+questions and batch confirmed repairs when practical. Select validation for the
+affected behavior and integration boundary using the existing review policy. New
+evidence can justify expanding validation; a small repair alone does not require
+restarting every review or test. Never suppress a newly confirmed issue to keep
+the batch closed. Independent review challenges both the proposed explanation
+and whether the investigation's scope and evidence support it. Passing a prompt
+rehearsal does not prove that future agents will always apply this method.
+
 ### Root cause before done (C-RCA / root_cause_before_done)
+
+Use [Question-led inspections and investigations](#question-led-inspections-and-investigations)
+to establish the affected scope and test the explanation before closing the RCA.
 
 **Investigate every open issue to root cause before declaring done — verified by a second subagent.** Before any "done"/completion claim, investigate EVERY open issue — failed tests, loose ends, errors, warnings, minor issues — none are left unaddressed. For each, reach the ROOT CAUSE, not a surface patch. Use the debugging skills (`build-loop:debug-loop` / `root-cause-investigator` / `systematic-debugging`) and/or a **5-whys / causal-tree** analysis to determine the true cause and its blast radius (same root cause at other sites → fix all of them). The fix MUST address the root cause — a surface patch is a violation — AND MUST be verified by another, independent subagent before "done." The second-subagent check reuses `independent-auditor`, `fix-critique`, or a dispatched verifier — no new agent required.
 

@@ -74,6 +74,15 @@ The orchestrator additionally dispatches you with `isolation: "worktree"` where 
 
 ## Known-item closure gate (MANDATORY on every audit)
 
+Apply [Question-led inspections and investigations](../skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
+to the investigation as well as the patch: is the premise supported, what could
+disprove the cause, and which equivalent decisions share the failed assumption?
+Check that the examined paths and exclusions justify the claimed scope. Request
+the missing discriminating evidence when needed; a green suite or the author's
+claim of "full span" is not that evidence. Use the existing findings and
+`oracle_completeness` fields; do not create a second report or assume hypothetical
+paths are confirmed defects.
+
 Reconcile every `known_open_items` entry and every approved, in-scope open item visible in the intent, goal, acceptance evidence, current run diagnostics, or prior review output. For each item, cite live closure evidence and classify it as `closed`, `open`, or `not_in_scope`.
 
 - A report, diagnostic, backlog entry, or plan records the issue; it does not close it.

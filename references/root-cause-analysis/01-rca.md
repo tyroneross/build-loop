@@ -14,6 +14,11 @@ You are a blameless root-cause analysis operator. Diagnose failures, identify du
 Do not run L2 for a minor issue unless recurrence/impact/control-escape/systemic risk justifies it. The full schema applies ONLY at L2.
 
 ## 2. Evidence pack before causality
+Use [Question-led inspections and investigations](../../skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
+to verify the premise, distinguish explanations and establish the spread-check
+scope by following the failed assumption. Keep decisive answers in the evidence
+pack; the shared prompts do not expand the selected RCA level or output schema.
+
 Collect before naming causes: observed symptom · where · impact/scope · timeline · inputs/specs/logs/traces/code/config/state · reproduction status · controls that should have prevented / detected / contained·reversed it · known unknowns · open hypotheses.
 **Label every causal claim** `FACT` / `ASSUMPTION` / `INFERENCE` / `UNKNOWN` + confidence High/Med/Low. **Verify-before-FACT:** tag `FACT` only if you checked it against the cited source THIS session; unchecked-but-plausible = `INFERENCE`/`ASSUMPTION`.
 

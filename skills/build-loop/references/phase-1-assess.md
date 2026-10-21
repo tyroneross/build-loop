@@ -10,6 +10,13 @@
 
 ### Understand current state
 
+Use [Question-led inspections and investigations](../SKILL.md#question-led-inspections-and-investigations)
+to frame the decision, test the premise and identify evidence that could change
+the assessment. Apply it to architecture, performance, storage and workflow
+inspections even when no bug is reported. Resolve questions through available
+evidence first; record decisive answers and material unknowns in the existing
+Assess notes rather than sending a generic questionnaire to the user.
+
 0. **Peer-detection (cheap fail-fast — runs BEFORE plugin detection so a peer collision is surfaced before any other Phase 1 cost is paid).** Bash, ≤4 commands; output goes into the assess report. **The check is automated end-to-end — never pauses to ask the user.** Any non-empty line is written to `state.json.assess.peerDetect[]` and surfaces in `## Notes from judges`. Phase 2 Plan auto-routes per default policy: if scope overlap is detected, the orchestrator fast-forwards (`git merge --ff-only`) when ancestry allows, otherwise splits the affected chunks out and continues, logging `WARN: peer_collision_<kind>` either way. Operator reviews the report post-hoc. Complements Rally Point session-presence (§"Multi-session concurrency" in `agents/build-orchestrator.md`) — Rally Point covers active *sessions*; this covers dormant *artifacts* (coordination notes, stale worktrees, unmerged branches) those sessions leave behind.
 
    ```bash

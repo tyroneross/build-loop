@@ -28,13 +28,13 @@ Do not use "agent forgot", "agent missed context", "model overlooked it", or sim
 
 The traditional "5 Whys" forces a single linear chain of reasoning. Research shows this misses multi-causal issues — focusing on one chain can overlook up to 97% of systemic improvement opportunities (Card, 2017). Results are not repeatable across analysts, the stopping point is arbitrary, and it cannot surface causes outside the investigator's existing knowledge (Serrat, 2017).
 
-Instead, build a **causal tree**: at each level, identify ALL plausible causes, then investigate the most evidence-supported branches. This catches multi-causal bugs and avoids tunnel vision.
+Instead, build a **causal tree**: identify material plausible causes and investigate the most evidence-supported branches. Challenge the favored explanation without treating a branch count as evidence of completeness.
 
 ## Your Core Responsibilities
 
 > **Durable post-failure RCA:** for the blameless durable-lever pass (creation+escape paths, action-strength hierarchy, lever+actuator, regression artifact, spread check), delegate to the shared `references/root-cause-analysis/` suite. This skill/agent finds and fixes the live issue; that suite is the post-failure prevention layer.
 
-1. Build a causal tree — at each node, identify multiple possible causes before pursuing any
+1. Build a causal tree — consider material alternative explanations before committing to a cause
 2. Investigate branches by evidence strength, not by order of appearance
 3. Determine when the real root cause is found (it explains ALL symptoms)
 4. Flag when investigation hits an external/environmental boundary
@@ -42,6 +42,14 @@ Instead, build a **causal tree**: at each level, identify ALL plausible causes, 
 6. Identify the first controllable system control that failed or was missing
 
 ## Causal Tree Process
+
+Use [Question-led inspections and investigations](../skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
+before accepting a premise or converging on a cause. Ask which observation would
+disprove the explanation and where the same assumption affects another outcome.
+Trace relevant writers, transformations/caches, sibling filters and consumers;
+symbol matches and an explanation of all reported symptoms alone do not prove
+full span. Record decisive answers, examined scope and material unknowns in the
+existing causal-tree evidence. Do not invent causes just to populate branches.
 
 ### Step 1: Define the Symptom Node (Root of Tree)
 
@@ -55,7 +63,7 @@ CONDITIONS: [when/where it occurs, any environmental factors]
 
 ### Step 2: Branch — Identify All Plausible Causes
 
-For the current node, list ALL plausible causes — not just the first one that comes to mind. Aim for 2-4 branches per node.
+For the current node, identify material plausible causes and the evidence that would distinguish them. Use 2-4 branches when several explanations fit; do not invent alternatives when direct evidence already establishes the cause.
 
 ```
 SYMPTOM: API returns empty array for search
@@ -65,7 +73,7 @@ SYMPTOM: API returns empty array for search
 └── Branch D: Caching returns stale empty result
 ```
 
-**Avoid single-branch trees.** If you can only think of one cause, you haven't thought enough. Ask:
+**Challenge the favored explanation.** Before accepting a single supported branch, ask:
 - What else could produce this exact symptom?
 - If I ruled out my first guess, what would I investigate next?
 - Could this be caused by something upstream? Downstream? Environmental?
@@ -314,7 +322,7 @@ SYMPTOM: Search returns empty array
 
 ## Guidelines
 
-- **Branch before diving**: Always identify 2+ plausible causes before investigating any. This prevents tunnel vision
+- **Distinguish before diving**: Consider material alternatives and the smallest check that separates them; do not invent branches to satisfy a quota
 - **Evidence over inference**: Every conclusion should cite specific code, output, or logs. Mark steps based on reasoning alone as `evidence_type: "inference"`
 - **Prune with evidence, not assumptions**: Don't dismiss a branch because it "seems unlikely" — show evidence that rules it out
 - **Don't fix during investigation**: Your job is to find the cause, not implement the fix. The fix comes in a later phase
