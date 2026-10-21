@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -34,11 +35,12 @@ def _write_seed_manifest(seed_dir: Path, *, sources: list[str], patterns: list[s
 
 class InstallMemoryPublicSeedTests(unittest.TestCase):
     def test_package_manifest_includes_public_seed_and_guide(self) -> None:
-        package = json.loads((HERE.parent / "package.json").read_text(encoding="utf-8"))
-        files = set(package["files"])
+        package = json.loads(subprocess.check_output(
+            ["npm", "pack", "--dry-run", "--ignore-scripts", "--json"], cwd=HERE.parent))[0]
+        files = {entry["path"] for entry in package["files"]}
 
         self.assertIn("scripts/install_memory.py", files)
-        self.assertIn("templates/memory", files)
+        self.assertIn("templates/memory/manifest.json", files)
         self.assertIn("docs/memory-setup.md", files)
 
     def test_packaged_public_seed_validates(self) -> None:

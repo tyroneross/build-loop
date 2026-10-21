@@ -415,7 +415,7 @@ def _run_identifier(run: dict[str, Any]) -> str | None:
     return identity.build_run_id or (str(run["id"]) if run.get("id") else None)
 
 
-def _runs_for_run_id(state_json: dict[str, Any], run_id: str | None) -> list[dict[str, Any]]:
+def _runs_for_run_id(state_json: dict[str, Any], run_id: str | list[str] | None) -> list[dict[str, Any]]:
     """Return run records for this retrospective.
 
     Explicit IDs require an exact match. With no ID, latest-run selection is
@@ -424,21 +424,24 @@ def _runs_for_run_id(state_json: dict[str, Any], run_id: str | None) -> list[dic
     runs = [r for r in (state_json.get("runs") or []) if isinstance(r, dict)]
     if not runs:
         return []
-    if run_id:
-        matched = [r for r in runs if _run_identifier(r) == str(run_id)]
+    if run_id is not None:
+        selected = set(run_id) if isinstance(run_id, list) else {str(run_id)}
+        matched = [r for r in runs if _run_identifier(r) in selected]
         return matched
     return [runs[-1]]
 
 
-def _iter_judge_decisions(runs: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+def _iter_judge_decisions(runs: list[dict[str, Any]], *, include_run_id: bool = False) -> Iterable[dict[str, Any]]:
     for run in runs:
         for judge in run.get("judge_decisions") or []:
             if isinstance(judge, dict):
-                yield judge
+                yield {**judge, "_source_run_id": _run_identifier(run)} if include_run_id else judge
 
 
 def _judge_context(judge: dict[str, Any]) -> str:
     jid = judge.get("judge_id") or "judge"
+    if judge.get("_source_run_id"):
+        jid = f"{judge['_source_run_id']}: {jid}"
     checkpoint = (judge.get("checkpoint_id") or "").strip()
     return f"**{jid}** at `{checkpoint}`" if checkpoint else f"**{jid}**"
 
@@ -523,7 +526,7 @@ def _format_user_prompts_section(
     return "\n".join(lines)
 
 
-def _format_issues_section(state_json: dict[str, Any], run_id: str | None = None) -> str:
+def _format_issues_section(state_json: dict[str, Any], run_id: str | list[str] | None = None) -> str:
     """Build section 9 (issues_with_causal_tree).
 
     Reads issues from the current run's ``judge_decisions[]`` + any
@@ -533,16 +536,17 @@ def _format_issues_section(state_json: dict[str, Any], run_id: str | None = None
     """
     runs = _runs_for_run_id(state_json, run_id)
     candidates: list[str] = []
-    for j in _iter_judge_decisions(runs):
+    for j in _iter_judge_decisions(runs, include_run_id=isinstance(run_id, list)):
         verdict = (j.get("verdict") or "").lower()
         if verdict in _ACTIONABLE_VERDICTS:
             for why in _judge_signal_summaries(j):
                 candidates.append(f"- {_judge_context(j)} — {why}")
     for run in runs:
+        prefix = f"`{_run_identifier(run)}`: " if isinstance(run_id, list) else ""
         for f in run.get("review_findings") or run.get("failures") or []:
-            candidates.append(f"- {f}")
+            candidates.append(f"- {prefix}{f}")
         for f in run.get("iterate_failures") or []:
-            candidates.append(f"- iterate-failure: {f}")
+            candidates.append(f"- {prefix}iterate-failure: {f}")
     if not candidates:
         return "_No issues surfaced this run._"
     lines = ["### Issues surfaced", "", *candidates, "",
@@ -619,7 +623,7 @@ def _format_automation_candidates_section(candidates: list[dict[str, Any]]) -> s
 def _enforce_signals(
     clusters: list[dict[str, Any]],
     state_json: dict[str, Any],
-    run_id: str | None = None,
+    run_id: str | list[str] | None = None,
 ) -> list[str]:
     """Surface candidates for the 'what should be enforced' section.
 
@@ -655,7 +659,7 @@ def _enforce_signals(
     for c in clusters:
         excerpt = c["examples"][0][:120]
         out.append(f"Make this an enforced default instead of user-prompted: _{excerpt}_")
-    for j in _iter_judge_decisions(_runs_for_run_id(state_json, run_id)):
+    for j in _iter_judge_decisions(_runs_for_run_id(state_json, run_id), include_run_id=isinstance(run_id, list)):
         if (j.get("verdict") or "").lower() not in _ACTIONABLE_VERDICTS:
             continue
         if not _judge_signal_summaries(j):
@@ -663,7 +667,8 @@ def _enforce_signals(
         gate = str(j.get("checkpoint_id") or "").strip()
         if not gate:
             continue
-        out.append(f"Enforce gate: {gate} (failed this run)")
+        prefix = f"{j['_source_run_id']}: " if j.get("_source_run_id") else ""
+        out.append(f"{prefix}Enforce gate: {gate} (failed this run)")
     return out
 
 
@@ -874,6 +879,7 @@ def build(
     transcript_note: str | None = None,
     trace_jsonl: Path | None = None,
     routing_evidence: dict[str, Any] | None = None,
+    run_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build the 9 named sections.
 
@@ -906,10 +912,11 @@ def build(
     signals = collect_transcript_signals(transcript_jsonl)
     prompts = signals["prompts"]
     clusters = cluster_repeated_prompts(prompts, threshold=prompted_threshold)
-    run_records = _runs_for_run_id(state_json, run_id)
+    selection = run_ids if run_ids is not None else run_id
+    run_records = _runs_for_run_id(state_json, selection)
     last_run = run_records[-1] if run_records else {}
-    judges = list(_iter_judge_decisions(run_records))
-    enforce = _enforce_signals(clusters, state_json, run_id)
+    judges = list(_iter_judge_decisions(run_records, include_run_id=run_ids is not None))
+    enforce = _enforce_signals(clusters, state_json, selection)
 
     # Deterministic transcript signals (free — no LLM). Feed §10, §11, and the
     # app-issue enrichment of §4/§9.
@@ -957,7 +964,7 @@ def build(
     lessons: list[str] = []
     for run in run_records:
         for lesson in run.get("lessons") or []:
-            _append_unique(lessons, str(lesson))
+            _append_unique(lessons, f"`{_run_identifier(run)}`: {lesson}" if run_ids is not None else str(lesson))
     for judge in judges:
         for summary in _judge_signal_summaries(judge):
             _append_unique(lessons, f"{judge.get('judge_id') or 'judge'}: {summary}")
@@ -976,7 +983,9 @@ def build(
     m2 = re.search(r"^# (.+)$", plan_md, re.M)
     if m2:
         takeaways.append(f"Plan headline: {m2.group(1).strip()}")
-    if last_run.get("outcome"):
+    if run_ids is not None:
+        takeaways.extend(f"Run `{_run_identifier(r)}`: {r.get('outcome')}" for r in run_records)
+    elif last_run.get("outcome"):
         takeaways.append(f"Run outcome: {last_run['outcome']}")
     if routing_evidence is not None:
         takeaways.append(format_routing_evidence(routing_evidence))
@@ -994,10 +1003,11 @@ def build(
     #    signals (errored tool calls, tracebacks) + tools that erred.
     bads: list[str] = []
     for run in run_records:
+        prefix = f"`{_run_identifier(run)}`: " if run_ids is not None else ""
         for f in run.get("failures") or []:
-            _append_unique(bads, str(f))
+            _append_unique(bads, f"{prefix}{f}")
         for f in run.get("iterate_failures") or []:
-            _append_unique(bads, f"iterate-failure: {f}")
+            _append_unique(bads, f"{prefix}iterate-failure: {f}")
     for label, n in (usage.get("errored") or {}).items():
         _append_unique(bads, f"`{label}` returned {n} error(s) — friction worth removing")
     for sig in issue_signals:
@@ -1018,6 +1028,8 @@ def build(
         judge_id = j.get("judge_id") or "judge"
         ck = (j.get("checkpoint_id") or "").strip()
         win = f"{judge_id} approved {ck}" if ck else f"{judge_id} approved"
+        if j.get("_source_run_id"):
+            win = f"`{j['_source_run_id']}`: {win}"
         if win in seen_wins:
             continue
         seen_wins.add(win)
@@ -1030,10 +1042,11 @@ def build(
     earned: list[str] = []
     lucky: list[str] = []
     for run in run_records:
+        prefix = f"`{_run_identifier(run)}`: " if run_ids is not None else ""
         for item in run.get("planned_wins") or []:
-            _append_unique(earned, str(item))
+            _append_unique(earned, prefix + str(item))
         for item in run.get("unplanned_wins") or []:
-            _append_unique(lucky, str(item))
+            _append_unique(lucky, prefix + str(item))
     if not earned and not lucky:
         sections["what_went_well_by_accident"] = "_(no signals captured — populate from agent reflection)_"
     else:
@@ -1056,7 +1069,7 @@ def build(
     sections["user_prompts_and_repeats"] = _format_user_prompts_section(prompts, clusters, transcript_note)
 
     # 9. issues_with_causal_tree — judge-flagged issues + transcript signals.
-    issues_body = _format_issues_section(state_json, run_id)
+    issues_body = _format_issues_section(state_json, selection)
     if issue_signals:
         extra = "\n".join(f"- {s}" for s in issue_signals)
         if issues_body.startswith("_No issues"):
@@ -1090,4 +1103,7 @@ def build(
         "trace_provider_429s": trace_summary.get("provider_429s", 0),
         "trace_p95_duration_ms": trace_summary.get("p95_duration_ms"),
     }
+    if run_ids is not None:
+        sections["meta"]["run_ids"] = [_run_identifier(r) for r in run_records]
+        sections["meta"]["coverage"] = "recorded-builds-only"
     return sections

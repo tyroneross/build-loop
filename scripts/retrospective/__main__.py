@@ -42,6 +42,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap.add_argument("--workdir", required=True, help="build-loop project workdir")
     ap.add_argument("--run-id", default=None, help="override derived run id")
+    ap.add_argument("--automatic", action="store_true", help="capture a due completed-build cohort")
+    ap.add_argument("--trigger", choices=["build", "review"], default="build")
     ap.add_argument("--transcript", default=None, help="override located transcript path")
     ap.add_argument(
         "--session-id", default=None,
@@ -56,11 +58,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="override cost-ledger JSONL for run-scoped routing evidence",
     )
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    return ap.parse_args(argv)
+    args = ap.parse_args(argv)
+    if args.automatic and any((args.run_id, args.transcript, args.session_id, args.memory_root, args.cost_ledger)):
+        ap.error("--automatic selects its own build cohort; explicit run/transcript/storage overrides are not supported")
+    return args
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.automatic:
+        from retrospective.cadence import automatic
+        result = automatic(Path(args.workdir), trigger=args.trigger)
+        print(json.dumps(result, indent=2) if args.json else f"retrospective: {result['status']}")
+        return 0
     transcript = Path(args.transcript) if args.transcript else None
     memory_root = Path(args.memory_root) if args.memory_root else None
     cost_ledger = Path(args.cost_ledger) if args.cost_ledger else None

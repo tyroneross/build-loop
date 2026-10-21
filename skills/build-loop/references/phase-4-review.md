@@ -468,6 +468,37 @@ Follow the returned `action`: `auto` may proceed after Review passes; `confirm` 
 
 **Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. The orchestrator agent owns the invocation — see `agents/build-orchestrator.md` §G for the canonical call (including `--judge-decisions-json` and `--budget-summary-json`). Schema and flags are owned by `scripts/write_run_entry/__main__.py --help`; do not hand-write JSON.
 
+### Automatic retrospective cadence
+
+The completed build record is the automatic trigger. `write_run_entry` records
+`review_scope: build` and checks `retrospective.cadence` after releasing the state
+lock. Default: one retrospective after **three unique completed builds** (`pass`
+or `fail`); partial and chunk records do not count. Set
+`{"retrospective": {"every_builds": 3}}` in `.build-loop/config.json` to change the
+threshold (integer 1–100). Historical records without explicit build scope are
+not guessed into a batch.
+
+An explicit self-review (`self_review` without `--dry-run`) flushes pending
+builds even below the threshold. For another explicit review entrypoint use
+`python3 scripts/retrospective/__main__.py --workdir "$PWD" --automatic --trigger review --json`.
+Ordinary per-build Review-G keeps the build threshold; it does not force a review
+flush. Do not add a separate per-build synthesizer dispatch on this path.
+
+One repository lock coalesces concurrent requests. A busy attempt returns
+`deferred`; pending builds stay in the run ledger and are checked at the next
+build/review event. Synthesis or publication failures return `degraded` and do
+not advance coverage. Repeated upserts with unchanged evidence do not count
+again; changed findings/outcomes remain eligible for a later batch or review.
+
+The existing synthesizer writes one batch plus its summary, identifies every
+covered build, and attempts the existing durable promotion. `durable_status`
+and `durable_path` distinguish captured, queued and unavailable memory copies.
+Automatic batches use recorded findings/lessons only and explicitly mark
+transcripts and live traces unexamined. Existing rich manual and SessionEnd
+transcript capture remain available; they have broader evidence than this
+record-only batch. Phase 6 Learn and its promotion policy remain unchanged.
+No new timer, model/API call, approval gate or blocking run-close step is added.
+
 **Run-close assertion (MANDATORY every Phase 4G — run record and Learn receipt are verified, not assumed).** After `write_run_entry` and Phase 6 complete, assert both mutations landed:
 
 ```bash

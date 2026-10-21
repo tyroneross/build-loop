@@ -269,6 +269,8 @@ def run(
     memory_root: Path | None = None,
     session_id: str | None = None,
     routing_ledger: Path | None = None,
+    run_ids: list[str] | None = None,
+    state_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Synthesize the retrospective for ``workdir``.
 
@@ -295,7 +297,7 @@ def run(
     """
     workdir = Path(workdir).resolve()
     try:
-        state = _load_state_json(workdir)
+        state = state_snapshot if state_snapshot is not None else _load_state_json(workdir)
         intent_md = _load_md(workdir, "intent.md")
         plan_md = _load_md(workdir, "plan.md")
         from rally_point.build_loop_id import resolve_run_identity
@@ -314,7 +316,11 @@ def run(
             run_start, run_end, run_host,
         )
         tx_reason = None
-        if transcript is not None:
+        if run_ids is not None:
+            if not run_ids or any(not _find_run(state, member) for member in run_ids):
+                raise ValueError("batch must name existing run records")
+            tx, tx_reason = None, "Automatic batch uses recorded build evidence; transcripts and live traces were not scanned"
+        elif transcript is not None:
             tx = transcript
         elif not session_id and (not target_run or run_start is None or
                                  (run_id is None and selection.build_run_id is None)):
@@ -331,8 +337,9 @@ def run(
         sections = build_sections(
             tx, state, intent_md, plan_md, rid,
             transcript_note=tx_reason,
-            trace_jsonl=workdir / ".build-loop/telemetry/tool-traces.jsonl",
-            routing_evidence=load_routing_evidence(_routing_ledger_path(routing_ledger), rid),
+            trace_jsonl=None if run_ids is not None else workdir / ".build-loop/telemetry/tool-traces.jsonl",
+            routing_evidence=None if run_ids is not None else load_routing_evidence(_routing_ledger_path(routing_ledger), rid),
+            run_ids=run_ids,
         )
 
         # Promote BEFORE writing the active/summary pair: the summary must carry
@@ -352,6 +359,7 @@ def run(
             "active_path":        active.get("active_path"),
             "summary_path":       active.get("summary_path"),
             "durable_path":       durable.get("durable_path"),
+            "durable_status":     durable.get("status"),
             "enforce_candidates": enforce.get("paths", []),
             "status":             active.get("status", "ok"),
             "reason":             active.get("reason"),

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import os
 import re
 import subprocess
 import sys
@@ -19,11 +20,16 @@ RUN_ID_RE = re.compile(r"^run_\d{8}T\d{6}Z_[0-9a-f]{8}$")
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT)] + args,
-        capture_output=True,
-        text=True,
-    )
+    # Build-scope records can now actuate a real retrospective; keep its durable
+    # promotion in an existing fixture store, never the user's memory checkout.
+    with tempfile.TemporaryDirectory(prefix="writer-retro-memory-") as memory:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT)] + args,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "BUILD_LOOP_MEMORY_STORE_ROOT": memory,
+                 "BUILD_LOOP_MEMORY_ROOT": memory, "AGENT_MEMORY_ROOT": memory},
+        )
 
 
 class WriteRunEntryTests(unittest.TestCase):

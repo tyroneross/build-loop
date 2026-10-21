@@ -12,6 +12,7 @@ is that the blm CLI's Python dependencies ship in the npm package.
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -20,14 +21,15 @@ REPO = Path(__file__).resolve().parents[1]
 
 class BlmMcpBridgeTests(unittest.TestCase):
     def test_package_includes_blm_cli_dependencies(self) -> None:
-        package = json.loads((REPO / "package.json").read_text(encoding="utf-8"))
-        files = set(package["files"])
+        package = json.loads(subprocess.check_output(
+            ["npm", "pack", "--dry-run", "--ignore-scripts", "--json"], cwd=REPO))[0]
+        files = {entry["path"] for entry in package["files"]}
         required = {
             "scripts/_paths.py",
             "scripts/blm.py",
             "scripts/blm_api.py",
-            "scripts/lessons_index",
-            "scripts/memory_context",
+            "scripts/lessons_index/__main__.py",
+            "scripts/memory_context/__init__.py",
             "scripts/project_resolver.py",
         }
         self.assertTrue(required.issubset(files), sorted(required - files))

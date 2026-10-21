@@ -93,6 +93,10 @@ def render_full_markdown(
             "Sections drawn from state.json and plan.md are still populated.",
             f"> Reason: {reason or 'no transcript located for this run'}",
         ])
+    if meta.get("run_ids"):
+        lines.extend(["", "**Covered builds:** " + ", ".join(
+            f"`{member}`" for member in meta["run_ids"]),
+            "Coverage: recorded build findings and lessons; transcript and live-trace evidence unavailable."])
     if intent_one_line:
         lines.append(f"_Intent: {intent_one_line}_")
     lines.append("")

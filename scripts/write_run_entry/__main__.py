@@ -343,6 +343,8 @@ def _build_entry(
         "manualInterventions": payloads["manual_interventions"],
         "active_experimental_artifacts": active,
     }
+    if getattr(args, "scope", "none") != "none":
+        entry["review_scope"] = args.scope
     diff_range = getattr(args, "diff_range", None)
     if diff_range:
         entry["diff_range"] = diff_range
@@ -478,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         log(f"filesystem error: {e}")
         return 2
 
+    if args.scope == "build" and args.outcome in {"pass", "fail"}:
+        # The state lock is released; capture is advisory and coalesces peers.
+        from retrospective.cadence import automatic
+        retro = automatic(workdir, trigger="build")
+        if retro["status"] == "degraded":
+            log(f"warn: automatic retrospective: {retro.get('reason')}")
     print(run_id)
     return 0
 

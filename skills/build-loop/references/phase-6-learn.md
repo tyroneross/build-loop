@@ -57,6 +57,14 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 - Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
 - Run more than once per build
 
+## Automatic retrospective input
+
+Completed build records feed the existing retrospective synthesizer through the
+[automatic cadence](phase-4-review.md#automatic-retrospective-cadence): three
+builds by default or an explicit review. This coalesces many agent completions;
+it does not replace mandatory Learn or authorize promotion. Use the batch's
+source membership and recorded-only coverage when interpreting its candidates.
+
 ## Required compatibility review (every agent)
 
 At lessons learned and retrospective closeout, examine interactions between two or

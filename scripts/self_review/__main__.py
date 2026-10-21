@@ -67,6 +67,11 @@ from typing import Any
 # is the package directory, so flat sibling imports work.  When imported via
 # `python3 -m self_review` with scripts/ on sys.path, __init__.py has already
 # inserted the package dir.
+# Cross-capability imports must also work for the absolute-path CLI.
+_SCRIPTS = Path(__file__).resolve().parents[1]
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(1, str(_SCRIPTS))
+
 from gather import run_miner
 from efficiency import scan_state, scan_churn
 from selfscan import is_self_recursive, scan_self_simplification
@@ -211,6 +216,9 @@ def run(argv: list[str]) -> int:
         "errors": errors,
         "dry_run": dry_run,
     }
+    if not dry_run:
+        from retrospective.cadence import automatic
+        output["retrospective"] = automatic(workdir, trigger="review")
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
     # Human summary to stderr
