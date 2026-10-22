@@ -89,6 +89,16 @@ Do not delete Xcode, IDE, package-manager, or shared caches outside the reposito
 
 Avoid `git branch -D` until normal deletion fails and equivalence proof exists. Never use `git reset --hard` to clean user-owned state.
 
+### 7a. Unmerged branches: resolve what git can prove, file only real decisions
+
+Run `python3 skills/repo-maintenance/scripts/branch_disposition.py --repo <repo>` (read-only), then again with `--apply`. It deletes `merged` branches and archives then deletes `content-on-main` and `patch-equivalent` ones (annotated tag `archive/pre-closeout-<date>/<branch>`, verified before a compare-and-swap delete). It never touches a checked-out, protected or task-queue (`oc/*`) branch, or remote refs.
+
+For each `needs-decision` branch, read its commits and diff before filing anything:
+
+- Main already implements the change another way (`git log -S '<key identifier>' main`), or the branch is an abandoned experiment whose card is closed: archive it with an annotated tag whose message names the evidence, then delete it.
+- The branch holds a product or taste choice main does not make (UI direction, behavior change, scope call): file one card, "decide branch <b>", with the commits, diffstat and your recommendation, through `scripts/file_to_operations_center.py` (it attaches to last week's open card instead of duplicating it).
+- Anything else with a clear default (finish and merge, or archive): do it and record it in the receipt. Do not ask the owner to pick.
+
 ## 8. Verify final truth
 
 Re-run the maintenance audit and report distinct states:

@@ -8,6 +8,8 @@ Loaded on demand from `agents/build-orchestrator.md` §"Keep going until done" a
 
 When confidence in the right next step is ≥70%, decide and execute; surface the reasoning and the chosen option in the readback. Below 70%, take one of the cheap escalation steps below before deciding. The threshold is calibrated, not literal — if the cost of being wrong is contained (reversible, low-blast-radius, recoverable in <1 chunk), decide earlier; if the cost is unbounded or production-impacting, climb the ladder regardless of confidence.
 
+When a recommended option exists, it clears the threshold: take it and state the choice and why. Never park a task-queue card asking the owner to pick between options when one is recommended (`references/task-queue-work.md` §3).
+
 ## Decision-escalation ladder (cheapest → costliest)
 
 Try each step in order. Stop at the first that resolves the uncertainty. Never skip down to "ask the human" while a cheaper step exists.
