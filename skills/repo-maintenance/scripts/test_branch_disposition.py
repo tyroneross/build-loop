@@ -181,6 +181,50 @@ class TestBranchDisposition(unittest.TestCase):
         self.assertEqual(out["action"], "kept: checked out since classification")
         self.assertTrue(r.exists("refs/heads/picked"))
 
+    def test_checkout_after_locked_check_restores_the_ref(self) -> None:
+        # Codex review r3 #2/#6: a ref lock does not block checkout; a checkout landing
+        # between the locked check and the commit must not leave the branch deleted.
+        r = self.repo
+        picked = r.branch_with("picked", "p.txt", "p\n")
+        r.advance_main("x")
+        r.git("cherry-pick", picked)
+        item = bd.classify(r.root, "main", "picked", picked, set())
+        real, n = bd.checked_out_branches, {"calls": 0}
+
+        def checkout_after_locked_check(repo):
+            n["calls"] += 1
+            if n["calls"] == 2:  # the check made under the ref lock sees nothing...
+                return set()
+            if n["calls"] == 3:  # ...and the checkout lands before the post-commit check
+                subprocess.run(["git", "-C", str(r.root), "symbolic-ref", "HEAD", "refs/heads/picked"],
+                               check=True, env=ENV)
+            return real(repo)
+        bd.checked_out_branches = checkout_after_locked_check
+        try:
+            out = bd.resolve(r.root, item, "2026-10-22")
+        finally:
+            bd.checked_out_branches = real
+        self.assertEqual(out["action"], "kept: checked out during delete; ref restored")
+        self.assertEqual(r.git("rev-parse", "refs/heads/picked"), picked)
+
+    def test_branch_only_merge_commit_is_not_patch_equivalent(self) -> None:
+        # Codex review r3 #1: git cherry ignores merges, so a branch-only merge with its
+        # own conflict resolution has no equivalence proof.
+        r = self.repo
+        r.branch_with("left", "c.txt", "left\n")
+        r.branch_with("right", "c.txt", "right\n")
+        r.git("checkout", "-q", "-b", "resolved", "left")
+        subprocess.run(["git", "-C", str(r.root), "merge", "-q", "right"], env=ENV, capture_output=True)
+        r.write("c.txt", "branch resolution\n")
+        r.commit("merge right into left with a unique resolution")
+        r.git("checkout", "-q", "main")
+        r.git("merge", "-q", "--no-ff", "-m", "left", "left")
+        subprocess.run(["git", "-C", str(r.root), "merge", "-q", "right"], env=ENV, capture_output=True)
+        r.write("c.txt", "main resolution\n")
+        r.commit("merge right into main with a different resolution")
+        d = dispositions(bd.run(r.root))
+        self.assertEqual(d["resolved"]["disposition"], "needs-decision")
+
     def test_tag_failure_means_no_delete(self) -> None:
         # Codex review r1 #13: archival must precede deletion; a failed tag keeps the branch.
         r = self.repo

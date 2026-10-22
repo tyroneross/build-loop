@@ -19,8 +19,8 @@ python3 scripts/task_queue_client.py lookup --repo <repo> --title "<one-line fin
 A match returns the card id. Attach new evidence to that card; do not file a second
 one. `scripts/file_to_operations_center.py` runs this lookup itself and attaches on a
 match (`attached: true`, `task_id` = the existing card). The match is exact after
-minimal normalization (case, spacing, edge punctuation, a bare `fix:` prefix; worktree
-paths fold to their repo), so any other difference in the title files a new card. Pass `--force-new` only for a distinct finding that
+minimal normalization (case, spacing, a bare `fix:` prefix; a worktree path folds to
+its repo), so any other difference in the title files a new card. Pass `--force-new` only for a distinct finding that
 shares a title.
 
 The filer refuses a card without `--spec` and `--repo` (exit 2): a card nobody can

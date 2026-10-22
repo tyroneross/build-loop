@@ -27,10 +27,12 @@ def card(title, repo, status="todo", cid=FULL):
 
 class TestNormalize(unittest.TestCase):
     def test_prefix_case_punctuation(self) -> None:
-        self.assertEqual(tq.normalize_title("fix: Ez-ptyd rejects  a command!"),
+        self.assertEqual(tq.normalize_title("fix: Ez-ptyd rejects  a command"),
                          "ez-ptyd rejects a command")
-        self.assertEqual(tq.normalize_title("Fix ez-ptyd rejects a command."),
+        self.assertEqual(tq.normalize_title("Fix ez-ptyd rejects a command"),
                          "ez-ptyd rejects a command")
+        # Codex review r3 #4: edge punctuation is content too.
+        self.assertNotEqual(tq.normalize_title("Lexer rejects !"), tq.normalize_title("Lexer rejects ?"))
 
     def test_scope_and_label_are_kept(self) -> None:
         # Codex review r1 #4: scopes and bracket labels name different components.
@@ -70,13 +72,16 @@ class TestNormalize(unittest.TestCase):
         self.assertFalse(tq.same_repo("", "api"))
         # Codex review r2 #5: relative paths with a slash are not bare names.
         self.assertFalse(tq.same_repo("org-a/api", "org-b/api"))
+        # Codex review r3 #5: a repo nested inside a worktree keeps its own identity.
+        self.assertFalse(tq.same_repo("/srv/app.worktrees/lane/vendor/api", "/srv/app"))
+        self.assertFalse(tq.same_repo("/srv/app/.claude/worktrees/a/vendor/api", "/srv/app"))
 
 
 class TestFindDuplicate(unittest.TestCase):
     cards = [card("Fix ez-ptyd rejecting a pane command", "/Users/x/dev/easy-terminal")]
 
     def test_match(self) -> None:
-        hit = tq.find_duplicate(self.cards, title="fix: ez-ptyd rejecting a pane command.",
+        hit = tq.find_duplicate(self.cards, title="fix: ez-ptyd rejecting a pane command",
                                 repo="/Users/x/dev/easy-terminal.worktrees/z")
         self.assertEqual(hit["id"], FULL)
 

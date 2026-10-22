@@ -250,7 +250,7 @@ class TestClientSideDedupe(unittest.TestCase):
             fake = _write_fake_oc(Path(d))
             client = FakeClient([OPEN_CARD])
             result, code = mod.file_task(repo="/Users/x/dev/WorkWiki.worktrees/lane-b",
-                                         title="fix: parameterize SQL in search.",
+                                         title="fix: parameterize SQL in search",
                                          spec="f-string SQL", oc_bin=str(fake), client=client)
             self.assertEqual(code, 0)
             self.assertTrue(result["attached"])
@@ -315,12 +315,13 @@ class TestIntakeRejection(unittest.TestCase):
     def test_duplicate_rejection_attaches_to_named_card(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of 1a2b3c4d", exit_code=3)
-            client = FakeClient([{"id": "1a2b3c4d", "title": "x", "status": "todo", "target_repo": "Q"}])
-            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            client = FakeClient([{"id": "1a2b3c4d" + "0" * 24, "title": "t", "status": "todo", "target_repo": "R"}])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client,
+                                         force_new=True)  # client lookup missed; the queue caught it
             self.assertEqual(code, 0)
             self.assertTrue(result["attached"])
-            self.assertEqual(result["task_id"], "1a2b3c4d")
-            self.assertEqual(client.attached[0][0], "1a2b3c4d")
+            self.assertEqual(result["task_id"], "1a2b3c4d" + "0" * 24)
+            self.assertEqual(client.attached[0][0], "1a2b3c4d" + "0" * 24)
 
     def test_named_card_that_is_not_open_is_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -335,9 +336,10 @@ class TestIntakeRejection(unittest.TestCase):
         # Codex review r2 #7: never pick the first of several open cards sharing a prefix.
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of deadbeef", exit_code=3)
-            client = FakeClient([{"id": "deadbeef" + "1" * 24, "title": "a", "status": "todo"},
-                                 {"id": "deadbeef" + "2" * 24, "title": "b", "status": "review"}])
-            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            client = FakeClient([{"id": "deadbeef" + "1" * 24, "title": "t", "status": "todo", "target_repo": "R"},
+                                 {"id": "deadbeef" + "2" * 24, "title": "t", "status": "review", "target_repo": "R"}])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client,
+                                         force_new=True)
             self.assertEqual(code, 1)
             self.assertIn("2 open cards", result["reason"])
             self.assertEqual(client.attached, [])
@@ -351,12 +353,31 @@ class TestIntakeRejection(unittest.TestCase):
 
             def list_after_add():
                 calls["n"] += 1
-                return [] if calls["n"] == 1 else [{"id": "abc12345" + "f" * 24, "title": "t", "status": "todo"}]
+                return [] if calls["n"] == 1 else [{"id": "abc12345" + "f" * 24, "title": "t",
+                                                    "status": "todo", "target_repo": "R"}]
             client.list_open = list_after_add
             result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
             self.assertEqual(code, 0)
             self.assertEqual(result["task_id"], "abc12345")
             self.assertEqual(result["full_id"], "abc12345" + "f" * 24)
+
+    def test_unrelated_open_card_sharing_a_prefix_is_never_chosen(self) -> None:
+        # Codex review r3 #3/#7: the intended card closed; an unrelated open card shares
+        # its prefix. Neither full_id recovery nor rejection handling may pick it.
+        unrelated = {"id": "deadbeef" + "2" * 24, "title": "something else", "status": "todo",
+                     "target_repo": "R"}
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="added  deadbeef  t")
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake),
+                                         client=FakeClient([unrelated]))
+            self.assertEqual(code, 0)
+            self.assertIsNone(result["full_id"])
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of deadbeef", exit_code=3)
+            client = FakeClient([unrelated])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 1)
+            self.assertEqual(client.attached, [])
 
     def test_failed_attach_is_blocker_naming_the_card(self) -> None:
         # Codex review r1 #2: attached=True only after the note is saved.

@@ -346,11 +346,9 @@ def file_task(
         if card_id:
             # Queue said "duplicate of X" or "full, attach to X". Attach there, but
             # only once the named card is confirmed OPEN when the list is readable.
-            from task_queue_client import OPEN_STATUSES, QueueUnavailable
+            from task_queue_client import QueueUnavailable
             try:
-                cards = client.list_open()
-                named = [c for c in cards if str(c.get("id") or "").lower().startswith(card_id)
-                         and str(c.get("status") or "").lower() in OPEN_STATUSES]
+                named = _cards_for(client.list_open(), card_id, title, repo)
                 if len(named) != 1:
                     what = "no open card" if not named else f"{len(named)} open cards"
                     base["reason"] = (f"oc add exited {r.returncode}; the queue named card {card_id}, "
@@ -378,12 +376,27 @@ def file_task(
     # `oc add` prints an 8-char id; the close-on-fix trailer needs the full one.
     from task_queue_client import QueueUnavailable as _QU
     try:
-        full = [c["id"] for c in client.list_open() if str(c.get("id") or "").startswith(task_id)]
+        full = _cards_for(client.list_open(), task_id, title, repo)
         if len(full) == 1:
-            base["full_id"] = full[0]
+            base["full_id"] = full[0]["id"]
     except (_QU, KeyError, TypeError):
         pass
     return base, 0
+
+
+def _cards_for(cards, id_prefix: str, title: str, repo: str) -> list[dict]:
+    """Open cards whose id starts with `id_prefix` AND that carry this finding.
+
+    A short id alone is not identity: an unrelated open card can share the prefix
+    of a closed one. Requiring the same normalized title and repo rules that out.
+    """
+    from task_queue_client import OPEN_STATUSES, normalize_title, same_repo
+    want = normalize_title(title)
+    return [c for c in cards
+            if str(c.get("id") or "").lower().startswith(id_prefix.lower())
+            and str(c.get("status") or "").lower() in OPEN_STATUSES
+            and normalize_title(c.get("title")) == want
+            and same_repo(c.get("target_repo"), repo)]
 
 
 def _attach(client, base: dict, task_id: str, note: str) -> tuple[dict, int]:

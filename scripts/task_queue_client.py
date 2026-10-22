@@ -54,29 +54,28 @@ OPEN_STATUSES = ("todo", "working", "needs_input", "review")
 TRAILER_KEY = "Task"
 LEGACY_TRAILER_KEYS = ("OC-Task",)
 
-# Normalization is deliberately minimal: case, whitespace, a bare conventional
-# type prefix ("fix: x", "bug!: x", "Fix x" all name the same defect), and edge
-# punctuation. Everything inside the title is KEPT -- scopes and bracket labels
+# Normalization is deliberately minimal: case, whitespace, and a bare conventional
+# type prefix ("fix: x", "bug!: x", "Fix x" all name the same defect). All
+# punctuation is KEPT, including at the edges ("rejects !" vs "rejects ?") -- scopes and bracket labels
 # name components ("fix(auth):", "[iOS]"), and symbols carry meaning ("C++" vs
 # "C#", "x < 0" vs "x > 0", "--verbose" vs "-verbose"). A missed duplicate costs a
 # card the queue's own intake dedupe can still catch; a false match hides a finding.
 _TYPE_RE = re.compile(r"^\s*(?:fix|bug|feat|chore|docs|refactor|perf|test|ops)(\([^)]{0,40}\))?!?:\s*",
                       re.IGNORECASE)
 _BARE_FIX_RE = re.compile(r"^\s*fix\s+", re.IGNORECASE)
-_EDGE_PUNCT = " \t.!?,;:'\"`"
 _TRAILER_KEYS = {k.casefold() for k in (TRAILER_KEY, *LEGACY_TRAILER_KEYS)}
 # Worktree layouts that live inside or beside the canonical repo.
 _WORKTREE_MARKERS = ("/.build-loop/worktrees/", "/.claude/worktrees/", "/.rally/worktrees/")
 
 
 def normalize_title(title: str | None) -> str:
-    """Casefold, drop a bare type prefix (keeping any scope), trim edge punctuation, collapse spaces."""
+    """Casefold, drop a bare type prefix (keeping any scope), collapse spaces."""
     t = (title or "").strip()
     m = _TYPE_RE.match(t)
     if m:
         t = ((m.group(1) or "") + " " + t[m.end():]).strip()
     t = _BARE_FIX_RE.sub("", t)
-    return " ".join(t.casefold().split()).strip(_EDGE_PUNCT)
+    return " ".join(t.casefold().split())
 
 
 def canonical_repo(repo: str | None) -> str:
@@ -90,15 +89,16 @@ def canonical_repo(repo: str | None) -> str:
     r = (repo or "").strip().rstrip("/")
     if not r:
         return ""
+    # Fold only when the worktree directory is the LAST component; a deeper path
+    # (a nested repo or submodule inside a worktree) keeps its own identity.
     for marker in _WORKTREE_MARKERS:
-        if marker in r:
-            r = r.split(marker, 1)[0]
+        head, sep, rest = r.partition(marker)
+        if sep and rest and "/" not in rest:
+            r = head
             break
     parts = r.split("/")
-    for i, part in enumerate(parts):
-        if part.endswith(".worktrees") and i + 1 < len(parts):
-            r = "/".join(parts[:i] + [part[: -len(".worktrees")]])
-            break
+    if len(parts) >= 2 and parts[-2].endswith(".worktrees"):
+        r = "/".join(parts[:-2] + [parts[-2][: -len(".worktrees")]])
     return r.casefold()
 
 

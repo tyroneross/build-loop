@@ -11,7 +11,8 @@ and, with --apply, closes the ones git can prove are redundant:
   merged           branch head is an ancestor of base       -> delete (git branch -d)
   content-on-main  merging b into base changes nothing       -> archive tag + delete
                    (`git merge-tree --write-tree` == base tree; catches squash merges)
-  patch-equivalent `git cherry base b` has no "+" commits and base later edited
+  patch-equivalent `git cherry base b` has no "+" commits, b has no merge commits
+                   (cherry cannot see their resolutions), and base later edited
                    those lines (merge conflicts)               -> archive tag + delete.
                    If the merge is clean but would re-add content, base removed it
                    on purpose (revert): that is needs-decision, not redundancy.
@@ -88,7 +89,11 @@ def classify(repo: Path, base: str, name: str, head: str, checked_out: set[str],
         return {**item, "disposition": "content-on-main",
                 "reason": f"merging into {base} changes no file (squash-merged or re-implemented identically)"}
     cherry = git(repo, "cherry", base, head, check=False)
-    all_picked = cherry.returncode == 0 and not any(l.startswith("+") for l in cherry.stdout.splitlines())
+    # `git cherry` ignores merge commits, so a branch-only merge (with its own
+    # conflict resolution) has no patch-id proof: never call such a branch picked.
+    merges = git(repo, "rev-list", "--merges", f"{base}..{head}", check=False).stdout.strip()
+    all_picked = (cherry.returncode == 0 and not merges
+                  and not any(l.startswith("+") for l in cherry.stdout.splitlines()))
     # A clean merge that still changes base means base no longer holds this content
     # (picked, then reverted or deleted on purpose): that is a decision, not redundancy.
     if all_picked and merged_tree is None:
@@ -152,6 +157,11 @@ def delete_branch_at(repo: Path, name: str, head: str) -> str:
             return "kept: checked out since classification"
         if say("commit") != "commit: ok":
             return "kept: delete did not commit"
+        # A ref lock does not block checkout. If a session checked the branch out
+        # between the locked check and the commit, put the ref back at once.
+        if name in checked_out_branches(repo):
+            git(repo, "update-ref", f"refs/heads/{name}", head, "0" * 40, check=False)
+            return "kept: checked out during delete; ref restored"
         return "deleted"
     except (BrokenPipeError, OSError):
         return "kept: " + (proc.stderr.read().strip()[:160] if proc.stderr else "ref transaction failed")
