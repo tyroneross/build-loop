@@ -68,7 +68,6 @@ _TRAILER_LINE_RE = re.compile(
     % "|".join(re.escape(k) for k in (TRAILER_KEY, *LEGACY_TRAILER_KEYS)),
 )
 _GIT_TRAILER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s*\S")
-_FULL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # Worktree layouts that live inside or beside the canonical repo.
 _WORKTREE_MARKERS = ("/.build-loop/worktrees/", "/.claude/worktrees/", "/.rally/worktrees/")
 
@@ -168,13 +167,13 @@ def parse_trailer_ids(message: str) -> list[str]:
 
 
 def resolve_open_id(cards: Iterable[dict], task_id: str) -> dict | None:
-    """The OPEN card with exactly this full 32-hex id, else None.
+    """The OPEN card whose id equals `task_id` exactly (case-insensitive), else None.
 
     Prefixes are refused: the open list cannot see a closed card that shares the
     prefix, so a stale short id could name the wrong open card.
     """
     t = (task_id or "").strip().lower()
-    if not _FULL_ID_RE.match(t):
+    if not t:
         return None
     for c in cards:
         if str(c.get("id") or "").lower() == t and str(c.get("status") or "").lower() in OPEN_STATUSES:
