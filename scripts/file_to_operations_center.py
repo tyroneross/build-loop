@@ -16,6 +16,14 @@ question. This helper makes the "file it" branch MECHANICAL rather than prose:
 the orchestrator/agents call it, it shells out to the Operations Center CLI's
 documented `add` subcommand, and returns a structured receipt.
 
+Before filing it looks up OPEN cards (`task_queue_client.find_duplicate`:
+normalized title + repo, exact). A match is ATTACHED to (a note on the existing
+card) instead of filed again, and the receipt returns the existing id — use it
+in the fixing commit's `Task: <id>` trailer so the card closes when the fix
+lands. `--force-new` skips the lookup for a genuinely distinct finding that
+shares a title. Requests without a spec or repo are refused (exit 2), and the
+`direct-fable` handler needs `--consent-direct-fable`.
+
 It NEVER writes raw rows into the SQLite queue — the intake contract is the CLI.
 If the CLI binary cannot be found, it returns a structured blocker
 (`filed: false`, exit 1) so the caller surfaces the blocker as its own finding,
@@ -26,7 +34,10 @@ CLI::
     python3 scripts/file_to_operations_center.py
         --repo <repo>                 # target repo the issue lives in (required)
         --title <one-line title>      # required
-        [--spec <fuller description>]
+        --spec <fuller description>   # required: what, where, fix hint
+        [--handler <label>] [--consent-direct-fable]
+        [--origin agent-finding|rca|audit|retro|user-request|other]  # default agent-finding
+        [--force-new]                 # skip the open-card lookup
         [--urgency low|normal|high|critical]   # default: normal
         [--task-type build|fix|research|ui-draft|ops|question]  # default: fix
         [--oc-bin <path>]             # override binary discovery
@@ -38,6 +49,8 @@ Output JSON::
 
     {
       "filed":     bool,
+      "attached":  bool,         # true = matched an open card; task_id is ITS id
+      "dedupe":    str,          # "matched" | "no-match" | "unavailable" | "skipped"
       "task_id":   str | null,   # 8-char id echoed by `oc add` — the durable
                                  #   receipt shown by `oc list` and the board
       "full_id":   str | null,   # forward-compat; null today (the CLI `show`
@@ -54,8 +67,10 @@ Output JSON::
     }
 
 Exit codes:
-  0  — filed (task created) OR dry-run printed successfully
-  1  — NOT filed (binary missing, or `oc add` failed) — a blocker for the caller
+  0  — filed, attached to an existing card, OR dry-run printed successfully
+  1  — NOT filed (binary missing, queue full with no card named, or `oc add`
+       failed) — a blocker for the caller
+  2  — request refused: missing spec/repo, or direct-fable without consent
 """
 from __future__ import annotations
 
@@ -67,6 +82,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling task_queue_client
 
 # urgency label → Operations Center priority (0=P0 highest .. 3=P3).
 PRIORITY_BY_URGENCY = {
@@ -141,6 +158,8 @@ def build_add_argv(
     spec: str | None = None,
     task_type: str | None = DEFAULT_TASK_TYPE,
     db: str | None = None,
+    handler: str | None = None,
+    origin: str | None = None,
 ) -> list[str]:
     """Build the `oc add` argv. Global flags (--db) precede the subcommand.
 
@@ -160,6 +179,10 @@ def build_add_argv(
         argv += ["--spec", spec]
     if task_type:
         argv += ["--task-type", task_type]
+    if handler:
+        argv += ["--handler", handler]
+    if origin:
+        argv += ["--origin", origin]
     argv += ["--", title]
     return argv
 
@@ -174,6 +197,27 @@ def parse_add_output(stdout: str) -> str | None:
     return m.group(1) if m else None
 
 
+# Intake rejections from the queue's own readiness/dedupe/cap checks. The
+# wording is not a frozen contract, so match on intent words and take the card
+# id the message names (8+ hex chars).
+_REJECT_DUP_RE = re.compile(r"duplicate|dedupe|already (?:open|exists|filed)|attach to", re.IGNORECASE)
+_REJECT_FULL_RE = re.compile(r"queue (?:is )?full|cap(?:acity)? (?:reached|exceeded)|too many open", re.IGNORECASE)
+_ID_RE = re.compile(r"\b([0-9a-f]{8}(?:[0-9a-f]{24})?)\b")
+
+
+def classify_rejection(text: str) -> tuple[str | None, str | None]:
+    """Return (kind, card_id) for an intake rejection, kind in {duplicate, queue_full}."""
+    kind = "duplicate" if _REJECT_DUP_RE.search(text or "") else (
+        "queue_full" if _REJECT_FULL_RE.search(text or "") else None)
+    if kind is None:
+        return None, None
+    m = _ID_RE.search(text or "")
+    return kind, (m.group(1) if m else None)
+
+
+DIRECT_FABLE = "direct-fable"
+
+
 def file_task(
     *,
     repo: str,
@@ -185,15 +229,24 @@ def file_task(
     db: str | None = None,
     workdir: Path | None = None,
     dry_run: bool = False,
+    handler: str | None = None,
+    consent_direct_fable: bool = False,
+    origin: str | None = "agent-finding",
+    force_new: bool = False,
+    client=None,
 ) -> tuple[dict, int]:
     """File one cross-repo task on the Operations Center queue.
 
     Returns (result_dict, exit_code). Exit 1 (blocker) when the CLI binary is
     missing or `oc add` fails — the caller surfaces that as its own finding.
+    `client` is a `task_queue_client.TaskQueueClient`; default = the binary's
+    own backend.
     """
     priority = urgency_to_priority(urgency)
     base = {
         "filed": False,
+        "attached": False,
+        "dedupe": "skipped",
         "task_id": None,
         "full_id": None,
         "repo": repo,
@@ -207,6 +260,22 @@ def file_task(
         "argv": [],
     }
 
+    missing = [n for n, v in (("repo", repo), ("spec", spec), ("title", title)) if not (v or "").strip()]
+    if missing:
+        base["reason"] = (
+            f"refused: {', '.join(missing)} required. A card without a spec and target repo "
+            "cannot be worked and parks waiting on the owner; include what is wrong, where, "
+            "and a fix hint."
+        )
+        return base, 2
+    if (handler or "").strip().lower() == DIRECT_FABLE and not consent_direct_fable:
+        base["reason"] = (
+            "refused: handler direct-fable parks until the owner consents to Fable plan-only "
+            "work. Omit --handler (routes to build-loop) or pass --consent-direct-fable "
+            "when that consent is on record."
+        )
+        return base, 2
+
     binary = find_oc_binary(oc_bin, workdir)
     if binary is None:
         base["reason"] = (
@@ -219,6 +288,29 @@ def file_task(
         return base, 1
 
     base["binary"] = str(binary)
+
+    if client is None:
+        from task_queue_client import RossLabsOCClient
+        client = RossLabsOCClient(str(binary), db=db)
+    note = f"Same finding re-reported ({origin or 'agent'}): {title}\n\n{spec}"[:4000]
+
+    if not force_new:
+        from task_queue_client import QueueUnavailable, find_duplicate
+        try:
+            hit = find_duplicate(client.list_open(), title=title, repo=repo)
+            base["dedupe"] = "matched" if hit else "no-match"
+        except QueueUnavailable as exc:
+            hit = None
+            base["dedupe"] = "unavailable"
+            base["dedupe_error"] = str(exc)[:300]
+        if hit is not None:
+            base["task_id"] = hit.get("id")
+            base["attached"] = True
+            if dry_run:
+                base["reason"] = "dry-run: matches open card; would attach"
+                return base, 0
+            return _attach(client, base, hit.get("id"), note)
+
     argv = build_add_argv(
         str(binary),
         title=title,
@@ -227,6 +319,8 @@ def file_task(
         spec=spec,
         task_type=task_type,
         db=db,
+        handler=handler,
+        origin=origin,
     )
     base["argv"] = argv
 
@@ -241,9 +335,16 @@ def file_task(
         return base, 1
 
     if r.returncode != 0:
-        base["reason"] = (
-            f"oc add exited {r.returncode}: {(r.stderr or r.stdout).strip()[:400]}"
-        )
+        detail = (r.stderr or r.stdout).strip()
+        kind, card_id = classify_rejection(detail)
+        if card_id:
+            # Queue said "already filed as X" or "full, attach to X": attach there.
+            base["task_id"] = card_id
+            base["attached"] = True
+            base["rejection"] = kind
+            return _attach(client, base, card_id, note)
+        base["rejection"] = kind
+        base["reason"] = f"oc add exited {r.returncode}: {detail[:400]}"
         return base, 1
 
     receipt = (r.stdout or "").strip().splitlines()
@@ -260,6 +361,18 @@ def file_task(
     return base, 0
 
 
+def _attach(client, base: dict, task_id: str, note: str) -> tuple[dict, int]:
+    """Attach the finding to an existing card. A failed attach still names the card."""
+    from task_queue_client import QueueUnavailable
+    try:
+        client.attach(task_id, note)
+    except (QueueUnavailable, OSError, subprocess.TimeoutExpired) as exc:
+        base["reason"] = f"matched open card {task_id}; attaching the note failed: {exc}"
+        return base, 0
+    base["reason"] = f"attached to open card {task_id} (not filed again)"
+    return base, 0
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -267,7 +380,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--repo", required=True, help="Target repo the issue lives in")
     p.add_argument("--title", required=True, help="One-line task title")
-    p.add_argument("--spec", default=None, help="Fuller description / repro / fix hint")
+    p.add_argument("--spec", default=None, help="Required: what is wrong, where, fix hint")
+    p.add_argument("--handler", default=None, help="Route label; direct-fable needs --consent-direct-fable")
+    p.add_argument("--consent-direct-fable", action="store_true", dest="consent_direct_fable")
+    p.add_argument("--origin", default="agent-finding")
+    p.add_argument("--force-new", action="store_true", dest="force_new",
+                   help="Skip the open-card lookup (distinct finding sharing a title)")
     p.add_argument(
         "--urgency",
         default=DEFAULT_URGENCY,
@@ -296,9 +414,14 @@ def main(argv: list[str] | None = None) -> int:
         db=args.db,
         workdir=workdir,
         dry_run=args.dry_run,
+        handler=args.handler,
+        consent_direct_fable=args.consent_direct_fable,
+        origin=args.origin,
+        force_new=args.force_new,
     )
     print(json.dumps(result, indent=2))
-    status = "filed" if result["filed"] else ("dry-run" if args.dry_run else "NOT filed")
+    status = ("attached" if result["attached"] else "filed" if result["filed"]
+              else "dry-run" if args.dry_run else "NOT filed")
     print(
         f"file_to_operations_center: {status} "
         f"repo={result['repo']} task_id={result['task_id']} "

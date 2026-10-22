@@ -168,7 +168,7 @@ class TestFileTaskEndToEnd(unittest.TestCase):
 
     def test_missing_binary_is_blocker_not_silent(self) -> None:
         result, code = mod.file_task(
-            repo="WorkWiki", title="x", oc_bin="/nonexistent/oc",
+            repo="WorkWiki", title="x", spec="s", oc_bin="/nonexistent/oc",
         )
         self.assertEqual(code, 1, msg="missing binary must be a non-zero blocker")
         self.assertFalse(result["filed"])
@@ -178,7 +178,7 @@ class TestFileTaskEndToEnd(unittest.TestCase):
     def test_oc_add_failure_is_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d), exit_code=1)
-            result, code = mod.file_task(repo="R", title="t", oc_bin=str(fake))
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake))
             self.assertEqual(code, 1)
             self.assertFalse(result["filed"])
             self.assertIn("exited 1", result["reason"])
@@ -187,13 +187,146 @@ class TestFileTaskEndToEnd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d))
             result, code = mod.file_task(
-                repo="R", title="t", oc_bin=str(fake), dry_run=True,
+                repo="R", title="t", spec="s", oc_bin=str(fake), dry_run=True,
             )
             self.assertEqual(code, 0)
             self.assertFalse(result["filed"])
             self.assertTrue(result["argv"])  # argv computed
-            self.assertFalse((Path(str(fake) + ".calls")).exists(),
-                             msg="dry-run must not invoke the binary")
+            calls = Path(str(fake) + ".calls")
+            self.assertNotIn("add ", calls.read_text() if calls.exists() else "",
+                             msg="dry-run must not file (the read-only lookup may run)")
+
+
+class FakeClient:
+    """In-memory TaskQueueClient: canned open cards, records attach notes."""
+
+    def __init__(self, cards=None, fail=False):
+        self.cards, self.fail, self.attached = list(cards or []), fail, []
+
+    def list_open(self):
+        if self.fail:
+            from task_queue_client import QueueUnavailable
+            raise QueueUnavailable("backend down")
+        return self.cards
+
+    def attach(self, task_id, note):
+        self.attached.append((task_id, note))
+
+
+OPEN_CARD = {"id": "deadbeef" + "0" * 24, "title": "Parameterize SQL in search",
+             "status": "needs_input", "target_repo": "/Users/x/dev/WorkWiki"}
+
+
+class TestIntakeReadiness(unittest.TestCase):
+    def test_missing_spec_refused_exit_2(self) -> None:
+        for spec in (None, "", "   "):
+            result, code = mod.file_task(repo="R", title="t", spec=spec, oc_bin="/nonexistent/oc")
+            self.assertEqual(code, 2)
+            self.assertIn("spec", result["reason"])
+            self.assertFalse(result["filed"])
+
+    def test_missing_repo_refused_exit_2(self) -> None:
+        result, code = mod.file_task(repo="", title="t", spec="s", oc_bin="/nonexistent/oc")
+        self.assertEqual(code, 2)
+        self.assertIn("repo", result["reason"])
+
+    def test_direct_fable_needs_consent(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake),
+                                         handler="direct-fable", client=FakeClient())
+            self.assertEqual(code, 2)
+            self.assertFalse(Path(str(fake) + ".calls").exists(), "refusal must precede any CLI call")
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake),
+                                         handler="direct-fable", consent_direct_fable=True,
+                                         client=FakeClient())
+            self.assertEqual(code, 0)
+            self.assertIn("--handler direct-fable", Path(str(fake) + ".calls").read_text())
+
+
+class TestClientSideDedupe(unittest.TestCase):
+    def test_match_attaches_instead_of_filing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            client = FakeClient([OPEN_CARD])
+            result, code = mod.file_task(repo="/Users/x/dev/WorkWiki.worktrees/lane-b",
+                                         title="fix: parameterize SQL in search.",
+                                         spec="f-string SQL", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 0)
+            self.assertTrue(result["attached"])
+            self.assertFalse(result["filed"])
+            self.assertEqual(result["dedupe"], "matched")
+            self.assertEqual(result["task_id"], OPEN_CARD["id"])
+            self.assertEqual(client.attached[0][0], OPEN_CARD["id"])
+            self.assertFalse(Path(str(fake) + ".calls").exists(), "no `add` on a match")
+
+    def test_distinct_title_or_repo_still_files(self) -> None:
+        for repo, title in (("WorkWiki", "Parameterize SQL in export"),
+                            ("OtherRepo", "Parameterize SQL in search")):
+            with tempfile.TemporaryDirectory() as d:
+                fake = _write_fake_oc(Path(d))
+                client = FakeClient([OPEN_CARD])
+                result, code = mod.file_task(repo=repo, title=title, spec="s",
+                                             oc_bin=str(fake), client=client)
+                self.assertTrue(result["filed"], (repo, title))
+                self.assertEqual(result["dedupe"], "no-match")
+                self.assertEqual(client.attached, [])
+
+    def test_closed_card_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            client = FakeClient([dict(OPEN_CARD, status="done")])
+            result, _ = mod.file_task(repo="WorkWiki", title=OPEN_CARD["title"], spec="s",
+                                      oc_bin=str(fake), client=client)
+            self.assertTrue(result["filed"])
+
+    def test_force_new_skips_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            result, _ = mod.file_task(repo="WorkWiki", title=OPEN_CARD["title"], spec="s",
+                                      oc_bin=str(fake), client=FakeClient([OPEN_CARD]),
+                                      force_new=True)
+            self.assertTrue(result["filed"])
+            self.assertEqual(result["dedupe"], "skipped")
+
+    def test_backend_down_degrades_to_filing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            result, code = mod.file_task(repo="WorkWiki", title="t", spec="s",
+                                         oc_bin=str(fake), client=FakeClient(fail=True))
+            self.assertEqual(code, 0)
+            self.assertTrue(result["filed"])
+            self.assertEqual(result["dedupe"], "unavailable")
+
+
+class TestIntakeRejection(unittest.TestCase):
+    def test_classify(self) -> None:
+        self.assertEqual(mod.classify_rejection("error: duplicate of open task 1a2b3c4d"),
+                         ("duplicate", "1a2b3c4d"))
+        self.assertEqual(mod.classify_rejection("queue full for repo X; attach to 9f9f9f9f"),
+                         ("duplicate", "9f9f9f9f"))  # "attach to" names the card
+        self.assertEqual(mod.classify_rejection("queue full for repo X (cap 20)"),
+                         ("queue_full", None))
+        self.assertEqual(mod.classify_rejection("Task spec is required."), (None, None))
+
+    def test_duplicate_rejection_attaches_to_named_card(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of 1a2b3c4d", exit_code=3)
+            client = FakeClient([])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 0)
+            self.assertTrue(result["attached"])
+            self.assertEqual(result["task_id"], "1a2b3c4d")
+            self.assertEqual(client.attached[0][0], "1a2b3c4d")
+
+    def test_queue_full_without_id_is_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="rejected: queue full for R", exit_code=3)
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake),
+                                         client=FakeClient([]))
+            self.assertEqual(code, 1)
+            self.assertEqual(result["rejection"], "queue_full")
+            self.assertFalse(result["attached"])
 
 
 class TestCli(unittest.TestCase):
@@ -201,7 +334,7 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d))
             r = _run(
-                ["--repo", "WorkWiki", "--title", "hi", "--urgency", "low", "--json"],
+                ["--repo", "WorkWiki", "--title", "hi", "--spec", "s", "--urgency", "low", "--json"],
                 env={"OC_BIN": str(fake)},
             )
             self.assertEqual(r.returncode, 0, msg=f"stderr={r.stderr}")
@@ -211,7 +344,7 @@ class TestCli(unittest.TestCase):
 
     def test_cli_missing_binary_exit_1(self) -> None:
         r = _run(
-            ["--repo", "R", "--title", "t", "--oc-bin", "/nonexistent/oc", "--json"],
+            ["--repo", "R", "--title", "t", "--spec", "s", "--oc-bin", "/nonexistent/oc", "--json"],
         )
         self.assertEqual(r.returncode, 1)
         payload = json.loads(r.stdout)
