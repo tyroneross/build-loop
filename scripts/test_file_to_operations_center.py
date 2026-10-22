@@ -331,6 +331,33 @@ class TestIntakeRejection(unittest.TestCase):
             self.assertFalse(result["attached"])
             self.assertEqual(client.attached, [])
 
+    def test_ambiguous_named_prefix_is_blocker(self) -> None:
+        # Codex review r2 #7: never pick the first of several open cards sharing a prefix.
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of deadbeef", exit_code=3)
+            client = FakeClient([{"id": "deadbeef" + "1" * 24, "title": "a", "status": "todo"},
+                                 {"id": "deadbeef" + "2" * 24, "title": "b", "status": "review"}])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 1)
+            self.assertIn("2 open cards", result["reason"])
+            self.assertEqual(client.attached, [])
+
+    def test_filed_card_gets_full_id_for_the_trailer(self) -> None:
+        # Codex review r2 #2: `oc add` prints 8 chars; the trailer needs the full id.
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))  # prints "added  abc12345  the title"
+            client = FakeClient([])
+            calls = {"n": 0}
+
+            def list_after_add():
+                calls["n"] += 1
+                return [] if calls["n"] == 1 else [{"id": "abc12345" + "f" * 24, "title": "t", "status": "todo"}]
+            client.list_open = list_after_add
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 0)
+            self.assertEqual(result["task_id"], "abc12345")
+            self.assertEqual(result["full_id"], "abc12345" + "f" * 24)
+
     def test_failed_attach_is_blocker_naming_the_card(self) -> None:
         # Codex review r1 #2: attached=True only after the note is saved.
         class FailingAttach(FakeClient):

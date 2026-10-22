@@ -44,6 +44,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -53,34 +54,29 @@ OPEN_STATUSES = ("todo", "working", "needs_input", "review")
 TRAILER_KEY = "Task"
 LEGACY_TRAILER_KEYS = ("OC-Task",)
 
-# Leading prefixes that do not change WHICH defect a title names: a bare
-# conventional type ("fix: x", "bug!: x") and a bare leading "Fix " ("Fix x" and
-# "fix: x" are the same finding). A scope or bracket label names a component, so it
-# is KEPT as words: "fix(auth): x" -> "auth x", "[iOS] x" -> "ios x".
-_TYPE_RE = re.compile(r"^\s*(?:fix|bug|feat|chore|docs|refactor|perf|test|ops)(?:\(([^)]{0,40})\))?!?:\s*",
+# Normalization is deliberately minimal: case, whitespace, a bare conventional
+# type prefix ("fix: x", "bug!: x", "Fix x" all name the same defect), and edge
+# punctuation. Everything inside the title is KEPT -- scopes and bracket labels
+# name components ("fix(auth):", "[iOS]"), and symbols carry meaning ("C++" vs
+# "C#", "x < 0" vs "x > 0", "--verbose" vs "-verbose"). A missed duplicate costs a
+# card the queue's own intake dedupe can still catch; a false match hides a finding.
+_TYPE_RE = re.compile(r"^\s*(?:fix|bug|feat|chore|docs|refactor|perf|test|ops)(\([^)]{0,40}\))?!?:\s*",
                       re.IGNORECASE)
 _BARE_FIX_RE = re.compile(r"^\s*fix\s+", re.IGNORECASE)
-# Collapse separators only. Unicode letters/digits survive ("导出" != "导入"), and
-# "+" / "#" stay because they change meaning ("C++" != "C#").
-_SEPARATOR_RE = re.compile(r"[^\w+#]+|_+")
-_TRAILER_LINE_RE = re.compile(
-    r"^(?:%s)\s*:\s*([0-9A-Za-z][0-9A-Za-z_-]{3,})\s*$"
-    % "|".join(re.escape(k) for k in (TRAILER_KEY, *LEGACY_TRAILER_KEYS)),
-)
-_GIT_TRAILER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s*\S")
+_EDGE_PUNCT = " \t.!?,;:'\"`"
+_TRAILER_KEYS = {k.casefold() for k in (TRAILER_KEY, *LEGACY_TRAILER_KEYS)}
 # Worktree layouts that live inside or beside the canonical repo.
 _WORKTREE_MARKERS = ("/.build-loop/worktrees/", "/.claude/worktrees/", "/.rally/worktrees/")
 
 
 def normalize_title(title: str | None) -> str:
-    """Casefold, drop a bare type prefix, keep scopes/labels as words, collapse separators."""
+    """Casefold, drop a bare type prefix (keeping any scope), trim edge punctuation, collapse spaces."""
     t = (title or "").strip()
     m = _TYPE_RE.match(t)
     if m:
         t = ((m.group(1) or "") + " " + t[m.end():]).strip()
     t = _BARE_FIX_RE.sub("", t)
-    t = t.replace("[", " ").replace("]", " ")
-    return " ".join(_SEPARATOR_RE.sub(" ", t.casefold()).split())
+    return " ".join(t.casefold().split()).strip(_EDGE_PUNCT)
 
 
 def canonical_repo(repo: str | None) -> str:
@@ -112,17 +108,20 @@ def repo_key(repo: str | None) -> str:
 
 
 def same_repo(a: str | None, b: str | None) -> bool:
-    """Two absolute paths must be the same repo; a bare name matches by directory name.
+    """Same repo when the canonical forms are equal; a BARE name (no "/") also
+    matches any path ending in that directory name.
 
-    `/srv/a/api` and `/srv/b/api` are different repos; `api` and `/srv/a/api` may be
-    the same, which is the best a bare name can say.
+    `/srv/a/api` vs `/srv/b/api` and `org-a/api` vs `org-b/api` are different repos;
+    `api` vs `/srv/a/api` may be the same, which is the best a bare name can say.
     """
     ca, cb = canonical_repo(a), canonical_repo(b)
     if not ca or not cb:
         return False
-    if ca.startswith(("/", "~")) and cb.startswith(("/", "~")):
-        return ca == cb
-    return repo_key(ca) == repo_key(cb)
+    if ca == cb:
+        return True
+    if "/" not in ca or "/" not in cb:
+        return repo_key(ca) == repo_key(cb)
+    return False
 
 
 def find_duplicate(cards: Iterable[dict], *, title: str, repo: str) -> dict | None:
@@ -147,22 +146,23 @@ def trailer(task_id: str) -> str:
 
 
 def parse_trailer_ids(message: str) -> list[str]:
-    """Task ids named by `Task:` / legacy `OC-Task:` lines in the TRAILER BLOCK only.
+    """Task ids from `Task:` / legacy `OC-Task:` trailers, parsed by git itself.
 
-    Git's trailer block is the message's last paragraph, and every line in it must be
-    `Key: value`; a `Task:` line in the body or in a quoted example does not count.
+    `git interpret-trailers --parse` applies git's trailer-block rules, so a `Task:`
+    line in the body, an indented example, or a subject-only message yields nothing.
     """
-    paragraphs = [p for p in re.split(r"\n\s*\n", (message or "").strip()) if p.strip()]
-    if len(paragraphs) < 2:  # a subject alone carries no trailers
-        return []
-    lines = [l.strip() for l in paragraphs[-1].splitlines() if l.strip()]
-    if not all(_GIT_TRAILER_RE.match(l) for l in lines):
+    try:
+        r = subprocess.run(["git", "interpret-trailers", "--parse"], input=message or "",
+                           capture_output=True, text=True, timeout=10, cwd="/",
+                           env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    except (OSError, subprocess.TimeoutExpired):
         return []
     seen: list[str] = []
-    for line in lines:
-        m = _TRAILER_LINE_RE.match(line)
-        if m and m.group(1) not in seen:
-            seen.append(m.group(1))
+    for line in r.stdout.splitlines() if r.returncode == 0 else []:
+        key, _, value = line.partition(":")
+        value = value.strip()
+        if key.strip().casefold() in _TRAILER_KEYS and value and " " not in value and value not in seen:
+            seen.append(value)
     return seen
 
 
@@ -179,6 +179,24 @@ def resolve_open_id(cards: Iterable[dict], task_id: str) -> dict | None:
         if str(c.get("id") or "").lower() == t and str(c.get("status") or "").lower() in OPEN_STATUSES:
             return c
     return None
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """Kill the child's whole process group and reap it without waiting on stray pipe holders."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if stream:
+                stream.close()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 class QueueUnavailable(RuntimeError):
@@ -217,14 +235,14 @@ class RossLabsOCClient:
         # request before exiting, and communicate() enforces one deadline overall.
         try:
             proc = subprocess.Popen(self._base() + ["mcp"], stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                    start_new_session=True)  # own group: kill reaches descendants
         except OSError as exc:
             raise QueueUnavailable(f"cannot start MCP server: {exc}") from exc
         try:
             out, _ = proc.communicate("".join(json.dumps(m) + "\n" for m in msgs), timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
-            proc.kill()
-            proc.communicate()
+            _kill_group(proc)
             raise QueueUnavailable(f"MCP list_tasks timed out after {self.timeout}s") from exc
         replies: dict[int, object] = {}
         for line in out.splitlines():

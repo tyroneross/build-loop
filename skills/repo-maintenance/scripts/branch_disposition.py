@@ -24,9 +24,9 @@ checks they hold a product or taste call (see references/safety-protocol.md §7a
 Safety: never touches a branch checked out in any worktree (re-checked right
 before each delete), base/main/master/develop/release/*/archive/*, or remote
 refs. Archive tags (`archive/pre-closeout-<date>/<branch>`, annotated) are
-created and verified BEFORE the delete, and the delete requires
-the classified head re-checked immediately before a worktree-aware `git branch -D`,
-so a branch that moved or got checked out since classification survives.
+created and verified BEFORE the delete. The delete is one ref transaction that
+locks the branch at the classified head and checks worktrees while the lock is
+held, so a branch that moved or got checked out since classification survives.
 
 CLI: branch_disposition.py --repo <path> [--base main] [--apply] [--include-queue-branches]
 Output: JSON {repo, base, applied, branches:[{name, head, disposition, reason, action, ...}]}
@@ -122,16 +122,45 @@ def resolve(repo: Path, item: dict, today: str) -> dict:
         if git(repo, "rev-parse", f"refs/tags/{tag}^{{commit}}").stdout.strip() != head:
             return {**item, "action": f"kept: archive tag {tag} did not verify"}
         item = {**item, "archive_tag": tag}
-    # The branch must still be at the classified head. `git branch -D` (not
-    # update-ref) so git itself refuses a branch checked out in any worktree at the
-    # moment of deletion; a new commit can only land through such a checkout.
-    now = git(repo, "rev-parse", "-q", "--verify", f"refs/heads/{name}", check=False).stdout.strip()
-    if now != head:
-        return {**item, "action": f"kept: branch moved since classification ({now[:12] or 'gone'})"}
-    r = git(repo, "branch", "-D", name, check=False)
-    if r.returncode != 0:
-        return {**item, "action": f"kept: delete refused ({r.stderr.strip()[:160]})"}
-    return {**item, "action": "deleted"}
+    return {**item, "action": delete_branch_at(repo, name, head)}
+
+
+def delete_branch_at(repo: Path, name: str, head: str) -> str:
+    """Delete refs/heads/<name> only if it still points at `head` and no worktree has it.
+
+    One `git update-ref --stdin` transaction: `prepare` locks the ref and verifies the
+    expected id (so no commit or ref update can land meanwhile), the worktree check
+    runs WHILE the lock is held, then `commit` or `abort`.
+    """
+    proc = subprocess.Popen(["git", "-C", str(repo), "update-ref", "--stdin"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=_env())
+    assert proc.stdin and proc.stdout
+
+    def say(line: str) -> str:
+        proc.stdin.write(line + "\n")
+        proc.stdin.flush()
+        return proc.stdout.readline().strip()
+
+    try:
+        if say("start") != "start: ok":
+            return "kept: ref transaction did not start"
+        proc.stdin.write(f"delete refs/heads/{name} {head}\n")
+        if say("prepare") != "prepare: ok":
+            return "kept: branch moved since classification (ref lock or id check failed)"
+        if name in checked_out_branches(repo):
+            say("abort")
+            return "kept: checked out since classification"
+        if say("commit") != "commit: ok":
+            return "kept: delete did not commit"
+        return "deleted"
+    except (BrokenPipeError, OSError):
+        return "kept: " + (proc.stderr.read().strip()[:160] if proc.stderr else "ref transaction failed")
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        proc.wait(timeout=10)
 
 
 def run(repo: Path, base: str = "main", apply: bool = False, include_queue: bool = False,

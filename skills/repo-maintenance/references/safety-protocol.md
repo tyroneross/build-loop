@@ -91,7 +91,7 @@ Avoid `git branch -D` until normal deletion fails and equivalence proof exists. 
 
 ### 7a. Unmerged branches: resolve what git can prove, file only real decisions
 
-Run `python3 skills/repo-maintenance/scripts/branch_disposition.py --repo <repo>` (read-only), then again with `--apply`. It deletes `merged` branches and archives then deletes `content-on-main` and `patch-equivalent` ones (annotated tag `archive/pre-closeout-<date>/<branch>`, verified before a compare-and-swap delete). It never touches a checked-out, protected or task-queue (`oc/*`) branch, or remote refs.
+Run `python3 skills/repo-maintenance/scripts/branch_disposition.py --repo <repo>` (read-only), then again with `--apply`. It deletes `merged` branches and archives then deletes `content-on-main` and `patch-equivalent` ones (annotated tag `archive/pre-closeout-<date>/<branch>`, verified before the delete; the delete is one ref transaction that locks the branch at its classified commit and re-checks worktrees while locked). It never touches a checked-out, protected or task-queue (`oc/*`) branch, or remote refs.
 
 For each `needs-decision` branch, read its commits and diff before filing anything:
 

@@ -19,8 +19,8 @@ python3 scripts/task_queue_client.py lookup --repo <repo> --title "<one-line fin
 A match returns the card id. Attach new evidence to that card; do not file a second
 one. `scripts/file_to_operations_center.py` runs this lookup itself and attaches on a
 match (`attached: true`, `task_id` = the existing card). The match is exact after
-normalization (case, punctuation, `fix:` prefixes, worktree paths), so a finding with
-a different title still files. Pass `--force-new` only for a distinct finding that
+minimal normalization (case, spacing, edge punctuation, a bare `fix:` prefix; worktree
+paths fold to their repo), so any other difference in the title files a new card. Pass `--force-new` only for a distinct finding that
 shares a title.
 
 The filer refuses a card without `--spec` and `--repo` (exit 2): a card nobody can
@@ -30,19 +30,24 @@ duplicate or full and names a card, the filer attaches there.
 
 ## 2. Close on fix: tag the commit
 
-When a commit addresses a card, add the trailer `Task: <full-id>` (the legacy
-`OC-Task: <id>` also parses). The queue's landing check closes the card when that
-commit reaches the target repo's main. Get the id from the run context: the queue
-runner's prompt carries `Task id: <id>`; a lookup returns it for a peer's card.
-Resolve it to a full id and confirm the card is still open before you use it:
+When a commit addresses a card, add the trailer `Task: <full-id>` in the commit's
+final trailer block (the legacy `OC-Task: <id>` also parses). The queue's landing
+check closes the card when that commit reaches the target repo's main. Use the full
+id, never the 8-character short form the board shows. Sources of the full id: the
+queue runner's prompt line `Task id: <id>`, the `id` from a `lookup` match, or
+`full_id` in the filer's receipt for a card you just filed. Confirm the card is still
+open before you use it:
 
 ```bash
-TRAILER="$(python3 scripts/task_queue_client.py trailer --task-id <id-or-prefix>)" \
-  && git commit -m "<subject>" -m "<body>" --trailer "$TRAILER"
+if TRAILER="$(python3 scripts/task_queue_client.py trailer --task-id <full-id>)"; then
+  git commit -m "<subject>" -m "<body>" --trailer "$TRAILER"
+else
+  git commit -m "<subject>" -m "<body>"   # card closed or id wrong: no trailer
+fi
 ```
 
-`trailer` exits 1 and prints nothing when no single open card matches. Then commit
-without the trailer. A wrong trailer closes someone else's card.
+`trailer` exits 1 and prints nothing unless the id is exactly an open card's id. A
+wrong trailer closes someone else's card.
 
 ## 3. Decide the default and inform; do not park for a choice
 
@@ -76,8 +81,9 @@ unfinished run reports what is left and stays in its working lane.
 A run that exits with uncommitted output parks as `needs_input` and blocks its own
 retry. Before the final report:
 
-1. Wait for every background subagent and background command you started; collect
-   each result or record why it was abandoned.
+1. Wait for every background subagent and finite background command you started
+   (builds, tests, reviews); collect each result or record why it was abandoned.
+   Persistent watchers are not waited on: Phase D closeout stops them.
 2. Commit the verified work on the task branch (a WIP commit labeled unverified is
    better than a dirty worktree).
 3. Confirm `git status --porcelain` is empty apart from tool state (`.build-loop/`,

@@ -158,6 +158,29 @@ class TestBranchDisposition(unittest.TestCase):
         self.assertEqual(out["action"], "kept: checked out since classification")
         self.assertTrue(r.exists("refs/heads/picked"))
 
+    def test_checkout_between_precheck_and_delete_survives(self) -> None:
+        # Codex review r2 #10: the worktree check must run inside the delete itself.
+        r = self.repo
+        picked = r.branch_with("picked", "p.txt", "p\n")
+        r.advance_main("x")
+        r.git("cherry-pick", picked)
+        item = bd.classify(r.root, "main", "picked", picked, set())
+        real, n = bd.checked_out_branches, {"calls": 0}
+
+        def checkout_after_first_look(repo):
+            n["calls"] += 1
+            if n["calls"] == 1:  # resolve()'s pre-check sees nothing, then a session checks it out
+                r.git("worktree", "add", "-q", str(Path(self._tmp.name) / "late"), "picked")
+                return set()
+            return real(repo)
+        bd.checked_out_branches = checkout_after_first_look
+        try:
+            out = bd.resolve(r.root, item, "2026-10-22")
+        finally:
+            bd.checked_out_branches = real
+        self.assertEqual(out["action"], "kept: checked out since classification")
+        self.assertTrue(r.exists("refs/heads/picked"))
+
     def test_tag_failure_means_no_delete(self) -> None:
         # Codex review r1 #13: archival must precede deletion; a failed tag keeps the branch.
         r = self.repo
@@ -179,7 +202,8 @@ class TestBranchDisposition(unittest.TestCase):
                 bd.resolve(r.root, item, "2026-10-22")
         finally:
             bd.git = real_git
-        self.assertNotIn("branch", calls, "no delete attempted after a failed tag")
+        self.assertEqual(calls.count("tag"), 1)
+        self.assertEqual(calls[-1], "tag", "nothing runs after the failed tag")
         self.assertEqual(r.git("rev-parse", "refs/heads/picked"), picked)
 
     def test_merge_tree_error_is_skipped_not_resolved(self) -> None:

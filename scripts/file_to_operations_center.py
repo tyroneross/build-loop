@@ -53,8 +53,8 @@ Output JSON::
       "dedupe":    str,          # "matched" | "no-match" | "unavailable" | "skipped"
       "task_id":   str | null,   # 8-char id echoed by `oc add` — the durable
                                  #   receipt shown by `oc list` and the board
-      "full_id":   str | null,   # forward-compat; null today (the CLI `show`
-                                 #   subcommand needs a full id, not a prefix)
+      "full_id":   str | null,   # full id of the filed card (resolved from the open
+                                 #   list; use it in the `Task: <id>` trailer)
       "repo":      str,
       "title":     str,
       "urgency":   str,
@@ -349,13 +349,14 @@ def file_task(
             from task_queue_client import OPEN_STATUSES, QueueUnavailable
             try:
                 cards = client.list_open()
-                named = next((c for c in cards if str(c.get("id") or "").lower().startswith(card_id)
-                              and str(c.get("status") or "").lower() in OPEN_STATUSES), None)
-                if named is None:
+                named = [c for c in cards if str(c.get("id") or "").lower().startswith(card_id)
+                         and str(c.get("status") or "").lower() in OPEN_STATUSES]
+                if len(named) != 1:
+                    what = "no open card" if not named else f"{len(named)} open cards"
                     base["reason"] = (f"oc add exited {r.returncode}; the queue named card {card_id}, "
-                                      f"which is not an open card: {detail[:300]}")
+                                      f"which matches {what}: {detail[:300]}")
                     return base, 1
-                card_id = named["id"]
+                card_id = named[0]["id"]
             except QueueUnavailable:
                 pass  # the queue itself named the card; trust it
             base["task_id"] = card_id
@@ -374,6 +375,14 @@ def file_task(
         return base, 0
 
     base["filed"] = True
+    # `oc add` prints an 8-char id; the close-on-fix trailer needs the full one.
+    from task_queue_client import QueueUnavailable as _QU
+    try:
+        full = [c["id"] for c in client.list_open() if str(c.get("id") or "").startswith(task_id)]
+        if len(full) == 1:
+            base["full_id"] = full[0]
+    except (_QU, KeyError, TypeError):
+        pass
     return base, 0
 
 

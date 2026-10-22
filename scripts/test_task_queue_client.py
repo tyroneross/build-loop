@@ -28,21 +28,24 @@ def card(title, repo, status="todo", cid=FULL):
 class TestNormalize(unittest.TestCase):
     def test_prefix_case_punctuation(self) -> None:
         self.assertEqual(tq.normalize_title("fix: Ez-ptyd rejects  a command!"),
-                         "ez ptyd rejects a command")
-        self.assertEqual(tq.normalize_title("Fix ez-ptyd rejects a command"),
-                         "ez ptyd rejects a command")
+                         "ez-ptyd rejects a command")
+        self.assertEqual(tq.normalize_title("Fix ez-ptyd rejects a command."),
+                         "ez-ptyd rejects a command")
 
     def test_scope_and_label_are_kept(self) -> None:
         # Codex review r1 #4: scopes and bracket labels name different components.
         self.assertNotEqual(tq.normalize_title("[iOS] Login crashes"), tq.normalize_title("[macOS] Login crashes"))
         self.assertNotEqual(tq.normalize_title("fix(auth): Session leaks"),
                             tq.normalize_title("fix(cache): Session leaks"))
-        self.assertEqual(tq.normalize_title("fix(auth): Session leaks"), "auth session leaks")
+        self.assertEqual(tq.normalize_title("fix(auth): Session leaks"), "(auth) session leaks")
 
     def test_meaningful_symbols_and_unicode_survive(self) -> None:
         # Codex review r1 #5.
         self.assertNotEqual(tq.normalize_title("C++ parser crashes"), tq.normalize_title("C# parser crashes"))
         self.assertNotEqual(tq.normalize_title("导出 CSV 失败"), tq.normalize_title("导入 CSV 失败"))
+        # Codex review r2 #4: operators and flag spelling are content.
+        self.assertNotEqual(tq.normalize_title("Parser rejects x < 0"), tq.normalize_title("Parser rejects x > 0"))
+        self.assertNotEqual(tq.normalize_title("CLI rejects --verbose"), tq.normalize_title("CLI rejects -verbose"))
 
     def test_distinct_words_stay_distinct(self) -> None:
         self.assertNotEqual(tq.normalize_title("Leak in search index"),
@@ -65,6 +68,8 @@ class TestNormalize(unittest.TestCase):
         self.assertTrue(tq.same_repo("/srv/a/api", "/srv/a/api.worktrees/lane"))
         self.assertTrue(tq.same_repo("api", "/srv/a/api"), "bare name matches by directory name")
         self.assertFalse(tq.same_repo("", "api"))
+        # Codex review r2 #5: relative paths with a slash are not bare names.
+        self.assertFalse(tq.same_repo("org-a/api", "org-b/api"))
 
 
 class TestFindDuplicate(unittest.TestCase):
@@ -111,6 +116,9 @@ class TestTrailer(unittest.TestCase):
         mixed_last = f"subject\n\nprose line\nTask: {FULL}"
         self.assertEqual(tq.parse_trailer_ids(mixed_last), [])
         self.assertEqual(tq.parse_trailer_ids(f"Task: {FULL}"), [], "subject alone has no trailers")
+        # Codex review r2 #6: an indented example at the end is not a trailer block.
+        indented = f"Document commit format\n\nExample:\n\n    Task: {FULL}\n"
+        self.assertEqual(tq.parse_trailer_ids(indented), [])
 
 
 def _fake_mcp(dirpath: Path, by_status: dict, receipt_rc: int = 0) -> Path:
@@ -169,14 +177,19 @@ class TestRossLabsOCClient(unittest.TestCase):
             with self.assertRaises(tq.QueueUnavailable):
                 tq.RossLabsOCClient(str(fake)).list_open()
 
-    def test_slow_server_times_out(self) -> None:
-        # Codex review r1 #1: the deadline covers the reads, and the child is reaped.
+    def test_slow_server_times_out_even_with_a_descendant_holding_stdout(self) -> None:
+        # Codex review r1 #1 + r2 #1/#9: one deadline covers the reads, and cleanup is
+        # bounded even when a grandchild keeps the pipe open.
+        import time
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "slow"
-            p.write_text("#!/bin/sh\nsleep 5\n")
+            p.write_text("#!/bin/sh\nsleep 30 &\nsleep 30\n")
             p.chmod(p.stat().st_mode | stat.S_IEXEC)
-            with self.assertRaises(tq.QueueUnavailable):
-                tq.RossLabsOCClient(str(p), timeout=0.3).list_open()
+            t0 = time.monotonic()
+            with self.assertRaises(tq.QueueUnavailable) as ctx:
+                tq.RossLabsOCClient(str(p), timeout=0.5).list_open()
+            self.assertLess(time.monotonic() - t0, 4.0)
+            self.assertIn("timed out", str(ctx.exception))
 
     def test_non_mcp_binary_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as d:
