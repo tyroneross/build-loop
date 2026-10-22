@@ -158,6 +158,50 @@ class TestBranchDisposition(unittest.TestCase):
         self.assertEqual(out["action"], "kept: checked out since classification")
         self.assertTrue(r.exists("refs/heads/picked"))
 
+    def test_tag_failure_means_no_delete(self) -> None:
+        # Codex review r1 #13: archival must precede deletion; a failed tag keeps the branch.
+        r = self.repo
+        picked = r.branch_with("picked", "p.txt", "p\n")
+        r.advance_main("x")
+        r.git("cherry-pick", picked)
+        item = bd.classify(r.root, "main", "picked", picked, set())
+        self.assertIn(item["disposition"], bd.RESOLVABLE)
+        real_git, calls = bd.git, []
+
+        def failing_tag(repo, *args, check=True):
+            calls.append(args[0])
+            if args[0] == "tag":
+                raise RuntimeError("tag refused")
+            return real_git(repo, *args, check=check)
+        bd.git = failing_tag
+        try:
+            with self.assertRaises(RuntimeError):
+                bd.resolve(r.root, item, "2026-10-22")
+        finally:
+            bd.git = real_git
+        self.assertNotIn("branch", calls, "no delete attempted after a failed tag")
+        self.assertEqual(r.git("rev-parse", "refs/heads/picked"), picked)
+
+    def test_merge_tree_error_is_skipped_not_resolved(self) -> None:
+        # Codex review r1 #10: a git error is not evidence of redundancy.
+        r = self.repo
+        picked = r.branch_with("picked", "p.txt", "p\n")
+        r.advance_main("x")
+        r.git("cherry-pick", picked)
+        real_git = bd.git
+
+        def broken_merge_tree(repo, *args, check=True):
+            if args[0] == "merge-tree":
+                return subprocess.CompletedProcess(args, 129, "", "unknown option")
+            return real_git(repo, *args, check=check)
+        bd.git = broken_merge_tree
+        try:
+            item = bd.classify(r.root, "main", "picked", picked, set())
+        finally:
+            bd.git = real_git
+        self.assertEqual(item["disposition"], "skipped")
+        self.assertIn("merge-tree failed", item["reason"])
+
     def test_reverted_on_main_is_not_content_on_main(self) -> None:
         r = self.repo
         head = r.branch_with("feature", "f.txt", "f\n")

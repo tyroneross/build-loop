@@ -304,7 +304,10 @@ class TestIntakeRejection(unittest.TestCase):
         self.assertEqual(mod.classify_rejection("error: duplicate of open task 1a2b3c4d"),
                          ("duplicate", "1a2b3c4d"))
         self.assertEqual(mod.classify_rejection("queue full for repo X; attach to 9f9f9f9f"),
-                         ("duplicate", "9f9f9f9f"))  # "attach to" names the card
+                         ("queue_full", "9f9f9f9f"))
+        # Codex review r1 #7: a hex token that is not introduced as the card is ignored.
+        self.assertEqual(mod.classify_rejection("queue full for repo deadbeef; no task created"),
+                         ("queue_full", None))
         self.assertEqual(mod.classify_rejection("queue full for repo X (cap 20)"),
                          ("queue_full", None))
         self.assertEqual(mod.classify_rejection("Task spec is required."), (None, None))
@@ -312,12 +315,35 @@ class TestIntakeRejection(unittest.TestCase):
     def test_duplicate_rejection_attaches_to_named_card(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of 1a2b3c4d", exit_code=3)
-            client = FakeClient([])
+            client = FakeClient([{"id": "1a2b3c4d", "title": "x", "status": "todo", "target_repo": "Q"}])
             result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
             self.assertEqual(code, 0)
             self.assertTrue(result["attached"])
             self.assertEqual(result["task_id"], "1a2b3c4d")
             self.assertEqual(client.attached[0][0], "1a2b3c4d")
+
+    def test_named_card_that_is_not_open_is_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d), add_line="rejected: duplicate of 1a2b3c4d", exit_code=3)
+            client = FakeClient([])
+            result, code = mod.file_task(repo="R", title="t", spec="s", oc_bin=str(fake), client=client)
+            self.assertEqual(code, 1)
+            self.assertFalse(result["attached"])
+            self.assertEqual(client.attached, [])
+
+    def test_failed_attach_is_blocker_naming_the_card(self) -> None:
+        # Codex review r1 #2: attached=True only after the note is saved.
+        class FailingAttach(FakeClient):
+            def attach(self, task_id, note):
+                from task_queue_client import QueueUnavailable
+                raise QueueUnavailable("receipt refused")
+        with tempfile.TemporaryDirectory() as d:
+            fake = _write_fake_oc(Path(d))
+            result, code = mod.file_task(repo="WorkWiki", title=OPEN_CARD["title"], spec="s",
+                                         oc_bin=str(fake), client=FailingAttach([OPEN_CARD]))
+            self.assertEqual(code, 1)
+            self.assertFalse(result["attached"])
+            self.assertEqual(result["task_id"], OPEN_CARD["id"])
 
     def test_queue_full_without_id_is_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as d:

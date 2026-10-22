@@ -32,7 +32,7 @@ appends; the card's repo field (`--repo-root` on create) must be returned by
 CLI::
 
     task_queue_client.py lookup  --repo <repo> --title <title> [--json]
-    task_queue_client.py trailer --task-id <id-or-prefix>       # prints "Task: <full-id>"
+    task_queue_client.py trailer --task-id <full-id>            # prints "Task: <full-id>" if open
     task_queue_client.py parse   --message <commit message>     # ids from Task:/OC-Task: trailers
 
 Exit codes: 0 ok (lookup: match or no match), 1 backend unavailable / id not
@@ -53,37 +53,44 @@ OPEN_STATUSES = ("todo", "working", "needs_input", "review")
 TRAILER_KEY = "Task"
 LEGACY_TRAILER_KEYS = ("OC-Task",)
 
-# Leading conventional-commit / tag prefixes that do not change what the finding is:
-# "fix: x", "fix(scope): x", "[bug] x", "bug: x", and a bare leading "Fix " ("Fix x"
-# and "fix: x" name the same defect). Other leading verbs stay: "Add x" != "Remove x".
-_PREFIX_RE = re.compile(
-    r"^\s*(?:\[[^\]]{1,20}\]\s*|(?:fix|bug|feat|chore|docs|refactor|perf|test|ops)(?:\([^)]{0,40}\))?!?:\s*|fix\s+)+",
-    re.IGNORECASE,
-)
-_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
-_TRAILER_RE = re.compile(
+# Leading prefixes that do not change WHICH defect a title names: a bare
+# conventional type ("fix: x", "bug!: x") and a bare leading "Fix " ("Fix x" and
+# "fix: x" are the same finding). A scope or bracket label names a component, so it
+# is KEPT as words: "fix(auth): x" -> "auth x", "[iOS] x" -> "ios x".
+_TYPE_RE = re.compile(r"^\s*(?:fix|bug|feat|chore|docs|refactor|perf|test|ops)(?:\(([^)]{0,40})\))?!?:\s*",
+                      re.IGNORECASE)
+_BARE_FIX_RE = re.compile(r"^\s*fix\s+", re.IGNORECASE)
+# Collapse separators only. Unicode letters/digits survive ("导出" != "导入"), and
+# "+" / "#" stay because they change meaning ("C++" != "C#").
+_SEPARATOR_RE = re.compile(r"[^\w+#]+|_+")
+_TRAILER_LINE_RE = re.compile(
     r"^(?:%s)\s*:\s*([0-9A-Za-z][0-9A-Za-z_-]{3,})\s*$"
     % "|".join(re.escape(k) for k in (TRAILER_KEY, *LEGACY_TRAILER_KEYS)),
-    re.MULTILINE,
 )
+_GIT_TRAILER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s*\S")
+_FULL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # Worktree layouts that live inside or beside the canonical repo.
 _WORKTREE_MARKERS = ("/.build-loop/worktrees/", "/.claude/worktrees/", "/.rally/worktrees/")
 
 
 def normalize_title(title: str | None) -> str:
-    """Casefold, drop conventional prefixes, collapse punctuation/whitespace."""
+    """Casefold, drop a bare type prefix, keep scopes/labels as words, collapse separators."""
     t = (title or "").strip()
-    t = _PREFIX_RE.sub("", t)
-    return _NON_ALNUM_RE.sub(" ", t.casefold()).strip()
+    m = _TYPE_RE.match(t)
+    if m:
+        t = ((m.group(1) or "") + " " + t[m.end():]).strip()
+    t = _BARE_FIX_RE.sub("", t)
+    t = t.replace("[", " ").replace("]", " ")
+    return " ".join(_SEPARATOR_RE.sub(" ", t.casefold()).split())
 
 
-def repo_key(repo: str | None) -> str:
-    """Stable repo identity: the canonical checkout's directory name, casefolded.
+def canonical_repo(repo: str | None) -> str:
+    """A path for absolute repos (worktrees folded to their repo), else the bare name.
 
-    Cards store either an absolute path or a bare repo name, and agents often
-    run from a linked worktree, so a raw string compare would miss. Worktree
-    paths resolve to their parent repo: `<repo>.worktrees/<x>`,
-    `<repo>/.build-loop/worktrees/<x>`, `<repo>/.claude/worktrees/<x>`.
+    Cards store either an absolute path or a bare repo name, and agents often run
+    from a linked worktree: `<repo>.worktrees/<x>`, `<repo>/.build-loop/worktrees/<x>`,
+    `<repo>/.claude/worktrees/<x>` all fold to `<repo>`. Casefolded (macOS paths are
+    case-insensitive by default).
     """
     r = (repo or "").strip().rstrip("/")
     if not r:
@@ -92,11 +99,31 @@ def repo_key(repo: str | None) -> str:
         if marker in r:
             r = r.split(marker, 1)[0]
             break
-    parts = [p for p in r.split("/") if p]
+    parts = r.split("/")
     for i, part in enumerate(parts):
         if part.endswith(".worktrees") and i + 1 < len(parts):
-            return part[: -len(".worktrees")].casefold()
-    return (parts[-1] if parts else r).casefold()
+            r = "/".join(parts[:i] + [part[: -len(".worktrees")]])
+            break
+    return r.casefold()
+
+
+def repo_key(repo: str | None) -> str:
+    """The repo's directory name (used only when one side is a bare name)."""
+    return canonical_repo(repo).rsplit("/", 1)[-1]
+
+
+def same_repo(a: str | None, b: str | None) -> bool:
+    """Two absolute paths must be the same repo; a bare name matches by directory name.
+
+    `/srv/a/api` and `/srv/b/api` are different repos; `api` and `/srv/a/api` may be
+    the same, which is the best a bare name can say.
+    """
+    ca, cb = canonical_repo(a), canonical_repo(b)
+    if not ca or not cb:
+        return False
+    if ca.startswith(("/", "~")) and cb.startswith(("/", "~")):
+        return ca == cb
+    return repo_key(ca) == repo_key(cb)
 
 
 def find_duplicate(cards: Iterable[dict], *, title: str, repo: str) -> dict | None:
@@ -104,14 +131,14 @@ def find_duplicate(cards: Iterable[dict], *, title: str, repo: str) -> dict | No
 
     An empty normalized title never matches (it would match every blank card).
     """
-    want_t, want_r = normalize_title(title), repo_key(repo)
-    if not want_t or not want_r:
+    want_t = normalize_title(title)
+    if not want_t or not canonical_repo(repo):
         return None
     for card in cards:
         status = str(card.get("status") or "").lower()
         if status and status not in OPEN_STATUSES:
             continue
-        if normalize_title(card.get("title")) == want_t and repo_key(card.get("target_repo")) == want_r:
+        if normalize_title(card.get("title")) == want_t and same_repo(card.get("target_repo"), repo):
             return card
     return None
 
@@ -121,23 +148,38 @@ def trailer(task_id: str) -> str:
 
 
 def parse_trailer_ids(message: str) -> list[str]:
-    """Task ids named by `Task:` or legacy `OC-Task:` trailers, in order, deduped."""
+    """Task ids named by `Task:` / legacy `OC-Task:` lines in the TRAILER BLOCK only.
+
+    Git's trailer block is the message's last paragraph, and every line in it must be
+    `Key: value`; a `Task:` line in the body or in a quoted example does not count.
+    """
+    paragraphs = [p for p in re.split(r"\n\s*\n", (message or "").strip()) if p.strip()]
+    if len(paragraphs) < 2:  # a subject alone carries no trailers
+        return []
+    lines = [l.strip() for l in paragraphs[-1].splitlines() if l.strip()]
+    if not all(_GIT_TRAILER_RE.match(l) for l in lines):
+        return []
     seen: list[str] = []
-    for m in _TRAILER_RE.finditer(message or ""):
-        if m.group(1) not in seen:
+    for line in lines:
+        m = _TRAILER_LINE_RE.match(line)
+        if m and m.group(1) not in seen:
             seen.append(m.group(1))
     return seen
 
 
-def resolve_open_id(cards: Iterable[dict], id_or_prefix: str) -> dict | None:
-    """Resolve a full id or unambiguous prefix to one OPEN card, else None."""
-    p = (id_or_prefix or "").strip().lower()
-    if len(p) < 4:
+def resolve_open_id(cards: Iterable[dict], task_id: str) -> dict | None:
+    """The OPEN card with exactly this full 32-hex id, else None.
+
+    Prefixes are refused: the open list cannot see a closed card that shares the
+    prefix, so a stale short id could name the wrong open card.
+    """
+    t = (task_id or "").strip().lower()
+    if not _FULL_ID_RE.match(t):
         return None
-    hits = [c for c in cards
-            if str(c.get("id") or "").lower().startswith(p)
-            and str(c.get("status") or "").lower() in OPEN_STATUSES]
-    return hits[0] if len(hits) == 1 else None
+    for c in cards:
+        if str(c.get("id") or "").lower() == t and str(c.get("status") or "").lower() in OPEN_STATUSES:
+            return c
+    return None
 
 
 class QueueUnavailable(RuntimeError):
@@ -172,46 +214,42 @@ class RossLabsOCClient:
         msgs += [{"jsonrpc": "2.0", "id": i + 1, "method": "tools/call",
                   "params": {"name": "list_tasks", "arguments": {"status": s}}}
                  for i, s in enumerate(OPEN_STATUSES)]
+        # Send the whole batch and close stdin: the server answers every queued
+        # request before exiting, and communicate() enforces one deadline overall.
         try:
             proc = subprocess.Popen(self._base() + ["mcp"], stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         except OSError as exc:
             raise QueueUnavailable(f"cannot start MCP server: {exc}") from exc
-        cards: list[dict] = []
         try:
-            assert proc.stdin and proc.stdout
-            for m in msgs:
-                proc.stdin.write(json.dumps(m) + "\n")
-            proc.stdin.flush()
-            # rmcp answers in order; read until every tools/call id has replied.
-            pending = set(range(1, len(OPEN_STATUSES) + 1))
-            while pending:
-                line = proc.stdout.readline()
-                if not line:
-                    raise QueueUnavailable("MCP server closed before answering list_tasks")
-                try:
-                    reply = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise QueueUnavailable(f"MCP reply was not JSON: {line[:120]!r}") from exc
-                rid = reply.get("id")
-                if rid not in pending:
-                    continue
-                pending.discard(rid)
-                if "error" in reply or reply.get("result", {}).get("isError"):
-                    raise QueueUnavailable(f"list_tasks failed: {str(reply)[:200]}")
-                text = reply["result"]["content"][0]["text"]
-                rows = json.loads(text)
-                if isinstance(rows, list):
-                    cards.extend(r for r in rows if isinstance(r, dict))
-        except (KeyError, IndexError, TypeError, ValueError, OSError) as exc:
-            raise QueueUnavailable(f"unexpected MCP reply: {exc}") from exc
-        finally:
+            out, _ = proc.communicate("".join(json.dumps(m) + "\n" for m in msgs), timeout=self.timeout)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.communicate()
+            raise QueueUnavailable(f"MCP list_tasks timed out after {self.timeout}s") from exc
+        replies: dict[int, object] = {}
+        for line in out.splitlines():
             try:
-                if proc.stdin:
-                    proc.stdin.close()
-                proc.wait(timeout=self.timeout)
-            except (OSError, subprocess.TimeoutExpired):
-                proc.kill()
+                reply = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise QueueUnavailable(f"MCP reply was not JSON: {line[:120]!r}") from exc
+            if isinstance(reply, dict) and isinstance(reply.get("id"), int):
+                replies[reply["id"]] = reply
+        cards: list[dict] = []
+        for i, status in enumerate(OPEN_STATUSES, start=1):
+            reply = replies.get(i)
+            if not isinstance(reply, dict):
+                raise QueueUnavailable(f"no MCP reply for list_tasks status={status}")
+            result = reply.get("result")
+            if "error" in reply or not isinstance(result, dict) or result.get("isError"):
+                raise QueueUnavailable(f"list_tasks status={status} failed: {str(reply)[:200]}")
+            try:
+                rows = json.loads(result["content"][0]["text"])
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                raise QueueUnavailable(f"list_tasks status={status}: unexpected payload ({exc})") from exc
+            if not isinstance(rows, list) or not all(isinstance(r, dict) and r.get("id") for r in rows):
+                raise QueueUnavailable(f"list_tasks status={status}: expected a list of cards")
+            cards.extend(rows)
         return cards
 
     def attach(self, task_id: str, note: str) -> None:
@@ -272,7 +310,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     card = resolve_open_id(cards, args.task_id)
     if card is None:
-        print(f"no single open card matches {args.task_id!r}; no trailer emitted", file=sys.stderr)
+        print(f"{args.task_id!r} is not the full id of an open card; no trailer emitted", file=sys.stderr)
         return 1
     print(trailer(card["id"]))
     return 0

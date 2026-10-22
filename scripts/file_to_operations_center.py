@@ -198,21 +198,27 @@ def parse_add_output(stdout: str) -> str | None:
 
 
 # Intake rejections from the queue's own readiness/dedupe/cap checks. The
-# wording is not a frozen contract, so match on intent words and take the card
-# id the message names (8+ hex chars).
-_REJECT_DUP_RE = re.compile(r"duplicate|dedupe|already (?:open|exists|filed)|attach to", re.IGNORECASE)
+# wording is not a frozen contract, so match on intent words. A card id is taken
+# ONLY when the message introduces it as the card to use ("duplicate of <id>",
+# "attach to <id>", "existing task <id>"); any other hex token (a repo name, a
+# hash) is ignored.
+_REJECT_DUP_RE = re.compile(r"duplicate|dedupe|already (?:open|exists|filed)", re.IGNORECASE)
 _REJECT_FULL_RE = re.compile(r"queue (?:is )?full|cap(?:acity)? (?:reached|exceeded)|too many open", re.IGNORECASE)
-_ID_RE = re.compile(r"\b([0-9a-f]{8}(?:[0-9a-f]{24})?)\b")
+_NAMED_CARD_RE = re.compile(
+    r"(?:duplicate of|attach(?: it)? to|existing (?:task|card)|already (?:open|filed) as)"
+    r"\s*(?:open\s+)?(?:task|card)?\s*#?([0-9a-f]{8}(?:[0-9a-f]{24})?)\b",
+    re.IGNORECASE,
+)
 
 
 def classify_rejection(text: str) -> tuple[str | None, str | None]:
-    """Return (kind, card_id) for an intake rejection, kind in {duplicate, queue_full}."""
-    kind = "duplicate" if _REJECT_DUP_RE.search(text or "") else (
-        "queue_full" if _REJECT_FULL_RE.search(text or "") else None)
+    """Return (kind, named_card_id) for an intake rejection, kind in {duplicate, queue_full}."""
+    t = text or ""
+    kind = "duplicate" if _REJECT_DUP_RE.search(t) else ("queue_full" if _REJECT_FULL_RE.search(t) else None)
     if kind is None:
         return None, None
-    m = _ID_RE.search(text or "")
-    return kind, (m.group(1) if m else None)
+    m = _NAMED_CARD_RE.search(t)
+    return kind, (m.group(1).lower() if m else None)
 
 
 DIRECT_FABLE = "direct-fable"
@@ -305,7 +311,6 @@ def file_task(
             base["dedupe_error"] = str(exc)[:300]
         if hit is not None:
             base["task_id"] = hit.get("id")
-            base["attached"] = True
             if dry_run:
                 base["reason"] = "dry-run: matches open card; would attach"
                 return base, 0
@@ -337,13 +342,24 @@ def file_task(
     if r.returncode != 0:
         detail = (r.stderr or r.stdout).strip()
         kind, card_id = classify_rejection(detail)
-        if card_id:
-            # Queue said "already filed as X" or "full, attach to X": attach there.
-            base["task_id"] = card_id
-            base["attached"] = True
-            base["rejection"] = kind
-            return _attach(client, base, card_id, note)
         base["rejection"] = kind
+        if card_id:
+            # Queue said "duplicate of X" or "full, attach to X". Attach there, but
+            # only once the named card is confirmed OPEN when the list is readable.
+            from task_queue_client import OPEN_STATUSES, QueueUnavailable
+            try:
+                cards = client.list_open()
+                named = next((c for c in cards if str(c.get("id") or "").lower().startswith(card_id)
+                              and str(c.get("status") or "").lower() in OPEN_STATUSES), None)
+                if named is None:
+                    base["reason"] = (f"oc add exited {r.returncode}; the queue named card {card_id}, "
+                                      f"which is not an open card: {detail[:300]}")
+                    return base, 1
+                card_id = named["id"]
+            except QueueUnavailable:
+                pass  # the queue itself named the card; trust it
+            base["task_id"] = card_id
+            return _attach(client, base, card_id, note)
         base["reason"] = f"oc add exited {r.returncode}: {detail[:400]}"
         return base, 1
 
@@ -362,13 +378,18 @@ def file_task(
 
 
 def _attach(client, base: dict, task_id: str, note: str) -> tuple[dict, int]:
-    """Attach the finding to an existing card. A failed attach still names the card."""
+    """Attach the finding to an existing card.
+
+    A failed attach is a blocker (exit 1, attached=False) that still names the
+    card in task_id, so the caller can retry the note or cite the card.
+    """
     from task_queue_client import QueueUnavailable
     try:
         client.attach(task_id, note)
     except (QueueUnavailable, OSError, subprocess.TimeoutExpired) as exc:
         base["reason"] = f"matched open card {task_id}; attaching the note failed: {exc}"
-        return base, 0
+        return base, 1
+    base["attached"] = True
     base["reason"] = f"attached to open card {task_id} (not filed again)"
     return base, 0
 

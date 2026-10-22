@@ -27,10 +27,22 @@ def card(title, repo, status="todo", cid=FULL):
 
 class TestNormalize(unittest.TestCase):
     def test_prefix_case_punctuation(self) -> None:
-        self.assertEqual(tq.normalize_title("fix(pty): Ez-ptyd rejects  a command!"),
+        self.assertEqual(tq.normalize_title("fix: Ez-ptyd rejects  a command!"),
                          "ez ptyd rejects a command")
-        self.assertEqual(tq.normalize_title("[bug] Ez-ptyd rejects a command"),
+        self.assertEqual(tq.normalize_title("Fix ez-ptyd rejects a command"),
                          "ez ptyd rejects a command")
+
+    def test_scope_and_label_are_kept(self) -> None:
+        # Codex review r1 #4: scopes and bracket labels name different components.
+        self.assertNotEqual(tq.normalize_title("[iOS] Login crashes"), tq.normalize_title("[macOS] Login crashes"))
+        self.assertNotEqual(tq.normalize_title("fix(auth): Session leaks"),
+                            tq.normalize_title("fix(cache): Session leaks"))
+        self.assertEqual(tq.normalize_title("fix(auth): Session leaks"), "auth session leaks")
+
+    def test_meaningful_symbols_and_unicode_survive(self) -> None:
+        # Codex review r1 #5.
+        self.assertNotEqual(tq.normalize_title("C++ parser crashes"), tq.normalize_title("C# parser crashes"))
+        self.assertNotEqual(tq.normalize_title("导出 CSV 失败"), tq.normalize_title("导入 CSV 失败"))
 
     def test_distinct_words_stay_distinct(self) -> None:
         self.assertNotEqual(tq.normalize_title("Leak in search index"),
@@ -46,6 +58,13 @@ class TestNormalize(unittest.TestCase):
             self.assertEqual(tq.repo_key(r), canon, r)
         self.assertNotEqual(tq.repo_key("/x/easy-terminal-web"), canon)
         self.assertEqual(tq.repo_key(""), "")
+
+    def test_same_repo_needs_identical_paths_when_both_absolute(self) -> None:
+        # Codex review r1 #6: same directory name in different roots is a different repo.
+        self.assertFalse(tq.same_repo("/srv/company-a/api", "/srv/company-b/api"))
+        self.assertTrue(tq.same_repo("/srv/a/api", "/srv/a/api.worktrees/lane"))
+        self.assertTrue(tq.same_repo("api", "/srv/a/api"), "bare name matches by directory name")
+        self.assertFalse(tq.same_repo("", "api"))
 
 
 class TestFindDuplicate(unittest.TestCase):
@@ -78,12 +97,20 @@ class TestTrailer(unittest.TestCase):
     def test_prose_mention_is_not_a_trailer(self) -> None:
         self.assertEqual(tq.parse_trailer_ids("We fixed the Task: list rendering today"), [])
 
-    def test_resolve_open_id(self) -> None:
-        cards = [card("a", "r"), card("b", "r", cid="e307aaaa" + "0" * 24),
-                 card("c", "r", status="done", cid="ffff0000" + "0" * 24)]
-        self.assertEqual(tq.resolve_open_id(cards, "e307f7da")["id"], FULL)
-        self.assertIsNone(tq.resolve_open_id(cards, "e307"), "ambiguous prefix")
-        self.assertIsNone(tq.resolve_open_id(cards, "ffff0000"), "closed card gets no trailer")
+    def test_resolve_open_id_requires_full_open_id(self) -> None:
+        cards = [card("a", "r"), card("c", "r", status="done", cid="ffff0000" + "0" * 24)]
+        self.assertEqual(tq.resolve_open_id(cards, FULL.upper())["id"], FULL)
+        # Codex review r1 #9: a prefix can collide with a closed card the open list cannot see.
+        self.assertIsNone(tq.resolve_open_id(cards, "e307f7da"))
+        self.assertIsNone(tq.resolve_open_id(cards, "ffff0000" + "0" * 24), "closed card gets no trailer")
+
+    def test_trailer_only_from_final_trailer_block(self) -> None:
+        # Codex review r1 #8: a Task: line in the body or a quoted example is not a trailer.
+        body_only = f"subject\n\nExample:\n\nTask: {FULL}\n\nmore prose after the example"
+        self.assertEqual(tq.parse_trailer_ids(body_only), [])
+        mixed_last = f"subject\n\nprose line\nTask: {FULL}"
+        self.assertEqual(tq.parse_trailer_ids(mixed_last), [])
+        self.assertEqual(tq.parse_trailer_ids(f"Task: {FULL}"), [], "subject alone has no trailers")
 
 
 def _fake_mcp(dirpath: Path, by_status: dict, receipt_rc: int = 0) -> Path:
@@ -115,11 +142,15 @@ for line in sys.stdin:
 class TestRossLabsOCClient(unittest.TestCase):
     def test_list_open_unions_open_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            fake = _fake_mcp(Path(d), {"todo": [card("a", "r")],
-                                       "review": [card("b", "r", status="review", cid="1" * 32)],
-                                       "done": [card("c", "r", status="done", cid="2" * 32)]})
+            fake = _fake_mcp(Path(d), {
+                "todo": [card("a", "r", cid="a" * 32)],
+                "working": [card("b", "r", status="working", cid="b" * 32)],
+                "needs_input": [card("c", "r", status="needs_input", cid="c" * 32)],
+                "review": [card("d", "r", status="review", cid="d" * 32)],
+                "done": [card("e", "r", status="done", cid="e" * 32)]})
             cards = tq.RossLabsOCClient(str(fake)).list_open()
-            self.assertEqual(sorted(c["title"] for c in cards), ["a", "b"])
+            # Codex review r1 #12: every open status must be queried.
+            self.assertEqual(sorted(c["title"] for c in cards), ["a", "b", "c", "d"])
 
     def test_attach_calls_receipt_and_raises_on_failure(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -130,6 +161,22 @@ class TestRossLabsOCClient(unittest.TestCase):
             bad = _fake_mcp(Path(d) / ".." / Path(d).name, {}, receipt_rc=1)
             with self.assertRaises(tq.QueueUnavailable):
                 tq.RossLabsOCClient(str(bad)).attach(FULL, "x")
+
+    def test_malformed_payload_is_unavailable_not_empty(self) -> None:
+        # Codex review r1 #3: `null` / non-list payloads must not read as "no open cards".
+        with tempfile.TemporaryDirectory() as d:
+            fake = _fake_mcp(Path(d), {"todo": None})
+            with self.assertRaises(tq.QueueUnavailable):
+                tq.RossLabsOCClient(str(fake)).list_open()
+
+    def test_slow_server_times_out(self) -> None:
+        # Codex review r1 #1: the deadline covers the reads, and the child is reaped.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "slow"
+            p.write_text("#!/bin/sh\nsleep 5\n")
+            p.chmod(p.stat().st_mode | stat.S_IEXEC)
+            with self.assertRaises(tq.QueueUnavailable):
+                tq.RossLabsOCClient(str(p), timeout=0.3).list_open()
 
     def test_non_mcp_binary_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as d:

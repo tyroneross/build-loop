@@ -24,8 +24,9 @@ checks they hold a product or taste call (see references/safety-protocol.md §7a
 Safety: never touches a branch checked out in any worktree (re-checked right
 before each delete), base/main/master/develop/release/*/archive/*, or remote
 refs. Archive tags (`archive/pre-closeout-<date>/<branch>`, annotated) are
-created and verified BEFORE the delete, and the delete is a compare-and-swap on
-the classified head, so a branch that moved since classification survives.
+created and verified BEFORE the delete, and the delete requires
+the classified head re-checked immediately before a worktree-aware `git branch -D`,
+so a branch that moved or got checked out since classification survives.
 
 CLI: branch_disposition.py --repo <path> [--base main] [--apply] [--include-queue-branches]
 Output: JSON {repo, base, applied, branches:[{name, head, disposition, reason, action, ...}]}
@@ -79,6 +80,9 @@ def classify(repo: Path, base: str, name: str, head: str, checked_out: set[str],
         return {**item, "disposition": "merged", "reason": f"head is an ancestor of {base}"}
     base_tree = git(repo, "rev-parse", f"{base}^{{tree}}").stdout.strip()
     mt = git(repo, "merge-tree", "--write-tree", base, head, check=False)
+    if mt.returncode not in (0, 1):  # 1 = conflicts; anything else = git could not answer
+        return {**item, "disposition": "skipped",
+                "reason": f"git merge-tree failed (exit {mt.returncode}): {mt.stderr.strip()[:160]}"}
     merged_tree = mt.stdout.split("\n", 1)[0].strip() if mt.returncode == 0 else None
     if merged_tree == base_tree:
         return {**item, "disposition": "content-on-main",
@@ -118,8 +122,13 @@ def resolve(repo: Path, item: dict, today: str) -> dict:
         if git(repo, "rev-parse", f"refs/tags/{tag}^{{commit}}").stdout.strip() != head:
             return {**item, "action": f"kept: archive tag {tag} did not verify"}
         item = {**item, "archive_tag": tag}
-    # Compare-and-swap delete: fails if the branch moved after classification.
-    r = git(repo, "update-ref", "-d", f"refs/heads/{name}", head, check=False)
+    # The branch must still be at the classified head. `git branch -D` (not
+    # update-ref) so git itself refuses a branch checked out in any worktree at the
+    # moment of deletion; a new commit can only land through such a checkout.
+    now = git(repo, "rev-parse", "-q", "--verify", f"refs/heads/{name}", check=False).stdout.strip()
+    if now != head:
+        return {**item, "action": f"kept: branch moved since classification ({now[:12] or 'gone'})"}
+    r = git(repo, "branch", "-D", name, check=False)
     if r.returncode != 0:
         return {**item, "action": f"kept: delete refused ({r.stderr.strip()[:160]})"}
     return {**item, "action": "deleted"}
