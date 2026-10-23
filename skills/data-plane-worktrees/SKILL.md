@@ -93,8 +93,10 @@ declare the same non-empty `writer`.
   derivatives in the run data root.
 
 The run data root lives at canonical `.build-loop/data/<run-id>/`, outside the
-linked source worktree. Putting ignored data inside a linked worktree makes
-normal non-force `git worktree remove` fail.
+linked source worktree. Ignored data inside a linked worktree is deleted
+silently by a plain, non-force `git worktree remove` (measured on git 2.54: exit
+0, no warning), so it must never be the only copy. Removal is gated by the
+worktree-removal guard; see `skills/repo-maintenance/references/safety-protocol.md` §7b.
 
 ## Migration rehearsal (isolated — production never touched)
 

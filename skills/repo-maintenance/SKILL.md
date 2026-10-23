@@ -116,7 +116,7 @@ the next commit.
 2. Map the change to its capability boundary and enumerate cross-repo consumers before changing contracts or paths.
 3. Run the narrow verifier during implementation and the canonical verifier on the final integration tip.
 4. Regenerate bundled outputs only from canonical source; verify code or artifact parity afterward.
-5. Collapse completed work back to one protected local `main`; remove temporary worktrees and branches only after ancestry or patch-equivalence proof.
+5. Collapse completed work back to one protected local `main`; remove temporary worktrees and branches only after ancestry or patch-equivalence proof, and remove a worktree only after `scripts/worktree_archive.py --path <wt>` has archived its ignored and untracked files (safety-protocol §7b; a PreToolUse guard enforces it).
 
 ## Close completed local work
 

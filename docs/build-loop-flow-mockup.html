@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "380a815486bee54d9048f06b9206d77f137196bbc4c8f14686cbed59c8059e59"
+    "content_sha256": "579753417f52c64e965ee54dedb3655d183b6ca2a86c32db71c4a4b995552b4b"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1602,6 +1602,7 @@
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/hooks/unbounded_load_gate.py": "Reject ad-hoc unbounded CPU probes and route callers to the owned supervisor.\"\"\"",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
+      "scripts/hooks/worktree_removal_guard.py": "PreToolUse:Bash guard — no worktree is deleted before its files are archived.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
       "scripts/host_model_map.py": "Host dispatch map — a host is not a provider.",
       "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",
@@ -1891,6 +1892,7 @@
       "scripts/wiki_local.py": "In-process wiki search (Phase I).",
       "scripts/working_branch_echo.py": "Echo the working-copy branch + SHA when the runtime is self-recursive.",
       "scripts/working_state_writer.py": "working_state_writer.py — per-step execution observability for build-loop.",
+      "scripts/worktree_archive.py": "worktree_archive.py — archive what a worktree removal would delete, then",
       "scripts/worktree_guard.py": "Guard build-loop worktree creation so worktrees never sprawl outside the canonical location.",
       "scripts/worktree_inventory.py": "worktree_inventory.py — what a worktree removal would actually delete.",
       "scripts/worktree_isolation_lint.py": "Worktree-isolation lint — block background committing agents from the live checkout.",

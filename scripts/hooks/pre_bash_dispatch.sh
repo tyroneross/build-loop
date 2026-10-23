@@ -118,6 +118,41 @@ if [ -z "$CMD" ]; then
     exit 0
 fi
 
+# ── Worktree-removal guard ───────────────────────────────────────────────────
+# Runs BEFORE the build-loop scope guard, like the privileged gate: deleting a
+# worktree destroys its git-IGNORED state (.build-loop/, .bookmark/, .ibr/) in
+# ANY repository, opted in or not. Named failure (2026-10-23): 83 Easy Terminal
+# worktrees removed after a `git status -uall` check that never lists ignored
+# files; 55 lost unrecoverable state. The gate denies until
+# scripts/worktree_archive.py has receipted the exact path at its current HEAD
+# within 30 minutes, and the deny reason names that command.
+# The `case` is a cheap pre-filter so ordinary commands spawn nothing; the
+# Python side does the exact parse. A warning (git error, unresolvable target)
+# is carried to the final envelope as a systemMessage, never a deny.
+_WT_SYSMSG=""
+case " $CMD" in
+    *worktree*remove*|*[\ \;\|\&\(/]rm[\ \	]*|*trash*|*safe-del*)
+        _WT_GUARD="$PLUGIN_ROOT/scripts/hooks/worktree_removal_guard.py"
+        if [ -f "$_WT_GUARD" ]; then
+            _WT_OUT=$(printf '%s' "$INPUT" | python3 "$_WT_GUARD" 2>/dev/null) || _WT_OUT='{}'
+            case "$_WT_OUT" in
+                *'"permissionDecision": "deny"'*|*'"permissionDecision":"deny"'*)
+                    printf '%s' "$_WT_OUT"
+                    exit 0
+                    ;;
+                *'"systemMessage"'*)
+                    _WT_SYSMSG="$_WT_OUT"
+                    ;;
+            esac
+        fi
+        ;;
+esac
+# Every allow exit below this point goes through _bl_pass so a guard warning
+# stays visible even when a later scope check short-circuits.
+_bl_pass() {
+    if [ -n "$_WT_SYSMSG" ]; then printf '%s' "$_WT_SYSMSG"; else printf '{}'; fi
+}
+
 # ── Privileged-command gate ──────────────────────────────────────────────────
 # Runs BEFORE the build-loop scope guard, and is the ONE gate here that does.
 # Every other gate polices repository work, so confining it to opted-in repos is
@@ -273,7 +308,7 @@ PY
 # + audit state), so a literal existence check there would arm the gate for
 # every shell command run from the user's home directory.
 if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$HOME" ]; then
-    printf '{}'
+    _bl_pass
     exit 0
 fi
 # The opt-in marker lives at the REPO ROOT, so checking $CWD alone made
@@ -286,11 +321,11 @@ if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.jso
     BL_SCOPE_ROOT=$(_bl_repo_root "$CWD")
 fi
 if [ "$BL_SCOPE_ROOT" = "/" ] || [ "$BL_SCOPE_ROOT" = "$HOME" ]; then
-    printf '{}'
+    _bl_pass
     exit 0
 fi
 if [ ! -f "$BL_SCOPE_ROOT/.build-loop/state.json" ] && [ ! -f "$BL_SCOPE_ROOT/.build-loop/config.json" ]; then
-    printf '{}'
+    _bl_pass
     exit 0
 fi
 
@@ -909,8 +944,8 @@ fi
 
 # Merge by precedence: deny > ask > allow (allow is emitted as {}). First matching decision wins.
 # Pass the envelopes via argv to a tiny python merge (no shell JSON parsing).
-python3 - "${ENVELOPES[@]}" <<'PY'
-import sys, json
+BL_WT_SYSMSG="$_WT_SYSMSG" python3 - "${ENVELOPES[@]}" <<'PY'
+import os, sys, json
 
 PRECEDENCE = {"deny": 3, "ask": 2, "allow": 1}
 best = None
@@ -932,6 +967,14 @@ for raw in sys.argv[1:]:
 # allow is emitted as {} (Codex rejects allow without updatedInput)
 if best and best["hookSpecificOutput"].get("permissionDecision") == "allow":
     best = None
+# Carry the worktree guard's warning (fail-open path) so it stays visible.
+try:
+    warn = json.loads(os.environ.get("BL_WT_SYSMSG") or "{}").get("systemMessage")
+except Exception:
+    warn = None
+if warn:
+    best = dict(best or {})
+    best["systemMessage"] = warn
 print(json.dumps(best) if best else "{}")
 PY
 

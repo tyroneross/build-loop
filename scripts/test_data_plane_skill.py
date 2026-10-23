@@ -45,7 +45,10 @@ def test_skill_encodes_the_four_isolation_modes_and_nonforce_cleanup_rule() -> N
         "external_namespaced",
     ):
         assert mode in text
-    assert "normal non-force `git worktree remove` fail" in text
+    # git 2.54 deletes ignored files on a plain non-force remove (exit 0); the
+    # earlier "makes non-force remove fail" claim was false and is gone.
+    assert "non-force `git worktree remove` (measured on git 2.54" in text
+    assert "normal non-force `git worktree remove` fail" not in text
     for command in (" add ", " validate ", " close ", " terminal "):
         assert command in text
 
