@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
+import fnmatch
 import shlex
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 REFUSAL = (
     "Keychain credential access is prohibited. Use the designated Secrets Vault "
@@ -17,6 +19,104 @@ REFUSAL = (
 )
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
 _NETWORK = {"push", "pull", "fetch", "clone", "ls-remote", "credential"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_HEREDOC = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z_0-9]*))")
+
+
+def _heredoc_exe(before: str) -> str:
+    """Executable that receives a heredoc opened at the end of `before`."""
+    segment = re.split(r"&&|\|\||[;|&]", before)[-1]
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError:
+        tokens = segment.split()
+    tokens = [t for t in tokens if not re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t)]
+    while tokens and Path(tokens[0]).name in {"env", "sudo", "command", "exec", "nohup"}:
+        tokens = [t for t in tokens[1:] if not t.startswith("-")]
+    return Path(tokens[0]).name if tokens else ""
+
+
+def _split_heredocs(command: str):
+    """Separate heredoc bodies from shell text. A body is data for its reader;
+    only a shell or interpreter reader turns it into code (checked by caller)."""
+    lines = command.split("\n")
+    shell_lines, bodies, index = [], [], 0
+    while index < len(lines):
+        line = lines[index]
+        shell_lines.append(line)
+        index += 1
+        if "<<" not in line or "<<<" in line:
+            continue
+        for match in _HEREDOC.finditer(line):
+            strip_tabs = match.group(1) == "-"
+            delimiter = match.group(2) or match.group(3) or match.group(4)
+            quoted = match.group(4) is None or match.group(0).lstrip("<-").lstrip().startswith("\\")
+            body = []
+            while index < len(lines):
+                candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
+                index += 1
+                if candidate == delimiter:
+                    break
+                body.append(lines[index - 1])
+            bodies.append((quoted, _heredoc_exe(line[:match.start()]), "\n".join(body)))
+    return "\n".join(shell_lines), bodies
+
+
+def _python_calls_keychain(source: str) -> bool:
+    try:
+        return any(isinstance(node, ast.Call) and _API.search(ast.unparse(node.func))
+                   for node in ast.walk(ast.parse(source)))
+    except SyntaxError:
+        return bool(_API.search(source))
+
+
+def _scope_match(pattern: str, url: str | None):
+    """Does `credential.<pattern>.helper` apply to `url`? True, False, or None
+    when it cannot be decided statically (unknown URL, user or path scopes)."""
+    if url is None or "://" not in pattern:
+        return None
+    try:
+        want, have = urlsplit(pattern), urlsplit(url)
+        want_port, have_port = want.port, have.port
+    except ValueError:
+        return None
+    if want.scheme.lower() != have.scheme.lower():
+        return False
+    want_host, have_host = (want.hostname or "").lower(), (have.hostname or "").lower()
+    want_labels, have_labels = want_host.split("."), have_host.split(".")
+    if len(want_labels) != len(have_labels) or not all(
+            fnmatch.fnmatchcase(h, w) for w, h in zip(want_labels, have_labels)):
+        return False
+    if want_port is not None and want_port != have_port:
+        return False
+    if want.username or want.path not in {"", "/"}:
+        return None
+    return True
+
+
+def _effective_helpers(pairs, url: str | None):
+    """Git's helper list for one URL: every matching key in config order, and an
+    empty value clears everything collected so far (git credential.c, select_all).
+    A reset counts only when its scope certainly applies; an uncertain scope
+    still contributes its helpers, so doubt never hides a Keychain helper."""
+    chain = []
+    for key, value in pairs:
+        if key == "credential.helper":
+            applies = True
+        else:
+            applies = _scope_match(key[len("credential."):-len(".helper")], url)
+        if applies is False:
+            continue
+        if value.strip():
+            chain.append(value)
+        elif applies is True:
+            chain.clear()
+    return chain
+
+
+def _keychain_helper(chain) -> bool:
+    return any("osxkeychain" in helper or helper.strip().split(" ", 1)[0] == "store"
+               for helper in chain)
 
 
 def _segments(command: str):
@@ -75,6 +175,20 @@ def command_reason(command: str, *, cwd: str | None = None,
     """Known executable forms only; opaque app/script behavior remains protocol-governed."""
     environment = os.environ if environment is None else environment
     platform = sys.platform if platform is None else platform
+    command, bodies = _split_heredocs(command)
+    for quoted, reader, body in bodies:
+        if reader in _SHELLS:
+            if command_reason(body, cwd=cwd, helpers=helpers, platform=platform,
+                              environment=environment, cwd_uncertain=cwd_uncertain):
+                return REFUSAL
+        elif reader.startswith(("python", "swift", "osascript")):
+            if (_python_calls_keychain(body) if reader.startswith("python") else _API.search(body)):
+                return REFUSAL
+        elif not quoted:
+            for inner in _substitutions(body):
+                if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
+                                  environment=environment, cwd_uncertain=cwd_uncertain):
+                    return REFUSAL
     try:
         segments = list(_segments(command.replace("\n", ";")))
     except ValueError:
@@ -187,24 +301,36 @@ def command_reason(command: str, *, cwd: str | None = None,
             if command_cwd_uncertain or inline_config or any(a.startswith("--config-env") for a in prefix):
                 return REFUSAL
             if helpers is None:
+                # One `git config` read (metadata only; no helper runs). Keys
+                # arrive in git's own reading order: system, global, local, -c.
                 try:
-                    result = subprocess.run([argv[0], *prefix, "config", "--get-regexp", r"^credential(\..*)?\.helper$"],
-                                            cwd=cwd, env=effective_environment, capture_output=True, text=True, timeout=2)
-                    if result.returncode not in (0, 1):
-                        return REFUSAL
-                    pairs = [line.partition(" ") for line in result.stdout.splitlines()]
-                    # Scoped helpers have separate reset chains; never let a
-                    # global reset erase a URL-specific Keychain helper.
-                    chains = {}
-                    for key, _, value in pairs:
-                        chain = chains.setdefault(key, [])
-                        if value.strip():
-                            chain.append(value)
-                        else:
-                            chain.clear()
-                    configured = [value for chain in chains.values() for value in chain]
+                    result = subprocess.run(
+                        [argv[0], *prefix, "config", "--get-regexp",
+                         r"^(credential(\..*)?\.helper|remote\..*\.(url|pushurl)|url\..*\.(insteadof|pushinsteadof))$"],
+                        cwd=cwd, env=effective_environment, capture_output=True, text=True, timeout=2)
                 except (OSError, subprocess.SubprocessError):
                     return REFUSAL
+                if result.returncode not in (0, 1):
+                    return REFUSAL
+                pairs, urls = [], []
+                for line in result.stdout.splitlines():
+                    key, _, value = line.partition(" ")
+                    lowered = key.lower()
+                    if lowered.startswith("credential.") and lowered.endswith(".helper"):
+                        pairs.append((key, value))
+                    elif lowered.endswith((".url", ".pushurl")):
+                        urls.append(value)
+                    else:  # url.<base>.insteadof: a rewrite can target <base>
+                        urls.append(key[len("url."):key.rfind(".")])
+                urls += [arg for arg in argv[index + 1:] if "://" in arg]
+                # Only http(s) remotes consult credential helpers (ssh and local
+                # paths never do). With no remote at all, judge an unknown URL:
+                # scoped helpers count, scoped resets don't.
+                http = [url for url in urls if url.lower().startswith(("http://", "https://"))]
+                urls = http if urls else [None]
+                if any(_keychain_helper(_effective_helpers(pairs, url)) for url in urls):
+                    return REFUSAL
+                continue
             else:
                 configured = list(helpers)
                 for arg in prefix:

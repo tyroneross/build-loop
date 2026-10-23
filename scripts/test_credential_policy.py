@@ -139,11 +139,62 @@ class CredentialPolicyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny', command)
 
-    def test_scoped_helpers_are_not_erased_by_a_global_reset(self):
-        result = subprocess.CompletedProcess([], 0, 'credential.https://github.com.helper osxkeychain\ncredential.helper \n', '')
+    def decide(self, config_lines, command='git fetch origin'):
+        result = subprocess.CompletedProcess([], 0, ''.join(line + '\n' for line in config_lines), '')
         with patch('credential_policy.subprocess.run', return_value=result) as runner:
-            self.assertIsNotNone(command_reason('git -c credential.helper= fetch origin', platform='darwin'))
+            reason = command_reason(command, platform='darwin')
         self.assertIn('--get-regexp', runner.call_args.args[0])
+        return reason
+
+    # Git keeps ONE helper list per URL in config order; an empty value clears
+    # everything before it. Verified 2026-10-23 with git 2.54 and logging fake
+    # helpers (`git credential fill`): system osxkeychain + global
+    # `credential.https://github.com.helper=` + gh => only gh runs for github.com.
+    GH_SETUP = ['credential.helper osxkeychain',
+                'credential.https://github.com.helper ',
+                'credential.https://github.com.helper !/opt/homebrew/bin/gh auth git-credential']
+
+    def test_gh_setup_git_overrides_system_keychain_for_github(self):
+        self.assertIsNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']))
+        self.assertIsNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git'],
+                                      'git push origin main'))
+
+    def test_keychain_still_applies_to_other_hosts_and_unknown_urls(self):
+        self.assertIsNotNone(self.decide(self.GH_SETUP + ['remote.origin.url https://gitlab.com/o/r.git']))
+        self.assertIsNotNone(self.decide(self.GH_SETUP))  # no remote: URL unknown
+        self.assertIsNotNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git',
+                                                          'remote.mirror.url https://example.com/r.git']))
+        self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://example.com/r.git'))
+
+    def test_a_later_unscoped_reset_clears_earlier_scoped_helpers(self):
+        self.assertIsNone(self.decide(['credential.https://github.com.helper osxkeychain', 'credential.helper ',
+                                       'remote.origin.url https://github.com/o/r.git']))
+
+    def test_scoped_keychain_and_uncertain_scopes_refuse(self):
+        remote = 'remote.origin.url https://api.github.com/o/r.git'
+        self.assertIsNotNone(self.decide(['credential.https://*.github.com.helper osxkeychain', remote]))
+        self.assertIsNotNone(self.decide(['credential.helper osxkeychain',
+                                          'credential.https://api.github.com/o.helper ', remote]))
+        self.assertIsNotNone(self.decide(['credential.helper store', remote]))
+
+    def test_insteadof_rewrite_targets_are_judged(self):
+        self.assertIsNotNone(self.decide(['credential.https://github.com.helper osxkeychain',
+                                          'remote.origin.url git@github.com:o/r.git',
+                                          'url.https://github.com/.insteadof git@github.com:']))
+        self.assertIsNone(self.decide(['credential.helper osxkeychain', 'remote.origin.url git@github.com:o/r.git']))
+
+    def test_heredoc_bodies_are_data_unless_a_shell_or_interpreter_reads_them(self):
+        for command in ["cat > notes.md <<'EOF'\n`git fetch` was blocked; security find-generic-password\nEOF",
+                        "python3 - <<'EOF'\nprint('keyring.get_password is mentioned only')\nEOF\necho done",
+                        'cat <<-EOF\n\tgit push origin main\n\tEOF']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+        for command in ["bash <<'EOF'\nsecurity find-generic-password\nEOF",
+                        "python3 - <<'EOF'\nimport keyring\nkeyring.get_password('s', 'u')\nEOF",
+                        'cat <<EOF\n$(security find-generic-password)\nEOF',
+                        "cat <<'EOF'\ntext\nEOF\nsecurity find-generic-password"]:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.reason(command))
 
 
 

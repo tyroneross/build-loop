@@ -81,6 +81,18 @@ General instructions to continue or fix connections do not renew authorization.
 Use ad-hoc local signing when suitable; stored signing keys require explicit
 authorization.
 
+Git transport is judged per remote, not banned (owner ruling 2026-10-23). `git
+fetch`, `pull` and `push` over HTTPS are allowed when the remote's effective
+credential helper is not `osxkeychain` or `store`. On this Mac, `gh auth
+setup-git` resets the system `osxkeychain` helper for `https://github.com` and
+uses `gh auth git-credential`, so GitHub fetch/push is an authorized service
+connection. Git builds one helper list per URL in config order, and an empty
+value clears the helpers before it; `scripts/credential_policy.py` applies that
+rule. Still refused: `security …`, `git-credential-osxkeychain`, and any remote
+whose effective helper is `osxkeychain` or `store`. A hook refusal of one git
+command is not a ban on git networking: read the refusal, then fix the
+config or the policy.
+
 ## System-access prompts — one request per access need
 
 Before a command, script, build or app launch can request Keychain/admin/privacy access, read `skills/build-loop/references/system-access-once.md` and check the shared request ledger. Existing unresolved requests suppress further commands AND repeated user questions. Do not change purpose, executable, worktree or run ID to evade the hold. An unexpected prompt must be recorded with `--record-blocked`; stop only verified owned requesters. Do not execute ad hoc Swift/Python reads against production Keychain items. Tests use injected stores or isolated fixture identities. A user's statement that they unlocked or signed in permits a metadata/status check; it is not permission to replay an unresolved password request. Ask once with the purpose and requester, then retain a note and wait for an explicit retry instruction. The wrapper enforces only invocations routed through it; no claim of machine-wide dialog interception is permitted.
