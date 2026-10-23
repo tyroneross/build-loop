@@ -25,6 +25,15 @@ python3 <build-loop>/scripts/daydream.py draft \
   --report <report.json> --output <new-local-drafts-directory>
 ```
 
+For recurring scans, start with `scan --incremental` and save its report. Resume with
+`scan --previous-report <prior-report.json>` and the same explicit roots. The report
+carries its bounded metadata checkpoint; no separate cache or service is needed.
+Changed/new metadata is read first, with rotating reconciliation and round-robin
+roots so a large memory store cannot starve other repositories. Only freshly read
+files support findings. Deferred files remain unverified coverage gaps; metadata
+never proves content freshness. Omit both flags for the original full bounded scan.
+Always retain fresh hash checks before drafting/export.
+
 The scan reads tracked Markdown. It excludes raw, generated, archival and unvetted
 review lanes, refuses symlinks and records budgets, unavailable files and hashes.
 Partial coverage remains partial. Search returns fresh source locators without
@@ -70,6 +79,8 @@ Include Codex, Claude, Cursor, Muse, Antigravity and local RossLabs harness when
 available. Preserve source path, digest, line and session identity. Keep missing
 host/model/effort/project/task/harness values unknown. Count repeated exports once.
 Separate user correction, added scope, error, user acceptance and tool success.
+Recognized scheduled automation metadata envelopes are instructions, not human
+feedback; genuine human corrections mentioning automation remain eligible.
 Keep code quality, integration correctness and rendered UI acceptance unknown
 unless the evidence actually measures them. A successful shell command is not
 proof of a usable interface.

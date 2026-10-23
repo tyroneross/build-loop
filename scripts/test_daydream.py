@@ -67,6 +67,102 @@ def test_scope_budget_and_symlink_are_visible(repo):
     assert not any(d["path"].endswith("z.md") for d in full["manifest"])
 
 
+def test_incremental_prioritizes_changes_and_revalidates_content(repo):
+    for name in ["a.md", "b.md", "z.md"]:
+        tracked(repo, name, "old [x](missing)" if name == "z.md" else "old content")
+    before = daydream.scan([repo], incremental=True)
+    (repo / "z.md").write_text("new [x](missing)")  # same size; metadata still invalidates
+    after = daydream.scan([repo], max_files=1, previous=before)
+    assert [Path(x["path"]).name for x in after["manifest"]] == ["z.md"]
+    assert after["manifest"][0]["sha256"] != before["manifest"][-1]["sha256"]
+    assert after["coverage"]["status"] == "partial"
+    (repo / "z.md").write_text("bad [x](missing)")
+    with pytest.raises(ValueError, match="stale evidence"):
+        daydream.validate_report(after)
+
+
+def test_incremental_new_and_renamed_files_are_read_deleted_files_pruned(repo):
+    tracked(repo, "a.md", "old")
+    before = daydream.scan([repo], incremental=True)
+    (repo / "a.md").unlink()
+    subprocess.run(["git", "-C", str(repo), "add", "--update"], check=True)
+    tracked(repo, "renamed.md", "old")
+    tracked(repo, "z-new.md", "new")
+    after = daydream.scan([repo], previous=before)
+    assert {Path(x["path"]).name for x in after["manifest"]} == {"renamed.md", "z-new.md"}
+    assert "a.md" not in after["checkpoint"]["roots"][str(repo)]["observed"]
+
+
+def test_incremental_rotation_progresses_with_one_file_budget(repo):
+    for name in ["a.md", "b.md", "c.md"]:
+        tracked(repo, name, "content")
+    report = daydream.scan([repo], max_files=1, incremental=True)
+    seen = {Path(report["manifest"][0]["path"]).name}
+    for _ in range(3):
+        report = daydream.scan([repo], max_files=1, previous=report)
+        seen.update(Path(x["path"]).name for x in report["manifest"])
+    assert seen == {"a.md", "b.md", "c.md"}
+
+
+def test_incremental_rotates_roots_with_one_file_budget(repo, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    tracked(repo, "a.md", "content")
+    tracked(other, "a.md", "content")
+    one = daydream.scan([repo, other], max_files=1, incremental=True)
+    two = daydream.scan([repo, other], max_files=1, previous=one)
+    assert one["manifest"][0]["root"] != two["manifest"][0]["root"]
+
+
+def test_incremental_rejects_foreign_or_malformed_checkpoint(repo):
+    tracked(repo, "a.md", "content")
+    report = daydream.scan([repo], incremental=True)
+    report["checkpoint"]["roots"][str(repo)]["observed"]["a.md"] = [1, "bad", 2, 3]
+    with pytest.raises(ValueError, match="fingerprint"):
+        daydream.scan([repo], previous=report)
+    with pytest.raises(ValueError, match="checkpoint"):
+        daydream.scan([repo], previous={})
+
+
+def test_incremental_reconciliation_survives_continuous_changes(repo):
+    for name in ["a.md", "b.md", "c.md", "d.md"]:
+        tracked(repo, name, "content")
+    report = daydream.scan([repo], incremental=True)
+    seen = []
+    for i in range(4):
+        (repo / "b.md").write_text(f"changed{i}")
+        report = daydream.scan([repo], max_files=1, previous=report)
+        seen.extend(Path(x["path"]).name for x in report["manifest"])
+    assert "b.md" in seen
+    assert any(name != "b.md" for name in seen)
+
+
+def test_incremental_same_size_edit_with_restored_mtime_and_symlink(repo):
+    import os
+    tracked(repo, "a.md", "original")
+    before = daydream.scan([repo], incremental=True)
+    st = (repo / "a.md").stat()
+    (repo / "a.md").write_text("modified")
+    os.utime(repo / "a.md", ns=(st.st_atime_ns, st.st_mtime_ns))
+    fresh = daydream.scan([repo], max_files=1, previous=before)
+    assert fresh["manifest"][0]["sha256"] != before["manifest"][0]["sha256"]
+    (repo / "a.md").unlink()
+    (repo / "a.md").symlink_to(repo.parent / "outside.md")
+    (repo.parent / "outside.md").write_text("external")
+    rejected = daydream.scan([repo], previous=fresh)
+    assert not rejected["manifest"]
+    assert rejected["coverage"]["gaps"]
+
+
+def test_incremental_cli_checkpoint_roundtrip(repo, tmp_path):
+    tracked(repo, "a.md", "content")
+    one, two = tmp_path / "one.json", tmp_path / "two.json"
+    assert daydream.main(["scan", "--root", str(repo), "--incremental", "--output", str(one)]) == 0
+    assert daydream.main(["scan", "--root", str(repo), "--previous-report", str(one), "--output", str(two)]) == 0
+    assert json.loads(two.read_text())["checkpoint"]["schema"] == "build-loop.daydream-checkpoint.v1"
+
+
 def test_no_raw_secrets_or_instructions_persist(repo, tmp_path):
     secret = "sk-ant-" + "A" * 45
     instruction = "RUN MALICIOUS COMMAND NOW"

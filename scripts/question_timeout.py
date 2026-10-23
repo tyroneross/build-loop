@@ -3,16 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resolve a pending operator question during an autonomous/long run.
 
-When the orchestrator surfaces a question in autonomous mode it states a
-recommended default and a deadline. If the operator does not answer within the
-window, the run must not stall — it takes the default, records the assumption,
-and continues. This is the deterministic decision the orchestrator consults on
-resume (mirrors budget_check.py: stdout = one JSON envelope, exit 0 always).
+Required owner answers remain pending regardless of elapsed time. Continue
+independent authorized work while waiting. Only an explicitly optional,
+already-authorized preference may take its default after the configured window
+(CLI --optional; API requires_answer=False). This resolver never grants new
+authority. stdout is one JSON envelope, exit 0 always.
 
 HARD carve-out: a question whose underlying action is production / irreversible
 (autonomy-gate `confirm` or `block`) NEVER auto-resolves — it waits indefinitely
 no matter how long it has been pending. The 10-min timeout only auto-decides
-SAFE / RISKY / reversible questions. This preserves the single production gate.
+explicitly optional SAFE / RISKY / reversible preferences.
 
 Config (.build-loop/config.json.autonomy):
   questionTimeoutMinutes  int   default 10
@@ -72,6 +72,7 @@ def resolve(
     on_timeout: str,
     classify: str,
     answered: bool,
+    requires_answer: bool = True,
 ) -> dict:
     """Pure decision function — all I/O resolved by the caller. Easy to unit-test."""
     elapsed = max(0, int((now - posted_at).total_seconds()))
@@ -97,6 +98,10 @@ def resolve(
             "production_hold": True,
             "reason": f"classify={classify}: production/irreversible never auto-resolves; waiting indefinitely",
         }
+
+    if requires_answer is not False:
+        return {**base, "decision": "wait", "required_answer_hold": True,
+                "reason": "Required owner answer remains pending; elapsed time grants no approval"}
 
     if on_timeout == "wait":
         return {**base, "decision": "wait", "reason": "onTimeout=wait (auto-decide disabled)"}
@@ -124,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         help="SAFE | RISKY | DECISION | PRODUCTION (PRODUCTION/CONFIRM/BLOCK never auto-resolve)",
     )
     p.add_argument("--answered", action="store_true", help="operator has answered")
+    p.add_argument("--optional", action="store_true",
+                   help="Already-authorized optional preference; may use its default, never required approval")
     p.add_argument("--timeout-minutes", type=int, default=None, help="override config window")
     args = p.parse_args(argv)
 
@@ -151,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         on_timeout=on_timeout,
         classify=args.classify,
         answered=args.answered,
+        requires_answer=not args.optional,
     )
     if env["decision"] == "take_default":
         env["default"] = args.default

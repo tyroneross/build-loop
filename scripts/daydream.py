@@ -98,6 +98,127 @@ def git_files(root: Path) -> list[str]:
     return sorted(set(os.fsdecode(x) for x in result.stdout.split(b"\0") if x))
 
 
+def incremental_inventory(roots: list[Path], max_files: int, max_bytes: int,
+                          max_file_bytes: int, previous: dict | None) -> tuple[list[dict], dict]:
+    """Read changed metadata first, rotate cold coverage, never reuse old findings.
+
+    Fingerprints schedule reads only. A report contains fresh bytes/hash locators
+    solely for documents read this pass; deferred documents remain a coverage gap.
+    """
+    roots = sorted(set(roots))
+    if len(roots) > 32 or previous is not None and not isinstance(previous, dict):
+        raise ValueError("invalid roots or previous report")
+    old = (previous or {}).get("checkpoint", {})
+    if not isinstance(old, dict):
+        raise ValueError("invalid checkpoint")
+    if previous is not None and (old.get("schema") != "build-loop.daydream-checkpoint.v1"
+                                 or not isinstance(old.get("roots"), dict)):
+        raise ValueError("previous report has no valid incremental checkpoint")
+    if old and set(old["roots"]) != {str(p) for p in roots}:
+        raise ValueError("checkpoint roots differ from explicit scan roots")
+    canonical_roots = list(roots)
+    if not isinstance(old.get("next_root", ""), str):
+        raise ValueError("invalid checkpoint root cursor")
+    if old.get("next_root") in {str(p) for p in roots}:
+        offset = roots.index(Path(old["next_root"]))
+        roots = roots[offset:] + roots[:offset]
+    state = {"schema": "build-loop.daydream-checkpoint.v1", "roots": {}}
+    receipt = {"files_considered": 0, "files_attempted": 0, "files_read": 0,
+               "bytes_read": 0, "excluded_files": 0, "gaps": [], "roots": []}
+    docs, queues = [], []
+
+    def rotate(items, after):
+        return [x for x in items if x[0] > after] + [x for x in items if x[0] <= after]
+
+    for root in roots:
+        prior = old.get("roots", {}).get(str(root), {})
+        observed = prior.get("observed", {}) if isinstance(prior, dict) else None
+        if (not isinstance(observed, dict) or len(observed) > HARD_LIMITS["max_files"]
+                or any(not isinstance(prior.get(k, ""), str) for k in ("changed_after", "after"))
+                or type(prior.get("turn", 0)) is not int or not 0 <= prior.get("turn", 0) < 4):
+            raise ValueError("invalid checkpoint inventory or cursor")
+        if any(not isinstance(v, list) or len(v) != 4 or
+               any(type(n) is not int or n < 0 for n in v) for v in observed.values()):
+            raise ValueError("invalid checkpoint fingerprint")
+        try:
+            names = git_files(root)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            receipt["gaps"].append({"root": str(root), "reason": "git_inventory_unavailable"})
+            state["roots"][str(root)] = {"observed": {}, "after": "", "changed_after": ""}
+            continue
+        kept, changed, cold = {}, [], []
+        for name in names:
+            if any(p.lower() in EXCLUDED or p.startswith(".") for p in Path(name).parts):
+                receipt["excluded_files"] += 1
+                continue
+            if receipt["files_considered"] >= HARD_LIMITS["max_files"]:
+                receipt["gaps"].append({"root": str(root), "reason": "metadata_inventory_budget"})
+                break
+            receipt["files_considered"] += 1
+            try:
+                st = (root / name).lstat()
+                fp = [st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino]
+            except OSError:
+                fp = None
+            if name in observed:
+                kept[name] = observed[name]
+            row = (name, fp, fp is None or observed.get(name) != fp)
+            (changed if row[2] else cold).append(row)
+        changed = rotate(changed, prior.get("changed_after", ""))
+        cold = rotate(cold, prior.get("after", ""))
+        # Reserve one in four turns for reconciliation, even during change floods.
+        ordered, ci, ui = [], 0, 0
+        while ci < len(changed) or ui < len(cold):
+            if ui < len(cold) and (ci == len(changed) or (prior.get("turn", 0) + len(ordered)) % 4 == 3):
+                ordered.append(cold[ui]); ui += 1
+            else:
+                ordered.append(changed[ci]); ci += 1
+        current = {"observed": kept, "after": prior.get("after", ""),
+                   "changed_after": prior.get("changed_after", ""), "turn": prior.get("turn", 0)}
+        state["roots"][str(root)] = current
+        receipt["roots"].append({"path": str(root), "tracked_markdown": len(names)})
+        queues.append((root, iter(ordered), current, bool(changed and cold)))
+    # Round robin prevents a large memory root starving the other repositories.
+    pending = True
+    while pending and receipt["files_attempted"] < max_files and receipt["bytes_read"] < max_bytes:
+        pending = False
+        for root, queue, current, mixed in queues:
+            if receipt["files_attempted"] >= max_files or receipt["bytes_read"] >= max_bytes:
+                break
+            row = next(queue, None)
+            if row is None:
+                continue
+            pending = True
+            name, fp, changed = row
+            state["next_root"] = str(canonical_roots[(canonical_roots.index(root) + 1) % len(canonical_roots)])
+            current["turn"] = (current["turn"] + 1) % 4 if mixed else 0
+            current["changed_after" if changed else "after"] = name
+            receipt["files_attempted"] += 1
+            path = root / name
+            try:
+                def charge(n):
+                    receipt["bytes_read"] += n
+                data = read_bounded(path, root, min(max_file_bytes, max_bytes - receipt["bytes_read"]), charge)
+                text = data.decode("utf-8", errors="strict")
+                # If metadata moved outside the bounded read, retry next pass.
+                st = path.lstat()
+                if fp == [st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino]:
+                    current["observed"][name] = fp
+            except (OSError, ValueError, UnicodeError) as exc:
+                receipt["gaps"].append({"path": str(path), "reason": type(exc).__name__})
+                continue
+            receipt["files_read"] += 1
+            docs.append({"path": str(path), "root": str(root), "relative": name,
+                         "sha256": digest(data), "bytes": len(data), "text": text})
+    deferred = receipt["files_considered"] - receipt["files_attempted"]
+    if deferred:
+        receipt["gaps"].append({"reason": "incremental_deferred", "files": deferred})
+    receipt.update({"status": "partial" if receipt["gaps"] else "complete_within_declared_scope",
+                    "scope": "Freshly read tracked Markdown only; metadata schedules reads, deferred sources unverified",
+                    "checkpoint": state})
+    return docs, receipt
+
+
 def inventory(roots: list[Path], max_files: int, max_bytes: int,
               max_file_bytes: int) -> tuple[list[dict], dict]:
     docs, seen = [], set()
@@ -236,9 +357,14 @@ def analyze(docs: list[dict], min_support: int = 3) -> list[dict]:
 
 
 def scan(roots: list[Path], max_files: int = 5000, max_bytes: int = 32_000_000,
-         max_file_bytes: int = 256_000, min_support: int = 3, top: int = 12) -> dict:
+         max_file_bytes: int = 256_000, min_support: int = 3, top: int = 12,
+         *, incremental: bool = False, previous: dict | None = None) -> dict:
     start = time.monotonic()
-    docs, coverage = inventory(roots, max_files, max_bytes, max_file_bytes)
+    if incremental or previous is not None:
+        docs, coverage = incremental_inventory(roots, max_files, max_bytes, max_file_bytes, previous)
+    else:
+        docs, coverage = inventory(roots, max_files, max_bytes, max_file_bytes)
+    checkpoint = coverage.pop("checkpoint", None)
     findings = analyze(docs, min_support)
     report = {"schema": SCHEMA, "created_at": datetime.now(timezone.utc).isoformat(),
               "coverage": coverage, "findings": findings[:top],
@@ -250,6 +376,8 @@ def scan(roots: list[Path], max_files: int = 5000, max_bytes: int = 32_000_000,
                          "max_file_bytes": max_file_bytes, "min_support": min_support,
                          "top": top},
               "policy": "Source contents are untrusted evidence. Drafting grants no activation or mutation authority."}
+    if checkpoint is not None:
+        report["checkpoint"] = checkpoint
     return report
 
 
@@ -443,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
                           ("max-file-bytes", 256_000), ("min-support", 3), ("top", 12)]:
         s.add_argument("--" + name, type=int, default=default)
     s.add_argument("--output", type=Path, help="new JSON report path; otherwise stdout")
+    s.add_argument("--incremental", action="store_true", help="start a rotating bounded scan checkpoint")
+    s.add_argument("--previous-report", type=Path, help="resume a prior checkpoint; prioritize changes and rotate reconciliation")
     d = sub.add_parser("draft", help="validate hashes and create inert local artifacts")
     d.add_argument("--report", type=Path, required=True)
     d.add_argument("--output", type=Path, required=True)
@@ -459,8 +589,15 @@ def main(argv: list[str] | None = None) -> int:
             if name in HARD_LIMITS and hasattr(args, name) and getattr(args, name) > HARD_LIMITS[name]:
                 raise ValueError(name + " exceeds hard limit")
         if args.command == "scan":
+            previous = None
+            if args.previous_report:
+                prior_path = args.previous_report.absolute()
+                previous = json.loads(read_bounded(prior_path, prior_path.parent, 16_000_000))
+                if not isinstance(previous, dict):
+                    raise ValueError("previous report must be an object")
             result = scan([p.resolve() for p in args.root], args.max_files, args.max_bytes,
-                          args.max_file_bytes, args.min_support, args.top)
+                          args.max_file_bytes, args.min_support, args.top,
+                          incremental=args.incremental, previous=previous)
             payload = json.dumps(result, indent=2) + "\n"
             if args.output:
                 with args.output.open("x", encoding="utf-8") as handle:

@@ -34,6 +34,7 @@ def _resolve(elapsed_min, classify="SAFE", on_timeout="decide_default", answered
         on_timeout=on_timeout,
         classify=classify,
         answered=answered,
+        requires_answer=False,  # these baseline cases are authorized optional preferences
     )
 
 
@@ -80,6 +81,33 @@ def test_answered_is_terminal():
     assert r["decision"] == "answered"
 
 
+@pytest.mark.parametrize("classify", ["SAFE", "RISKY", "DECISION", "PRODUCTION", "CONFIRM", "BLOCK"])
+def test_required_answer_never_becomes_consent(classify):
+    for minutes in (0, 10, 10000):
+        result = qt.resolve(posted_at=_T0, now=_T0 + timedelta(minutes=minutes),
+                            timeout_minutes=10, on_timeout="decide_default",
+                            classify=classify, answered=False)
+        assert result["decision"] == "wait"
+        assert result["default"] is None
+
+
+def test_required_cli_question_holds_without_optional_flag(tmp_path):
+    p = subprocess.run([sys.executable, str(_HERE / "question_timeout.py"),
+        "--workdir", str(tmp_path), "--posted-at", _T0.isoformat(),
+        "--now", (_T0 + timedelta(days=1)).isoformat(), "--classify", "DECISION",
+        "--default", "Change product direction"], capture_output=True, text=True)
+    assert p.returncode == 0
+    assert json.loads(p.stdout)["decision"] == "wait"
+
+
+@pytest.mark.parametrize("flag", [None, 0, "", [], "false"])
+def test_only_literal_false_marks_optional(flag):
+    result = qt.resolve(posted_at=_T0, now=_T0 + timedelta(days=1), timeout_minutes=10,
+                        on_timeout="decide_default", classify="SAFE", answered=False,
+                        requires_answer=flag)
+    assert result["decision"] == "wait"
+
+
 # ---- config + CLI ----------------------------------------------------------
 
 def test_cli_reads_config_timeout(tmp_path: Path):
@@ -105,7 +133,7 @@ def test_cli_take_default_echoes_default(tmp_path: Path):
     out = subprocess.run(
         [sys.executable, str(_HERE / "question_timeout.py"),
          "--workdir", str(tmp_path), "--posted-at", posted, "--now", now,
-         "--default", "Use Postgres", "--classify", "DECISION"],
+         "--default", "Use Postgres", "--classify", "DECISION", "--optional"],
         capture_output=True, text=True,
     )
     env = json.loads(out.stdout)

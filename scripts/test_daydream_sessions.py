@@ -103,6 +103,29 @@ class SessionMiningTests(unittest.TestCase):
         path = self.write("scope.jsonl", [self.event(content="Also add integration tests instead.")])
         self.assertEqual(self.mine(path)["counts"]["signals"], {"new_scope_heuristic": 1})
 
+    def test_scheduled_brief_is_not_human_feedback_but_tool_errors_survive(self):
+        brief = ("Automation: Daily Planner and follow-up insights\nAutomation ID: daily-brief\n"
+                 "Automation memory: $CODEX_HOME/automations/daily-brief/memory.md\n"
+                 "Last run: 2026-10-22T14:33:43Z\n\nActually fix the wrong output. Looks good.")
+        path = self.write("automation.jsonl", [self.event(content=brief),
+            self.event(role="tool_result", content="failed", is_error=True)])
+        self.assertEqual(self.mine(path)["counts"]["signals"], {"tool_error_observed": 1})
+
+    def test_human_correction_about_automation_is_retained(self):
+        for text in ["Actually fix the automation instead.",
+                     "No, the automation is wrong.\nAutomation: Daily Planner\nAutomation ID: daily-brief",
+                     "Automation: needs a fix instead of the current behavior."]:
+            with self.subTest(text=text):
+                path = self.write("human.jsonl", [self.event(content=text)])
+                self.assertEqual(self.mine(path)["counts"]["signals"].get("correction_heuristic"), 1)
+
+    def test_structured_heartbeat_is_not_correction(self):
+        text = ("<heartbeat>\n<automation_id>build-loop-dream</automation_id>"
+                "<current_time_iso>2026-10-23T15:57:48Z</current_time_iso>"
+                "<instructions>Actually fix the wrong result.</instructions></heartbeat>")
+        path = self.write("heartbeat.jsonl", [self.event(content=text)])
+        self.assertEqual(self.mine(path)["counts"]["signals"], {})
+
     def test_meta_quoted_and_fenced_corrections_are_not_feedback(self):
         path = self.write("meta.jsonl", [
             self.event(content="Actually wrong", isMeta=True),
@@ -353,7 +376,7 @@ class SessionMiningTests(unittest.TestCase):
     def test_method_fingerprints_current_rules_and_scanner(self):
         path = self.write("one.jsonl", [self.event()])
         method = self.mine(path)["method"]
-        self.assertEqual(method["rules_version"], "2026-10-21.2")
+        self.assertEqual(method["rules_version"], "2026-10-23.1")
         self.assertEqual(method["scanner_sha256"], hashlib.sha256(Path(ds.__file__).read_bytes()).hexdigest())
 
     def test_repeated_distinct_feedback_without_ids_counts_occurrences_not_documents(self):

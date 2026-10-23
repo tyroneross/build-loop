@@ -77,9 +77,7 @@ The orchestrator writes `state.execution.budget` at autonomous-mode start:
 
 ### Question timeout (autonomous auto-decide)
 
-In autonomous / `--long` mode a question that would otherwise block on the human auto-resolves if unanswered within a window, so an unattended run never stalls. When the orchestrator surfaces such a question it states a **recommended default** + a deadline; `scripts/question_timeout.py` is consulted (e.g. on a `ScheduleWakeup` resume) and returns `answered | take_default | wait`. On `take_default` the orchestrator takes the recommended option, records it to `state.execution.autonomousDefaults[]` + `auto-decision-capture`, continues, and lists every auto-decided question in the end-of-run readback for override (prefer the reversible option when deciding).
-
-**Never auto-resolves — waits indefinitely:** production push, destructive/irreversible delete, and anything the autonomy gate verdicts `confirm`/`block` (gates #1–#2 in `agents/build-orchestrator.md`). Only reversible / `user_impact: major` decisions (gate #3) and steering clarifications time out — the single production gate is preserved.
+Required owner answers never time out into approval. Continue independent authorized work while waiting. For the canonical required-versus-optional contract and `question_timeout.py --optional`, see `references/keep-going-policy.md` §"Core principle". Record optional defaults in the run readback; elapsed time cannot authorize a major product decision, production push or irreversible action.
 
 Config (`.build-loop/config.json.autonomy`): `questionTimeoutMinutes` (default 10), `onTimeout` (`decide_default` default | `wait`).
 

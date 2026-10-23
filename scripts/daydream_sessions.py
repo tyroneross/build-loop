@@ -47,7 +47,7 @@ except ImportError:
 
 SCHEMA = "build-loop.daydream-sessions.v1"
 NORMALIZED_SCHEMA = "daydream.session-event.v1"
-RULES_VERSION = "2026-10-21.2"
+RULES_VERSION = "2026-10-23.1"
 SCANNER_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 DIMENSIONS = ("host", "provider", "model", "effort", "project", "task", "harness", "session_id")
 HOSTS = ("codex", "claude", "cursor", "muse", "antigravity", "rosslabs")
@@ -57,6 +57,12 @@ DEFAULTS = {"max_documents": 24, "max_bytes_per_document": 8 << 20,
 POSITIVE = re.compile(r"\b(?:that works|looks good|tests? pass(?:ed)?|works correctly|much better|ship it)\b", re.I)
 SCOPE = re.compile(r"^\s*(?:also\b|additionally\b|next\b|now\b|please add\b|can you also\b)", re.I)
 CLARIFICATION = re.compile(r"^\s*(?:actually[,\s]+)?(?:what|how|which|why|when|where|define|explain|clarify)\b", re.I)
+AUTOMATION_BRIEF = re.compile(
+    r"\AAutomation: [^\n]+\nAutomation ID: [A-Za-z0-9_-]+\n"
+    r"Automation memory: [^\n]+\nLast run: [^\n]+(?:\n|\Z)")
+HEARTBEAT_BRIEF = re.compile(
+    r"\A<heartbeat>\s*<automation_id>[^<]+</automation_id>\s*"
+    r"<current_time_iso>[^<]+</current_time_iso>\s*<instructions>[\s\S]*</instructions>\s*</heartbeat>\s*\Z")
 TEST_PASS = re.compile(r"(?:\b\d+ passed\b|^OK\s*$|\bTest Suite .+ passed\b)", re.M)
 TEST_FAIL = re.compile(r"(?:\b[1-9]\d* failed\b|^FAILED\b|\bTest Suite .+ failed\b)", re.M)
 TEST_COMMAND = re.compile(r"(?:^|(?:&&|;|[|\n])\s*)(?:(?:uv run|poetry run|python3? -m)\s+)?(?:pytest|unittest|xcodebuild|swift test|npm (?:run )?test|pnpm (?:run )?test|cargo test)\b")
@@ -351,6 +357,12 @@ def _signals(event: dict) -> list[str]:
                 continue
             text = block.get("text", "")
             if not isinstance(text, str) or text.lstrip().startswith(META_PREFIXES):
+                continue
+            # Scheduled task envelopes are instructions, not human feedback.
+            # Anchor the full metadata header; ordinary corrections mentioning
+            # automation (or quoting a header later) must remain visible.
+            if (AUTOMATION_BRIEF.match(text.lstrip().replace("\r\n", "\n"))
+                    or HEARTBEAT_BRIEF.fullmatch(text.lstrip())):
                 continue
             # Quoted and fenced material is not owner feedback.
             text = re.sub(r"```.*?```", "", text, flags=re.S)
