@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import fnmatch
 import shlex
 import subprocess
 import sys
@@ -46,6 +45,44 @@ def _line_commands(line: str) -> set:
     return words
 
 
+def _heredoc_operators(line: str):
+    """Offsets of `<<` that the shell treats as heredoc operators: unquoted,
+    not `<<<`, and before an unquoted `#` comment. A quoted "<<EOF" argument or
+    a commented `# <<EOF` opens nothing, so the next lines stay commands."""
+    # `stack` holds the quote state outside each open $( ): inside "$( … )"
+    # the shell starts a fresh, unquoted context where heredocs are real.
+    quote, index, stack = None, 0, []
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if quote != "'" and line.startswith("$(", index):
+            stack.append(quote)
+            quote = None
+            index += 2
+            continue
+        if quote is None and char == ")" and stack:
+            quote = stack.pop()
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
+            return
+        elif line.startswith("<<<", index):
+            index += 3
+            continue
+        elif line.startswith("<<", index):
+            yield index
+            index += 2
+            continue
+        index += 1
+
+
 def _split_heredocs(command: str):
     """Separate heredoc bodies from shell text. A body is data for its reader;
     only a shell or interpreter reader turns it into code (checked by caller)."""
@@ -55,9 +92,12 @@ def _split_heredocs(command: str):
         line = lines[index]
         shell_lines.append(line)
         index += 1
-        if "<<" not in line or "<<<" in line:
+        if "<<" not in line:
             continue
-        for match in _HEREDOC.finditer(line):
+        for start in _heredoc_operators(line):
+            match = _HEREDOC.match(line, start)
+            if match is None:
+                continue
             strip_tabs = match.group(1) == "-"
             delimiter = match.group(2) or match.group(3) or match.group(4)
             quoted = match.group(4) is None or match.group(0).lstrip("<-").lstrip().startswith("\\")
@@ -80,28 +120,40 @@ def _python_calls_keychain(source: str) -> bool:
         return bool(_API.search(source))
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def _scope_match(pattern: str, url: str | None):
-    """Does `credential.<pattern>.helper` apply to `url`? True, False, or None
+    """Does `credential.<pattern>.helper` apply to `url`? Mirrors git urlmatch.c:
+    same scheme; same port after default-port normalisation; host labels equal
+    or a WHOLE label `*` (a partial `git*` matches only itself). Returns None
     when it cannot be decided statically (unknown URL, user or path scopes)."""
     if url is None or "://" not in pattern:
         return None
     try:
         want, have = urlsplit(pattern), urlsplit(url)
-        want_port, have_port = want.port, have.port
+        scheme = want.scheme.lower()
+        want_port = want.port or _DEFAULT_PORTS.get(scheme)
+        have_port = have.port or _DEFAULT_PORTS.get(have.scheme.lower())
     except ValueError:
         return None
-    if want.scheme.lower() != have.scheme.lower():
+    if scheme != have.scheme.lower() or want_port != have_port:
         return False
-    want_host, have_host = (want.hostname or "").lower(), (have.hostname or "").lower()
-    want_labels, have_labels = want_host.split("."), have_host.split(".")
+    want_labels = (want.hostname or "").lower().split(".")
+    have_labels = (have.hostname or "").lower().split(".")
     if len(want_labels) != len(have_labels) or not all(
-            fnmatch.fnmatchcase(h, w) for w, h in zip(want_labels, have_labels)):
-        return False
-    if want_port is not None and want_port != have_port:
+            w == "*" or w == h for w, h in zip(want_labels, have_labels)):
         return False
     if want.username or want.path not in {"", "/"}:
         return None
     return True
+
+
+def _rewrite(url: str, rules: dict) -> str:
+    """Apply git's longest-prefix url.<base>.insteadOf rewrite (remote.c):
+    base + the unmatched remainder of the URL."""
+    best = max((prefix for prefix in rules if url.startswith(prefix)), key=len, default=None)
+    return rules[best] + url[len(best):] if best is not None else url
 
 
 def _effective_helpers(pairs, url: str | None):
@@ -129,13 +181,162 @@ def _keychain_helper(chain) -> bool:
                for helper in chain)
 
 
+_PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+_GIT_CONTEXT_KEYS = (r"^(credential(\..*)?\.helper|remote\..*\.(url|pushurl)"
+                     r"|url\..*\.(insteadof|pushinsteadof)|http(\..*)?\.proxy"
+                     r"|submodule\..*\.url|fetch\.recursesubmodules)$")
+
+
+def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
+    """Could this git network command make git run a Keychain helper?
+
+    Git asks helpers per CONTEXT (a URL), so judge every context the command
+    can reach: the named remote(s) or URL arguments after insteadOf /
+    pushInsteadOf rewriting, submodule URLs a fetch/pull may recurse into, and
+    proxies. Anything that cannot be resolved statically (shell variables,
+    `git credential` stdin, clone --config/--recurse-submodules, transport::
+    syntax other than http(s), non-credential -c overrides, no URL at all) is
+    an UNKNOWN context: unscoped helpers apply and scoped resets do not.
+    Reads metadata with `git config` only; never runs a helper.
+    """
+    def read(args):
+        try:
+            result = subprocess.run([git, *prefix, *args], cwd=cwd, env=env,
+                                    capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout if result.returncode in (0, 1) else None
+
+    config = read(["config", "--get-regexp", _GIT_CONTEXT_KEYS])
+    if config is None:
+        return True
+    pairs, remotes, rules, push_rules, proxies, submodules = [], {}, {}, {}, [], []
+    recurse = ""
+    for line in config.splitlines():
+        key, _, value = line.partition(" ")
+        low = key.lower()
+        if low.startswith("credential.") and low.endswith(".helper"):
+            pairs.append((key, value))
+        elif low.startswith("remote.") and low.endswith((".url", ".pushurl")):
+            remotes.setdefault(key[len("remote."):key.rfind(".")], []).append(value)
+        elif low.startswith("url.") and low.endswith(".pushinsteadof"):
+            push_rules[value] = key[len("url."):key.rfind(".")]
+        elif low.startswith("url.") and low.endswith(".insteadof"):
+            rules[value] = key[len("url."):key.rfind(".")]
+        elif low.startswith("http") and low.endswith(".proxy"):
+            proxies.append(value)
+        elif low.startswith("submodule.") and low.endswith(".url"):
+            submodules.append(value)
+        elif low == "fetch.recursesubmodules":
+            recurse = value.lower()
+
+    unknown = sub == "credential"
+    for position, arg in enumerate(prefix):
+        if arg == "-c" and position + 1 < len(prefix):
+            name = prefix[position + 1].split("=", 1)[0].lower()
+            unknown |= not (name.startswith("credential.") and name.endswith(".helper"))
+    targets = []
+    for arg in rest:
+        if "$" in arg or "`" in arg:
+            unknown = True
+        elif arg.startswith("-"):
+            low = arg.lower()
+            if sub == "clone" and (low in {"-c", "--config", "--recursive"}
+                                   or low.startswith(("--config=", "--recurse-submodules"))):
+                unknown = True
+            if "=" in arg and ("://" in arg or "::" in arg):
+                targets.append(arg.split("=", 1)[1])
+        else:
+            targets.append(arg)
+
+    urls, named = [], False
+    for target in targets:
+        if target in remotes:
+            urls += remotes[target]
+            named = True
+        elif "://" in target or "::" in target or re.match(r"^[\w.-]+@[\w.-]+:", target):
+            urls.append(target)
+    if not named and sub != "clone":
+        for values in remotes.values():
+            urls += values
+    if (sub in {"fetch", "pull"} and "--no-recurse-submodules" not in rest
+            and recurse not in {"false", "no"}):
+        urls += submodules
+        top = read(["rev-parse", "--show-toplevel"])
+        gitmodules = Path(top.strip()) / ".gitmodules" if top and top.strip() else None
+        if gitmodules is not None and gitmodules.exists():
+            listed = read(["config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.url$"])
+            if listed is None:
+                unknown = True
+            else:
+                urls += [line.partition(" ")[2] for line in listed.splitlines()]
+    proxies += [env[name] for name in _PROXY_ENV if env.get(name)]
+    urls += [proxy if "://" in proxy else "http://" + proxy for proxy in proxies if proxy]
+    unknown |= not urls
+
+    contexts = []
+    for url in urls:
+        if url.startswith(("./", "../")):
+            continue  # relative submodule URL: resolves onto the remote's own host
+        if "::" in url.split("://", 1)[0]:
+            transport, _, url = url.partition("::")
+            if transport.lower() not in {"http", "https"}:
+                unknown = True
+                continue
+        rewrites = {_rewrite(url, rules)}
+        if sub == "push":
+            rewrites.add(_rewrite(url, push_rules))
+        for rewritten in rewrites:
+            if rewritten.lower().startswith(("http://", "https://")):
+                contexts.append(rewritten)
+            elif "::" in rewritten.split("://", 1)[0]:
+                unknown = True
+    if unknown:
+        contexts.append(None)
+    return any(_keychain_helper(_effective_helpers(pairs, context)) for context in contexts)
+
+
+def _strip_comments(command: str) -> str:
+    """Drop unquoted `#` comments but keep the newline that ends each one.
+    shlex's own comment handling eats that newline, which glued the next line's
+    command onto the commented one (`echo hi # c` + newline + `security …`)."""
+    out, quote, index, stack = [], None, 0, []
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and quote != "'":
+            out.append(command[index:index + 2])
+            index += 2
+            continue
+        if quote != "'" and command.startswith("$(", index):
+            stack.append(quote)
+            quote = None
+            out.append("$(")
+            index += 2
+            continue
+        if quote is None and char == ")" and stack:
+            quote = stack.pop()
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "#" and (index == 0 or command[index - 1] in " \t\n;&|("):
+            end = command.find("\n", index)
+            index = len(command) if end == -1 else end
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def _segments(command: str):
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+    lexer = shlex.shlex(_strip_comments(command), posix=True, punctuation_chars=";&|()\n")
+    lexer.commenters = ""
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     current = []
     for token in lexer:
-        if token in {";", "&&", "||", "|", "&", "(", ")"}:
+        if token and set(token) <= set(";&|()\n"):  # separators, incl. newline runs
             if current:
                 yield current
             current = []
@@ -187,6 +388,13 @@ def command_reason(command: str, *, cwd: str | None = None,
     platform = sys.platform if platform is None else platform
     command, bodies = _split_heredocs(command)
     for quoted, readers, body in bodies:
+        if not quoted:
+            # The shell expands $( ) and backticks in an unquoted body BEFORE
+            # any reader sees it, and quotes inside the body do not protect.
+            for inner in _substitutions(body.replace("'", " ").replace('"', " ")):
+                if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
+                                  environment=environment, cwd_uncertain=cwd_uncertain):
+                    return REFUSAL
         interpreters = {r for r in readers if r.startswith(_INTERPRETERS)}
         if not readers <= _DATA_READERS | interpreters:
             # A shell, eval, source, xargs or unknown reader may execute it.
@@ -199,13 +407,10 @@ def command_reason(command: str, *, cwd: str | None = None,
             return REFUSAL
         if interpreters - {r for r in interpreters if r.startswith("python")} and _API.search(body):
             return REFUSAL
-        if not quoted:
-            for inner in _substitutions(body):
-                if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
-                                  environment=environment, cwd_uncertain=cwd_uncertain):
-                    return REFUSAL
     try:
-        segments = list(_segments(command.replace("\n", ";")))
+        # Newline is a separator token, so a `#` comment ends at its line
+        # instead of swallowing every later command.
+        segments = list(_segments(command))
     except ValueError:
         return REFUSAL if _API.search(command) else None
     # Substitutions are expanded in their surrounding shell context. If this
@@ -316,34 +521,8 @@ def command_reason(command: str, *, cwd: str | None = None,
             if command_cwd_uncertain or inline_config or any(a.startswith("--config-env") for a in prefix):
                 return REFUSAL
             if helpers is None:
-                # One `git config` read (metadata only; no helper runs). Keys
-                # arrive in git's own reading order: system, global, local, -c.
-                try:
-                    result = subprocess.run(
-                        [argv[0], *prefix, "config", "--get-regexp",
-                         r"^(credential(\..*)?\.helper|remote\..*\.(url|pushurl)|url\..*\.(insteadof|pushinsteadof))$"],
-                        cwd=cwd, env=effective_environment, capture_output=True, text=True, timeout=2)
-                except (OSError, subprocess.SubprocessError):
-                    return REFUSAL
-                if result.returncode not in (0, 1):
-                    return REFUSAL
-                pairs, urls = [], []
-                for line in result.stdout.splitlines():
-                    key, _, value = line.partition(" ")
-                    lowered = key.lower()
-                    if lowered.startswith("credential.") and lowered.endswith(".helper"):
-                        pairs.append((key, value))
-                    elif lowered.endswith((".url", ".pushurl")):
-                        urls.append(value)
-                    else:  # url.<base>.insteadof: a rewrite can target <base>
-                        urls.append(key[len("url."):key.rfind(".")])
-                urls += [arg for arg in argv[index + 1:] if "://" in arg]
-                # Only http(s) remotes consult credential helpers (ssh and local
-                # paths never do). With no remote at all, judge an unknown URL:
-                # scoped helpers count, scoped resets don't.
-                http = [url for url in urls if url.lower().startswith(("http://", "https://"))]
-                urls = http if urls else [None]
-                if any(_keychain_helper(_effective_helpers(pairs, url)) for url in urls):
+                if _git_may_use_keychain(argv[0], prefix, argv[index], argv[index + 1:],
+                                         cwd, effective_environment):
                     return REFUSAL
                 continue
             else:

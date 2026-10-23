@@ -139,11 +139,19 @@ class CredentialPolicyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny', command)
 
-    def decide(self, config_lines, command='git fetch origin'):
-        result = subprocess.CompletedProcess([], 0, ''.join(line + '\n' for line in config_lines), '')
-        with patch('credential_policy.subprocess.run', return_value=result) as runner:
-            reason = command_reason(command, platform='darwin')
-        self.assertIn('--get-regexp', runner.call_args.args[0])
+    def decide(self, config_lines, command='git fetch origin', environment=None):
+        config = ''.join(line + '\n' for line in config_lines)
+
+        def fake_git(argv, **kwargs):
+            # Only metadata reads happen: the context config read, and the
+            # superproject lookup (answered "no work tree" so no .gitmodules).
+            if '--get-regexp' in argv:
+                return subprocess.CompletedProcess(argv, 0, config, '')
+            return subprocess.CompletedProcess(argv, 1, '', '')
+
+        with patch('credential_policy.subprocess.run', side_effect=fake_git) as runner:
+            reason = command_reason(command, platform='darwin', environment=environment or {})
+        self.assertTrue(any('--get-regexp' in call.args[0] for call in runner.call_args_list))
         return reason
 
     # Git keeps ONE helper list per URL in config order; an empty value clears
@@ -162,9 +170,40 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_keychain_still_applies_to_other_hosts_and_unknown_urls(self):
         self.assertIsNotNone(self.decide(self.GH_SETUP + ['remote.origin.url https://gitlab.com/o/r.git']))
         self.assertIsNotNone(self.decide(self.GH_SETUP))  # no remote: URL unknown
-        self.assertIsNotNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git',
-                                                          'remote.mirror.url https://example.com/r.git']))
+        two_remotes = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git',
+                                       'remote.mirror.url https://example.com/r.git']
+        self.assertIsNone(self.decide(two_remotes, 'git fetch origin'))   # only origin's context
+        self.assertIsNotNone(self.decide(two_remotes, 'git fetch mirror'))
+        self.assertIsNotNone(self.decide(two_remotes, 'git fetch'))       # remote unnamed: all
         self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://example.com/r.git'))
+        self.assertIsNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git'))
+
+    # Shapes from the independent Codex review of 9d7f68f3 (2026-10-23): each
+    # was allowed there while git would still run osxkeychain.
+    def test_review_shapes_that_still_reach_the_keychain_are_refused(self):
+        gh = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']
+        cases = [
+            (self.GH_SETUP + ['remote.origin.url https://github.com:8443/o/r.git'], 'git fetch origin', None),
+            (['credential.helper osxkeychain', 'credential.https://git*.com.helper ',
+              'remote.origin.url https://github.com/o/r.git'], 'git fetch origin', None),
+            (self.GH_SETUP + ['remote.origin.url alias:.evil.example/o/r.git',
+                              'url.https://github.com.insteadof alias:'], 'git fetch origin', None),
+            (gh, 'git fetch "$TARGET_URL"', None),
+            (gh, 'git credential fill', None),
+            (self.GH_SETUP, 'git clone --config credential.helper=osxkeychain https://github.com/o/r.git', None),
+            (self.GH_SETUP, 'git clone --recurse-submodules https://github.com/o/r.git', None),
+            (gh, 'git -c http.proxy=http://alice@proxy.example:8080 fetch origin', None),
+            (gh, 'git fetch origin', {'HTTPS_PROXY': 'http://alice@proxy.example:8080'}),
+            (['credential.helper osxkeychain'], 'git fetch https::https://gitlab.com/o/r.git', None),
+            (gh + ['submodule.lib.url https://gitlab.com/o/lib.git'], 'git pull', None),
+        ]
+        for config, command, environment in cases:
+            with self.subTest(command=command, config=config[-1]):
+                self.assertIsNotNone(self.decide(config, command, environment))
+        # The explicit default port is the same context as none.
+        self.assertIsNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com:443/o/r.git']))
+        self.assertIsNone(self.decide(gh + ['submodule.lib.url https://gitlab.com/o/lib.git'],
+                                      'git fetch --no-recurse-submodules origin'))
 
     def test_a_later_unscoped_reset_clears_earlier_scoped_helpers(self):
         self.assertIsNone(self.decide(['credential.https://github.com.helper osxkeychain', 'credential.helper ',
@@ -198,7 +237,12 @@ class CredentialPolicyTests(unittest.TestCase):
                         'eval "$(cat <<\'EOF\'\nsecurity find-generic-password\nEOF\n)"',
                         "source /dev/stdin <<'EOF'\nsecurity find-generic-password\nEOF",
                         "xargs -I{} sh -c {} <<'EOF'\nsecurity find-generic-password\nEOF",
-                        "cd /tmp && bash -s <<'EOF'\nsecurity find-generic-password\nEOF"]:
+                        "cd /tmp && bash -s <<'EOF'\nsecurity find-generic-password\nEOF",
+                        "# <<EOF\nsecurity find-generic-password\nEOF",
+                        "echo hi # trailing comment\nsecurity find-generic-password",
+                        'echo "<<EOF"\nsecurity find-generic-password\nEOF',
+                        "cat <<EOF\n'$(security find-generic-password)'\nEOF",
+                        "python3 - <<EOF\nprint('$(security find-generic-password)')\nEOF"]:
             with self.subTest(command=command):
                 self.assertIsNotNone(self.reason(command))
 
