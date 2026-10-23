@@ -186,13 +186,19 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_heredoc_bodies_are_data_unless_a_shell_or_interpreter_reads_them(self):
         for command in ["cat > notes.md <<'EOF'\n`git fetch` was blocked; security find-generic-password\nEOF",
                         "python3 - <<'EOF'\nprint('keyring.get_password is mentioned only')\nEOF\necho done",
-                        'cat <<-EOF\n\tgit push origin main\n\tEOF']:
+                        'cat <<-EOF\n\tgit push origin main\n\tEOF',
+                        "cd /tmp && python3 - <<'EOF'\nsecurity = 'not a command'\nprint(security)\nEOF"]:
             with self.subTest(command=command):
                 self.assertIsNone(self.reason(command))
         for command in ["bash <<'EOF'\nsecurity find-generic-password\nEOF",
                         "python3 - <<'EOF'\nimport keyring\nkeyring.get_password('s', 'u')\nEOF",
                         'cat <<EOF\n$(security find-generic-password)\nEOF',
-                        "cat <<'EOF'\ntext\nEOF\nsecurity find-generic-password"]:
+                        "cat <<'EOF'\ntext\nEOF\nsecurity find-generic-password",
+                        "cat <<'EOF' | sh\nsecurity find-generic-password\nEOF",
+                        'eval "$(cat <<\'EOF\'\nsecurity find-generic-password\nEOF\n)"',
+                        "source /dev/stdin <<'EOF'\nsecurity find-generic-password\nEOF",
+                        "xargs -I{} sh -c {} <<'EOF'\nsecurity find-generic-password\nEOF",
+                        "cd /tmp && bash -s <<'EOF'\nsecurity find-generic-password\nEOF"]:
             with self.subTest(command=command):
                 self.assertIsNotNone(self.reason(command))
 

@@ -19,21 +19,31 @@ REFUSAL = (
 )
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
 _NETWORK = {"push", "pull", "fetch", "clone", "ls-remote", "credential"}
-_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _HEREDOC = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z_0-9]*))")
 
 
-def _heredoc_exe(before: str) -> str:
-    """Executable that receives a heredoc opened at the end of `before`."""
-    segment = re.split(r"&&|\|\||[;|&]", before)[-1]
-    try:
-        tokens = shlex.split(segment, posix=True)
-    except ValueError:
-        tokens = segment.split()
-    tokens = [t for t in tokens if not re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t)]
-    while tokens and Path(tokens[0]).name in {"env", "sudo", "command", "exec", "nohup"}:
-        tokens = [t for t in tokens[1:] if not t.startswith("-")]
-    return Path(tokens[0]).name if tokens else ""
+# Readers that only pass text along. A heredoc body is data only when EVERY
+# command on its line is one of these; `cat <<EOF | sh` or `eval "$(cat <<EOF`
+# execute the body, so any other command word makes the body a script.
+_DATA_READERS = {"cat", "tee", "wc", "head", "tail", "sort", "uniq", "grep", "rg",
+                 "jq", "diff", "cut", "tr", "column", "fold", "pbcopy", "echo", "printf",
+                 # these do not read stdin at all
+                 "cd", "mkdir", "export", "set", "true", ":", "test", "[", "ls"}
+_INTERPRETERS = ("python", "swift", "osascript")
+
+
+def _line_commands(line: str) -> set:
+    """Every command word on one shell line, including inside $( ) and backticks."""
+    words = set()
+    for piece in re.split(r"&&|\|\||\$\(|[;|&()`]", line):
+        piece = re.sub(r"<<-?\s*\S+", " ", piece)
+        tokens = [t for t in piece.split() if not re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t)]
+        tokens = [t.strip("\"'") for t in tokens]
+        while tokens and Path(tokens[0]).name in {"env", "sudo", "command", "exec", "nohup", "time"}:
+            tokens = [t for t in tokens[1:] if not t.startswith("-")]
+        if tokens and not re.match(r"^[0-9]*[<>]", tokens[0]):
+            words.add(Path(tokens[0]).name)
+    return words
 
 
 def _split_heredocs(command: str):
@@ -58,7 +68,7 @@ def _split_heredocs(command: str):
                 if candidate == delimiter:
                     break
                 body.append(lines[index - 1])
-            bodies.append((quoted, _heredoc_exe(line[:match.start()]), "\n".join(body)))
+            bodies.append((quoted, _line_commands(line), "\n".join(body)))
     return "\n".join(shell_lines), bodies
 
 
@@ -176,15 +186,20 @@ def command_reason(command: str, *, cwd: str | None = None,
     environment = os.environ if environment is None else environment
     platform = sys.platform if platform is None else platform
     command, bodies = _split_heredocs(command)
-    for quoted, reader, body in bodies:
-        if reader in _SHELLS:
-            if command_reason(body, cwd=cwd, helpers=helpers, platform=platform,
-                              environment=environment, cwd_uncertain=cwd_uncertain):
+    for quoted, readers, body in bodies:
+        interpreters = {r for r in readers if r.startswith(_INTERPRETERS)}
+        if not readers <= _DATA_READERS | interpreters:
+            # A shell, eval, source, xargs or unknown reader may execute it.
+            if _API.search(body) or command_reason(
+                    body, cwd=cwd, helpers=helpers, platform=platform,
+                    environment=environment, cwd_uncertain=cwd_uncertain):
                 return REFUSAL
-        elif reader.startswith(("python", "swift", "osascript")):
-            if (_python_calls_keychain(body) if reader.startswith("python") else _API.search(body)):
-                return REFUSAL
-        elif not quoted:
+            continue
+        if any(r.startswith("python") for r in interpreters) and _python_calls_keychain(body):
+            return REFUSAL
+        if interpreters - {r for r in interpreters if r.startswith("python")} and _API.search(body):
+            return REFUSAL
+        if not quoted:
             for inner in _substitutions(body):
                 if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
                                   environment=environment, cwd_uncertain=cwd_uncertain):
