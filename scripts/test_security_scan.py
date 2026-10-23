@@ -983,6 +983,20 @@ class TestSpotCacheAndBudget(_DiffScanBase):
         cache.put(legacy, [], key)
         self.assertIsNone(cache.get(legacy), "a pre-edit key must not match the edited file")
 
+    def test_an_edit_that_restores_size_and_mtime_is_still_seen(self):
+        """Final review: size + mtime alone can be restored (touch -r, rsync -t)."""
+        d = self._repo_with_legacy_secret()
+        legacy = d / "src/legacy.ts"
+        secret = legacy.read_text(encoding="utf-8")
+        legacy.write_text("// " + "x" * (len(secret) - 4) + "\n", encoding="utf-8")  # clean, same size
+        before = legacy.stat()
+        self._scan(d, "--diff", "HEAD~1", "--spot-check")  # caches the clean result
+        legacy.write_text(secret, encoding="utf-8")  # secret back, same size
+        os.utime(legacy, ns=(before.st_atime_ns, before.st_mtime_ns))  # mtime restored
+        _, data = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertTrue(self._has_secret(data, "src/legacy.ts"),
+                        "a restored mtime must not revive the clean cached result")
+
     def test_two_scan_roots_in_one_repo_never_share_entries(self):
         d = self._mkdir()
         self._init(d)

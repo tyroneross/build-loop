@@ -228,6 +228,14 @@ def _keychain_helper(chain) -> bool:
         words = text.lstrip("!").split()
         if words and Path(words[0]).name in {"store", "git-credential-store"}:
             return True
+        if text.startswith("!"):
+            # `!gh auth git-credential` is the owner-approved connection
+            # (AGENTS.md, 2026-10-23); any other shell helper is judged as a
+            # command, so `!security find-generic-password …` is refused.
+            if len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]:
+                continue
+            if command_reason(text[1:], platform="darwin", environment={}, helpers=[]):
+                return True
     return False
 
 
@@ -257,13 +265,16 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
             return None
         return result.stdout if result.returncode in (0, 1) else None
 
-    config = read(["config", "--get-regexp", _GIT_CONTEXT_KEYS])
+    config = read(["config", "-z", "--get-regexp", _GIT_CONTEXT_KEYS])
     if config is None:
         return True
     pairs, remotes, rules, push_rules, proxies, submodules = [], {}, {}, {}, [], []
     recurse = ""
-    for line in config.splitlines():
-        key, _, value = line.partition(" ")
+    # -z records: "key\nvalue\0" (key alone when the value is absent).
+    for record in config.split("\0"):
+        if not record:
+            continue
+        key, _, value = record.partition("\n")
         low = key.lower()
         if low.startswith("credential.") and low.endswith(".helper"):
             pairs.append((key, value))
@@ -342,11 +353,11 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
         top = read(["rev-parse", "--show-toplevel"])
         gitmodules = Path(top.strip()) / ".gitmodules" if top and top.strip() else None
         if gitmodules is not None and gitmodules.exists():
-            listed = read(["config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.url$"])
+            listed = read(["config", "-z", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.url$"])
             if listed is None:
                 unknown = True
             else:
-                urls += [line.partition(" ")[2] for line in listed.splitlines()]
+                urls += [record.partition("\n")[2] for record in listed.split("\0") if record]
     proxies += [env[name] for name in _PROXY_ENV if env.get(name)]
     urls += [proxy if "://" in proxy else "http://" + proxy for proxy in proxies if proxy]
     unknown |= not urls
@@ -397,6 +408,37 @@ def _piped_scripts(command: str):
             stage = []
         else:
             stage.append(token)
+
+
+_CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list",
+                 "get", "list", "--show-origin", "--show-scope", "--name-only"}
+_CONFIG_FILES = re.compile(r"gitconfig|\.git/config|\.config/git/|\.gitmodules|config\.worktree")
+
+
+def _writes_git_config(argv) -> bool:
+    """Does this segment change git configuration or remotes?"""
+    if any(_CONFIG_FILES.search(token) for token in argv
+           if token.startswith((">", "1>", "2>")) or Path(argv[0]).name == "tee"):
+        return True
+    for position, token in enumerate(argv[:-1]):
+        if token in {">", ">>", "1>", "1>>"} and _CONFIG_FILES.search(argv[position + 1]):
+            return True
+    if not argv or Path(argv[0]).name != "git":
+        return False
+    index = 1
+    while index < len(argv) and argv[index].startswith("-"):
+        index += 2 if argv[index] in {"-c", "-C", "--git-dir", "--work-tree"} else 1
+    if index >= len(argv):
+        return False
+    sub, rest = argv[index], argv[index + 1:]
+    if sub == "config":
+        return not any(arg in _CONFIG_READS for arg in rest) and len([a for a in rest if not a.startswith("-")]) >= 2 \
+            or any(arg in {"--add", "--unset", "--unset-all", "--replace-all", "--edit", "-e", "set", "unset",
+                           "--remove-section", "--rename-section"} for arg in rest)
+    if sub == "remote":
+        verb = next((a for a in rest if not a.startswith("-")), "")
+        return verb in {"add", "set-url", "rename", "remove", "rm"}
+    return sub in {"submodule"} and any(a in {"add", "set-url", "init", "sync"} for a in rest)
 
 
 def _git_alias(git, prefix, name, cwd, env):
@@ -549,6 +591,7 @@ def command_reason(command: str, *, cwd: str | None = None,
     git_env_changed = any(_GIT_ENV.match(token) for argv in segments for token in argv
                           if argv and (Path(argv[0]).name in {"export", "declare", "typeset", "readonly", "local"}
                                        or all(re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t) for t in argv)))
+    git_env_changed = git_env_changed or any(_writes_git_config(argv) for argv in segments)
     for argv in segments:
         command_cwd_uncertain = cwd_uncertain
         effective_environment = dict(environment)

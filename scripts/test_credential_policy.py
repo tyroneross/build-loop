@@ -148,10 +148,11 @@ class CredentialPolicyTests(unittest.TestCase):
             # Only metadata reads happen: the context config read, alias
             # lookups, and the superproject lookup (answered "no work tree").
             if '--get-regexp' in argv:
-                # Like git: `-c k=v` values are read last, after every file.
-                inline = ''.join(argv[i + 1].replace('=', ' ', 1) + '\n'
-                                 for i, arg in enumerate(argv[:-1]) if arg == '-c')
-                return subprocess.CompletedProcess(argv, 0, config + inline, '')
+                # Like git -z: "key\nvalue\0" records; `-c k=v` values come last.
+                records = [line.partition(' ')[::2] for line in config_lines]
+                records += [tuple(argv[i + 1].split('=', 1)) for i, arg in enumerate(argv[:-1]) if arg == '-c']
+                out = ''.join(f'{key}\n{value}\0' for key, value in records)
+                return subprocess.CompletedProcess(argv, 0, out, '')
             if '--get' in argv:
                 key = argv[argv.index('--get') + 1]
                 found = key in values
@@ -237,6 +238,27 @@ class CredentialPolicyTests(unittest.TestCase):
         for config, command in round2:
             with self.subTest(command=command, config=config[-1]):
                 self.assertIsNotNone(self.decide(config, command))
+        # Final review (round 3): shapes the ORIGINAL policy refused that the
+        # rewritten one briefly allowed.
+        round3 = [
+            (self.GH_SETUP[:2] + ['credential.https://github.com.helper !security find-generic-password -w; :',
+                                  'remote.origin.url https://github.com/o/r.git'], 'git fetch origin'),
+            (gh, "git config --local --add credential.helper ''; "
+                 "git config --local --add credential.helper osxkeychain; git fetch origin"),
+            (gh, 'git remote set-url origin https://gitlab.com/o/r.git && git fetch origin'),
+            (gh, "printf '[credential]\\n\\thelper = osxkeychain\\n' >> .git/config; git fetch origin"),
+        ]
+        for config, command in round3:
+            with self.subTest(command=command, config=config[-2]):
+                self.assertIsNotNone(self.decide(config, command))
+        # A value containing newlines stays ONE value (git config -z): it cannot
+        # forge a scoped reset record.
+        forged = ['credential.helper osxkeychain get\ncredential.https://github.com.helper \n'
+                  'credential.https://github.com.helper !gh auth git-credential',
+                  'remote.origin.url https://github.com/o/r.git']
+        self.assertIsNotNone(self.decide(forged, 'git fetch origin'))
+        # A plain read of git config in the same command changes nothing.
+        self.assertIsNone(self.decide(gh, 'git config --get remote.origin.url && git fetch origin'))
         # fetch uses url, not pushurl: an unused push destination is not consulted.
         self.assertIsNone(self.decide(gh + ['remote.origin.pushurl https://gitlab.com/o/r.git'],
                                       'git fetch origin'))

@@ -479,8 +479,11 @@ class SpotCache:
         return digest.hexdigest()[:16]
 
     def _key(self, path: Path):
+        # ctime_ns changes on every content write and cannot be set back by
+        # tools that restore mtime (touch -r, rsync -t); inode catches a file
+        # replaced by another of equal size and times.
         stat = path.stat()
-        return [stat.st_size, stat.st_mtime_ns]
+        return [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino]
 
     def key_before_read(self, path: Path):
         try:
