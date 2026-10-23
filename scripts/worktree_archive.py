@@ -143,7 +143,9 @@ def _git(path: Path, *args: str, timeout: float = _GIT_TIMEOUT_S, text: bool = T
 def head_of(path: str | os.PathLike[str], timeout: float = _GIT_TIMEOUT_S) -> tuple[str | None, str | None]:
     try:
         proc = _git(Path(path), "rev-parse", "--verify", "-q", "HEAD", timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired:
+        return None, "timeout: git rev-parse HEAD did not finish"
+    except OSError as exc:
         return None, f"git rev-parse failed: {exc}"
     if proc.returncode != 0:
         return None, (proc.stderr or proc.stdout).strip() or "git rev-parse HEAD failed"
@@ -216,6 +218,36 @@ def _status(wt: Path, timeout: float) -> tuple[list[tuple[str, str]], list[str]]
     return entries, warnings
 
 
+class BudgetExceeded(Exception):
+    pass
+
+
+def _index_info(wt: Path, timeout: float) -> tuple[str, list[str], list[str]]:
+    """(digest of staged entries, assume-unchanged/skip-worktree paths, submodule paths).
+
+    `git status` and `git diff` hide edits to files marked assume-unchanged
+    (lowercase tag) or skip-worktree ('S'), so those files are kept outright.
+    Hashing the stage listing binds the receipt to the index: an index-only
+    edit after archiving changes the digest.
+    """
+    proc = _git(wt, "ls-files", "-s", "-v", "-z", timeout=timeout, text=False)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or b"").decode("utf-8", "replace").strip() or "git ls-files failed")
+    hidden, subs = [], []
+    for rec in proc.stdout.split(b"\0"):
+        if not rec:
+            continue
+        meta, _, raw = rec.partition(b"\t")
+        parts = meta.split(b" ")
+        rel = os.fsdecode(raw)
+        tag = parts[0].decode("ascii", "replace") if parts else ""
+        if tag.islower() or tag == "S":
+            hidden.append(rel)
+        if len(parts) > 1 and parts[1] == b"160000":
+            subs.append(rel)
+    return hashlib.sha256(proc.stdout).hexdigest(), hidden, subs
+
+
 class Snapshot:
     def __init__(self) -> None:
         self.files: dict[str, str] = {}        # rel -> kind (tracked_change|untracked|ignored)
@@ -223,13 +255,16 @@ class Snapshot:
         self.caches: list[str] = []            # cache roots/files listed, not archived
         self.cache_valuable: list[str] = []    # credential-shaped files inside cache roots
         self.incomplete: list[str] = []        # reasons the inventory is not whole
+        self.index_digest = ""                 # sha256 of `git ls-files -s -v` (staged blobs)
 
 
 def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
-             deadline: float | None = None, timeout: float = _GIT_TIMEOUT_S) -> Snapshot:
+             deadline: float | None = None, timeout: float = _GIT_TIMEOUT_S, _depth: int = 0) -> Snapshot:
     snap = Snapshot()
     entries, warnings = _status(wt, timeout)
     snap.incomplete += [f"git warned: {w}" for w in warnings]
+    snap.index_digest, hidden, submodules = _index_info(wt, timeout)
+    subset = set(submodules)
     budget = [CACHE_SCAN_BUDGET]
 
     def over_time() -> bool:
@@ -244,6 +279,9 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
             return
         errors: list[OSError] = []
         for dirpath, dirnames, filenames in os.walk(root, onerror=errors.append):
+            if over_time():
+                snap.incomplete.append("time budget exhausted while listing files")
+                return
             budget[0] -= len(dirnames) + len(filenames)
             if budget[0] < 0:
                 snap.incomplete.append(f"{rel_root}/ is too large to search for credential-shaped "
@@ -290,6 +328,8 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
             snap.incomplete.append(f"could not read {errors[0].filename} ({errors[0].strerror})")
 
     for code, rel in entries:
+        if rel.rstrip("/") in subset:
+            continue  # submodule: its own contents are snapshotted below
         if code == "??" or code == "!!":
             kind = "untracked" if code == "??" else "ignored"
             path = wt / rel.rstrip("/")
@@ -302,13 +342,40 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
             path = wt / rel
             if path.is_symlink() or path.exists():
                 snap.files.setdefault(rel, "tracked_change")
+    for rel in hidden:
+        if (wt / rel).is_symlink() or (wt / rel).is_file():
+            snap.files.setdefault(rel, "tracked_hidden")
+    # Submodules: superproject status reports a dirty submodule as one path and
+    # never lists its ignored files, so each checked-out submodule is
+    # snapshotted in full and merged under its prefix.
+    for sub in submodules:
+        sub_wt = wt / sub
+        if not (sub_wt / ".git").exists():
+            continue
+        if _depth >= 4:
+            snap.incomplete.append(f"submodule nesting too deep at {sub}")
+            continue
+        try:
+            inner = snapshot(sub_wt, scan_caches=scan_caches, include_caches=include_caches,
+                             deadline=deadline, timeout=timeout, _depth=_depth + 1)
+        except RuntimeError as exc:
+            snap.incomplete.append(f"could not inventory submodule {sub} ({exc})")
+            continue
+        pre = sub.rstrip("/") + "/"
+        for rel, kind in inner.files.items():
+            snap.files.setdefault(pre + rel, kind)
+        snap.codes.update({pre + r: c for r, c in inner.codes.items()})
+        snap.caches += [pre + c for c in inner.caches]
+        snap.cache_valuable += [pre + c for c in inner.cache_valuable]
+        snap.incomplete += [f"submodule {sub}: {r}" for r in inner.incomplete]
+        snap.index_digest = hashlib.sha256((snap.index_digest + sub + inner.index_digest).encode()).hexdigest()
     snap.caches = sorted(set(snap.caches))
     snap.cache_valuable = sorted(set(snap.cache_valuable))
     return snap
 
 
 def fingerprint(wt: Path, snap: Snapshot, cache_valuable: list[str]) -> str:
-    """Content binding: sizes + mtimes of everything kept, status codes, caches."""
+    """Content binding: sizes + mtimes of everything kept, status codes, index."""
     lines = []
     for rel in sorted(set(snap.files) | set(cache_valuable)):
         try:
@@ -317,7 +384,9 @@ def fingerprint(wt: Path, snap: Snapshot, cache_valuable: list[str]) -> str:
         except OSError:
             lines.append(f"f\0{rel}\0missing")
     lines += [f"s\0{rel}\0{code}" for rel, code in sorted(snap.codes.items())]
-    lines += [f"c\0{rel}" for rel in snap.caches]
+    # Cache roots are deliberately NOT bound: they are regenerable, and a new
+    # `__pycache__/` from merely importing a module would void every receipt.
+    lines.append(f"i\0{snap.index_digest}")
     return hashlib.sha256("\n".join(lines).encode("utf-8", "surrogateescape")).hexdigest()
 
 
@@ -342,10 +411,12 @@ def _branch_of(wt: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
-def _hash_file(path: Path) -> str:
+def _hash_file(path: Path, deadline: float | None = None) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
+            if deadline is not None and time.monotonic() > deadline:
+                raise BudgetExceeded("hashing the archive")
             h.update(chunk)
     return h.hexdigest()
 
@@ -385,6 +456,7 @@ def archive(path: str | os.PathLike[str], *, dest: str | os.PathLike[str] | None
     snap = snapshot(wt, scan_caches=True, include_caches=include_caches)
     if snap.incomplete:
         raise RuntimeError("inventory incomplete, no receipt issued: " + "; ".join(snap.incomplete))
+    fp_before = fingerprint(wt, snap, snap.cache_valuable)
     staged = _git(wt, "diff", "--cached", "--binary", text=False)
     unstaged = _git(wt, "diff", "--binary", text=False)
     if staged.returncode != 0 or unstaged.returncode != 0:
@@ -410,13 +482,16 @@ def archive(path: str | os.PathLike[str], *, dest: str | os.PathLike[str] | None
     fd = os.open(archive_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as fh, tarfile.open(fileobj=fh, mode="w:gz") as tar:
-            for item in listed:
-                tar.add(str(wt / item["path"].rstrip("/")), arcname=f"{wt.name}/{item['path'].rstrip('/')}",
-                        recursive=False)
+            _tar_files(tar, wt, listed)
             _add_bytes(tar, "__worktree_archive__/staged.patch", staged.stdout)
             _add_bytes(tar, "__worktree_archive__/unstaged.patch", unstaged.stdout)
             _add_bytes(tar, "__worktree_archive__/status.json",
                        json.dumps(snap.codes, indent=2, sort_keys=True).encode())
+        # Close the archive-time race: files edited while tar ran would bind
+        # their new metadata to old archived bytes.
+        after = snapshot(wt, scan_caches=False, include_caches=include_caches)
+        if after.incomplete or fingerprint(wt, after, snap.cache_valuable) != fp_before:
+            raise RuntimeError("files changed while the archive was being written; no receipt issued, re-run")
     except BaseException:
         archive_path.unlink(missing_ok=True)
         raise
@@ -429,7 +504,7 @@ def archive(path: str | os.PathLike[str], *, dest: str | os.PathLike[str] | None
         "branch": _branch_of(wt),
         "created_at": now.isoformat(timespec="microseconds"),
         "created_at_epoch": now.timestamp(),
-        "fingerprint": fingerprint(wt, snap, snap.cache_valuable),
+        "fingerprint": fp_before,
         "archive_path": str(archive_path),
         "archive_bytes": st.st_size,
         "archive_mtime_ns": st.st_mtime_ns,
@@ -457,6 +532,12 @@ def archive(path: str | os.PathLike[str], *, dest: str | os.PathLike[str] | None
     return receipt
 
 
+def _tar_files(tar: tarfile.TarFile, wt: Path, listed: list[dict[str, Any]]) -> None:
+    for item in listed:
+        rel = item["path"].rstrip("/")
+        tar.add(str(wt / rel), arcname=f"{wt.name}/{rel}", recursive=False)
+
+
 def _finite(value: Any) -> float | None:
     try:
         f = float(value)
@@ -470,7 +551,8 @@ def receipt_verdict(path: str | os.PathLike[str], *, now: float | None = None,
     """Judge whether a removal of `path` is covered by a receipt.
 
     Verdicts: ok · missing · stale (expired, HEAD moved, files changed, archive
-    altered) · invalid (malformed receipt) · git_error (fail open) · timeout.
+    altered) · invalid (malformed receipt) · incomplete (the worktree could not
+    be listed in full) · git_error · timeout. Only ok permits a removal.
     """
     receipt = load_receipt(path)
     if receipt is None:
@@ -497,7 +579,11 @@ def receipt_verdict(path: str | os.PathLike[str], *, now: float | None = None,
     if st.st_size != receipt.get("archive_bytes"):
         return "stale", f"the receipt's archive {ap} changed size since it was written"
     if st.st_size <= FULL_HASH_MAX_BYTES:
-        if _hash_file(archive_path) != receipt.get("archive_sha256"):
+        try:
+            digest = _hash_file(archive_path, deadline)
+        except BudgetExceeded:
+            return "timeout", "receipt not verified within the guard's time budget"
+        if digest != receipt.get("archive_sha256"):
             return "stale", f"the receipt's archive {ap} no longer matches its sha256"
     elif (st.st_mtime_ns != receipt.get("archive_mtime_ns")
           or _sample_hash(archive_path, st.st_size) != receipt.get("archive_sample_sha256")):
@@ -507,7 +593,7 @@ def receipt_verdict(path: str | os.PathLike[str], *, now: float | None = None,
 
     head, err = head_of(path, timeout=max(0.1, min(5.0, remaining())))
     if err:
-        return "git_error", err
+        return ("timeout" if err.startswith("timeout") else "git_error"), err
     if head != receipt.get("head"):
         return "stale", f"HEAD moved since the archive ({str(receipt.get('head'))[:12]} -> {str(head)[:12]})"
     wt = Path(canonical(path))
@@ -520,9 +606,14 @@ def receipt_verdict(path: str | os.PathLike[str], *, now: float | None = None,
         return "git_error", f"could not list the worktree's files ({exc})"
     if any("time budget" in r for r in snap.incomplete):
         return "timeout", "receipt not verified within the guard's time budget"
+    if snap.incomplete:
+        return "incomplete", "the worktree listing is incomplete now: " + "; ".join(snap.incomplete[:3])
     cache_valuable = [r for r in receipt.get("cache_valuable_files") or [] if isinstance(r, str)]
-    if fingerprint(wt, snap, cache_valuable) != receipt["fingerprint"]:
-        return "stale", "files changed since the archive was made (edited, added, or removed)"
+    changed = fingerprint(wt, snap, cache_valuable) != receipt["fingerprint"]
+    if remaining() <= 0:
+        return "timeout", "receipt not verified within the guard's time budget"
+    if changed:
+        return "stale", "files or the index changed since the archive was made (edited, added, removed, or staged)"
     return "ok", ap
 
 
