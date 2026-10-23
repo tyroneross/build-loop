@@ -57,6 +57,9 @@ class GuardTests(unittest.TestCase):
         git(self.repo, "worktree", "add", "-q", "-b", "wt1", str(self.wt))
         (self.wt / ".build-loop").mkdir()
         (self.wt / ".build-loop" / "notes.md").write_text("design notes\n")
+        (self.wt / "package.json").write_text("{}\n")  # makes node_modules/ a real cache root
+        git(self.wt, "add", "package.json")
+        git(self.wt, "commit", "-q", "-m", "pkg")
         (self.wt / "node_modules" / "pkg").mkdir(parents=True)
         (self.wt / "node_modules" / "pkg" / "index.js").write_text("x\n")
         (self.wt / "__pycache__").mkdir()
@@ -126,7 +129,7 @@ class GuardTests(unittest.TestCase):
     def test_rm_of_parent_holding_the_archive_stays_blocked(self) -> None:
         wa.archive(self.wt)  # default dest is repo.worktrees/_preserved
         reason = self.assertDenied(self.run_guard(f"rm -rf {self.wt_parent}"))
-        self.assertIn("contains the archive", reason)
+        self.assertIn("would also delete its archive", reason)
         self.assertAllowed(self.run_guard(f"rm -rf {self.wt}"))
 
     def test_unrelated_rm_and_prune_are_allowed(self) -> None:

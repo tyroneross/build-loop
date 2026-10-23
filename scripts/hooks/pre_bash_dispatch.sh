@@ -127,11 +127,17 @@ fi
 # scripts/worktree_archive.py has receipted the exact path at its current HEAD
 # within 30 minutes, and the deny reason names that command.
 # The `case` is a cheap pre-filter so ordinary commands spawn nothing; the
-# Python side does the exact parse. A warning (git error, unresolvable target)
-# is carried to the final envelope as a systemMessage, never a deny.
+# Python side does the exact parse. It matches on the command with quotes and
+# backslashes removed, so `"rm"`, `r\m` and `re"move"` still reach the guard;
+# a false positive costs one Python start. A warning (git error, unresolvable
+# target) is carried to the final envelope as a systemMessage, never a deny.
 _WT_SYSMSG=""
-case " $CMD" in
-    *worktree*remove*|*[\ \;\|\&\(/]rm[\ \	]*|*trash*|*safe-del*)
+_WT_Q="'"
+_WT_N="${CMD//\"/}"
+_WT_N="${_WT_N//$_WT_Q/}"
+_WT_N="${_WT_N//\\/}"
+case "$_WT_N" in
+    *worktree*|*rm|*rm[[:space:]\;\|\&\)]*|*trash*|*safe-del*|*-delete*|*xargs*)
         _WT_GUARD="$PLUGIN_ROOT/scripts/hooks/worktree_removal_guard.py"
         if [ -f "$_WT_GUARD" ]; then
             _WT_OUT=$(printf '%s' "$INPUT" | python3 "$_WT_GUARD" 2>/dev/null) || _WT_OUT='{}'
