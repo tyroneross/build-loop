@@ -18,7 +18,50 @@ REFUSAL = (
 )
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
 _NETWORK = {"push", "pull", "fetch", "clone", "ls-remote", "credential"}
-_HEREDOC = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z_0-9]*))")
+# Shell reserved words that can precede a command in a segment.
+_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}",
+             "fi", "done", "time", "case", "esac", "in"}
+# Variables whose assignment changes which git config (and so which helper)
+# a later git command reads.
+_GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|HOME|XDG_CONFIG_HOME)=")
+# git subcommands that never contact a remote. Anything else is judged like a
+# fetch against the repository's remotes (git lfs, remote update, aliases …).
+_LOCAL_GIT = {
+    "status", "log", "diff", "show", "add", "commit", "checkout", "switch", "branch",
+    "merge", "rebase", "reset", "restore", "stash", "tag", "rev-parse", "rev-list",
+    "worktree", "config", "ls-files", "cat-file", "grep", "blame", "cherry-pick",
+    "cherry", "revert", "init", "mv", "rm", "describe", "shortlog", "reflog", "notes",
+    "apply", "am", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
+    "update-ref", "for-each-ref", "show-ref", "ls-tree", "hash-object", "count-objects",
+    "fsck", "gc", "prune", "clean", "bisect", "help", "version", "var", "check-ignore",
+    "diff-tree", "diff-index", "diff-files", "name-rev", "range-diff", "whatchanged",
+    "read-tree", "write-tree", "commit-tree", "update-index", "mktree", "mktag",
+    "check-ref-format", "check-attr", "interpret-trailers", "column", "stripspace",
+    "sparse-checkout", "maintenance", "repack", "pack-refs", "verify-commit",
+    "verify-tag", "annotate", "difftool", "mergetool", "citool", "gui", "instaweb",
+}
+# The delimiter is one shell WORD; quoting ANY part of it (`'EO'F`, `\\EOF`)
+# makes the body literal, and the delimiter is the word with quotes removed.
+_HEREDOC = re.compile(r"<<(-?)[ \t]*((?:[^\s;&|()<>'\"\\]|\\.|'[^']*'|\"[^\"]*\")+)")
+
+
+def _heredoc_word(word: str):
+    """(delimiter, quoted) for a heredoc delimiter word."""
+    quoted = any(char in word for char in "'\"\\")
+    out, index = [], 0
+    while index < len(word):
+        char = word[index]
+        if char == "\\" and index + 1 < len(word):
+            out.append(word[index + 1])
+            index += 2
+        elif char in "'\"":
+            end = word.find(char, index + 1)
+            out.append(word[index + 1:end])
+            index = end + 1
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out), quoted
 
 
 # Readers that only pass text along. A heredoc body is data only when EVERY
@@ -99,8 +142,7 @@ def _split_heredocs(command: str):
             if match is None:
                 continue
             strip_tabs = match.group(1) == "-"
-            delimiter = match.group(2) or match.group(3) or match.group(4)
-            quoted = match.group(4) is None or match.group(0).lstrip("<-").lstrip().startswith("\\")
+            delimiter, quoted = _heredoc_word(match.group(2))
             body = []
             while index < len(lines):
                 candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
@@ -177,8 +219,16 @@ def _effective_helpers(pairs, url: str | None):
 
 
 def _keychain_helper(chain) -> bool:
-    return any("osxkeychain" in helper or helper.strip().split(" ", 1)[0] == "store"
-               for helper in chain)
+    """osxkeychain or store, in any spelling git accepts: `store`,
+    `/path/git-credential-store`, `!git credential-store …` (a shell helper)."""
+    for helper in chain:
+        text = helper.strip()
+        if "osxkeychain" in text or "credential-store" in text:
+            return True
+        words = text.lstrip("!").split()
+        if words and Path(words[0]).name in {"store", "git-credential-store"}:
+            return True
+    return False
 
 
 _PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
@@ -217,8 +267,10 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
         low = key.lower()
         if low.startswith("credential.") and low.endswith(".helper"):
             pairs.append((key, value))
-        elif low.startswith("remote.") and low.endswith((".url", ".pushurl")):
-            remotes.setdefault(key[len("remote."):key.rfind(".")], []).append(value)
+        elif low.startswith("remote.") and low.endswith(".url"):
+            remotes.setdefault(key[len("remote."):key.rfind(".")], {"url": [], "push": []})["url"].append(value)
+        elif low.startswith("remote.") and low.endswith(".pushurl"):
+            remotes.setdefault(key[len("remote."):key.rfind(".")], {"url": [], "push": []})["push"].append(value)
         elif low.startswith("url.") and low.endswith(".pushinsteadof"):
             push_rules[value] = key[len("url."):key.rfind(".")]
         elif low.startswith("url.") and low.endswith(".insteadof"):
@@ -235,30 +287,55 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
         if arg == "-c" and position + 1 < len(prefix):
             name = prefix[position + 1].split("=", 1)[0].lower()
             unknown |= not (name.startswith("credential.") and name.endswith(".helper"))
-    targets = []
+    targets, pending_config = [], False
     for arg in rest:
+        clone_config = sub == "clone" and (arg.startswith("--config=") or (arg.startswith("-c") and arg != "-c"))
+        if pending_config or clone_config:
+            # clone --config k=v / -c k=v: applied to the new repo BEFORE it
+            # fetches, so credential helpers set here join the chain last.
+            if pending_config:
+                value = arg
+            elif arg.startswith("--config="):
+                value = arg.split("=", 1)[1]
+            else:
+                value = arg[2:]
+            pending_config = False
+            name, _, helper = value.partition("=")
+            if name.lower().startswith("credential.") and name.lower().endswith(".helper"):
+                pairs.append(("credential.helper" if name.lower() == "credential.helper" else name, helper))
+            else:
+                unknown = True
+            continue
+        if sub == "clone" and arg in {"-c", "--config"}:
+            pending_config = True
+            continue
         if "$" in arg or "`" in arg:
             unknown = True
         elif arg.startswith("-"):
             low = arg.lower()
-            if sub == "clone" and (low in {"-c", "--config", "--recursive"}
-                                   or low.startswith(("--config=", "--recurse-submodules"))):
+            if sub == "clone" and (low == "--recursive" or low.startswith("--recurse-submodules")):
                 unknown = True
             if "=" in arg and ("://" in arg or "::" in arg):
                 targets.append(arg.split("=", 1)[1])
         else:
             targets.append(arg)
 
+    def remote_urls(entry):
+        # git push uses pushurl when set; fetch, pull and ls-remote use url.
+        return (entry["push"] or entry["url"]) if sub == "push" else entry["url"]
+
     urls, named = [], False
     for target in targets:
         if target in remotes:
-            urls += remotes[target]
+            urls += remote_urls(remotes[target])
             named = True
         elif "://" in target or "::" in target or re.match(r"^[\w.-]+@[\w.-]+:", target):
             urls.append(target)
+    if "--recurse-submodules-only" in rest:
+        named = True  # submodule commands reach the submodule URLs, not the remotes
     if not named and sub != "clone":
-        for values in remotes.values():
-            urls += values
+        for entry in remotes.values():
+            urls += remote_urls(entry)
     if (sub in {"fetch", "pull"} and "--no-recurse-submodules" not in rest
             and recurse not in {"false", "no"}):
         urls += submodules
@@ -294,6 +371,42 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
     if unknown:
         contexts.append(None)
     return any(_keychain_helper(_effective_helpers(pairs, context)) for context in contexts)
+
+
+def _piped_scripts(command: str):
+    """Literal text that a pipeline feeds into a shell: `printf 'cmd' | sh`,
+    `echo cmd | bash -s`. Only echo/printf producers are readable statically."""
+    try:
+        lexer = shlex.shlex(_strip_comments(command), posix=True, punctuation_chars=";&|()\n")
+        lexer.commenters = ""
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return
+    stage, previous = [], None
+    for token in tokens + [";"]:
+        if token in {"|", ";", "&&", "||", "&", "\n", "(", ")"} or (token and set(token) <= set(";&|()\n")):
+            if stage:
+                if previous and previous[0] in {"echo", "printf"} \
+                        and Path(stage[0]).name in {"sh", "bash", "zsh", "dash", "ksh"} \
+                        and not any(arg.startswith("-") and "c" in arg and not arg.startswith("--") for arg in stage[1:]):
+                    text = " ".join(previous[1:])
+                    yield text.replace("\\n", "\n").replace("%s", "")
+                previous = stage if token == "|" else None
+            stage = []
+        else:
+            stage.append(token)
+
+
+def _git_alias(git, prefix, name, cwd, env):
+    """Value of alias.<name>, or None. Metadata read only."""
+    try:
+        result = subprocess.run([git, *prefix, "config", "--get", f"alias.{name}"], cwd=cwd, env=env,
+                                capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def _strip_comments(command: str) -> str:
@@ -370,6 +483,10 @@ def _substitutions(source):
                     continue
                 if backtick and source[end] == "`":
                     break
+                if not backtick and source[end] in {"'", '"'}:
+                    close = source.find(source[end], end + 1)
+                    end = len(source) if close == -1 else close + 1
+                    continue
                 if not backtick:
                     depth += (source[end] == "(") - (source[end] == ")")
                     if depth == 0:
@@ -386,6 +503,7 @@ def command_reason(command: str, *, cwd: str | None = None,
     """Known executable forms only; opaque app/script behavior remains protocol-governed."""
     environment = os.environ if environment is None else environment
     platform = sys.platform if platform is None else platform
+    command = command.replace("\\\n", "")  # `git \<newline> fetch` is one command
     command, bodies = _split_heredocs(command)
     for quoted, readers, body in bodies:
         if not quoted:
@@ -421,11 +539,24 @@ def command_reason(command: str, *, cwd: str | None = None,
     for inner in _substitutions(command):
         if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain):
             return REFUSAL
+    for script in _piped_scripts(command):
+        if _API.search(script) or command_reason(
+                script, cwd=cwd, helpers=helpers, platform=platform,
+                environment=environment, cwd_uncertain=cwd_uncertain):
+            return REFUSAL
+    # `export GIT_CONFIG_COUNT=…` / `HOME=/x` on their own persist into later
+    # commands, so any later git network command is judged as reconfigured.
+    git_env_changed = any(_GIT_ENV.match(token) for argv in segments for token in argv
+                          if argv and (Path(argv[0]).name in {"export", "declare", "typeset", "readonly", "local"}
+                                       or all(re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t) for t in argv)))
     for argv in segments:
         command_cwd_uncertain = cwd_uncertain
         effective_environment = dict(environment)
         inline_config = False
         while argv:
+            if argv[0] in _KEYWORDS:
+                argv = argv[1:]
+                continue
             redirect = re.match(r"^(?:[0-9]+)?(>>?|<<?)(.*)$", argv[0])
             if redirect:
                 argv.pop(0)
@@ -435,7 +566,7 @@ def command_reason(command: str, *, cwd: str | None = None,
             if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", argv[0]):
                 name, value = argv[0].split("=", 1)
                 effective_environment[name] = value
-                inline_config |= argv[0].startswith("GIT_CONFIG_")
+                inline_config |= bool(_GIT_ENV.match(argv[0]))
                 argv = argv[1:]
                 continue
             wrapper = Path(argv[0]).name
@@ -446,6 +577,14 @@ def command_reason(command: str, *, cwd: str | None = None,
                 effective_environment = {}
             while argv and argv[0].startswith("-"):
                 option = argv.pop(0)
+                if wrapper == "env" and (option in {"-S", "--split-string"} or option.startswith(("--split-string=", "-S"))):
+                    # env -S 'cmd args' splits the string and runs it.
+                    text = option.split("=", 1)[1] if option.startswith("--split-string=") else option[2:] if len(option) > 2 and option.startswith("-S") else (argv.pop(0) if argv else "")
+                    try:
+                        argv = shlex.split(text) + argv
+                    except ValueError:
+                        return REFUSAL
+                    break
                 if option in {"-C", "--chdir", "-D"} or option.startswith("--chdir="):
                     command_cwd_uncertain = True
                 if wrapper == "env":
@@ -468,6 +607,14 @@ def command_reason(command: str, *, cwd: str | None = None,
             continue
         if exe == "security" or "credential-osxkeychain" in exe:
             return REFUSAL
+        if exe == "eval" and command_reason(" ".join(argv[1:]), cwd=cwd, helpers=helpers, platform=platform,
+                                            environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
+            return REFUSAL
+        if exe in {"bash", "sh", "zsh", "dash", "ksh"} and "<<<" in argv:
+            herestring = argv[argv.index("<<<") + 1] if argv.index("<<<") + 1 < len(argv) else ""
+            if command_reason(herestring, cwd=cwd, helpers=helpers, platform=platform,
+                              environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
+                return REFUSAL
         if exe == "vault" and (any(a == "--value" or a.startswith("--value=") for a in argv) or any(x in {"export", "dump"} for x in argv[1:])):
             return "Secret values must not enter agent output. Use Secrets Vault metadata or server-side injection."
         shell_option = next((i for i, arg in enumerate(argv[1:], 1)
@@ -515,14 +662,38 @@ def command_reason(command: str, *, cwd: str | None = None,
                 index += 1
         if index < len(argv) and "credential-osxkeychain" in argv[index]:
             return REFUSAL
-        if index < len(argv) and argv[index] in _NETWORK:
+        network = index < len(argv) and argv[index] not in _LOCAL_GIT and not argv[index].startswith("-")
+        if network and argv[index] in {"remote", "submodule"}:
+            # Only these forms contact a remote; `git remote -v`, `add`,
+            # `submodule status` and the like stay local.
+            verb = next((a for a in argv[index + 1:] if not a.startswith("-")), "")
+            network = verb in ({"update", "prune", "show", "set-head"} if argv[index] == "remote"
+                               else {"update", "sync", "add", "foreach", "init"})
+        if network:
             # Dynamic config overrides cannot be proven safe by inspecting the
             # parent environment; require an explicit, inspectable Git -c form.
-            if command_cwd_uncertain or inline_config or any(a.startswith("--config-env") for a in prefix):
+            if (command_cwd_uncertain or inline_config or git_env_changed
+                    or any(a.startswith("--config-env") for a in prefix)):
                 return REFUSAL
             if helpers is None:
-                if _git_may_use_keychain(argv[0], prefix, argv[index], argv[index + 1:],
-                                         cwd, effective_environment):
+                sub, rest = argv[index], argv[index + 1:]
+                if sub not in _NETWORK:
+                    alias = _git_alias(argv[0], prefix, sub, cwd, effective_environment)
+                    if alias is not None:
+                        # A shell alias (`!…`) runs a command; any other alias
+                        # names a subcommand that may reach any remote.
+                        if alias.startswith("!") and command_reason(
+                                alias[1:], cwd=cwd, helpers=helpers, platform=platform,
+                                environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
+                            return REFUSAL
+                        sub, rest = "credential", []
+                    elif sub == "submodule":
+                        sub, rest = "fetch", ["--recurse-submodules-only"]
+                    else:
+                        # remote update, lfs, …: judged like a fetch of the
+                        # remotes they name (or all remotes).
+                        sub, rest = "fetch", [arg for arg in rest[1:] if not arg.startswith("-")]
+                if _git_may_use_keychain(argv[0], prefix, sub, rest, cwd, effective_environment):
                     return REFUSAL
                 continue
             else:

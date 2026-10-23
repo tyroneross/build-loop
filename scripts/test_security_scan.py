@@ -973,6 +973,47 @@ class TestSpotCacheAndBudget(_DiffScanBase):
         self.assertFalse(self._has_secret(cached, "src/legacy.ts"),
                          "a stale cache entry must not outlive the file's edit")
 
+    def test_an_edit_during_the_sweep_invalidates_the_entry(self):
+        """Second review: the key must describe the bytes that were scanned."""
+        d = self._repo_with_legacy_secret()
+        cache = security_scan.SpotCache(d)
+        legacy = d / "src/legacy.ts"
+        key = cache.key_before_read(legacy)
+        legacy.write_text('const name = "edited while scanning";\n', encoding="utf-8")
+        cache.put(legacy, [], key)
+        self.assertIsNone(cache.get(legacy), "a pre-edit key must not match the edited file")
+
+    def test_two_scan_roots_in_one_repo_never_share_entries(self):
+        d = self._mkdir()
+        self._init(d)
+        secret = _SECRET_LINE if _SECRET_LINE.endswith("\n") else _SECRET_LINE + "\n"
+        clean = "// " + "x" * (len(secret) - 4) + "\n"  # same byte length, no finding
+        self.assertEqual(len(clean), len(secret))
+        self._write(d, "a/route.ts", clean)
+        self._write(d, "b/route.ts", secret)
+        self._write(d, "a/seed.ts", "x\n")
+        self._write(d, "b/seed.ts", "x\n")
+        self._commit(d, "baseline")
+        self._write(d, "a/seed.ts", "y\n")  # the delta touches only the seeds
+        self._write(d, "b/seed.ts", "y\n")
+        self._commit(d, "touch seeds")
+        a, b = d / "a/route.ts", d / "b/route.ts"
+        stamp = a.stat().st_mtime_ns
+        os.utime(b, ns=(stamp, stamp))  # same size and mtime: only the path differs
+        _, first = self._scan(d / "a", "--diff", "HEAD~1", "--spot-check")
+        self.assertGreater(first["diff"]["spot_files"], 0, "route.ts must be a spot file")
+        _, data = self._scan(d / "b", "--diff", "HEAD~1", "--spot-check")
+        self.assertTrue(self._has_secret(data, "route.ts"),
+                        "b/route.ts must not be answered by a/route.ts's cache entry")
+
+    def test_a_deleted_but_listed_headers_file_does_not_count(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "public/_headers", "/*\n  X-Frame-Options: DENY\n")
+        self._commit(d, "headers")
+        (d / "public/_headers").unlink()
+        self.assertFalse(security_scan._has_file_named(d.resolve(), "_headers"))
+
     def test_budget_never_cuts_the_delta(self):
         d = self._mkdir()
         self._init(d)

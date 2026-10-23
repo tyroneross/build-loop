@@ -142,16 +142,26 @@ class CredentialPolicyTests(unittest.TestCase):
     def decide(self, config_lines, command='git fetch origin', environment=None):
         config = ''.join(line + '\n' for line in config_lines)
 
+        values = dict(line.partition(' ')[::2] for line in config_lines)
+
         def fake_git(argv, **kwargs):
-            # Only metadata reads happen: the context config read, and the
-            # superproject lookup (answered "no work tree" so no .gitmodules).
+            # Only metadata reads happen: the context config read, alias
+            # lookups, and the superproject lookup (answered "no work tree").
             if '--get-regexp' in argv:
-                return subprocess.CompletedProcess(argv, 0, config, '')
+                # Like git: `-c k=v` values are read last, after every file.
+                inline = ''.join(argv[i + 1].replace('=', ' ', 1) + '\n'
+                                 for i, arg in enumerate(argv[:-1]) if arg == '-c')
+                return subprocess.CompletedProcess(argv, 0, config + inline, '')
+            if '--get' in argv:
+                key = argv[argv.index('--get') + 1]
+                found = key in values
+                return subprocess.CompletedProcess(argv, 0 if found else 1, values.get(key, '') + '\n', '')
             return subprocess.CompletedProcess(argv, 1, '', '')
 
         with patch('credential_policy.subprocess.run', side_effect=fake_git) as runner:
             reason = command_reason(command, platform='darwin', environment=environment or {})
-        self.assertTrue(any('--get-regexp' in call.args[0] for call in runner.call_args_list))
+        if reason is None:  # an allow must come from actually judging the config
+            self.assertTrue(any('--get-regexp' in call.args[0] for call in runner.call_args_list))
         return reason
 
     # Git keeps ONE helper list per URL in config order; an empty value clears
@@ -200,6 +210,36 @@ class CredentialPolicyTests(unittest.TestCase):
         for config, command, environment in cases:
             with self.subTest(command=command, config=config[-1]):
                 self.assertIsNotNone(self.decide(config, command, environment))
+        # Second review (2026-10-23) of 9cb969cf.
+        round2 = [
+            (['credential.helper !gh auth git-credential'],
+             'git clone --config credential.helper=osxkeychain https://github.com/o/r.git'),
+            (['credential.helper !gh auth git-credential'],
+             'git clone -c credential.helper=osxkeychain https://github.com/o/r.git'),
+            (gh, 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper '
+                 'GIT_CONFIG_VALUE_0=osxkeychain; git fetch origin'),
+            (gh, 'HOME=/tmp/other git fetch origin'),
+            (gh, 'git -c credential.helper=osxkeychain remote update'),
+            (['credential.helper osxkeychain', 'remote.origin.url https://gitlab.com/o/r.git'],
+             'git submodule update --remote'),
+            (['credential.helper !git credential-store', 'remote.origin.url https://github.com/o/r.git'],
+             'git fetch origin'),
+            (['credential.helper /usr/libexec/git-core/git-credential-store',
+              'remote.origin.url https://github.com/o/r.git'], 'git fetch origin'),
+            (['credential.helper osxkeychain', 'remote.origin.url https://gitlab.com/o/r.git'],
+             'git \\\nfetch origin'),
+            (gh + ['alias.f !security find-generic-password'], 'git f'),
+            (gh + ['alias.sync fetch --all'], 'git sync'),
+            (['credential.helper osxkeychain', 'remote.origin.url https://gitlab.com/o/r.git'],
+             'git lfs pull'),
+            (gh + ['remote.origin.pushurl https://gitlab.com/o/r.git'], 'git push origin main'),
+        ]
+        for config, command in round2:
+            with self.subTest(command=command, config=config[-1]):
+                self.assertIsNotNone(self.decide(config, command))
+        # fetch uses url, not pushurl: an unused push destination is not consulted.
+        self.assertIsNone(self.decide(gh + ['remote.origin.pushurl https://gitlab.com/o/r.git'],
+                                      'git fetch origin'))
         # The explicit default port is the same context as none.
         self.assertIsNone(self.decide(self.GH_SETUP + ['remote.origin.url https://github.com:443/o/r.git']))
         self.assertIsNone(self.decide(gh + ['submodule.lib.url https://gitlab.com/o/lib.git'],
@@ -221,6 +261,32 @@ class CredentialPolicyTests(unittest.TestCase):
                                           'remote.origin.url git@github.com:o/r.git',
                                           'url.https://github.com/.insteadof git@github.com:']))
         self.assertIsNone(self.decide(['credential.helper osxkeychain', 'remote.origin.url git@github.com:o/r.git']))
+
+    def test_local_git_commands_read_no_config(self):
+        with patch('credential_policy.subprocess.run', side_effect=AssertionError('read config')):
+            for command in ['git status', 'git log --oneline -3', 'git remote -v',
+                            'git remote add up https://gitlab.com/o/r.git', 'git submodule status',
+                            'git -C /tmp diff', 'git worktree list']:
+                with self.subTest(command=command):
+                    self.assertIsNone(command_reason(command, platform='darwin', environment={}))
+
+    def test_shell_shapes_that_run_a_command_are_inspected(self):
+        for command in ['echo "$(printf \')\'; security find-generic-password)"',
+                        "cat <<'EO'F\ntext\nEOF\nsecurity find-generic-password",
+                        "printf '%s\\n' 'security find-generic-password' | sh",
+                        "echo security find-generic-password | bash -s",
+                        "env -S 'security find-generic-password'",
+                        "env --split-string='security find-generic-password'",
+                        'if true; then security find-generic-password; fi',
+                        'while true; do security find-generic-password; done',
+                        "eval 'security find-generic-password'",
+                        "bash <<< 'security find-generic-password'"]:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.reason(command))
+        for command in ["printf '%s\\n' 'hello' | sh", 'if true; then echo ok; fi',
+                        "cat <<'EO'F\nsecurity find-generic-password\nEOF"]:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
 
     def test_heredoc_bodies_are_data_unless_a_shell_or_interpreter_reads_them(self):
         for command in ["cat > notes.md <<'EOF'\n`git fetch` was blocked; security find-generic-password\nEOF",

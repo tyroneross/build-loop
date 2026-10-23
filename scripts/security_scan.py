@@ -136,7 +136,8 @@ _DET_SPOT_CHECK_IDS: frozenset[str] = frozenset({"A", "B", "C"})
 
 def _is_binary(path: Path) -> bool:
     try:
-        return b"\x00" in path.read_bytes()[:8192]
+        with path.open("rb") as handle:
+            return b"\x00" in handle.read(8192)
     except OSError:
         return True
 
@@ -385,10 +386,10 @@ def walk_source_files(
             if stats is not None:
                 stats["excluded"] = stats.get("excluded", 0) + 1
             continue
-        if _is_binary(path):
-            continue
         if skip_read is not None and skip_read(path):
-            yield path, None
+            yield path, None  # caller checks binary after its cache/budget
+            continue
+        if _is_binary(path):
             continue
         lines = _read_source_lines(path)
         if lines is not None:
@@ -481,11 +482,16 @@ class SpotCache:
         stat = path.stat()
         return [stat.st_size, stat.st_mtime_ns]
 
-    def _rel(self, path: Path) -> str:
+    def key_before_read(self, path: Path):
         try:
-            return str(path.relative_to(self.root))
-        except ValueError:
-            return str(path)
+            return self._key(path)
+        except OSError:
+            return None
+
+    def _rel(self, path: Path) -> str:
+        # Absolute and resolved: two scan roots sharing one .git (a/ and b/)
+        # must never share an entry for `route.ts`.
+        return str(_resolved(path))
 
     def get(self, path: Path):
         if self.path is None:
@@ -499,15 +505,12 @@ class SpotCache:
             return None
         return None
 
-    def put(self, path: Path, findings: list[dict[str, Any]]) -> None:
-        if self.path is None:
+    def put(self, path: Path, findings: list[dict[str, Any]], key=None) -> None:
+        if self.path is None or key is None:
             return
-        try:
-            self.entries[self._rel(path)] = {
-                "k": self._key(path), "f": json.loads(json.dumps(findings, default=str))}
-            self.dirty = True
-        except OSError:
-            pass
+        self.entries[self._rel(path)] = {
+            "k": key, "f": json.loads(json.dumps(findings, default=str))}
+        self.dirty = True
 
     def save(self) -> None:
         if self.path is None or not self.dirty:
@@ -1147,6 +1150,7 @@ def _has_file_named(root: Path, name: str) -> bool:
     if listed is not None:
         return any(rel.rsplit("/", 1)[-1] == name
                    and not any(part in SKIP_DIRS for part in rel.split("/")[:-1])
+                   and (root / rel).is_file()
                    for rel in listed)
     for _dirpath, dirnames, filenames in os.walk(str(root), topdown=True):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -1613,11 +1617,16 @@ def _perform_scan(
             if spot_deadline is not None and time.monotonic() > spot_deadline:
                 walk_stats["spot_skipped"] += 1
                 continue
+            spot_key = spot_cache.key_before_read(path) if spot_cache is not None else None
+            if _is_binary(path):
+                continue
             lines = _read_source_lines(path)
             if lines is None:
                 if spot_cache is not None:
-                    spot_cache.put(path, [])
+                    spot_cache.put(path, [], spot_key)
                 continue
+        else:
+            spot_key = None
         files_scanned += 1
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
@@ -1667,8 +1676,8 @@ def _perform_scan(
                 if f.get("check_id") in _api_checks.SPOT_CHECK_IDS
                 or f.get("check_id") in _DET_SPOT_CHECK_IDS
             ]
-            if spot_cache is not None:
-                spot_cache.put(path, file_findings)
+            if spot_cache is not None and spot_key is not None:
+                spot_cache.put(path, file_findings, spot_key)
         for f in file_findings:
             f["scope"] = "deep" if deep else "spot"
         all_findings.extend(file_findings)
