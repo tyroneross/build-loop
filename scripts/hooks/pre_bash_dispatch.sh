@@ -509,7 +509,14 @@ case " $_GITCLASS " in
             # root normalisation matters because a subdirectory would scan only
             # part of the tree.
             _SCAN_TARGET=$(_bl_repo_root "$(_bl_effective_dir)")
-            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check)
+            # --spot-budget keeps the advisory whole-tree sweep inside the 18 s
+            # hook deadline: delta files are always scanned in full, unchanged
+            # files come from the per-worktree cache, and a sweep cut short
+            # finishes in the background for the next push. Named failure
+            # (2026-10-23): a 41 s sweep on easy-terminal made every direct
+            # `git push` there end in "checks did not finish, retry".
+            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check
+                        --spot-budget "${BUILD_LOOP_SPOT_BUDGET_S:-5}")
             # Human-readable reason for the delta-vs-full choice, carried into
             # the block message. Before this, an operator whose clean delta was
             # full-scanned had to read this file to find out why.

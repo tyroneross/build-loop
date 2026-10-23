@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for security_scan.py. Stdlib unittest only."""
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -930,6 +932,83 @@ class TestSpotCheckCoverage(_DiffScanBase):
         )
         self.assertIn("spot sweep", proc.stdout, "header must disclose the widened scope")
         self.assertIn("unchanged files", proc.stdout, "summary must separate advisory findings")
+
+
+class TestSpotCacheAndBudget(_DiffScanBase):
+    """Named failure (2026-10-23): the whole-tree spot sweep took 41 s on a
+    5,702-file repo, past the 18 s PreToolUse deadline, so every direct
+    `git push` there was refused with "retry". The sweep is now cached per
+    worktree and bounded by --spot-budget; the delta is never cut."""
+
+    def _repo_with_legacy_secret(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        for index in range(5):
+            self._write(d, f"src/clean{index}.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline with pre-existing secret")
+        self._write(d, "src/new.ts", 'const name = "Bob";\n')
+        self._commit(d, "unrelated change")
+        return d
+
+    def test_second_sweep_comes_from_cache_with_the_same_findings(self):
+        d = self._repo_with_legacy_secret()
+        rc1, first = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        rc2, second = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertEqual((rc1, rc2), (0, 0))
+        self.assertEqual(first["diff"].get("spot_cached"), 0)
+        self.assertEqual(second["diff"]["spot_cached"], second["diff"]["spot_files"])
+        self.assertTrue(self._has_secret(second, "src/legacy.ts"),
+                        "a cached spot result must still report the secret")
+        key = lambda data: sorted((f["file"], f["check_id"], f["line"]) for f in data["findings"])
+        self.assertEqual(key(first), key(second))
+
+    def test_an_edited_unchanged_file_is_swept_again(self):
+        d = self._repo_with_legacy_secret()
+        self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        legacy = d / "src/legacy.ts"
+        legacy.write_text('const name = "Carol";\n', encoding="utf-8")  # secret removed
+        os.utime(legacy, ns=(legacy.stat().st_atime_ns, legacy.stat().st_mtime_ns + 10**9))
+        _, cached = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertFalse(self._has_secret(cached, "src/legacy.ts"),
+                         "a stale cache entry must not outlive the file's edit")
+
+    def test_budget_never_cuts_the_delta(self):
+        d = self._mkdir()
+        self._init(d)
+        for index in range(5):
+            self._write(d, f"src/clean{index}.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        self._write(d, "src/new.ts", _SECRET_LINE)
+        self._commit(d, "introduce a secret")
+        rc, data = self._scan(d, "--diff", "HEAD~1", "--spot-check", "--spot-budget", "0",
+                              "--no-spot-cache")
+        self.assertEqual(rc, 1, "a secret in the pushed delta must block even with a zero budget")
+        self.assertEqual(data["diff"]["spot_skipped"], 5)
+        self.assertEqual(data["diff"]["spot_files"], 0)
+
+    def test_report_discloses_a_cut_sweep(self):
+        d = self._repo_with_legacy_secret()
+        proc = subprocess.run(
+            [sys.executable, str(_SCANNER), "--path", str(d), "--diff", "HEAD~1",
+             "--spot-check", "--spot-budget", "0", "--no-spot-cache"],
+            capture_output=True, text=True,
+        )
+        self.assertIn("NOT swept (time budget)", proc.stdout)
+
+    def test_cut_sweep_finishes_in_the_background(self):
+        d = self._repo_with_legacy_secret()
+        rc, data = self._scan(d, "--diff", "HEAD~1", "--spot-check", "--spot-budget", "0")
+        self.assertTrue(data["diff"].get("spot_warming"), "a cut sweep must start the warmer")
+        git_dir = Path(self._git(d, "rev-parse", "--absolute-git-dir").stdout.strip())
+        lock = git_dir / "build-loop" / "spot-warm.lock"
+        deadline = time.time() + 60
+        while lock.exists() and time.time() < deadline:
+            time.sleep(0.2)
+        self.assertFalse(lock.exists(), "the warmer must finish and release its lock")
+        rc, warm = self._scan(d, "--diff", "HEAD~1", "--spot-check", "--spot-budget", "0")
+        self.assertEqual(warm["diff"]["spot_skipped"], 0)
+        self.assertTrue(self._has_secret(warm, "src/legacy.ts"))
 
 
 class TestApiChecksWiredIntoScanner(_DiffScanBase):

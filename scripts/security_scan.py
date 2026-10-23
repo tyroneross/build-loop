@@ -62,11 +62,14 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import functools
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -212,12 +215,21 @@ def _git_tracked_files(root: Path, include_untracked: bool = True) -> set[Path] 
         return None
     if result.returncode != 0:
         return None
-    tracked = {
-        (root / rel).resolve()
-        for rel in result.stdout.split("\0")
-        if rel.strip()
-    }
+    _LISTED[(root, include_untracked)] = [rel for rel in result.stdout.split("\0") if rel.strip()]
+    tracked = {_resolved(root / rel) for rel in _LISTED[(root, include_untracked)]}
     return tracked or None
+
+
+# Relative paths from the last `git ls-files` per (root, include_untracked), so
+# the walk can iterate git's list instead of every directory on disk.
+_LISTED: dict[tuple[Path, bool], list[str]] = {}
+
+
+@functools.lru_cache(maxsize=None)
+def _resolved(path: Path) -> Path:
+    """path.resolve(), once per path: the walk, delta and depth checks each
+    resolved every file (159k realpath calls on a 5.7k-file repo)."""
+    return path.resolve()
 
 
 def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
@@ -306,7 +318,7 @@ def _matches_exclude(root: Path, path: Path, exclude_globs: list[str]) -> bool:
     if not exclude_globs:
         return False
     try:
-        rel = path.resolve().relative_to(root.resolve()).as_posix()
+        rel = _resolved(path).relative_to(_resolved(root)).as_posix()
     except ValueError:
         rel = path.as_posix()
     return any(fnmatch.fnmatch(rel, g) for g in exclude_globs)
@@ -319,8 +331,12 @@ def walk_source_files(
     stats: dict[str, int] | None = None,
     tracked_only: bool = False,
     tracked_exempt: set[Path] | None = None,
+    skip_read=None,
 ):
     """Yield (path, lines) for non-binary text source files.
+
+    ``skip_read(path) -> True`` yields ``(path, None)`` without reading the
+    file, so the caller can answer it from a cache or skip it on a deadline.
 
     Uses os.walk with directory pruning so we never descend into SKIP_DIRS.
     This is essential for large repos (pnpm-store, node_modules, dist). In a git
@@ -343,50 +359,197 @@ def walk_source_files(
         to the remote by definition even if it is untracked right now.
     """
     tracked = _git_tracked_files(root, include_untracked=not tracked_only)
-    for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
-        # Prune SKIP_DIRS in-place so os.walk doesn't descend into them
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        dirnames.sort()
-
-        for fname in sorted(filenames):
-            if _skip_file_name(fname):
-                continue
-            path = Path(dirpath_str) / fname
-            if diff_set is not None and path.resolve() not in diff_set:
-                continue
-            # A file NAMED by the push delta ships to the remote, so it survives
-            # the tracked filter even when it is untracked right now. Without
-            # this, the most common secret-remediation reflex silenced the gate
-            # on the very push carrying the secret: commit the file, then
-            # `git rm --cached` it, and `--tracked-only` dropped it while its
-            # blob stayed in <upstream>..HEAD. (Auditor finding f3, 2026-09-05,
-            # caught before this shipped.)
-            if (
-                tracked is not None
-                and path.resolve() not in tracked
-                and not (tracked_exempt and path.resolve() in tracked_exempt)
-            ):
-                continue
-            # Exclude is the LAST filter so stats['excluded'] counts only files
-            # that would otherwise have been scanned (real candidates removed).
-            # The yielded set is order-independent (all are AND/continue gates),
-            # so this reorder is behavior-preserving vs the prior placement.
-            if exclude_globs and _matches_exclude(root, path, exclude_globs):
-                if stats is not None:
-                    stats["excluded"] = stats.get("excluded", 0) + 1
-                continue
-            if _is_binary(path):
-                continue
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
-            # Skip minified/generated bundles (long single lines) even when the
-            # extension isn't `.min.js` — committed playwright/trace/webpack
-            # bundles produce phantom pattern matches, not reviewable source.
-            if any(len(ln) > 2000 for ln in lines):
-                continue
+    for path in _candidate_paths(root, tracked, not tracked_only, tracked_exempt):
+        if _skip_file_name(path.name):
+            continue
+        if diff_set is not None and _resolved(path) not in diff_set:
+            continue
+        # A file NAMED by the push delta ships to the remote, so it survives
+        # the tracked filter even when it is untracked right now. Without
+        # this, the most common secret-remediation reflex silenced the gate
+        # on the very push carrying the secret: commit the file, then
+        # `git rm --cached` it, and `--tracked-only` dropped it while its
+        # blob stayed in <upstream>..HEAD. (Auditor finding f3, 2026-09-05,
+        # caught before this shipped.)
+        if (
+            tracked is not None
+            and _resolved(path) not in tracked
+            and not (tracked_exempt and _resolved(path) in tracked_exempt)
+        ):
+            continue
+        # Exclude is the LAST filter so stats['excluded'] counts only files
+        # that would otherwise have been scanned (real candidates removed).
+        # The yielded set is order-independent (all are AND/continue gates),
+        # so this reorder is behavior-preserving vs the prior placement.
+        if exclude_globs and _matches_exclude(root, path, exclude_globs):
+            if stats is not None:
+                stats["excluded"] = stats.get("excluded", 0) + 1
+            continue
+        if _is_binary(path):
+            continue
+        if skip_read is not None and skip_read(path):
+            yield path, None
+            continue
+        lines = _read_source_lines(path)
+        if lines is not None:
             yield path, lines
+
+
+def _candidate_paths(root: Path, tracked, include_untracked: bool, tracked_exempt):
+    """Files the walk considers, in a stable order.
+
+    In a git repo, iterate git's own file list (plus delta files that are no
+    longer tracked) instead of every directory on disk: on easy-terminal the
+    disk walk visited 48,626 directories of untracked build output to find
+    5,702 listed files. Outside git, fall back to os.walk with SKIP_DIRS pruned.
+    """
+    listed = _LISTED.get((root, include_untracked)) if tracked is not None else None
+    if listed is None:
+        for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            for fname in sorted(filenames):
+                yield Path(dirpath_str) / fname
+        return
+    rels = set(listed)
+    for exempt in tracked_exempt or ():
+        try:
+            rels.add(str(exempt.relative_to(root)))
+        except ValueError:
+            pass
+    for rel in sorted(rels):
+        if any(part in SKIP_DIRS for part in rel.split("/")[:-1]):
+            continue
+        path = root / rel
+        if path.is_file():
+            yield path
+
+
+def _read_source_lines(path: Path) -> list[str] | None:
+    """File lines, or None when unreadable or a minified/generated bundle
+    (long single lines from committed playwright/trace/webpack bundles produce
+    phantom pattern matches, not reviewable source)."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    if any(len(ln) > 2000 for ln in lines):
+        return None
+    return lines
+
+
+class SpotCache:
+    """Spot-sweep results for UNCHANGED files, reused across pushes.
+
+    Named failure (2026-10-23): on easy-terminal (5,702 tracked files) the
+    whole-tree spot sweep took 41 s, past the 18 s PreToolUse deadline, so
+    every direct `git push` was refused with "retry". Spot files are, by
+    definition, not in the push delta; their result only changes when the file
+    or the scanner changes. Key: repo-relative path + (size, mtime_ns), under a
+    scanner-version hash. Delta files are never cached — they always get a
+    fresh deep scan. Stored per worktree in <git-dir>/build-loop/.
+    """
+
+    NAME = "security-spot-cache.json"
+
+    def __init__(self, root: Path):
+        self.root, self.path, self.entries = root, None, {}
+        self.hits, self.dirty = 0, False
+        try:
+            out = subprocess.run(["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+                                 capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return
+        if out.returncode != 0 or not out.stdout.strip():
+            return
+        self.path = Path(out.stdout.strip()) / "build-loop" / self.NAME
+        self.version = self._scanner_version()
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if data.get("version") == self.version:
+                self.entries = data.get("entries") or {}
+        except (OSError, ValueError):
+            pass
+
+    @staticmethod
+    def _scanner_version() -> str:
+        digest = hashlib.sha256()
+        for module in sorted({__file__, _api_checks.__file__, sys.modules["security_common"].__file__}):
+            digest.update(Path(module).read_bytes())
+        return digest.hexdigest()[:16]
+
+    def _key(self, path: Path):
+        stat = path.stat()
+        return [stat.st_size, stat.st_mtime_ns]
+
+    def _rel(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.root))
+        except ValueError:
+            return str(path)
+
+    def get(self, path: Path):
+        if self.path is None:
+            return None
+        entry = self.entries.get(self._rel(path))
+        try:
+            if entry and entry.get("k") == self._key(path):
+                self.hits += 1
+                return json.loads(json.dumps(entry["f"]))
+        except OSError:
+            return None
+        return None
+
+    def put(self, path: Path, findings: list[dict[str, Any]]) -> None:
+        if self.path is None:
+            return
+        try:
+            self.entries[self._rel(path)] = {
+                "k": self._key(path), "f": json.loads(json.dumps(findings, default=str))}
+            self.dirty = True
+        except OSError:
+            pass
+
+    def save(self) -> None:
+        if self.path is None or not self.dirty:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps({"version": self.version, "entries": self.entries}), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            pass  # a cache that cannot be written only costs time next run
+
+    def warm_in_background(self, diff_ref: str | None, tracked_only: bool,
+                           exclude_globs: list[str]) -> bool:
+        """Finish a budget-cut sweep in a detached process so the NEXT push is
+        answered from cache. Writes only this cache file (inside .git); one
+        warmer per worktree via an O_EXCL lock, stale after 10 minutes."""
+        if self.path is None:
+            return False
+        lock = self.path.with_name("spot-warm.lock")
+        try:
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            if lock.exists() and time.time() - lock.stat().st_mtime > 600:
+                lock.unlink()
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except OSError:
+            return False  # another warmer is running
+        argv = [sys.executable, str(Path(__file__).resolve()), "--path", str(self.root),
+                "--spot-check", "--json", "--warm-lock", str(lock)]
+        if diff_ref:
+            argv += ["--diff", diff_ref]
+        if tracked_only:
+            argv.append("--tracked-only")
+        for glob in exclude_globs:
+            argv += ["--exclude", glob]
+        try:
+            subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True, cwd=str(self.root))
+            return True
+        except OSError:
+            lock.unlink(missing_ok=True)
+            return False
 
 # ---------------------------------------------------------------------------
 # Check A: Secrets in source
@@ -974,20 +1137,27 @@ _CSP_CONFIG_RE = re.compile(
     re.IGNORECASE,
 )
 
+def _has_file_named(root: Path, name: str) -> bool:
+    """Is there a file `name` outside SKIP_DIRS? Answered from git's file list
+    (tracked + untracked-not-ignored) when available. Named failure
+    (2026-10-23): `root.rglob("_headers")` walked 176,380 directories of
+    untracked build output on easy-terminal, 10.6 s of an 18 s push hook."""
+    tracked = _git_tracked_files(root, include_untracked=True)
+    listed = _LISTED.get((root, True)) if tracked is not None else None
+    if listed is not None:
+        return any(rel.rsplit("/", 1)[-1] == name
+                   and not any(part in SKIP_DIRS for part in rel.split("/")[:-1])
+                   for rel in listed)
+    for _dirpath, dirnames, filenames in os.walk(str(root), topdown=True):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        if name in filenames:
+            return True
+    return False
+
+
 def check_F_security_headers(root: Path) -> list[dict[str, Any]]:
     # Look for _headers file outside skip dirs
-    headers_file_found = False
-    for path in root.rglob("_headers"):
-        # Must not be inside a skipped directory
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            continue
-        if not any(part in SKIP_DIRS for part in rel.parts[:-1]):
-            headers_file_found = True
-            break
-
-    if headers_file_found:
+    if _has_file_named(root, "_headers"):
         return []
 
     # Look for CSP in framework config files
@@ -1240,6 +1410,15 @@ def format_report(
                 spot_note = (
                     f"  +  spot sweep over {diff_info.get('spot_files', 0)} unchanged file(s)"
                 )
+                if diff_info.get("spot_cached"):
+                    spot_note += f" ({diff_info['spot_cached']} from cache)"
+                if diff_info.get("spot_skipped"):
+                    spot_note += (
+                        f"; {diff_info['spot_skipped']} unchanged file(s) NOT swept "
+                        f"(time budget)"
+                        + (" — finishing in the background for the next run"
+                           if diff_info.get("spot_warming") else " — they are swept on later runs")
+                    )
             lines.append(
                 f"  scope: delta vs {diff_info['ref']}  |  changed files: "
                 f"{diff_info['changed_files']}{spot_note}"
@@ -1356,6 +1535,8 @@ def _perform_scan(
     spot_check: bool = False,
     tracked_only: bool = False,
     tracked_exempt: set[Path] | None = None,
+    spot_cache: SpotCache | None = None,
+    spot_deadline: float | None = None,
 ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
     """Run all checks once. Returns (findings, files_scanned, walk_stats).
 
@@ -1367,7 +1548,7 @@ def _perform_scan(
     ``scope: "spot"``. Without a delta there is nothing to widen, so the flag is
     a no-op and every finding stays ``scope: "deep"``.
     """
-    walk_stats: dict[str, int] = {"excluded": 0, "spot_files": 0}
+    walk_stats: dict[str, int] = {"excluded": 0, "spot_files": 0, "spot_cached": 0, "spot_skipped": 0}
     all_findings: list[dict[str, Any]] = []
     files_scanned = 0
 
@@ -1405,9 +1586,38 @@ def _perform_scan(
     # is decided per file), so the tracked-filter exemption is passed SEPARATELY
     # — the push gate runs exactly that combination
     # (`--diff … --spot-check --tracked-only`).
+    def _outside_delta(path: Path) -> bool:
+        if not spot_active:
+            return False
+        try:
+            return _resolved(path) not in diff_set  # type: ignore[operator]
+        except OSError:
+            return False
+
     for path, lines in walk_source_files(
-        root, walk_filter, exclude_globs, walk_stats, tracked_only, tracked_exempt
+        root, walk_filter, exclude_globs, walk_stats, tracked_only, tracked_exempt,
+        skip_read=_outside_delta,
     ):
+        if lines is None:
+            # An unchanged file in spot mode: reuse its cached result, skip it
+            # once the spot budget is spent, otherwise read and sweep it below.
+            cached = spot_cache.get(path) if spot_cache is not None else None
+            if cached is not None:
+                for f in cached:
+                    f["scope"] = "spot"
+                all_findings.extend(cached)
+                files_scanned += 1
+                walk_stats["spot_files"] += 1
+                walk_stats["spot_cached"] += 1
+                continue
+            if spot_deadline is not None and time.monotonic() > spot_deadline:
+                walk_stats["spot_skipped"] += 1
+                continue
+            lines = _read_source_lines(path)
+            if lines is None:
+                if spot_cache is not None:
+                    spot_cache.put(path, [])
+                continue
         files_scanned += 1
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
@@ -1417,7 +1627,7 @@ def _perform_scan(
         deep = True
         if spot_active:
             try:
-                deep = path.resolve() in diff_set  # type: ignore[operator]
+                deep = _resolved(path) in diff_set  # type: ignore[operator]
             except OSError:
                 deep = False
             if not deep:
@@ -1457,6 +1667,8 @@ def _perform_scan(
                 if f.get("check_id") in _api_checks.SPOT_CHECK_IDS
                 or f.get("check_id") in _DET_SPOT_CHECK_IDS
             ]
+            if spot_cache is not None:
+                spot_cache.put(path, file_findings)
         for f in file_findings:
             f["scope"] = "deep" if deep else "spot"
         all_findings.extend(file_findings)
@@ -1512,7 +1724,33 @@ def main() -> int:
              "ships committed content only; leave off for a DEPLOY gate, which "
              "uploads the working tree.",
     )
+    parser.add_argument(
+        "--spot-budget",
+        type=float,
+        default=None,
+        dest="spot_budget",
+        metavar="SECONDS",
+        help="With --spot-check: stop sweeping UNCHANGED files after this many "
+             "seconds (cached results still count). Delta files are always "
+             "scanned in full. The report names how many were skipped.",
+    )
+    parser.add_argument(
+        "--no-spot-cache",
+        action="store_true",
+        dest="no_spot_cache",
+        help="Do not read or write the per-worktree spot-sweep cache.",
+    )
+    parser.add_argument("--warm-lock", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.warm_lock:
+        try:
+            return _main_with_args(args, time.monotonic())
+        finally:
+            Path(args.warm_lock).unlink(missing_ok=True)
+    return _main_with_args(args, time.monotonic())
+
+
+def _main_with_args(args, started: float) -> int:
 
     root = Path(args.path).resolve()
     if not root.exists():
@@ -1558,9 +1796,11 @@ def main() -> int:
     # the delta, so this exemption has to travel separately from `walk_filter`.
     tracked_exempt: set[Path] | None = diff_set if (args.tracked_only and diff_active) else None
 
+    spot_cache = SpotCache(root) if (args.spot_check and not args.no_spot_cache) else None
+    spot_deadline = started + args.spot_budget if args.spot_budget is not None else None
     all_findings, files_scanned, walk_stats = _perform_scan(
         root, diff_set, diff_active, exclude_globs, empty_diff, args.spot_check,
-        args.tracked_only, tracked_exempt,
+        args.tracked_only, tracked_exempt, spot_cache, spot_deadline,
     )
 
     # f1 belt-and-braces: --diff named changed files, yet the walk scanned NONE
@@ -1585,7 +1825,7 @@ def main() -> int:
         diff_active = False
         all_findings, files_scanned, walk_stats = _perform_scan(
             root, None, False, exclude_globs, False, args.spot_check,
-            args.tracked_only, tracked_exempt,
+            args.tracked_only, tracked_exempt, spot_cache, spot_deadline,
         )
 
     # Surface the spot sweep in the report header so "scanned the whole tree"
@@ -1593,6 +1833,13 @@ def main() -> int:
     if diff_info is not None and diff_info.get("mode") == "delta" and args.spot_check:
         diff_info["spot_check"] = True
         diff_info["spot_files"] = walk_stats.get("spot_files", 0)
+        diff_info["spot_cached"] = walk_stats.get("spot_cached", 0)
+        diff_info["spot_skipped"] = walk_stats.get("spot_skipped", 0)
+    if spot_cache is not None:
+        spot_cache.save()
+        if walk_stats.get("spot_skipped") and not args.warm_lock and diff_info is not None:
+            diff_info["spot_warming"] = spot_cache.warm_in_background(
+                args.diff, args.tracked_only, exclude_globs)
 
     # f4: exclude visibility — carry the active globs + removed count into the
     # report so an over-broad glob (`*` matches every path) cannot silently
