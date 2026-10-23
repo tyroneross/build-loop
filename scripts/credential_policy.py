@@ -16,6 +16,16 @@ REFUSAL = (
     "metadata/injection interface or an already authorized service connection. "
     "Do not probe, unlock, migrate, retry authentication, or copy secrets into plaintext storage."
 )
+GIT_CWD_REFUSAL = (
+    "This git network command follows a `cd`, so the credential policy cannot tell which "
+    "repository's credential settings apply. Run it as `git -C <repo> <command>` instead. "
+    "(Git over an approved credential helper, e.g. gh for github.com, is allowed.)"
+)
+GIT_CONFIG_REFUSAL = (
+    "This command changes git configuration (git config / remote writes, GIT_CONFIG_*, HOME) "
+    "before a git network command in the same call, so the credential helper it will use "
+    "cannot be checked. Run the configuration change and the network command as separate calls."
+)
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
 _NETWORK = {"push", "pull", "fetch", "clone", "ls-remote", "credential"}
 # Shell reserved words that can precede a command in a segment.
@@ -715,9 +725,13 @@ def command_reason(command: str, *, cwd: str | None = None,
         if network:
             # Dynamic config overrides cannot be proven safe by inspecting the
             # parent environment; require an explicit, inspectable Git -c form.
-            if (command_cwd_uncertain or inline_config or git_env_changed
+            # Say WHY: a bare "Keychain prohibited" here was read as "git
+            # networking is banned" (2026-10-22) when the fix was one flag.
+            if command_cwd_uncertain:
+                return GIT_CWD_REFUSAL
+            if (inline_config or git_env_changed
                     or any(a.startswith("--config-env") for a in prefix)):
-                return REFUSAL
+                return GIT_CONFIG_REFUSAL
             if helpers is None:
                 sub, rest = argv[index], argv[index + 1:]
                 if sub not in _NETWORK:
