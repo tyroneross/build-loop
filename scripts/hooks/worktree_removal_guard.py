@@ -176,32 +176,23 @@ def strip_heredocs(cmd: str) -> tuple[str, list[tuple[str, str]]]:
 
 def counting_text(s: str) -> str:
     """Text for the backstop: quoted strings holding whitespace dropped, other
-    quotes and escapes removed, braces and commas split into words. Command
-    substitutions inside double quotes still run, so their text is kept."""
+    quotes and escapes removed, braces and commas split into words. A command
+    substitution inside double quotes still runs, and its boundaries are hard
+    to find (quoted parens, escaped backticks), so from the first `$(` or
+    backtick in a double-quoted string the rest of the text is kept whole,
+    quote characters removed: its deletions count and quoted paths survive."""
     out, i, n = [], 0, len(s)
     while i < n:
         c = s[i]
         if c in "'\"":
-            j, subs = i + 1, []
+            j = i + 1
             while j < n and s[j] != c:
-                if c == '"' and s[j] == "\\":
-                    j += 2; continue
-                if c == '"' and s.startswith("$(", j):
-                    try:
-                        k = _matching(s, j + 1, "(", ")")
-                    except ValueError:
-                        k = n
-                    subs.append(s[j + 2:k]); j = k + 1; continue
-                if c == '"' and s[j] == "`":
-                    k = s.find("`", j + 1)
-                    k = n if k < 0 else k
-                    subs.append(s[j + 1:k]); j = k + 1; continue
-                j += 1
+                if c == '"' and (s.startswith("$(", j) or s[j] == "`"):
+                    out.append(" ; " + re.sub(r"[\"'\\]", "", s[j:]) + " ")
+                    return "".join(out)
+                j += 2 if (c == '"' and s[j] == "\\") else 1
             inner = s[i + 1:j]
-            if subs:
-                out.append(" ; " + " ; ".join(counting_text(x) for x in subs) + " ; ")
-            else:
-                out.append(" " if re.search(r"\s", inner) else inner.replace("\\", ""))
+            out.append(" " if re.search(r"\s", inner) else inner.replace("\\", ""))
             i = j + 1; continue
         if c == "\\":
             out.append(s[i + 1:i + 2]); i += 2; continue

@@ -221,6 +221,20 @@ class R3(Base):
             with self.subTest(cmd=cmd):
                 self.allowed(self.run_guard(cmd, cwd=self.trees))
 
+    def test_r4_substitution_boundaries_and_quoted_paths(self) -> None:
+        spaced = self.trees / "two words"
+        git(self.repo, "worktree", "add", "-q", "-b", "two-words", str(spaced))
+        (spaced / ".build-loop").mkdir()
+        (spaced / ".build-loop" / "notes.md").write_text("notes\n")
+        for cmd in (f"echo \"$(printf ')'; rm -rf {self.wt})\"",
+                    f'echo "`echo \\`date\\`; rm -rf {self.wt}`"',
+                    f"echo \"$(rm -rf '{spaced}')\"",
+                    f"echo \"`rm -rf '{spaced}'`\""):
+            with self.subTest(cmd=cmd):
+                self.assertIn("archive", self.denied(self.run_guard(cmd)))
+        import worktree_removal_guard as wrg
+        wrg.counting_text("echo " + '"$(' * 5000)  # no RecursionError
+
     def test_r3_f2_deinitialized_submodule_leftovers_are_archived(self) -> None:
         sub_src = self.tmp / "subsrc"
         sub_src.mkdir()
