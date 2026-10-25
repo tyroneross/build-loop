@@ -92,6 +92,10 @@ rule. Still refused: `security …`, `git-credential-osxkeychain`, and any remot
 whose effective helper is `osxkeychain` or `store`. A hook refusal of one git
 command is not a ban on git networking: read the refusal, then fix the
 config or the policy.
+`gh` and `claude` are refused except `--help`, `--version` and `<sub> --help`:
+gh keeps its token in the Keychain here (no `oauth_token` in `hosts.yml`) and
+Claude Code keeps its login there. Every refusal names its trigger and the
+safe alternative; one the policy cannot resolve (`git -C $DIR`) says so.
 
 ## System-access prompts — one request per access need
 

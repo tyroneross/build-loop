@@ -335,6 +335,105 @@ class CredentialPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(self.reason(command))
 
 
+    # Regressions from 2026-10-24 (BUIL-CREDENTIAL-POLICY-m5rnsgd3): each was
+    # refused with "Keychain credential access is prohibited" although none
+    # reaches the Keychain.
+    PAPERCLIP = 'https://github.com/paperclipai/paperclip.git'
+
+    def test_public_clone_into_a_directory_made_in_the_same_call_is_allowed(self):
+        # clone does no repository discovery, so an unresolvable -C target
+        # does not change which helper runs; the URL decides.
+        for command in [
+            f'mkdir -p $S/src; git -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
+            f'mkdir -p $S/src; git -c credential.helper= -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
+            f'mkdir -p $S/src; GIT_TERMINAL_PROMPT=0 git -C $S/src -c credential.helper= clone --depth 1 -q {self.PAPERCLIP}',
+        ]:
+            with self.subTest(command=command):
+                self.assertIsNone(self.decide(self.GH_SETUP, command))
+
+    def test_clone_with_unresolvable_directory_still_judges_the_url(self):
+        # Same shape, but the URL's host falls back to system osxkeychain.
+        reason = self.decide(self.GH_SETUP, 'mkdir -p $S; git -C $S clone https://example.com/x.git')
+        self.assertIn('osxkeychain', reason)
+        self.assertIn('-c credential.helper=', reason)
+        self.assertIsNone(self.decide(self.GH_SETUP,
+                                      'mkdir -p $S; git -C $S -c credential.helper= clone https://example.com/x.git'))
+
+    def test_unresolvable_git_directory_is_reported_as_such(self):
+        for command, path in [('git -C $R push origin main', '$R'),
+                              ('git -C /nonexistent/build-loop-test fetch', '/nonexistent/build-loop-test'),
+                              ('git --git-dir=$G fetch', None)]:
+            with self.subTest(command=command):
+                reason = self.decide(self.GH_SETUP, command)
+                self.assertIsNotNone(reason)
+                if path:
+                    self.assertIn(f'`{path}`', reason)
+                    self.assertIn('not a Keychain finding', reason)
+
+    def test_keychain_helper_refusal_names_context_helper_and_fix(self):
+        reason = self.decide(['credential.helper osxkeychain', 'remote.origin.url https://example.com/r.git'],
+                             'git push origin main')
+        self.assertIn('https://example.com/r.git', reason)
+        self.assertIn('`osxkeychain`', reason)
+        self.assertIn('git -c credential.helper= push', reason)
+
+    def test_help_and_version_with_redirects_are_allowed(self):
+        for command in ['claude --help 2>&1 | grep -i plugin', 'claude --version', 'claude -v',
+                        'claude --help >/dev/null 2>&1', 'claude mcp --help', 'claude help mcp',
+                        'gh --help 2>&1', 'gh pr --help', 'gh help auth', 'gh --version 2> /dev/null']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+
+    def test_fd_duplication_is_not_a_command_separator_but_background_is(self):
+        for command in ['claude --help 2>&1; security find-generic-password',
+                        'claude --help & security find-generic-password',
+                        'claude --help 2>&1 && claude -p hi',
+                        'true 2>& 1; security dump-keychain',
+                        'gh --version >&2 | gh auth token']:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.reason(command))
+
+    def test_claude_session_and_auth_are_refused_with_an_accurate_reason(self):
+        for command in ['claude -p hello', 'claude auth login', 'claude', 'claude --help -p hi']:
+            with self.subTest(command=command):
+                reason = self.reason(command)
+                self.assertIsNotNone(reason)
+                self.assertIn('Claude Code login', reason)
+
+    def test_gh_is_refused_only_when_its_token_lives_in_the_keyring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hosts = Path(tmp) / 'hosts.yml'
+            env = {'GH_CONFIG_DIR': tmp}
+            hosts.write_text('github.com:\n    git_protocol: https\n    user: someone\n')
+            reason = command_reason('gh pr list', platform='darwin', helpers=[], environment=env)
+            self.assertIn('Keychain', reason)
+            self.assertIn('gh pr', reason)
+            # Plaintext token (gh auth login --insecure-storage): gh never asks the keyring.
+            hosts.write_text('github.com:\n    oauth_token: synthetic\n    user: someone\n')
+            self.assertIsNone(command_reason('gh pr list', platform='darwin', helpers=[], environment=env))
+            # Missing or unreadable config: assume the keyring.
+            self.assertIsNotNone(command_reason('gh pr list', platform='darwin', helpers=[],
+                                                environment={'GH_CONFIG_DIR': str(Path(tmp) / 'absent')}))
+
+    def test_direct_keychain_tools_name_the_trigger(self):
+        for command, trigger in [('security find-generic-password -w', '`security`'),
+                                 ('security add-generic-password -s x -a y -w z', '`security`'),
+                                 ('security delete-generic-password -s x', '`security`'),
+                                 ('security unlock-keychain', '`security`'),
+                                 ('security dump-keychain', '`security`'),
+                                 ('security export -k login.keychain', '`security`'),
+                                 ('security set-key-partition-list -S apple:', '`security`'),
+                                 ('git credential-osxkeychain get', 'credential-osxkeychain'),
+                                 ('/usr/local/bin/git-credential-osxkeychain get', 'credential-osxkeychain'),
+                                 ('echo "$(security find-internet-password)"', '`security`'),
+                                 ("osascript -e 'SecKeychainFindGenericPassword()'", 'Keychain API'),
+                                 ("python3 -c 'import keyring; keyring.get_password(\"a\", \"b\")'", 'Keychain API')]:
+            with self.subTest(command=command):
+                reason = self.reason(command)
+                self.assertIsNotNone(reason)
+                self.assertIn(trigger, reason)
+
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -26,6 +26,37 @@ GIT_CONFIG_REFUSAL = (
     "before a git network command in the same call, so the credential helper it will use "
     "cannot be checked. Run the configuration change and the network command as separate calls."
 )
+GIT_PATH_REFUSAL = (
+    "The credential policy cannot resolve the git directory `{path}` ({why}), so it cannot read "
+    "the git config that decides which credential helper `git {sub}` would use. This is not a "
+    "Keychain finding. Use a literal path that already exists, or run the `mkdir`/variable setup "
+    "as a separate call first."
+)
+GIT_HELPER_REFUSAL = (
+    "`git {sub}` could reach {context} whose effective credential helper is `{helper}`, which reads "
+    "the macOS Keychain (or plaintext store). Add `-c credential.helper=` before the subcommand "
+    "(`git -c credential.helper= {sub} …`) to run with no helper, or use a remote whose helper is "
+    "approved (gh for https://github.com)."
+)
+GIT_CONFIG_READ_REFUSAL = (
+    "The credential policy could not read git config for `git {sub}` (`git config` failed in {where}), "
+    "so it cannot tell which credential helper would run. Check that the directory is a readable "
+    "git checkout, or pass `-c credential.helper=` to disable helpers for this command."
+)
+GH_REFUSAL = (
+    "`gh {sub}` reads the GitHub token gh stores in the macOS Keychain on this Mac (no token in "
+    "{hosts}), and the owner rule forbids Keychain access. Allowed instead: `gh --help`/`--version`; "
+    "git fetch/pull/push/clone over https://github.com (the approved gh credential helper); "
+    "unauthenticated reads of public data (e.g. `curl https://api.github.com/...`). Ask the owner for "
+    "anything that needs gh's login."
+)
+CLAUDE_REFUSAL = (
+    "`claude {sub}` may load the Claude Code login, which Claude Code stores in the macOS Keychain "
+    "(code.claude.com/docs/en/authentication), and the owner rule forbids Keychain access. Only "
+    "`claude --help`, `claude --version` and `claude <subcommand> --help` are allowed."
+)
+API_REFUSAL = ("This code calls a macOS Keychain API (SecItem*, SecKeychain* or keyring.*). "
+               + REFUSAL)
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
 _NETWORK = {"push", "pull", "fetch", "clone", "ls-remote", "credential"}
 # Shell reserved words that can precede a command in a segment.
@@ -228,16 +259,17 @@ def _effective_helpers(pairs, url: str | None):
     return chain
 
 
-def _keychain_helper(chain) -> bool:
-    """osxkeychain or store, in any spelling git accepts: `store`,
-    `/path/git-credential-store`, `!git credential-store …` (a shell helper)."""
+def _keychain_helper(chain):
+    """The first helper that is osxkeychain or store, in any spelling git
+    accepts (`store`, `/path/git-credential-store`, `!git credential-store …`,
+    a shell helper that runs a Keychain command), else None."""
     for helper in chain:
         text = helper.strip()
         if "osxkeychain" in text or "credential-store" in text:
-            return True
+            return text
         words = text.lstrip("!").split()
         if words and Path(words[0]).name in {"store", "git-credential-store"}:
-            return True
+            return text
         if text.startswith("!"):
             # `!gh auth git-credential` is the owner-approved connection
             # (AGENTS.md, 2026-10-23); any other shell helper is judged as a
@@ -245,8 +277,8 @@ def _keychain_helper(chain) -> bool:
             if len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]:
                 continue
             if command_reason(text[1:], platform="darwin", environment={}, helpers=[]):
-                return True
-    return False
+                return text
+    return None
 
 
 _PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
@@ -255,7 +287,21 @@ _GIT_CONTEXT_KEYS = (r"^(credential(\..*)?\.helper|remote\..*\.(url|pushurl)"
                      r"|submodule\..*\.url|fetch\.recursesubmodules)$")
 
 
-def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
+def _git_directory_problem(prefix, cwd):
+    """(path, why) for a -C/--git-dir/--work-tree the hook cannot resolve to
+    an existing directory, else None. A `$VAR` or a directory created earlier
+    in the same command (`mkdir -p $S; git -C $S …`) is unresolvable here."""
+    for position, arg in enumerate(prefix[:-1]):
+        if arg in {"-C", "--git-dir", "--work-tree"}:
+            path = prefix[position + 1]
+            if "$" in path or "`" in path or path.startswith("~"):
+                return path, "it contains a shell expansion the hook does not evaluate"
+            if not (Path(cwd or ".") / path).is_dir():
+                return path, "it does not exist when the hook runs"
+    return None
+
+
+def _git_may_use_keychain(git, prefix, sub, rest, cwd, env):
     """Could this git network command make git run a Keychain helper?
 
     Git asks helpers per CONTEXT (a URL), so judge every context the command
@@ -265,8 +311,25 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
     `git credential` stdin, clone --config/--recurse-submodules, transport::
     syntax other than http(s), non-credential -c overrides, no URL at all) is
     an UNKNOWN context: unscoped helpers apply and scoped resets do not.
-    Reads metadata with `git config` only; never runs a helper.
+    Reads metadata with `git config` only; never runs a helper. Returns a
+    refusal reason naming the trigger, or None.
     """
+    if sub == "clone":
+        # clone does no repository discovery, so -C only picks where the new
+        # repo goes; read config without it (from the hook's cwd, which can only
+        # ADD helpers, never hide one).
+        stripped, position = [], 0
+        while position < len(prefix):
+            if prefix[position] in {"-C", "--git-dir", "--work-tree"}:
+                position += 2
+                continue
+            stripped.append(prefix[position])
+            position += 1
+        prefix = stripped
+    problem = _git_directory_problem(prefix, cwd)
+    if problem:
+        return GIT_PATH_REFUSAL.format(path=problem[0], why=problem[1], sub=sub)
+
     def read(args):
         try:
             result = subprocess.run([git, *prefix, *args], cwd=cwd, env=env,
@@ -277,7 +340,7 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
 
     config = read(["config", "-z", "--get-regexp", _GIT_CONTEXT_KEYS])
     if config is None:
-        return True
+        return GIT_CONFIG_READ_REFUSAL.format(sub=sub, where=f"`{cwd or os.getcwd()}`")
     pairs, remotes, rules, push_rules, proxies, submodules = [], {}, {}, {}, [], []
     recurse = ""
     # -z records: "key\nvalue\0" (key alone when the value is absent).
@@ -391,7 +454,12 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env) -> bool:
                 unknown = True
     if unknown:
         contexts.append(None)
-    return any(_keychain_helper(_effective_helpers(pairs, context)) for context in contexts)
+    for context in contexts:
+        helper = _keychain_helper(_effective_helpers(pairs, context))
+        if helper:
+            where = f"`{context}`" if context else "a remote the hook cannot resolve statically"
+            return GIT_HELPER_REFUSAL.format(sub=sub, context=where, helper=helper)
+    return None
 
 
 def _piped_scripts(command: str):
@@ -499,8 +567,18 @@ def _segments(command: str):
     lexer.commenters = ""
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
-    current = []
-    for token in lexer:
+    current, tokens = [], list(lexer)
+    merged = []
+    for token in tokens:
+        # `2>&1`, `>&2`, `2>&-` lex as `2>` `&` `1`: an fd duplication, not a
+        # background `&`. Splitting there cut `claude --help 2>&1` into
+        # `claude --help 2>` (not a help form) and a command named `1`.
+        if (len(merged) >= 2 and merged[-1] == "&" and re.match(r"^[0-9]*[<>]$", merged[-2])
+                and re.match(r"^(?:[0-9]+|-)$", token)):
+            merged[-2:] = [merged[-2] + "&" + token]
+            continue
+        merged.append(token)
+    for token in merged:
         if token and set(token) <= set(";&|()\n"):  # separators, incl. newline runs
             if current:
                 yield current
@@ -509,6 +587,53 @@ def _segments(command: str):
             current.append(token)
     if current:
         yield current
+
+
+def _without_redirects(args):
+    """Arguments with redirections (`2>&1`, `>/dev/null`, `2> log`) removed."""
+    out, skip = [], False
+    for arg in args:
+        if skip:
+            skip = False
+            continue
+        match = re.match(r"^[0-9]*(?:>>?|<)(&?[0-9-]*)(.*)$", arg)
+        if match:
+            skip = not match.group(1) and not match.group(2)
+            continue
+        out.append(arg)
+    return out
+
+
+_HELP = (["--help"], ["-h"], ["--version"], ["help"])
+
+
+def _help_only(exe, args) -> bool:
+    """Prints usage or a version and exits. `gh`/`claude` also allow
+    `<sub> --help` and `help <sub>`: their help text needs no login."""
+    if args in _HELP:
+        return True
+    if exe == "claude" and args == ["-v"]:
+        return True
+    return exe in {"gh", "claude"} and len(args) == 2 and (
+        (args[1] in {"--help", "-h"} and re.match(r"^[a-z][a-z-]*$", args[0]))
+        or (args[0] == "help" and re.match(r"^[a-z][a-z-]*$", args[1])))
+
+
+def _gh_hosts_file(environment):
+    base = environment.get("GH_CONFIG_DIR") or os.path.join(
+        environment.get("XDG_CONFIG_HOME") or os.path.join(environment.get("HOME") or str(Path.home()), ".config"), "gh")
+    return Path(base) / "hosts.yml"
+
+
+def _gh_uses_keyring(environment) -> bool:
+    """gh keeps its token in hosts.yml only with --insecure-storage; otherwise
+    in the system keyring (macOS Keychain). Checks for the KEY only; the value
+    is never returned or printed. Unreadable = assume the keyring."""
+    try:
+        text = _gh_hosts_file(environment).read_text()
+    except OSError:
+        return True
+    return not re.search(r"^\s+oauth_token:\s*\S", text, re.MULTILINE)
 
 
 def _substitutions(source):
@@ -562,40 +687,40 @@ def command_reason(command: str, *, cwd: str | None = None,
             # The shell expands $( ) and backticks in an unquoted body BEFORE
             # any reader sees it, and quotes inside the body do not protect.
             for inner in _substitutions(body.replace("'", " ").replace('"', " ")):
-                if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
-                                  environment=environment, cwd_uncertain=cwd_uncertain):
-                    return REFUSAL
+                if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
+                                  environment=environment, cwd_uncertain=cwd_uncertain)):
+                    return inner_reason
         interpreters = {r for r in readers if r.startswith(_INTERPRETERS)}
         if not readers <= _DATA_READERS | interpreters:
             # A shell, eval, source, xargs or unknown reader may execute it.
-            if _API.search(body) or command_reason(
+            if (inner_reason := API_REFUSAL if _API.search(body) else command_reason(
                     body, cwd=cwd, helpers=helpers, platform=platform,
-                    environment=environment, cwd_uncertain=cwd_uncertain):
-                return REFUSAL
+                    environment=environment, cwd_uncertain=cwd_uncertain)):
+                return inner_reason
             continue
         if any(r.startswith("python") for r in interpreters) and _python_calls_keychain(body):
-            return REFUSAL
+            return API_REFUSAL
         if interpreters - {r for r in interpreters if r.startswith("python")} and _API.search(body):
-            return REFUSAL
+            return API_REFUSAL
     try:
         # Newline is a separator token, so a `#` comment ends at its line
         # instead of swallowing every later command.
         segments = list(_segments(command))
     except ValueError:
-        return REFUSAL if _API.search(command) else None
+        return API_REFUSAL if _API.search(command) else None
     # Substitutions are expanded in their surrounding shell context. If this
     # command contains any directory-changing builtin, do not inspect their
     # Git helpers against a guessed directory (including earlier substitutions).
     cwd_uncertain |= any(token in {"cd", "pushd", "popd"}
                          for segment in segments for token in segment)
     for inner in _substitutions(command):
-        if command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain):
-            return REFUSAL
+        if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain)):
+            return inner_reason
     for script in _piped_scripts(command):
-        if _API.search(script) or command_reason(
+        if (inner_reason := API_REFUSAL if _API.search(script) else command_reason(
                 script, cwd=cwd, helpers=helpers, platform=platform,
-                environment=environment, cwd_uncertain=cwd_uncertain):
-            return REFUSAL
+                environment=environment, cwd_uncertain=cwd_uncertain)):
+            return inner_reason
     # `export GIT_CONFIG_COUNT=…` / `HOME=/x` on their own persist into later
     # commands, so any later git network command is judged as reconfigured.
     git_env_changed = any(_GIT_ENV.match(token) for argv in segments for token in argv
@@ -636,7 +761,8 @@ def command_reason(command: str, *, cwd: str | None = None,
                     try:
                         argv = shlex.split(text) + argv
                     except ValueError:
-                        return REFUSAL
+                        return ("The credential policy cannot parse the `env -S` string, so it cannot "
+                                "check it for Keychain access. Pass the command as separate words.")
                     break
                 if option in {"-C", "--chdir", "-D"} or option.startswith("--chdir="):
                     command_cwd_uncertain = True
@@ -656,52 +782,60 @@ def command_reason(command: str, *, cwd: str | None = None,
         if exe in {"cd", "pushd", "popd"}:
             cwd_uncertain = True
             continue
-        if argv[1:] in (["--help"], ["-h"], ["--version"], ["help"]):
+        if _help_only(exe, _without_redirects(argv[1:])):
             continue
         if exe == "security" or "credential-osxkeychain" in exe:
-            return REFUSAL
-        if exe == "eval" and command_reason(" ".join(argv[1:]), cwd=cwd, helpers=helpers, platform=platform,
-                                            environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
-            return REFUSAL
+            return f"`{exe}` reads or changes the macOS Keychain. " + REFUSAL
+        if exe == "eval" and (inner_reason := command_reason(
+                " ".join(argv[1:]), cwd=cwd, helpers=helpers, platform=platform,
+                environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
+            return inner_reason
         if exe in {"bash", "sh", "zsh", "dash", "ksh"} and "<<<" in argv:
             herestring = argv[argv.index("<<<") + 1] if argv.index("<<<") + 1 < len(argv) else ""
-            if command_reason(herestring, cwd=cwd, helpers=helpers, platform=platform,
-                              environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
-                return REFUSAL
+            if (inner_reason := command_reason(herestring, cwd=cwd, helpers=helpers, platform=platform,
+                              environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
+                return inner_reason
         if exe == "vault" and (any(a == "--value" or a.startswith("--value=") for a in argv) or any(x in {"export", "dump"} for x in argv[1:])):
             return "Secret values must not enter agent output. Use Secrets Vault metadata or server-side injection."
         shell_option = next((i for i, arg in enumerate(argv[1:], 1)
                              if arg.startswith("-") and not arg.startswith("--") and "c" in arg), None)
         if exe in {"bash", "sh", "zsh"} and shell_option is not None:
             index = shell_option + 1
-            if index < len(argv) and command_reason(argv[index], cwd=cwd, helpers=helpers,
-                                                   platform=platform, environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
-                return REFUSAL
+            if index < len(argv) and (inner_reason := command_reason(
+                    argv[index], cwd=cwd, helpers=helpers, platform=platform,
+                    environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
+                return inner_reason
         if exe.startswith(("python", "swift", "osascript")):
             if exe.startswith("python") and "-c" in argv:
                 try:
                     code = ast.parse(argv[argv.index("-c") + 1])
                     if any(isinstance(node, ast.Call) and _API.search(ast.unparse(node.func))
                            for node in ast.walk(code)):
-                        return REFUSAL
+                        return API_REFUSAL
                 except (SyntaxError, IndexError):
                     if any(_API.search(arg) for arg in argv[1:]):
-                        return REFUSAL
+                        return API_REFUSAL
             elif any(_API.search(arg) for arg in argv[1:]):
-                return REFUSAL
+                return API_REFUSAL
             for marker in ("--argv", "--"):
                 if marker in argv and any(Path(a).name in {"privileged_broker.py", "system_access_request.py"} for a in argv):
                     inner = argv[argv.index(marker) + 1:]
-                    if command_reason(shlex.join(inner), cwd=cwd, helpers=helpers,
-                                      platform=platform, environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
-                        return REFUSAL
+                    if (inner_reason := command_reason(shlex.join(inner), cwd=cwd, helpers=helpers,
+                                      platform=platform, environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
+                        return inner_reason
         if platform != "darwin":
             continue
         # Shell text cannot establish an approved auth route: expansions,
         # unset/export and wrapper environments can trigger stored-credential
         # fallback. Use the connected service instead of guessing from tokens.
-        if exe in {"gh", "claude"}:
-            return REFUSAL
+        if exe == "gh":
+            if _gh_uses_keyring(effective_environment):
+                first = next((a for a in argv[1:] if not a.startswith("-")), "")
+                return GH_REFUSAL.format(sub=first or "…", hosts=_gh_hosts_file(effective_environment))
+            continue
+        if exe == "claude":
+            first = next((a for a in argv[1:] if not a.startswith("-")), "")
+            return CLAUDE_REFUSAL.format(sub=" ".join(argv[1:3]) or first)
         if exe != "git":
             continue
         prefix = []
@@ -714,7 +848,7 @@ def command_reason(command: str, *, cwd: str | None = None,
                 prefix.append(argv[index])
                 index += 1
         if index < len(argv) and "credential-osxkeychain" in argv[index]:
-            return REFUSAL
+            return "`git credential-osxkeychain` reads the macOS Keychain. " + REFUSAL
         network = index < len(argv) and argv[index] not in _LOCAL_GIT and not argv[index].startswith("-")
         if network and argv[index] in {"remote", "submodule"}:
             # Only these forms contact a remote; `git remote -v`, `add`,
@@ -739,10 +873,10 @@ def command_reason(command: str, *, cwd: str | None = None,
                     if alias is not None:
                         # A shell alias (`!…`) runs a command; any other alias
                         # names a subcommand that may reach any remote.
-                        if alias.startswith("!") and command_reason(
+                        if alias.startswith("!") and (inner_reason := command_reason(
                                 alias[1:], cwd=cwd, helpers=helpers, platform=platform,
-                                environment=effective_environment, cwd_uncertain=command_cwd_uncertain):
-                            return REFUSAL
+                                environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
+                            return f"git alias `{sub}` runs a shell command: " + inner_reason
                         sub, rest = "credential", []
                     elif sub == "submodule":
                         sub, rest = "fetch", ["--recurse-submodules-only"]
@@ -750,8 +884,9 @@ def command_reason(command: str, *, cwd: str | None = None,
                         # remote update, lfs, …: judged like a fetch of the
                         # remotes they name (or all remotes).
                         sub, rest = "fetch", [arg for arg in rest[1:] if not arg.startswith("-")]
-                if _git_may_use_keychain(argv[0], prefix, sub, rest, cwd, effective_environment):
-                    return REFUSAL
+                git_reason = _git_may_use_keychain(argv[0], prefix, sub, rest, cwd, effective_environment)
+                if git_reason:
+                    return git_reason
                 continue
             else:
                 configured = list(helpers)
@@ -760,7 +895,7 @@ def command_reason(command: str, *, cwd: str | None = None,
                         key, value = arg.split("=", 1)
                         if key != "credential.helper":
                             if "osxkeychain" in value or value.split(" ", 1)[0] == "store":
-                                return REFUSAL
+                                return GIT_HELPER_REFUSAL.format(sub=argv[index], context=f"`{key[len('credential.'):-len('.helper')]}`", helper=value)
                         else:
                             configured.append(value)
             effective = []
@@ -769,8 +904,9 @@ def command_reason(command: str, *, cwd: str | None = None,
                     effective.append(helper)
                 else:
                     effective.clear()
-            if any("osxkeychain" in helper or helper.strip().split(" ", 1)[0] == "store" for helper in effective):
-                return REFUSAL
+            bad = next((h for h in effective if "osxkeychain" in h or h.strip().split(" ", 1)[0] == "store"), None)
+            if bad:
+                return GIT_HELPER_REFUSAL.format(sub=argv[index], context="every remote", helper=bad)
     return None
 
 
