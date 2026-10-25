@@ -351,6 +351,10 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
     for sub in submodules:
         sub_wt = wt / sub
         if not (sub_wt / ".git").exists():
+            # Deinitialized: git reports the gitlink unmodified and lists none of
+            # the files left in the folder, so archive whatever is there.
+            if sub_wt.is_dir() and not sub_wt.is_symlink():
+                walk(sub_wt, "untracked", caches_too=include_caches)
             continue
         if _depth >= 4:
             snap.incomplete.append(f"submodule nesting too deep at {sub}")

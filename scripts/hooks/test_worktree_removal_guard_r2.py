@@ -208,5 +208,39 @@ class R2(Base):
                 self.allowed(self.run_guard(cmd, cwd=self.trees))
 
 
+class R3(Base):
+    """Round-3 review of 09ec8d27: the two findings it left open."""
+
+    def test_r3_f1_quoted_command_substitution_is_counted(self) -> None:
+        for cmd in (f'echo "$(rm -rf {self.wt})"', f'echo "`rm -rf {self.wt}`"',
+                    f'x="$(cd / && rm -rf "{self.wt}")"'):
+            with self.subTest(cmd=cmd):
+                self.assertIn("archive", self.denied(self.run_guard(cmd)))
+        for cmd in (f'git commit -m "rm -rf {self.wt.name} later"', 'echo "$(date) rm -rf"',
+                    'echo "$(rm -rf node_modules)"'):
+            with self.subTest(cmd=cmd):
+                self.allowed(self.run_guard(cmd, cwd=self.trees))
+
+    def test_r3_f2_deinitialized_submodule_leftovers_are_archived(self) -> None:
+        sub_src = self.tmp / "subsrc"
+        sub_src.mkdir()
+        git(sub_src, "init", "-q", "-b", "main")
+        git(sub_src, "config", "user.email", "t@example.com")
+        git(sub_src, "config", "user.name", "Test")
+        (sub_src / "f.txt").write_text("v1\n")
+        git(sub_src, "add", ".")
+        git(sub_src, "commit", "-q", "-m", "s")
+        subprocess.run(["git", "-C", str(self.wt), "-c", "protocol.file.allow=always", "submodule", "add",
+                        "-q", str(sub_src), "sub"], check=True, capture_output=True)
+        git(self.wt, "commit", "-q", "-m", "add sub")
+        git(self.wt, "submodule", "deinit", "-q", "-f", "sub")
+        (self.wt / "sub" / "notes.txt").write_text("keep\n")
+        paths = {f["path"] for f in wa.archive(self.wt)["files"]}
+        self.assertIn("sub/notes.txt", paths)
+        self.allowed(self.run_guard(f"rm -rf {self.wt}"))
+        (self.wt / "sub" / "notes.txt").write_text("changed after archive\n")
+        self.denied(self.run_guard(f"rm -rf {self.wt}"))
+
+
 if __name__ == "__main__":
     unittest.main()
