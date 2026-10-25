@@ -21,7 +21,7 @@ REFUSAL = (
 GIT_CWD_REFUSAL = (
     "This git network command follows a `cd`, so the credential policy cannot tell which "
     "repository's credential settings apply. Run it as `git -C <repo> <command>` instead. "
-    "(git fetch/pull/push to https://github.com over the approved gh helper is allowed.)"
+    "(git fetch/pull/push/clone with https://github.com over the approved gh helper is allowed.)"
 )
 GIT_CONFIG_REFUSAL = (
     "This command changes git configuration or the environment git reads it from (git config / "
@@ -39,7 +39,8 @@ GIT_HELPER_REFUSAL = (
     "`git {sub}` could reach {context} whose effective credential helper is `{helper}`, which reads "
     "the macOS Keychain (or plaintext store). Add `-c credential.helper=` before the subcommand "
     "(`git -c credential.helper= {sub} …`) to run with no helper. The gh helper is approved only for "
-    "`git fetch`, `pull` and `push` to https://github.com (owner ruling 2026-10-23, AGENTS.md)."
+    "`git fetch`, `pull`, `push` and `clone` with https://github.com (owner rulings 2026-10-23 and "
+    "2026-10-25, AGENTS.md)."
 )
 GIT_CONFIG_READ_REFUSAL = (
     "The credential policy could not read git config for `git {sub}` (`git config` failed in {where}), "
@@ -50,7 +51,7 @@ GH_REFUSAL = (
     "`gh {sub}` needs gh's GitHub login. gh keeps that token in the macOS Keychain, and the owner "
     "rule forbids both Keychain access and moving the token to plaintext storage, so every gh call "
     "except help/version is refused (a token file anywhere is not proof for the host gh will use). "
-    "Allowed instead: `gh --help`, `gh --version`, `gh <sub> --help`; git fetch/pull/push to "
+    "Allowed instead: `gh --help`, `gh --version`, `gh <sub> --help`; git fetch/pull/push/clone with "
     "https://github.com (the approved gh credential helper); unauthenticated reads of public data "
     "(e.g. `curl https://api.github.com/...`). Ask the owner for anything that needs gh's login."
 )
@@ -308,8 +309,8 @@ def _keychain_helper(chain, gh_approved=False):
             return text
         if text.startswith("!"):
             # `!gh auth git-credential` reads gh's Keychain token. The owner
-            # approved it ONLY for git fetch/pull/push to https://github.com
-            # (AGENTS.md, ruling 2026-10-23); the caller decides that. Any
+            # approved it ONLY for git fetch/pull/push/clone with https://github.com
+            # (AGENTS.md, rulings 2026-10-23 and 2026-10-25); the caller decides that. Any
             # other shell helper is judged as a command.
             if len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]:
                 if gh_approved:
@@ -1183,9 +1184,10 @@ def command_reason(command: str, *, cwd: str | None = None,
                 return GIT_CONFIG_REFUSAL
             if helpers is None:
                 sub, rest = argv[index], argv[index + 1:]
-                # Exactly the owner's 2026-10-23 ruling: gh's helper for git
-                # fetch, pull and push to https://github.com. Nothing else.
-                gh_approved = sub in {"fetch", "pull", "push"}
+                # Exactly the owner's rulings (2026-10-23 fetch/pull/push;
+                # 2026-10-25 clone): gh's helper for those git subcommands
+                # with https://github.com. Nothing else.
+                gh_approved = sub in {"fetch", "pull", "push", "clone"}
                 if sub not in _NETWORK:
                     alias = _git_alias(argv[0], prefix, sub, cwd, effective_environment)
                     if alias is not None:

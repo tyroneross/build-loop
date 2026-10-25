@@ -92,8 +92,9 @@ rule. Still refused: `security …`, `git-credential-osxkeychain`, and any remot
 whose effective helper is `osxkeychain` or `store`. A hook refusal of one git
 command is not a ban on git networking: read the refusal, then fix the
 config or the policy.
+2026-10-25: clone from https://github.com added to the gh helper approval.
 The gh helper reads gh's Keychain token, so the ruling covers exactly `git
-fetch`, `pull` and `push` to `https://github.com`; `clone`, `ls-remote`,
+fetch`, `pull`, `push` and `clone` with `https://github.com`; `ls-remote`,
 `remote update`, aliases and other hosts need `-c credential.helper=`. ssh is
 refused when it may search the Keychain (`UseKeychain yes` in any ssh config
 it reads, `-o UseKeychain=yes`, `ssh-add --apple-use-keychain`); pass

@@ -194,8 +194,8 @@ class CredentialPolicyTests(unittest.TestCase):
         self.assertIsNotNone(self.decide(two_remotes, 'git fetch mirror'))
         self.assertIsNotNone(self.decide(two_remotes, 'git fetch'))       # remote unnamed: all
         self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://example.com/r.git'))
-        # The gh helper is approved for fetch/pull/push only (BLK-01, 2026-10-25).
-        self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git'))
+        # Clone from github.com joined the gh helper approval (owner, 2026-10-25).
+        self.assertIsNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git'))
         self.assertIsNone(self.decide(self.GH_SETUP, 'git -c credential.helper= clone https://github.com/o/r.git'))
 
     # Shapes from the independent Codex review of 9d7f68f3 (2026-10-23): each
@@ -352,11 +352,9 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_public_clone_into_a_directory_made_in_the_same_call_is_allowed(self):
         # clone does no repository discovery, so an unresolvable -C target
         # does not change which helper runs; the URL decides.
-        # Without `-c credential.helper=` the clone would run gh's Keychain
-        # helper on an auth challenge, which the owner ruling does not cover.
-        reason = self.decide(self.GH_SETUP, f'mkdir -p $S/src; git -C $S/src clone --depth 1 -q {self.PAPERCLIP}')
-        self.assertIn('-c credential.helper=', reason)
+        # The gh helper is approved for clone from github.com (2026-10-25).
         for command in [
+            f'mkdir -p $S/src; git -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
             f'mkdir -p $S/src; git -c credential.helper= -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
             f'mkdir -p $S/src; GIT_TERMINAL_PROMPT=0 git -C $S/src -c credential.helper= clone --depth 1 -q {self.PAPERCLIP}',
         ]:
@@ -446,23 +444,43 @@ class CredentialPolicyTests(unittest.TestCase):
 
     # Independent review of e7f447fd (2026-10-25, BLK-01..MIN-07). Each shape
     # was allowed (or wrongly refused) before this change.
-    def test_gh_helper_is_approved_only_for_fetch_pull_push_to_github(self):
+    def test_gh_helper_is_approved_only_for_fetch_pull_push_clone_to_github(self):
         gh = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']
-        for command in ['git fetch origin', 'git pull', 'git push origin main']:
+        for command in ['git fetch origin', 'git pull', 'git push origin main',
+                        'git clone https://github.com/o/private.git']:
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(gh, command))
-        for command in ['git clone https://github.com/o/private.git', 'git ls-remote origin',
+        for command in ['git ls-remote origin',
                         'git remote update', 'git submodule update --remote', 'git credential fill']:
             with self.subTest(command=command):
                 reason = self.decide(gh, command)
                 self.assertIsNotNone(reason)
-                self.assertIn('fetch`, `pull` and `push`', reason)
+                self.assertIn('`push` and `clone`', reason)
         self.assertIsNotNone(self.decide(gh + ['alias.sync fetch --all'], 'git sync'))
         # gh setup for gist.github.com is not part of the ruling.
         gist = ['credential.helper osxkeychain', 'credential.https://gist.github.com.helper ',
                 'credential.https://gist.github.com.helper !gh auth git-credential',
                 'remote.origin.url https://gist.github.com/abc.git']
         self.assertIsNotNone(self.decide(gist, 'git push origin main'))
+
+    def test_clone_approval_is_limited_to_github(self):
+        # Owner ruling 2026-10-25: clone joins fetch/pull/push, nothing wider.
+        self.assertIsNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git dest'))
+        for url in ['https://gitlab.com/o/r.git', 'https://gist.github.com/abc.git',
+                    'https://github.com:8443/o/r.git']:
+            with self.subTest(url=url):
+                reason = self.decide(self.GH_SETUP, f'git clone {url}')
+                self.assertIsNotNone(reason)
+                self.assertIn('-c credential.helper=', reason)
+                self.assertIsNone(self.decide(self.GH_SETUP, f'git -c credential.helper= clone {url}'))
+        # Submodules may reach any host; an extra helper joins the chain.
+        self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone --recurse-submodules https://github.com/o/r.git'))
+        self.assertIsNotNone(self.decide(self.GH_SETUP,
+                                         'git clone -c credential.helper=osxkeychain https://github.com/o/r.git'))
+        # gh CLI itself stays refused.
+        for command in ['gh repo clone o/r', 'gh auth status', 'gh auth git-credential get']:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.reason(command))
 
     def ssh_config(self, tmp, text):
         path = Path(tmp) / 'config'
