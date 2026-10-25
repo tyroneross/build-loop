@@ -132,12 +132,18 @@ class CredentialPolicyTests(unittest.TestCase):
                         r'secu\rity find-generic-password',
                         'echo `security find-generic-password`',
                         '2>/dev/null security find-generic-password',
-                        'echo "$(security find-generic-password)"']:
+                        'echo "$(security find-generic-password)"',
+                        # 2026-10-25 review: expansion and git shell bodies.
+                        "$'security' find-generic-password -w",
+                        'sec${EMPTY}urity find-generic-password -w',
+                        "git -c credential.helper= submodule foreach 'security find-generic-password -w'"]:
             event = {'tool_input': {'command': command}, 'cwd': '/tmp'}
             result = subprocess.run(['bash', str(ROOT / 'scripts/hooks/pre_bash_dispatch.sh')],
                                     input=json.dumps(event), text=True, capture_output=True, env=env, timeout=25)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny', command)
+
+    ssh_files = []  # hermetic: no real ssh config unless a test supplies one
 
     def decide(self, config_lines, command='git fetch origin', environment=None):
         config = ''.join(line + '\n' for line in config_lines)
@@ -159,7 +165,8 @@ class CredentialPolicyTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0 if found else 1, values.get(key, '') + '\n', '')
             return subprocess.CompletedProcess(argv, 1, '', '')
 
-        with patch('credential_policy.subprocess.run', side_effect=fake_git) as runner:
+        with patch('credential_policy.subprocess.run', side_effect=fake_git) as runner, \
+                patch('credential_policy._ssh_config_files', return_value=self.ssh_files, create=True):
             reason = command_reason(command, platform='darwin', environment=environment or {})
         if reason is None:  # an allow must come from actually judging the config
             self.assertTrue(any('--get-regexp' in call.args[0] for call in runner.call_args_list))
@@ -187,7 +194,9 @@ class CredentialPolicyTests(unittest.TestCase):
         self.assertIsNotNone(self.decide(two_remotes, 'git fetch mirror'))
         self.assertIsNotNone(self.decide(two_remotes, 'git fetch'))       # remote unnamed: all
         self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://example.com/r.git'))
-        self.assertIsNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git'))
+        # The gh helper is approved for fetch/pull/push only (BLK-01, 2026-10-25).
+        self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone https://github.com/o/r.git'))
+        self.assertIsNone(self.decide(self.GH_SETUP, 'git -c credential.helper= clone https://github.com/o/r.git'))
 
     # Shapes from the independent Codex review of 9d7f68f3 (2026-10-23): each
     # was allowed there while git would still run osxkeychain.
@@ -343,8 +352,11 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_public_clone_into_a_directory_made_in_the_same_call_is_allowed(self):
         # clone does no repository discovery, so an unresolvable -C target
         # does not change which helper runs; the URL decides.
+        # Without `-c credential.helper=` the clone would run gh's Keychain
+        # helper on an auth challenge, which the owner ruling does not cover.
+        reason = self.decide(self.GH_SETUP, f'mkdir -p $S/src; git -C $S/src clone --depth 1 -q {self.PAPERCLIP}')
+        self.assertIn('-c credential.helper=', reason)
         for command in [
-            f'mkdir -p $S/src; git -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
             f'mkdir -p $S/src; git -c credential.helper= -C $S/src clone --depth 1 -q {self.PAPERCLIP}',
             f'mkdir -p $S/src; GIT_TERMINAL_PROMPT=0 git -C $S/src -c credential.helper= clone --depth 1 -q {self.PAPERCLIP}',
         ]:
@@ -400,20 +412,19 @@ class CredentialPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(reason)
                 self.assertIn('Claude Code login', reason)
 
-    def test_gh_is_refused_only_when_its_token_lives_in_the_keyring(self):
+    def test_gh_is_refused_even_when_a_token_file_exists(self):
+        # MAJ-06: a plaintext oauth_token for ANY host disabled gh protection
+        # for every host. The owner rule bans plaintext substitution too.
         with tempfile.TemporaryDirectory() as tmp:
-            hosts = Path(tmp) / 'hosts.yml'
+            Path(tmp, 'hosts.yml').write_text('example.com:\n    oauth_token: synthetic\n'
+                                              'github.com:\n    user: someone\n')
             env = {'GH_CONFIG_DIR': tmp}
-            hosts.write_text('github.com:\n    git_protocol: https\n    user: someone\n')
-            reason = command_reason('gh pr list', platform='darwin', helpers=[], environment=env)
-            self.assertIn('Keychain', reason)
-            self.assertIn('gh pr', reason)
-            # Plaintext token (gh auth login --insecure-storage): gh never asks the keyring.
-            hosts.write_text('github.com:\n    oauth_token: synthetic\n    user: someone\n')
-            self.assertIsNone(command_reason('gh pr list', platform='darwin', helpers=[], environment=env))
-            # Missing or unreadable config: assume the keyring.
-            self.assertIsNotNone(command_reason('gh pr list', platform='darwin', helpers=[],
-                                                environment={'GH_CONFIG_DIR': str(Path(tmp) / 'absent')}))
+            for command in ['gh auth token --hostname github.com', 'gh pr list', 'gh api user']:
+                with self.subTest(command=command):
+                    reason = command_reason(command, platform='darwin', helpers=[], environment=env)
+                    self.assertIsNotNone(reason)
+                    self.assertIn('Keychain', reason)
+            self.assertIsNone(command_reason('gh pr --help', platform='darwin', helpers=[], environment=env))
 
     def test_direct_keychain_tools_name_the_trigger(self):
         for command, trigger in [('security find-generic-password -w', '`security`'),
@@ -432,6 +443,141 @@ class CredentialPolicyTests(unittest.TestCase):
                 reason = self.reason(command)
                 self.assertIsNotNone(reason)
                 self.assertIn(trigger, reason)
+
+    # Independent review of e7f447fd (2026-10-25, BLK-01..MIN-07). Each shape
+    # was allowed (or wrongly refused) before this change.
+    def test_gh_helper_is_approved_only_for_fetch_pull_push_to_github(self):
+        gh = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']
+        for command in ['git fetch origin', 'git pull', 'git push origin main']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.decide(gh, command))
+        for command in ['git clone https://github.com/o/private.git', 'git ls-remote origin',
+                        'git remote update', 'git submodule update --remote', 'git credential fill']:
+            with self.subTest(command=command):
+                reason = self.decide(gh, command)
+                self.assertIsNotNone(reason)
+                self.assertIn('fetch`, `pull` and `push`', reason)
+        self.assertIsNotNone(self.decide(gh + ['alias.sync fetch --all'], 'git sync'))
+        # gh setup for gist.github.com is not part of the ruling.
+        gist = ['credential.helper osxkeychain', 'credential.https://gist.github.com.helper ',
+                'credential.https://gist.github.com.helper !gh auth git-credential',
+                'remote.origin.url https://gist.github.com/abc.git']
+        self.assertIsNotNone(self.decide(gist, 'git push origin main'))
+
+    def ssh_config(self, tmp, text):
+        path = Path(tmp) / 'config'
+        path.write_text(text)
+        return [(path, Path(tmp))]
+
+    def test_ssh_that_may_search_the_keychain_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            clean = self.ssh_config(tmp, 'Host *\n  IdentitiesOnly yes\n')
+            with patch('credential_policy._ssh_config_files', return_value=clean):
+                for command in ['ssh -o UseKeychain=yes git@github.com', 'ssh -oUseKeychain=yes host',
+                                "ssh -o 'UseKeychain yes' host", 'scp -o UseKeychain=yes a host:b',
+                                'ssh-add --apple-use-keychain key', 'ssh-add -K key', 'ssh-add --apple-load-keychain',
+                                'ssh -F /nonexistent/ssh-config host', 'ssh -o UseKeychain=$X host',
+                                "rsync -e 'ssh -o UseKeychain=yes' a host:b"]:
+                    with self.subTest(command=command):
+                        self.assertIn('UseKeychain=no', self.reason(command))
+                for command in ['ssh host uptime', 'ssh-add -l', 'scp a host:b', 'rsync -a x host:y']:
+                    with self.subTest(command=command):
+                        self.assertIsNone(self.reason(command))
+            unsafe = self.ssh_config(tmp, 'Host github.com\n  UseKeychain yes\n')
+            with patch('credential_policy._ssh_config_files', return_value=unsafe):
+                self.assertIn('UseKeychain yes', self.reason('ssh git@github.com'))
+                self.assertIsNone(self.reason('ssh -o UseKeychain=no git@github.com'))  # first value wins
+            include = self.ssh_config(tmp, 'Include ${CONF}/*.conf\n')
+            with patch('credential_policy._ssh_config_files', return_value=include):
+                self.assertIsNotNone(self.reason('ssh host'))
+            nested = Path(tmp) / 'extra.conf'
+            nested.write_text('UseKeychain=yes\n')
+            included = self.ssh_config(tmp, 'Include extra.conf\n')
+            with patch('credential_policy._ssh_config_files', return_value=included):
+                self.assertIn('extra.conf', self.reason('ssh host'))
+
+    def test_git_over_ssh_is_judged_by_its_ssh_settings(self):
+        ssh_remote = ['credential.helper osxkeychain', 'remote.origin.url git@gitlab.com:o/r.git']
+        for command, environment in [
+                ("GIT_SSH_COMMAND='ssh -o UseKeychain=yes' git ls-remote ssh://git@github.com/o/r.git", None),
+                ("git -c credential.helper= -c core.sshCommand='ssh -o UseKeychain=yes' "
+                 "ls-remote ssh://git@github.com/o/r.git", None),
+                ('git fetch origin', {'GIT_SSH_COMMAND': 'ssh -o UseKeychain=yes'}),
+                ('git fetch origin', {'GIT_SSH': '/usr/local/bin/plink'}),
+                ('git fetch origin', {'GIT_SSH_COMMAND': 'ssh $OPTS'})]:
+            with self.subTest(command=command, environment=environment):
+                self.assertIsNotNone(self.decide(ssh_remote, command, environment))
+        self.assertIsNotNone(self.decide(ssh_remote + ['core.sshCommand ssh -o UseKeychain=yes']))
+        self.assertIsNone(self.decide(ssh_remote))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.ssh_files = self.ssh_config(tmp, 'Host *\n  UseKeychain yes\n')
+            try:
+                self.assertIn('UseKeychain yes', self.decide(ssh_remote))
+                self.assertIsNone(self.decide(ssh_remote, 'git fetch origin',
+                                              {'GIT_SSH_COMMAND': 'ssh -o UseKeychain=no'}))
+            finally:
+                del self.ssh_files
+
+    def test_shell_expansion_in_the_command_word_fails_closed(self):
+        for command in ["$'security' find-generic-password -w", 'sec${EMPTY}urity find-generic-password -w',
+                        "zsh -c $'security find-generic-password -w'", '/usr/bin/secur* find-generic-password',
+                        'secu{rity,} find-generic-password', '"$TOOL" find-generic-password',
+                        'eval "$CMD"', 'git $SUB origin', "git -c $'credential.helper=osxkeychain' fetch"]:
+            with self.subTest(command=command):
+                reason = self.reason(command)
+                self.assertIsNotNone(reason)
+                self.assertIn('literally', reason)
+        for command in ['python3 "$ROOT/x.py"', '[ -f x ] && echo y', '[[ -n $x ]] && echo y',
+                        'for f in *.py; do echo "$f"; done', 'ls *.txt', 'echo {a,b}',
+                        'case "$1" in\n  a) echo a ;;\n  *) echo other ;;\nesac']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+        self.assertIsNotNone(self.reason('case $x in a) (security dump-keychain) ;; esac'))
+
+    def test_git_shell_bodies_and_executed_values_are_inspected(self):
+        for command in ["git -c credential.helper= submodule foreach 'security find-generic-password -w'",
+                        "git submodule foreach --recursive security dump-keychain",
+                        "git rebase --exec 'security find-generic-password -w' HEAD~1",
+                        "git rebase -x 'security dump-keychain' HEAD~1",
+                        "git rebase --exec='security dump-keychain' HEAD~1",
+                        'git bisect run security dump-keychain',
+                        "git filter-branch --tree-filter 'security dump-keychain' HEAD",
+                        "git difftool -x 'security dump-keychain'",
+                        "git -c core.pager='security find-generic-password -w' log",
+                        "git -c alias.x='!security dump-keychain' status",
+                        "PAGER='security dump-keychain' git log",
+                        "export GIT_PAGER='security dump-keychain'; git log",
+                        'timeout 5 security find-generic-password', 'xargs -I{} security find-generic-password',
+                        'nice -n 5 security dump-keychain', 'find . -exec security dump-keychain \\;']:
+            with self.subTest(command=command):
+                self.assertIn('security', self.reason(command))
+        for command in ["git submodule foreach 'git status'", 'git -c core.pager=less log',
+                        'git rebase --exec "make test" HEAD~2', 'find . -name x -exec grep -l foo {} +',
+                        'timeout 5 make test']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+
+    def test_environment_changes_that_persist_into_git_are_refused(self):
+        gh = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']
+        for command in ['unset HOME; git fetch origin', 'command unset HOME; git fetch origin',
+                        'export -n HOME; git fetch origin', 'unset XDG_CONFIG_HOME && git push origin main',
+                        'unset GIT_CONFIG_GLOBAL; git fetch origin', 'source ./env.sh; git fetch origin',
+                        '. ./env.sh; git fetch origin', 'export GIT_SSH_COMMAND=ssh; git fetch origin']:
+            with self.subTest(command=command):
+                self.assertIn('separate calls', self.decide(gh, command))
+        self.assertIsNone(self.decide(gh, 'unset FOO; git fetch origin'))
+        # env -u HOME is modeled: git then reads system config (osxkeychain).
+        self.assertIsNotNone(self.decide(['credential.helper osxkeychain'], 'env -u HOME git fetch origin'))
+
+    def test_redirect_targets_are_files_not_commands(self):
+        for command in ['claude --help >|security', 'claude --help >&security', 'claude --help > security',
+                        'claude --help 2>|security', 'claude --help >& security']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+        for command in ['claude --help | security dump-keychain', 'claude --help || security dump-keychain',
+                        'claude --help & security dump-keychain']:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.reason(command))
 
 
 

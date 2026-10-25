@@ -92,9 +92,19 @@ rule. Still refused: `security …`, `git-credential-osxkeychain`, and any remot
 whose effective helper is `osxkeychain` or `store`. A hook refusal of one git
 command is not a ban on git networking: read the refusal, then fix the
 config or the policy.
-`gh` and `claude` are refused except `--help`, `--version` and `<sub> --help`:
-gh keeps its token in the Keychain here (no `oauth_token` in `hosts.yml`) and
-Claude Code keeps its login there. Every refusal names its trigger and the
+The gh helper reads gh's Keychain token, so the ruling covers exactly `git
+fetch`, `pull` and `push` to `https://github.com`; `clone`, `ls-remote`,
+`remote update`, aliases and other hosts need `-c credential.helper=`. ssh is
+refused when it may search the Keychain (`UseKeychain yes` in any ssh config
+it reads, `-o UseKeychain=yes`, `ssh-add --apple-use-keychain`); pass
+`-o UseKeychain=no`. `gh` and `claude` are refused except `--help`,
+`--version` and `<sub> --help`: gh keeps its token in the Keychain and a
+plaintext token is a forbidden substitute; Claude Code keeps its login there.
+The policy fails closed where it cannot see what runs: a program name built
+by shell expansion (`$'security'`, `sec${X}urity`, globs), `unset HOME` or
+`source` before a git network command, and shell bodies (`git submodule
+foreach`, `rebase --exec`, `core.pager`, `PAGER=`, `timeout`/`xargs`/`find
+-exec`) are inspected or refused. Every refusal names its trigger and the
 safe alternative; one the policy cannot resolve (`git -C $DIR`) says so.
 
 ## System-access prompts — one request per access need
