@@ -6,7 +6,7 @@ Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on 
 
 Before retrying a failed build or operation, return to Assess and apply the
 [canonical search-and-batch rule](../skills/build-loop/SKILL.md#question-led-inspections-and-investigations).
-Verify related sites, update the plan and repair the confirmed affected batch
+Search the failure class across the codebase, verify related sites, update the plan and repair the confirmed affected batch
 before re-entering Execute/Review, including when repairing evidence gaps.
 
 ## End-of-run continuation gate
