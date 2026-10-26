@@ -255,3 +255,27 @@ def test_memory_bootstrap_still_installs_when_missing(plugin):
     proc, _ = run_hook(plugin, "session-start-memory.sh")
     assert proc.returncode == 0
     assert marker.read_text() == "seeded"
+
+
+def test_memory_bootstrap_retries_partial_store_without_overwriting(plugin):
+    root, _ = plugin
+    dest = root / "memory"
+    (root / "scripts/install_memory.py").write_text(
+        "import json, sys, time, os\nfrom pathlib import Path\n"
+        f"dest = Path({str(dest)!r})\n"
+        "if '--check' in sys.argv:\n"
+        " print(json.dumps({'exists': dest.exists(), 'files': {'seed': {'exists': (dest/'seed').exists()}}}))\n"
+        "else:\n"
+        " dest.mkdir(exist_ok=True)\n"
+        " if not (dest/'personal').exists(): (dest/'personal').write_text('preserve')\n"
+        " time.sleep(float(os.environ.get('TEST_HELPER_DELAY','0')))\n"
+        " (dest/'seed').write_text('complete')\n"
+    )
+    first, _ = run_hook(plugin, "session-start-memory.sh",
+                        BUILD_LOOP_MEMORY_DEADLINE_MS="500", TEST_HELPER_DELAY="8")
+    assert first.returncode == 0 and dest.is_dir()
+    assert not (dest / "seed").exists()
+    second, _ = run_hook(plugin, "session-start-memory.sh")
+    assert second.returncode == 0
+    assert (dest / "seed").read_text() == "complete"
+    assert (dest / "personal").read_text() == "preserve"
