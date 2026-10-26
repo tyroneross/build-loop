@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -122,6 +123,83 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
             self.assertFalse(status["exists"])
             self.assertTrue(status["public_seed"]["ok"])
             self.assertEqual(status["public_seed"]["seed_version"], "2026-06-12")
+            self.assertFalse(status["files"]["projects/README.md"]["exists"])
+
+    def test_interrupted_template_copy_is_retried_without_partial_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src, dest = root / "seed.md", root / "memory.md"
+            src.write_text("complete public seed\n", encoding="utf-8")
+
+            def interrupted_copy(_src: Path, temp: Path) -> None:
+                temp.write_text("partial", encoding="utf-8")
+                raise OSError("simulated interrupted copy")
+
+            with mock.patch.object(install_memory.shutil, "copy2", side_effect=interrupted_copy):
+                with self.assertRaisesRegex(OSError, "interrupted copy"):
+                    install_memory.seed_template(src, dest)
+
+            self.assertFalse(dest.exists())
+            self.assertEqual(list(root.glob(".memory.md.seed-*")), [])
+            self.assertEqual(install_memory.seed_template(src, dest), (True, "seeded"))
+            self.assertEqual(dest.read_text(encoding="utf-8"), "complete public seed\n")
+
+    def test_concurrent_user_file_wins_no_overwrite_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src, dest = root / "seed.md", root / "memory.md"
+            src.write_text("public seed\n", encoding="utf-8")
+            real_copy = install_memory.shutil.copy2
+
+            def user_writes_during_copy(source: Path, temp: Path) -> None:
+                real_copy(source, temp)
+                dest.write_text("private user content\n", encoding="utf-8")
+
+            with mock.patch.object(install_memory.shutil, "copy2", side_effect=user_writes_during_copy):
+                self.assertEqual(install_memory.seed_template(src, dest), (False, "already exists"))
+            self.assertEqual(dest.read_text(encoding="utf-8"), "private user content\n")
+            self.assertEqual(list(root.glob(".memory.md.seed-*")), [])
+
+    def test_projects_readme_uses_same_atomic_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "README.md"
+
+            def interrupted_write(temp: Path) -> None:
+                temp.write_text("partial", encoding="utf-8")
+                raise OSError("simulated interrupted write")
+
+            with self.assertRaisesRegex(OSError, "interrupted write"):
+                install_memory._publish_seed(dest, interrupted_write)
+            self.assertFalse(dest.exists())
+            self.assertEqual(list(root.glob(".README.md.seed-*")), [])
+
+            self.assertEqual(
+                install_memory._publish_seed(dest, lambda temp: temp.write_text("public README\n", encoding="utf-8")),
+                (True, "seeded"),
+            )
+            self.assertEqual(dest.read_text(encoding="utf-8"), "public README\n")
+            self.assertEqual(
+                install_memory._publish_seed(dest, lambda temp: temp.write_text("replacement\n", encoding="utf-8")),
+                (False, "already exists"),
+            )
+            self.assertEqual(dest.read_text(encoding="utf-8"), "public README\n")
+
+    def test_rerun_restores_missing_readme_without_overwriting_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "memory-store"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(install_memory.main(["--dest", str(dest)]), 0)
+            personal = dest / "MEMORY.md"
+            personal.write_text("private user content\n", encoding="utf-8")
+            readme = dest / "projects" / "README.md"
+            readme.unlink()
+            self.assertFalse(install_memory.report(dest)["files"]["projects/README.md"]["exists"])
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(install_memory.main(["--dest", str(dest)]), 0)
+            self.assertTrue(readme.is_file())
+            self.assertEqual(personal.read_text(encoding="utf-8"), "private user content\n")
 
 
 if __name__ == "__main__":

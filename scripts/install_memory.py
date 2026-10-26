@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -231,7 +233,7 @@ def report(dest: Path) -> dict:
         "is_git_repo": (dest / ".git").exists() if dest.exists() else False,
         "files": {},
     }
-    for _, target_name in TEMPLATES:
+    for target_name in [*(name for _, name in TEMPLATES), "projects/README.md"]:
         target = dest / target_name
         status["files"][target_name] = {
             "exists": target.exists(),
@@ -289,14 +291,30 @@ def _raw_status(project_dir: Path) -> dict:
     return {"exists": raw.is_dir() and not missing, "missing": missing}
 
 
+def _publish_seed(dest: Path, write_temp: Callable[[Path], object], force: bool = False) -> tuple[bool, str]:
+    """Publish a complete same-directory seed, preserving an existing destination."""
+    fd, temp_name = tempfile.mkstemp(prefix=f".{dest.name}.seed-", dir=dest.parent)
+    os.close(fd)
+    temp = Path(temp_name)
+    try:
+        write_temp(temp)
+        if force:
+            os.replace(temp, dest)
+        else:
+            try:
+                os.link(temp, dest)  # atomic create-if-absent; no overwrite race
+            except FileExistsError:
+                return False, "already exists"
+        return True, "seeded"
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def seed_template(src: Path, dest: Path, force: bool = False) -> tuple[bool, str]:
-    """Copy a template if the destination doesn't exist (or force=True). Returns (wrote, reason)."""
-    if dest.exists() and not force:
-        return False, "already exists"
-    if not src.exists():
+    """Copy a template atomically if the destination is absent (or force=True)."""
+    if not src.is_file():
         return False, f"template missing: {src}"
-    shutil.copy2(src, dest)
-    return True, "seeded"
+    return _publish_seed(dest, lambda temp: shutil.copy2(src, temp), force)
 
 
 def _project_relpath(project: str) -> Path:
@@ -500,11 +518,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  ✓ created: projects/")
     else:
         print("  – skipped: projects/ (already exists)")
-    if not projects_readme.exists():
-        projects_readme.write_text(_PROJECTS_README_BODY, encoding="utf-8")
-        print("  ✓ seeded: projects/README.md")
-    else:
-        print("  – skipped: projects/README.md (already exists)")
+    wrote, reason = _publish_seed(
+        projects_readme,
+        lambda temp: temp.write_text(_PROJECTS_README_BODY, encoding="utf-8"),
+        force=args.force,
+    )
+    status = "✓ seeded" if wrote else f"– skipped ({reason})"
+    print(f"  {status}: projects/README.md")
 
     for project in args.ensure_project:
         try:
