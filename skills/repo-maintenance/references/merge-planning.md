@@ -2,6 +2,11 @@
 
 Plan the order and batches before merging two or more branches. Merging one at a time re-runs the build and tests once per branch and lets one conflicting branch stall the rest.
 
+Load [Guarded Batch Reconciliation](../../guarded-batch-reconcile/SKILL.md) for
+readiness, ownership, preservation and semantic-dependency review before using
+this planner. Its adapters map execution to the project's supported tools; the
+planner's JSON remains a proposal, not permission or verification evidence.
+
 ## When to plan
 
 - Plan when asked to merge, land, or "multi merge" 2+ branches, or to land all ready branches.
@@ -54,11 +59,18 @@ Plans go stale. Re-run after each batch lands, since base has moved.
 
 When the batch's combined build/test fails:
 
-1. Split the batch in half; test each half on base (merge only the half's branches in a scratch worktree).
-2. Recurse into the failing half until one branch fails alone: the culprit.
-3. Land the passing branches, re-plan, and send the culprit back for a fix.
+1. Preserve the exact failed revisions and logs; distinguish infrastructure or
+   admission failures from code failures before attributing fault.
+2. Use the native queue's isolation algorithm when available. Otherwise test
+   dependency-valid subsets in scratch state, retaining prerequisites. If both
+   halves pass but their combination fails, investigate an interaction rather
+   than declaring a single branch the culprit.
+3. Land only independently verified compatible work through the permitted path,
+   refresh the base/plan and keep failing or unverified combinations held.
 
-Cost is about log2(N) extra runs. This is why small N is right when failures are common.
+One isolated culprit can be located in logarithmic depth; total gate runs depend
+on tested passing subsets, multiple failures and interactions. Do not promise a
+logarithmic total for an arbitrary failing batch.
 
 ## Trade-offs
 

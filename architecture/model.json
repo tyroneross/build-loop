@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "579753417f52c64e965ee54dedb3655d183b6ca2a86c32db71c4a4b995552b4b"
+    "content_sha256": "01ee07c585f7f9ed6718f8b512f7c2391475d262113662a2b9461b83881ce4d9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1096,6 +1096,10 @@
       "focused-loop-builder": {
         "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
         "file": "skills/focused-loop-builder/SKILL.md"
+      },
+      "guarded-batch-reconcile": {
+        "description": "\"Use when reconciling parallel branches, worktrees or completed task outputs, draining a merge queue, or closing a multi-agent work wave. Establish readiness and integrate authorized work through the project's supported merge path; preserve assessment-only requests as read-only.\"",
+        "file": "skills/guarded-batch-reconcile/SKILL.md"
       },
       "handoff": {
         "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\"",

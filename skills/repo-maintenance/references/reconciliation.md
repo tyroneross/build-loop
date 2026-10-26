@@ -5,6 +5,13 @@ changes, or prune stale branches/worktrees. It uses the maintenance inventory,
 merge-risk scorer, recovery protocol and closeout tools already in this plugin.
 No scheduled or background integration is implied.
 
+For parallel-work or ready-branch reconciliation, load
+[Guarded Batch Reconciliation](../../guarded-batch-reconcile/SKILL.md) alongside
+this contract. Use available task/review receipts to find unqueued completions,
+attribute evidence to exact revisions, and plan guarded integration through the
+project's supported queue. Keep this comparison record and goal ledger canonical;
+the helper's independent state dimensions are review evidence, not a second schema.
+
 ## Preserve the goal across approaches
 
 Every branch and worktree needs a goal and observable success criteria. Store

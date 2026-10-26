@@ -120,6 +120,13 @@ the next commit.
 
 ## Close completed local work
 
+For parallel-work reconciliation, ready-branch drains or multi-agent closeout,
+load [Guarded Batch Reconciliation](../guarded-batch-reconcile/SKILL.md) before
+classifying readiness or planning integration. It covers unqueued completions,
+revision-bound receipts, active ownership, recovery and project-specific batch
+execution. Keep the comparison/goal records and strict closeout gates below;
+the helper adds no new store or merge executor. A review-only request stays read-only.
+
 For branch/worktree reconciliation, follow
 [the comparison contract](references/reconciliation.md) automatically. A request
 to merge additive work includes reading code and diffs, classifying changed
@@ -143,7 +150,7 @@ Give every worktree, branch, stash, dirty path set, sibling source, and artifact
 - `preserve-only` — incomplete, unrelated, user-owned, or historical material.
 - `blocked` — active ownership, failed verification, conflicts, or unclear provenance.
 
-Before mutation, create dated annotated recovery tags for pre-integration `main`, every branch head, and every stash commit under `archive/pre-closeout-YYYY-MM-DD/`. Preserve dirty state including untracked files. Prefer fast-forward integration; re-run the canonical verifier on exact final `main` after the last mutation.
+Before mutation, create dated annotated recovery tags for pre-integration `main`, every branch head, and every stash commit under `archive/pre-closeout-YYYY-MM-DD/<unique-run-id>/`. Never overwrite a recovery ref. Preserve dirty state including untracked files. Prefer fast-forward integration; re-run the canonical verifier on exact final `main` after the last mutation.
 
 ### Merging several branches
 
