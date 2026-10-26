@@ -293,6 +293,8 @@ def _raw_status(project_dir: Path) -> dict:
 
 def _publish_seed(dest: Path, write_temp: Callable[[Path], object], force: bool = False) -> tuple[bool, str]:
     """Publish a complete same-directory seed, preserving an existing destination."""
+    if dest.exists() and not force:
+        return False, "already exists"
     fd, temp_name = tempfile.mkstemp(prefix=f".{dest.name}.seed-", dir=dest.parent)
     os.close(fd)
     temp = Path(temp_name)
@@ -312,6 +314,8 @@ def _publish_seed(dest: Path, write_temp: Callable[[Path], object], force: bool 
 
 def seed_template(src: Path, dest: Path, force: bool = False) -> tuple[bool, str]:
     """Copy a template atomically if the destination is absent (or force=True)."""
+    if dest.exists() and not force:
+        return False, "already exists"
     if not src.is_file():
         return False, f"template missing: {src}"
     return _publish_seed(dest, lambda temp: shutil.copy2(src, temp), force)
@@ -521,7 +525,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     wrote, reason = _publish_seed(
         projects_readme,
         lambda temp: temp.write_text(_PROJECTS_README_BODY, encoding="utf-8"),
-        force=args.force,
     )
     status = "✓ seeded" if wrote else f"– skipped ({reason})"
     print(f"  {status}: projects/README.md")

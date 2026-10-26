@@ -160,6 +160,19 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
             self.assertEqual(dest.read_text(encoding="utf-8"), "private user content\n")
             self.assertEqual(list(root.glob(".memory.md.seed-*")), [])
 
+    def test_existing_target_skips_before_temp_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src, dest = root / "seed.md", root / "memory.md"
+            src.write_text("public seed\n", encoding="utf-8")
+            dest.write_text("private user content\n", encoding="utf-8")
+            with mock.patch.object(install_memory.tempfile, "mkstemp") as make_temp:
+                with mock.patch.object(install_memory.shutil, "copy2") as copy:
+                    self.assertEqual(install_memory.seed_template(src, dest), (False, "already exists"))
+            make_temp.assert_not_called()
+            copy.assert_not_called()
+            self.assertEqual(dest.read_text(encoding="utf-8"), "private user content\n")
+
     def test_projects_readme_uses_same_atomic_publish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -200,6 +213,11 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
                 self.assertEqual(install_memory.main(["--dest", str(dest)]), 0)
             self.assertTrue(readme.is_file())
             self.assertEqual(personal.read_text(encoding="utf-8"), "private user content\n")
+
+            readme.write_text("private README\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(install_memory.main(["--dest", str(dest), "--force"]), 0)
+            self.assertEqual(readme.read_text(encoding="utf-8"), "private README\n")
 
 
 if __name__ == "__main__":
