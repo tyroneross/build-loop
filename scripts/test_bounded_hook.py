@@ -21,7 +21,7 @@ def plugin(tmp_path):
     (root / "scripts/rally_point").mkdir(parents=True)
     (root / ".build-loop").mkdir()
     for name in ("pre-edit-rally-point.sh", "closeout.sh", "_resolve_python.sh", "_bounded_hook.sh",
-                 "session-start-git-hooks.sh", "session-start-tool-state.sh"):
+                 "session-start-git-hooks.sh", "session-start-tool-state.sh", "session-start-memory.sh"):
         source = ROOT / "hooks" / name
         if source.exists():
             shutil.copy2(source, root / "hooks" / name)
@@ -228,3 +228,30 @@ def test_tool_state_open_stdin_is_bounded(plugin):
             proc.wait(timeout=2)
         proc.stdout.close()
         proc.stderr.close()
+
+
+def test_memory_bootstrap_bounds_check_and_install_together(plugin):
+    root, _ = plugin
+    (root / "scripts/install_memory.py").write_text(
+        "import json, sys, time\n"
+        "if '--check' in sys.argv:\n"
+        " time.sleep(0.2); print(json.dumps({'exists': False}))\n"
+        "else:\n"
+        " time.sleep(8)\n"
+    )
+    proc, elapsed = run_hook(plugin, "session-start-memory.sh")
+    assert proc.returncode == 0
+    assert elapsed < 6, f"memory bootstrap exceeded its host deadline: {elapsed:.3f}s"
+
+
+def test_memory_bootstrap_still_installs_when_missing(plugin):
+    root, _ = plugin
+    marker = root / "installed"
+    (root / "scripts/install_memory.py").write_text(
+        "import json, sys\nfrom pathlib import Path\n"
+        "if '--check' in sys.argv: print(json.dumps({'exists': False}))\n"
+        f"else: Path({str(marker)!r}).write_text('seeded')\n"
+    )
+    proc, _ = run_hook(plugin, "session-start-memory.sh")
+    assert proc.returncode == 0
+    assert marker.read_text() == "seeded"

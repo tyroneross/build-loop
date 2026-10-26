@@ -6,6 +6,11 @@
 # absent. install_memory.py is idempotent (skip-if-exists) and copies no
 # personal content. Never blocks, never overwrites, never errors the session.
 # Repair of a partial store is the user-facing `/build-loop:setup-memory` job.
+# Bound the check AND any first-run install, including interpreter startup.
+# The host allows six seconds; keep headroom for shell teardown and scheduling.
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_MEMORY_DEADLINE_MS:-4500}" 4500 text "$BASH" "$0" "$@"
+
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 installer="${PLUGIN_ROOT}/scripts/install_memory.py"
 [ -f "$installer" ] || exit 0
