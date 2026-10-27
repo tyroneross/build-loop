@@ -344,6 +344,88 @@ class CredentialPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(self.reason(command))
 
 
+    def test_heredoc_consumer_excludes_unrelated_commands_and_quoted_controls(self):
+        body = "values = [1, 2]\nprint(values[:12000])\n"
+        for header in [
+            "rally room --json && python3 - <<'PY'",
+            "rally room --json || python3 - <<'PY'",
+            "rally room --json; python3 - <<'PY'",
+            "python3 - <<'PY' && rally room --json",
+            "python3 - <<'PY' --label 'one; two | three'",
+            "rally status --label 'one; two' && python3 - <<'PY'",
+            "2>/dev/null python3 - <<'PY'",
+            "2> /tmp/diagnostic python3 - <<'PY'",
+            "2>& 1 python3 - <<'PY'",
+            "MODE=test env -u UNUSED python3 - <<'PY'",
+            "env NOTE=a#b python3 - <<'PY'",
+            "sudo -u nobody python3 - <<'PY'",
+            "timeout 5 python3 - <<'PY'",
+            "env -S 'python3 -' <<'PY'",
+            "exec -a fixture python3 - <<'PY'",
+            "python3 - <<'PY' | wc -l",
+        ]:
+            with self.subTest(header=header), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNone(self.reason(header + '\n' + body + 'PY'))
+
+    def test_redirects_and_wrappers_do_not_hide_executable_heredocs(self):
+        for reader in ["sh", "bash -s", "env sh", "env -S 'sh -s'", "sudo -u nobody sh",
+                       "exec -a python3 sh", "timeout 5 sh"]:
+            command = "2>/dev/null " + reader + " <<'EOF'\nsecurity find-generic-password\nEOF"
+            with self.subTest(reader=reader), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNotNone(self.reason(command))
+        for header in ["2>/dev/null python3 - <<'PY'", "env -u UNUSED python3 - <<'PY'"]:
+            command = header + "\nimport keyring\nkeyring.get_password('fixture', 'fixture')\nPY"
+            with self.subTest(header=header), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNotNone(self.reason(command))
+
+    def test_generated_heredoc_output_to_an_executor_is_not_treated_as_python_data(self):
+        for consumer in ["sh", "cat | sh", "python3 -", "env -u UNUSED bash -s"]:
+            command = "python3 - <<'PY' | " + consumer + "\nprint('security find-generic-password')\nPY"
+            with self.subTest(consumer=consumer), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNotNone(self.reason(command))
+        self.assertIsNotNone(self.reason("cat <<'PY' | python3 - | sh\nprint('security find-generic-password')\nPY"))
+        # Literal data passed to an interpreter still receives that language's
+        # checks, while safe literal shell scripts remain permitted.
+        self.assertIsNone(self.reason("cat <<'EOF' | sh\nprintf 'safe'\nEOF"))
+        self.assertIsNotNone(self.reason("cat <<'PY' | python3 -\nimport keyring\nkeyring.get_password('a','b')\nPY"))
+
+    def test_nested_context_cannot_hide_an_outer_executable_reader(self):
+        for command in [
+            "(cat <<'EOF') | sh\nsecurity find-generic-password\nEOF",
+            "source <(cat <<'EOF'\nsecurity find-generic-password\nEOF\n)",
+            "eval `cat <<'EOF'\nsecurity find-generic-password\nEOF\n`",
+            'eval "$(cat <<\'EOF\'\nsecurity find-generic-password\nEOF\n)"',
+            "{ cat <<'EOF'; } | sh\nsecurity find-generic-password\nEOF",
+            "(\npython3 - <<'PY'\nprint('security find-generic-password')\nPY\n) | sh",
+            "source <(\ncat <<'EOF'\nsecurity find-generic-password\nEOF\n)",
+            "eval \"$(\ncat <<'EOF'\nsecurity find-generic-password\nEOF\n)\"",
+        ]:
+            with self.subTest(command=command), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNotNone(self.reason(command))
+
+    def test_local_bundle_backup_is_not_misclassified_as_a_network_fetch(self):
+        with patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+            self.assertIsNone(command_reason('git bundle create /tmp/fixture.bundle HEAD',
+                platform='darwin', environment={}, helpers=['osxkeychain']))
+
+    def test_simple_nested_data_capture_is_preserved_without_allowing_an_executor(self):
+        for command in [
+            "payload=$(cat <<'JSON'\n{\"note\":\"security find-generic-password is literal data\"}\nJSON\n)",
+            'payload="$(cat <<\'JSON\'\n{"note":"safe"}\nJSON\n)"',
+            "payload=$(\ncat <<'JSON'\n{\"note\":\"safe\"}\nJSON\n)",
+            "payload=$(python3 - <<'PY'\nprint([1, 2][:12000])\nPY\n)",
+        ]:
+            with self.subTest(command=command), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNone(self.reason(command))
+        for command in [
+            "payload=$(cat <<'EOF' | sh\nsecurity find-generic-password\nEOF\n)",
+            "payload=$(cat <<'EOF'\nsecurity find-generic-password\nEOF\n)\neval \"$payload\"",
+            "PAGER=$(cat <<'EOF'\nsecurity find-generic-password\nEOF\n)\ngit log",
+            "payload=$(sh <<'EOF'\nsecurity find-generic-password\nEOF\n)",
+        ]:
+            with self.subTest(command=command), patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+                self.assertIsNotNone(self.reason(command))
+
     # Regressions from 2026-10-24 (BUIL-CREDENTIAL-POLICY-m5rnsgd3): each was
     # refused with "Keychain credential access is prohibited" although none
     # reaches the Keychain.
