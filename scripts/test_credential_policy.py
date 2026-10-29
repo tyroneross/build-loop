@@ -394,6 +394,45 @@ class CredentialPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.reason(command))
 
+    def test_command_lookup_does_not_execute_the_named_program(self):
+        commands = [
+            'command -v claude', 'command -V claude',
+            'command -pv claude', 'command -p -V claude',
+            'builtin command -v claude', 'env command -v gh',
+            'command -v -- security', 'command -v claude gh security',
+            'command -v claude >/dev/null 2>&1',
+            'command -v claude || true',
+            'command -v claude; printf hello | cat',
+            "command -v claude\nsed -n '1,2p' README.md",
+        ]
+        with patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+            for command in commands:
+                with self.subTest(command=command):
+                    self.assertIsNone(self.reason(command))
+
+    def test_command_lookup_cannot_hide_execution(self):
+        commands = [
+            'command claude -p hello', 'command -p claude -p hello',
+            'command -- claude -p hello', 'command -v --; claude -p hello',
+            'command -v claude && security dump-keychain',
+            'command -v claude\nclaude -p hello',
+            'command -v "$(security find-generic-password)"',
+            '$(command -v claude) -p hello',
+            'command -v claude | sh', 'command -v claude | cat | sh',
+            'command -v claude | xargs',
+            'command -v claude >/tmp/lookup-script; sh /tmp/lookup-script',
+            'command -v claude >|/tmp/lookup-script; sh /tmp/lookup-script',
+            '(command -v claude) | sh', '{ command -v claude; } | sh',
+            '>/tmp/lookup-script command -v claude; sh /tmp/lookup-script',
+            'if true; then command -v claude; fi | sh',
+            'for x in once; do command -v claude; done | sh',
+            'while false; do command -v claude; done | sh',
+        ]
+        with patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+            for command in commands:
+                with self.subTest(command=command):
+                    self.assertIsNotNone(self.reason(command))
+
     def test_fd_duplication_is_not_a_command_separator_but_background_is(self):
         for command in ['claude --help 2>&1; security find-generic-password',
                         'claude --help & security find-generic-password',

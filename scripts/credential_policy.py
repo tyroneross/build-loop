@@ -742,7 +742,7 @@ def _strip_comments(command: str) -> str:
     return "".join(out)
 
 
-def _segments(command: str):
+def _segments(command: str, *, with_operators: bool = False):
     lexer = shlex.shlex(_strip_comments(command), posix=True, punctuation_chars=";&|()\n")
     lexer.commenters = ""
     lexer.whitespace = " \t\r"
@@ -762,9 +762,15 @@ def _segments(command: str):
         merged.append(token)
     # A `case` pattern (`*)`, `$x)`) is a word before `)` with no open `(`;
     # it names no command, so it is not yielded.
-    depth, in_case = 0, 0
+    depth, in_case, brace_depth, compound_depth, grouped = 0, 0, 0, 0, False
     for token in merged:
         if token and set(token) <= separator:  # separators, incl. newline runs
+            for word in current:
+                if word in {"if", "while", "until", "for", "select", "case"}:
+                    compound_depth += 1
+                elif word not in _KEYWORDS:
+                    break
+            grouped |= compound_depth > 0
             if current and current[0] == "case":
                 in_case += 1
             if current and current[0] == "esac":
@@ -772,12 +778,20 @@ def _segments(command: str):
             closes_pattern = token.startswith(")") and depth == 0 and in_case
             depth = max(0, depth + token.count("(") - token.count(")"))
             if current and not closes_pattern:
-                yield current
+                yield (current, token, grouped) if with_operators else current
+            if current and current[0] in {"fi", "done", "esac"}:
+                compound_depth = max(0, compound_depth - 1)
             current = []
+            grouped = False
         else:
+            if token == "{":
+                brace_depth += 1
+            grouped |= depth > 0 or brace_depth > 0 or compound_depth > 0
+            if token == "}":
+                brace_depth = max(0, brace_depth - 1)
             current.append(token)
     if current:
-        yield current
+        yield (current, "", grouped) if with_operators else current
 
 
 def _without_redirects(args):
@@ -953,7 +967,8 @@ def command_reason(command: str, *, cwd: str | None = None,
     try:
         # Newline is a separator token, so a `#` comment ends at its line
         # instead of swallowing every later command.
-        segments = list(_segments(command))
+        statements = list(_segments(command, with_operators=True))
+        segments = [argv for argv, _, _ in statements]
     except ValueError:
         return API_REFUSAL if _API.search(command) else None
     # Substitutions are expanded in their surrounding shell context. If this
@@ -978,9 +993,10 @@ def command_reason(command: str, *, cwd: str | None = None,
             for token in argv[1:]:
                 if (inner_reason := _exec_env_reason(token, **kwargs)):
                     return f"`{token.split('=', 1)[0]}` is run as a command: " + inner_reason
-    for argv in segments:
+    for argv, following, grouped in statements:
         if argv and argv[0] in {"case", "for", "select"}:
             continue  # `case WORD in`, `for x in WORDS`: no command word
+        original_argv = list(argv)
         command_cwd_uncertain = cwd_uncertain
         effective_environment = dict(environment)
         inline_config = False
@@ -1017,6 +1033,26 @@ def command_reason(command: str, *, cwd: str | None = None,
             if wrapper not in {"env", "sudo", "command", "exec", "nohup", "builtin"}:
                 break
             argv = argv[1:]
+            if wrapper == "command":
+                # -v/-V report names; they do not execute the named program.
+                # Substitutions were checked above; later segments still run.
+                for option in argv:
+                    if not re.fullmatch(r"-[pvV]+", option):
+                        break
+                    if "v" in option or "V" in option:
+                        if grouped:
+                            return ("Command lookup output in a shell group is not validated. "
+                                    "Run `command -v` / `command -V` as a standalone statement.")
+                        if following in {"|", "|&"}:
+                            return ("Command lookup output in a pipeline may be executed. "
+                                    "Run `command -v` / `command -V` separately from the pipeline.")
+                        if any(re.match(r"^[0-9]*[<>]", arg) and arg not in {
+                                ">/dev/null", "1>/dev/null", "2>/dev/null", "2>&1",
+                                ">&2", "1>&2"} for arg in original_argv):
+                            return ("Command lookup output redirection is not validated; saved output "
+                                    "could later be executed. Run the lookup without file redirection.")
+                        argv = []
+                        break
             if wrapper == "sudo":
                 effective_environment = {}
             while argv and argv[0].startswith("-"):
