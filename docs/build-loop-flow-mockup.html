@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1b335d1d4a2275c7d01574d77c88ba52e574b2194d9aa1992f937f0126fc05c2"
+    "content_sha256": "cd881044d0b34d6f783c957077ba9480065100726947289fb257ae6ae1c458f0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1601,6 +1601,7 @@
       "scripts/hook_hygiene_lint.py": "hook_hygiene_lint.py — deterministic hook reliability lint for build-loop.",
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
+      "scripts/hooks/pre_bash_fastpath.py": "In-process runner for pre_bash_dispatch.sh's always-on Python gates.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
       "scripts/hooks/run_registration_gate.py": "run_registration_gate.py — warn, at commit time, that this run was never registered.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",

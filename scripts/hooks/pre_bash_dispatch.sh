@@ -49,10 +49,24 @@ fi
 
 # Owner credential policy is independent of repository opt-in and convenience
 # kill switches. It never reads secret values or invokes a credential helper.
-if ! _CREDENTIAL_OUT=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/credential_policy.py" 2>/dev/null); then
+#
+# pre_bash_fastpath.py `head` runs credential_policy.py's main() and the
+# command/cwd extraction in ONE interpreter (was two). Output framing:
+#   line 1 = credential exit status (0 ok, 1 failed), line 2 = its stdout,
+#   lines 3.. = the former extraction output (cwd, then the normalized command).
+# The helper ships beside this file; gate modules load from $PLUGIN_ROOT.
+_FASTPATH="$_DISPATCH_DIR/pre_bash_fastpath.py"
+_HEAD=$(printf '%s' "$INPUT" | BL_PLUGIN_ROOT="$PLUGIN_ROOT" python3 "$_FASTPATH" head 2>/dev/null) || _HEAD=""
+_CRED_RC=${_HEAD%%$'\n'*}
+_HEAD_REST=""
+case "$_HEAD" in *$'\n'*) _HEAD_REST=${_HEAD#*$'\n'} ;; esac
+if [ "$_CRED_RC" != "0" ]; then
     printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Credential policy could not be checked. Use the designated Secrets Vault or an authorized service connection; do not attempt Keychain access."}}'
     exit 0
 fi
+_CREDENTIAL_OUT=${_HEAD_REST%%$'\n'*}
+_PARSED=""
+case "$_HEAD_REST" in *$'\n'*) _PARSED=${_HEAD_REST#*$'\n'} ;; esac
 case "$_CREDENTIAL_OUT" in
     *'"permissionDecision": "deny"'*|*'"permissionDecision":"deny"'*)
         printf '%s' "$_CREDENTIAL_OUT"
@@ -84,33 +98,14 @@ if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
     exit 0
 fi
 
-# Extract command + cwd ONCE (was: 2 python spawns per sub-hook).
-#
-# f3: the COMMAND can be multi-line (`git add -A\ngit commit\ngit push`), so it
-# cannot be a fixed line-N field. Print the single-line CWD FIRST, then the
-# command as everything after it — CMD = lines 2..$ captures the whole command
-# regardless of embedded newlines. (The old order — command then cwd on line 2
-# — put line 2 of a multi-line command into CWD and dropped every push/commit
-# past line 1, so NO gate ran.) Embedded newlines are then normalized to `;` so
-# the `case` guards and the classifier's `[;|&]` segment splitter see every
-# segment; the sub-gates still receive the raw event on stdin (unaffected).
-# Normalization happens INSIDE python (newlines → ';') so the command emerges as
-# a single line — the shell path stays python3 + sed only (no `tr`), preserving
-# the minimal-PATH fail-open contract.
-read -r -d '' _EXTRACT <<'PY' || true
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get("cwd", ""))
-    cmd = d.get("tool_input", {}).get("command", "")
-    print(cmd.replace("\r", "\n").replace("\n", ";"))
-except Exception:
-    print("")
-    print("")
-PY
-_PARSED=$(printf '%s' "$INPUT" | python3 -c "$_EXTRACT" 2>/dev/null) || _PARSED=$'\n'
-CWD=$(printf '%s' "$_PARSED" | sed -n '1p')
-CMD=$(printf '%s' "$_PARSED" | sed -n '2,$p')
+# Command + cwd were extracted by the `head` call above (f3 semantics kept:
+# cwd is line 1, the command is everything after it with embedded newlines
+# already normalized to `;` inside Python). Pure parameter expansion replaces
+# the former two `sed` forks; it splits on the first newline exactly as
+# `sed -n 1p` / `sed -n '2,$p'` did on the same text.
+CWD=${_PARSED%%$'\n'*}
+CMD=""
+case "$_PARSED" in *$'\n'*) CMD=${_PARSED#*$'\n'} ;; esac
 
 # No command — pass through silently.
 if [ -z "$CMD" ]; then
@@ -354,12 +349,7 @@ esac
 # supervisor is the only supported synthetic-load owner because it gives every
 # worker a deadline, stable title, and verified cleanup receipt.
 _LOAD_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_load_gate.py"
-if [ -f "$_LOAD_GATE" ]; then
-    if ! printf '%s' "$INPUT" | python3 "$_LOAD_GATE" >/dev/null; then
-        printf '{}'
-        exit 2
-    fi
-fi
+_WAIT_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_wait_gate.py"
 
 # ── Unbounded-wait gate ──────────────────────────────────────────────────────
 # Runs FIRST and cheap: a wait with no exit condition is wrong regardless of what
@@ -372,13 +362,46 @@ fi
 #
 # Fails open on any error — see the gate's own contract. It speaks through stderr
 # and exit 2, so there is no JSON to merge.
-_WAIT_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_wait_gate.py"
-if [ -f "$_WAIT_GATE" ]; then
-    if ! printf '%s' "$INPUT" | python3 "$_WAIT_GATE" >/dev/null; then
+# ── One interpreter for the always-on gates ─────────────────────────────────
+# pre_bash_fastpath.py `gates` runs, in this order and in ONE Python process,
+# exactly what used to be five separate starts plus the five inside
+# pre_bash_autonomy.sh: the unbounded-load gate, the unbounded-wait gate, the
+# git command classifier, the autonomy gate (an emulation of
+# pre_bash_autonomy.sh, held equal to it by test_pre_bash_fastpath.py) and the
+# deploy classifier used further down. Each gate keeps its own stdin, stderr
+# routing and exit-status contract (see the helper's docstring).
+#
+# Output: line 1 `load` / `wait` when that gate rejected the command (its
+# stderr has already gone out, later gates did not run), else `ok` followed by
+# classifier status, classifier verdict, deploy target, autonomy envelope.
+#
+# Helper could not run at all (spawn failure under load): the old load/wait
+# gate invocations failed CLOSED in that case (`if ! python3 gate` → exit 2),
+# so this does too whenever either gate file exists.
+_GATES=$(printf '%s' "$INPUT" | BL_PLUGIN_ROOT="$PLUGIN_ROOT" BL_CMD="$CMD" python3 "$_FASTPATH" gates) || _GATES=""
+_GATE_CLS_OK=fail
+_GATE_CLS_OUT=""
+_DTARGET_PRE=""
+_AUTONOMY_ENVELOPE='{}'
+case "${_GATES%%$'\n'*}" in
+    load|wait)
         printf '{}'
         exit 2
-    fi
-fi
+        ;;
+    ok)
+        _gr=${_GATES#*$'\n'}
+        _GATE_CLS_OK=${_gr%%$'\n'*}; _gr=${_gr#*$'\n'}
+        _GATE_CLS_OUT=${_gr%%$'\n'*}; _gr=${_gr#*$'\n'}
+        _DTARGET_PRE=${_gr%%$'\n'*}; _gr=${_gr#*$'\n'}
+        _AUTONOMY_ENVELOPE=$_gr
+        ;;
+    *)
+        if [ -f "$_LOAD_GATE" ] || [ -f "$_WAIT_GATE" ]; then
+            printf '{}'
+            exit 2
+        fi
+        ;;
+esac
 
 # Run a sub-gate, feeding it the original event on stdin; echo its stdout.
 # Any failure yields '{}' (fail-open). Never aborts the dispatcher.
@@ -433,7 +456,9 @@ _run_gate() {
 # security scan itself is unchanged). A transient outage trades that rare window for never
 # wedging the session — the correct bound, since a hard-block on a false positive is a
 # worse, more common failure than a missed scan during a spawn outage.
-_GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_command_classifier.py" 2>/dev/null) || {
+# (Computed by the `gates` helper call above; `fail` = the classifier could not run.)
+_GITCLASS="$_GATE_CLS_OUT"
+[ "$_GATE_CLS_OK" = "ok" ] || {
     _GITCLASS=""
     printf '[build-loop] git command classifier could not run (transient) — commit/push gates skipped for this command.\n' >&2
 }
@@ -442,7 +467,8 @@ _GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_comma
 ENVELOPES=()
 
 # Autonomy gate: always the policy classifier.
-ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/hooks/pre_bash_autonomy.sh")")
+# (pre_bash_autonomy.sh's envelope, computed in-process by the `gates` call above.)
+ENVELOPES+=("$_AUTONOMY_ENVELOPE")
 
 # Dependency cooldown: only on package installs/adds. This pre-filter MUST be
 # a SUPERSET of the inner classifier in pre_bash_dependency_cooldown.sh
@@ -905,21 +931,9 @@ if [ "$_SEC_SCAN_RAN" = "0" ]; then
         # is_deploy_like() splits compound commands itself, so
         # `npm run build && vercel deploy --prod` gates on the deploy segment
         # rather than on whatever leads the line.
-        _DTARGET=$(CMD="$CMD" python3 - "$_DPOL" <<'PY' 2>/dev/null || true
-import importlib.util, os, sys
-spec = importlib.util.spec_from_file_location("deployment_policy", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-cmd = os.environ.get("CMD", "")
-if mod.is_deploy_like(cmd):
-    # Name the policy target when it has one, for the operator-facing message.
-    try:
-        target, _reason = mod.classify_command(cmd)
-    except Exception:
-        target = "unknown"
-    print(target if target != "unknown" else "deploy")
-PY
-)
+        # (Classified in-process by the `gates` helper call above — the same
+        # is_deploy_like()/classify_command() calls on the same $CMD.)
+        _DTARGET="$_DTARGET_PRE"
         case "$_DTARGET" in
             production|testflight|preview|deploy)
                 # Same resolution as the push gate: `cd apps/web && vercel
@@ -950,6 +964,16 @@ fi
 
 # Merge by precedence: deny > ask > allow (allow is emitted as {}). First matching decision wins.
 # Pass the envelopes via argv to a tiny python merge (no shell JSON parsing).
+# Fast path: every envelope is the literal `{}` and there is no guard warning —
+# the merge below provably prints `{}` (no hookSpecificOutput, no systemMessage),
+# so skip its interpreter start. Anything else still goes through the merge.
+_ALL_EMPTY=1
+for _env in "${ENVELOPES[@]}"; do
+    [ "$_env" = "{}" ] || { _ALL_EMPTY=0; break; }
+done
+if [ "$_ALL_EMPTY" = "1" ] && [ -z "$_WT_SYSMSG" ]; then
+    printf '{}\n'
+else
 BL_WT_SYSMSG="$_WT_SYSMSG" python3 - "${ENVELOPES[@]}" <<'PY'
 import os, sys, json
 
@@ -983,6 +1007,7 @@ if warn:
     best["systemMessage"] = warn
 print(json.dumps(best) if best else "{}")
 PY
+fi
 
 # Hard-block the commit (auditor) or push (security scan) on a deterministic
 # violation. stderr was already emitted; exit 2 tells Claude Code to deny.
