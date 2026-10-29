@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.architecture.hook_async import stub_uv_env, wait_for, wait_idle
+
 REPO = Path(__file__).resolve().parents[2]
 HOOK = REPO / "hooks" / "pre-edit-architecture.sh"
 
@@ -39,6 +41,7 @@ def _seed(tmp_path: Path) -> Path:
     hooks_dir.mkdir(exist_ok=True)
     shutil.copy(HOOK, hooks_dir / "pre-edit-architecture.sh")
     shutil.copy(REPO / "hooks" / "_arch_scan_bg.py", hooks_dir / "_arch_scan_bg.py")
+    shutil.copy(REPO / "hooks" / "_arch_pre_edit_bg.py", hooks_dir / "_arch_pre_edit_bg.py")
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(exist_ok=True)
     shutil.copy(REPO / "scripts" / "architecture_freshness.py",
@@ -51,7 +54,7 @@ def _run(hook: Path, workdir: Path, file_path: str) -> int:
     payload = json.dumps({"tool_input": {"file_path": file_path}})
     proc = subprocess.run(
         ["bash", str(hook)], input=payload, capture_output=True, text=True,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": str(workdir)}, timeout=10,
+        env=stub_uv_env(workdir), timeout=10,
     )
     return proc.returncode
 
@@ -73,13 +76,16 @@ def test_manifest_edit_marks_enrich_needed(tmp_path: Path, manifest: str):
     hook = _seed(tmp_path)
     rc = _run(hook, tmp_path, manifest)
     assert rc == 0
-    assert _marker(tmp_path).exists(), f"{manifest} must mark enrich-needed"
+    assert wait_for(_marker(tmp_path).exists), f"{manifest} must mark enrich-needed"
+    wait_idle(tmp_path)
 
 
 def test_manifest_edit_does_not_run_enrich_inline(tmp_path: Path):
     # OQ3: the hook marks, it must NOT spawn the bg scan worker for a manifest.
     hook = _seed(tmp_path)
     _run(hook, tmp_path, "package.json")
+    assert wait_for(_marker(tmp_path).exists)
+    wait_idle(tmp_path)
     # The bg worker writes/scans .scan.lock; a manifest path must not trigger it.
     assert not (tmp_path / ".build-loop" / "architecture" / ".scan.lock").exists()
     # Manifest edit does not flip the source-staleness flag either.
@@ -91,7 +97,8 @@ def test_source_edit_path_unchanged(tmp_path: Path):
     hook = _seed(tmp_path)
     rc = _run(hook, tmp_path, "src/foo.py")
     assert rc == 0
-    assert _is_stale(tmp_path) is True
+    assert wait_for(lambda: _is_stale(tmp_path))
+    wait_idle(tmp_path)
     assert not _marker(tmp_path).exists()
 
 
@@ -100,5 +107,6 @@ def test_doc_edit_still_bails(tmp_path: Path):
     hook = _seed(tmp_path)
     rc = _run(hook, tmp_path, "README.md")
     assert rc == 0
+    wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False
     assert not _marker(tmp_path).exists()

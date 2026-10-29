@@ -6,7 +6,8 @@
 # Contract:
 #   - command-type only (NEVER prompt-type)
 #   - no stdout, no stderr (exit 0 always — never blocks the Edit/Write)
-#   - fire-and-forget via `nohup ... &`; hook returns in <100ms
+#   - fire-and-forget: a detached runner (own process group, deadline, SIGTERM only)
+#     does the classify + mark-stale + scan; hook returns in <20ms
 #   - tool input arrives on stdin as JSON: {"tool_input": {"file_path": "..."}}
 #
 # Behavior:
@@ -36,71 +37,27 @@ WORKER="$SCRIPT_DIR/_arch_scan_bg.py"
 [ -f "$FRESHNESS_SCRIPT" ] || exit 0
 [ -f "$WORKER" ] || exit 0
 
-# Read stdin (may be empty — bail cleanly).
-STDIN_JSON=$(cat 2>/dev/null)
-[ -n "$STDIN_JSON" ] || exit 0
+# Everything past the three stat() checks runs in a detached background job
+# (hooks/_arch_pre_edit_bg.py): classify the path, mark stale / .enrich-needed,
+# start _arch_scan_bg.py. The hook itself does no python, no JSON parsing and
+# no waiting, so it returns in single-digit ms regardless of host load.
+# Nothing reads the stale mark within the hook window (readers run at later
+# phase boundaries via architecture_freshness.py --check), and the job still
+# marks stale BEFORE it starts the scan.
+RUNNER="$SCRIPT_DIR/_arch_pre_edit_bg.py"
+[ -f "$RUNNER" ] || exit 0
 
-# Classify the edited path. Emits one of:
-#   "MANIFEST"  → dependency manifest changed: mark enrich-needed, DEFER the
-#                 actual enrich to the scout pass (OQ3) — do NOT scan inline.
-#   "<rel>"     → tracked source file: the existing mark-stale + bg-scan path.
-#   ""          → bail (doc-only, untracked, unparseable).
-# The manifest check runs BEFORE the source-extension allowlist so a
-# package.json / requirements.txt edit is no longer excluded.
-REL_PATH=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
-import json, os, sys
-from pathlib import Path
-ALLOWED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"}
-MANIFESTS = {
-    "package.json", "package-lock.json", "pnpm-lock.yaml", "requirements.txt",
-    "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "go.mod", "Gemfile",
-}
-try:
-    payload = json.loads(os.environ["STDIN_JSON"])
-except (KeyError, json.JSONDecodeError):
-    sys.exit(0)
-ti = payload.get("tool_input") or {}
-fp = ti.get("file_path") or ti.get("path") or ti.get("filename")
-if not fp:
-    sys.exit(0)
-# Dependency-manifest unblock (OQ3) — runs before the extension allowlist.
-if Path(fp).name in MANIFESTS:
-    print("MANIFEST")
-    sys.exit(0)
-# Extension allowlist gate — bail on .md/.txt/.json/etc. before any I/O.
-ext = Path(fp).suffix.lower()
-if ext not in ALLOWED_EXTS:
-    sys.exit(0)
-workdir = Path(os.environ["WORKDIR"]).resolve()
-abs_path = (workdir / fp).resolve() if not os.path.isabs(fp) else Path(fp).resolve()
-try:
-    rel = abs_path.relative_to(workdir).as_posix()
-except ValueError:
-    sys.exit(0)
-try:
-    file_map = json.loads(Path(os.environ["FILE_MAP"]).read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
-    sys.exit(0)
-files = file_map.get("files") or {}
-if rel in files:
-    print(rel)
-PYEOF
-)
+# Spill stdin to a file: the Write tool's payload can be megabytes, too big for
+# argv/env. The runner deletes the file.
+PAYLOAD=$(mktemp "${TMPDIR:-/tmp}/bl-pre-edit.XXXXXX" 2>/dev/null) || exit 0
+cat > "$PAYLOAD" 2>/dev/null
+[ -s "$PAYLOAD" ] || { rm -f "$PAYLOAD"; exit 0; }
 
-[ -n "$REL_PATH" ] || exit 0
-
-# Dependency-manifest edit: mark enrich-needed and EXIT. The actual enriched
-# scan is deferred to the scout pass (OQ3) — never run inline here.
-if [ "$REL_PATH" = "MANIFEST" ]; then
-  : > "$ARCH_DIR/.enrich-needed" 2>/dev/null || true
-  exit 0
-fi
-
-# Mark stale immediately (cheap, atomic).
-python3 "$FRESHNESS_SCRIPT" --mark-stale --file "$REL_PATH" --workdir "$WORKDIR" >/dev/null 2>&1 || true
-
-# Fire the background worker. Single-flight handled inside the worker.
-nohup python3 "$WORKER" --workdir "$WORKDIR" </dev/null >/dev/null 2>&1 &
+# `set -m` gives the background job its own process group (so the runner can
+# SIGTERM the whole tree at its deadline); stdio is fully detached.
+set -m
+( exec python3 "$RUNNER" --workdir "$WORKDIR" --payload "$PAYLOAD" \
+    </dev/null >/dev/null 2>&1 ) &
 disown 2>/dev/null || true
 
 exit 0
