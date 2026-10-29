@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "01ee07c585f7f9ed6718f8b512f7c2391475d262113662a2b9461b83881ce4d9"
+    "content_sha256": "1b335d1d4a2275c7d01574d77c88ba52e574b2194d9aa1992f937f0126fc05c2"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1299,7 +1299,7 @@
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
-      "scripts/codex_hook_trust_check.py": "codex_hook_trust_check.py — is every registered Codex hook actually trusted?",
+      "scripts/codex_hook_trust_check.py": "Report recorded Codex hook grants without claiming native trust verification.",
       "scripts/codex_preflight.py": "Codex preflight checker for the build-loop plugin.",
       "scripts/collapse_run.py": "collapse_run.py — End-of-run branch/worktree cleanup for build-loop.",
       "scripts/collision_scan.py": "",

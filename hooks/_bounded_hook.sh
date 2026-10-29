@@ -20,12 +20,16 @@ bl_bound_hook() {
     exec perl -e '
         use strict;
         my ($ms, $maximum, $mode, $fallback, $parent, $hook) = splice @ARGV, 0, 6;
+        # Core alarm needs no imports: module loading must not outlive the host.
+        $SIG{ALRM} = sub { print $fallback; exit 0; };
+        alarm 1;
         my $started = eval { require Time::HiRes; Time::HiRes::time() }
             // do { print $fallback; exit 0; };
         eval { require POSIX; require JSON::PP; 1 }
             or do { print $fallback; exit 0; };
         $ms = $maximum unless $ms =~ /\A[0-9]+\z/ && $ms >= 100 && $ms <= $maximum;
         my $deadline = $started + $ms / 1000;
+        alarm 0;
         $ENV{BUILD_LOOP_BOUNDED_HOOK_CHILD} = $hook;
         $ENV{BUILD_LOOP_RALLY_START_PARENT_PID} = $parent;
         my ($r, $w);

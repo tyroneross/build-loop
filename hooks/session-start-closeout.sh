@@ -18,6 +18,10 @@
 # Minimal PATH safe: resolves ``python3`` via ``command -v``; bare ``set -e``
 # is intentionally avoided.
 
+# Bound optional maintenance below the host deadline, including interpreter startup.
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_START_CLOSEOUT_DEADLINE_MS:-2200}" 2200 json "$BASH" "$0" "$@"
+
 set -u
 
 # Resolve the project / plugin root.

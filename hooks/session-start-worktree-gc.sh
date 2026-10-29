@@ -6,6 +6,10 @@
 # explicit owner release. BUILDLOOP_GC_ACT is intentionally ignored: Stop is a
 # turn boundary, and SessionStart cannot prove the prior terminal process exited.
 
+# Bound optional maintenance below the host deadline, including interpreter startup.
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_WORKTREE_REPORT_DEADLINE_MS:-1500}" 1500 json "$BASH" "$0" "$@"
+
 set -u
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"

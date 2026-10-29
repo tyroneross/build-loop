@@ -1,39 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""codex_hook_trust_check.py — is every registered Codex hook actually trusted?
+"""Report recorded Codex hook grants without claiming native trust verification.
 
-WHY THIS EXISTS (the defect it fixes)
--------------------------------------
-Codex will not run a hook it has not been told to trust, and it records that
-trust in ``~/.codex/config.toml`` under ``[hooks.state]`` keyed by ORDINAL
-POSITION -- ``"<abs path to hooks.json>:<event>:<group>:<index>"``. Nothing
-compares the two files, so a hook can ship in git, read as fully wired, and
-never once execute.
-
-Two observed instances in build-loop (2026-08-23 audit):
-
-  * The rally ``session_probe`` Stop hook landed 2026-08-14 in b384b34f and had
-    still never been trusted 9 days later.
-  * Five transcript sweeps registered in a964f79 were inert on arrival.
-
-build-loop's own trust set was granted once, between 2026-07-11 and 2026-08-13,
-and has been frozen at 9 entries since. Every hook added after that grant is
-dead until someone accepts a prompt -- and nothing tells you.
-
-THE ORDINAL HAZARD, which is worse than either instance
--------------------------------------------------------
-Because trust is keyed by POSITION rather than by content, inserting a hook
-group ahead of an existing one shifts every later index and silently moves an
-accepted grant onto a DIFFERENT command. Two merges on 2026-08-23 moved one
-group from index 4 to 5; indices 0-3 happened to be untouched, so nothing
-broke -- by insertion order, not by design.
-
-Position alone cannot detect that, so this records a fingerprint of the command
-text seen at each trusted key and reports when that key later holds different
-content. The fingerprint file is local state, never a repo artifact.
-
-Advisory by contract: reports, never blocks. Stdlib only. Python 3.11+.
+Codex owns the definition and plugin-content fingerprint algorithms. This
+advisory reads its TOML state, reports missing/disabled grants and observed
+command changes, and leaves recorded hashes unverified. It never creates a
+trust grant, disables a hook, or substitutes a command digest for a native hash.
+Stdlib only, Python 3.11+.
 """
 from __future__ import annotations
 
@@ -42,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -68,8 +43,7 @@ def _is_worktree(path: Path) -> bool:
         for part in path.parts
     )
 
-_STATE_RE = re.compile(r'\[hooks\.state\."([^"]+)"\]\s*\n\s*trusted_hash\s*=\s*"([^"]+)"')
-
+_HASH_RE = re.compile(r"sha256:[0-9a-fA-F]{64}\Z")
 
 def default_config() -> Path:
     return Path.home() / ".codex" / "config.toml"
@@ -80,29 +54,44 @@ def fingerprint_path() -> Path:
     return Path(state) / "build-loop" / "codex-hook-fingerprints.json"
 
 
-def read_trust(config: Path) -> dict[str, str]:
-    """Map "<hooks.json path>:<event>:<group>:<index>" -> trusted hash."""
-    try:
-        text = config.read_text(errors="replace")
-    except OSError:
-        return {}
-    return {m.group(1): m.group(2) for m in _STATE_RE.finditer(text)}
+def read_trust(config: Path) -> dict[str, dict[str, Any]]:
+    """Read both legacy definition and modern content grants, including enabled."""
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    hooks = data.get("hooks", {})
+    state = hooks.get("state", {}) if isinstance(hooks, dict) else None
+    if not isinstance(state, dict):
+        raise ValueError("hooks.state must be a TOML table")
+    return {key: value for key, value in state.items() if isinstance(value, dict)}
+
+
+def plugin_identity(hooks_json: Path) -> str | None:
+    """Recognize the installed Codex cache layout; never guess from a subject."""
+    parts = hooks_json.parts
+    for i in range(len(parts) - 7):
+        if parts[i:i + 3] == (".codex", "plugins", "cache"):
+            tail = parts[i + 3:]
+            if len(tail) == 5 and tail[-2:] == ("hooks", "hooks.json"):
+                return f"{tail[1]}@{tail[0]}:hooks/hooks.json"
+    return None
 
 
 def read_hooks(hooks_json: Path) -> list[dict[str, Any]]:
     """Flatten hooks.json into positional entries mirroring Codex's key scheme."""
-    try:
-        data = json.loads(hooks_json.read_text(errors="replace"))
-    except (OSError, ValueError):
-        return []
+    data = json.loads(hooks_json.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+        raise ValueError("hooks.json must contain a hooks object")
     out: list[dict[str, Any]] = []
-    for event, groups in (data.get("hooks") or {}).items():
+    for event, groups in data.get("hooks", {}).items():
         token = EVENT_KEYS.get(event, event.lower())
         if not isinstance(groups, list):
-            continue
+            raise ValueError(f"{event}: expected hook groups")
         for gi, group in enumerate(groups):
-            for hi, hook in enumerate((group or {}).get("hooks") or []):
-                command = str(hook.get("command") or "")
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                raise ValueError(f"{event}: invalid hook group")
+            for hi, hook in enumerate(group["hooks"]):
+                if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
+                    raise ValueError(f"{event}: expected command hook")
+                command = hook["command"]
                 out.append({
                     "event": event,
                     "key_suffix": f"{token}:{gi}:{hi}",
@@ -137,34 +126,47 @@ def check(
     record: bool = True,
 ) -> dict[str, Any]:
     hooks_json = Path(hooks_json).resolve()
-    trust = read_trust(config or default_config())
-    entries = read_hooks(hooks_json)
+    errors: list[str] = []
+    try:
+        trust = read_trust(config or default_config())
+    except (OSError, ValueError) as exc:
+        trust = {}
+        errors.append(f"Cannot read hook trust state: {type(exc).__name__}")
+    try:
+        entries = read_hooks(hooks_json)
+    except (OSError, ValueError) as exc:
+        entries = []
+        errors.append(f"Cannot read hook definitions: {type(exc).__name__}")
 
     fp_file = fingerprints or fingerprint_path()
     seen = _load_fingerprints(fp_file)
     updated = dict(seen)
-
     untrusted: list[dict[str, Any]] = []
+    unknown: list[dict[str, Any]] = []
+    disabled: list[dict[str, Any]] = []
     drifted: list[dict[str, Any]] = []
+    identity = plugin_identity(hooks_json) or str(hooks_json)
 
     for entry in entries:
-        key = f"{hooks_json}:{entry['key_suffix']}"
-        if key not in trust:
-            untrusted.append({
-                "key": entry["key_suffix"],
-                "event": entry["event"],
-                "command": entry["command"][:120],
-            })
+        key = f"{identity}:{entry['key_suffix']}"
+        item = {"key": entry["key_suffix"], "event": entry["event"],
+                "command": entry["command"][:120]}
+        grant = trust.get(key)
+        if grant and grant.get("enabled") is False:
+            disabled.append(item)
+            continue
+        if grant is None:
+            untrusted.append({**item, "reason": "no recorded grant"})
+            continue
+        hashes = [grant[name] for name in ("trusted_hash", "trusted_content_hash") if name in grant]
+        if (grant.get("enabled", True) is not True or not hashes
+                or any(not isinstance(h, str) or not _HASH_RE.fullmatch(h) for h in hashes)):
+            untrusted.append({**item, "reason": "invalid recorded grant"})
             continue
         prior = seen.get(key)
         if prior and prior != entry["digest"]:
-            drifted.append({
-                "key": entry["key_suffix"],
-                "event": entry["event"],
-                "command": entry["command"][:120],
-                "was": prior,
-                "now": entry["digest"],
-            })
+            drifted.append({**item, "was": prior, "now": entry["digest"]})
+        unknown.append({**item, "reason": "recorded hashes require Codex native verification"})
         updated[key] = entry["digest"]
 
     if record:
@@ -173,10 +175,15 @@ def check(
     return {
         "hooks_json": str(hooks_json),
         "hooks_registered": len(entries),
-        "trusted": len(entries) - len(untrusted),
+        "trusted": 0,
+        "recorded_grants": len(unknown),
+        "verification": "unknown" if unknown or errors else "not_required",
         "untrusted": untrusted,
+        "unknown": unknown,
+        "disabled": disabled,
         "position_drift": drifted,
-        "ok": not untrusted and not drifted,
+        "errors": errors,
+        "ok": not untrusted and not drifted and not unknown and not errors,
     }
 
 
@@ -218,7 +225,7 @@ def sweep(roots: list[Path], config: Path | None = None,
         "hooks_registered": sum(r["hooks_registered"] for r in unique),
         "hooks_untrusted": sum(len(r["untrusted"]) for r in unique),
         "repos_fully_dead": [
-            r["repo"] for r in unique if r["hooks_registered"] and not r["trusted"]
+            r["repo"] for r in unique if r["hooks_registered"] and len(r["untrusted"]) == r["hooks_registered"]
         ],
     }
 
@@ -227,34 +234,33 @@ def render_sweep(result: dict[str, Any]) -> str:
     lines = [
         f"Codex hook trust — {result['repos_checked']} repo(s), "
         f"{result['hooks_registered']} hook(s) registered, "
-        f"**{result['hooks_untrusted']} will not run**",
+        f"{result['hooks_untrusted']} missing or invalid grants",
         "",
     ]
     for r in sorted(result["repos"], key=lambda x: -len(x["untrusted"])):
         dead = len(r["untrusted"])
-        mark = "OK " if not dead else "GAP"
-        lines.append(f"  {mark} {r['repo']:<40} {r['trusted']:>2}/{r['hooks_registered']:<2} trusted")
+        mark = "UNK" if r["unknown"] else ("OK " if r["ok"] else "GAP")
+        lines.append(f"  {mark} {r['repo']:<40} {r['recorded_grants']:>2}/{r['hooks_registered']:<2} recorded grants")
     if result["repos_fully_dead"]:
         lines += ["", "  No hook runs at all in: " + ", ".join(result["repos_fully_dead"])]
     return "\n".join(lines) + "\n"
 
 
-def render(result: dict[str, Any]) -> str:
-    if not result["hooks_registered"]:
+def render(result: dict[str, Any], quiet_unknown: bool = False) -> str:
+    if result["ok"] or (quiet_unknown and not any(
+            result[key] for key in ("errors", "untrusted", "position_drift"))):
         return ""
-    if result["ok"]:
-        return ""
-    lines = ["⚠️  Codex hooks registered but not trusted — they will not run:"]
+    lines = ["Codex hook trust: review recorded state in /hooks."]
+    lines.extend(f"   {error}" for error in result["errors"])
     for item in result["untrusted"]:
-        lines.append(f"   {item['event']} {item['key']}  {item['command'][:70]}")
+        lines.append(f"   {item['event']} {item['key']}: {item['reason']}")
+    if result["unknown"]:
+        lines.append(f"   {len(result['unknown'])} recorded grant(s); current native hashes unverified.")
     if result["position_drift"]:
-        lines.append("")
-        lines.append("⚠️  Trusted positions now hold DIFFERENT commands (ordinal shift):")
+        lines.append("   Observed command changes at recorded positions (possible ordinal shift):")
         for item in result["position_drift"]:
             lines.append(f"   {item['event']} {item['key']}  {item['command'][:70]}")
-        lines.append("   A merge likely inserted a hook group ahead of these.")
-    lines.append("")
-    lines.append("   Start a Codex session in this repo and accept the hook-trust prompt.")
+    lines.append("   Only Codex can confirm current hook trust; this check changes no grants.")
     return "\n".join(lines) + "\n"
 
 
@@ -268,12 +274,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="do not update the fingerprint store")
     parser.add_argument("--sweep", type=Path, action="append", metavar="ROOT",
                         help="check every .codex/hooks.json under ROOT (repeatable)")
+    parser.add_argument("--quiet-unknown", action="store_true",
+                        help="suppress text when only native verification is unknown; JSON is unchanged")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     if args.sweep:
         result = sweep(args.sweep, args.config, args.fingerprints)
-        print(json.dumps(result, indent=2) if args.json else render_sweep(result), end="")
+        quiet = args.quiet_unknown and not any(
+            row[key] for row in result["repos"] for key in ("errors", "untrusted", "position_drift"))
+        print(json.dumps(result, indent=2) if args.json else ("" if quiet else render_sweep(result)), end="")
         return 0
 
     hooks_json = args.hooks_json or (args.workdir / ".codex" / "hooks.json")
@@ -283,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     result = check(hooks_json, args.config, args.fingerprints, record=not args.no_record)
-    print(json.dumps(result, indent=2) if args.json else render(result), end="")
+    print(json.dumps(result, indent=2) if args.json else render(result, quiet_unknown=args.quiet_unknown), end="")
     # Advisory: a gap is reported, never blocking.
     return 0
 

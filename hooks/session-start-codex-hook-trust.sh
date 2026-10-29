@@ -8,6 +8,9 @@
 # POSITION. Nothing compared it to .codex/hooks.json, so on 2026-08-23 a sweep
 # found 28 of 46 registered hooks across 10 repos had never been trusted --
 # including one that had shipped in git 9 days earlier.
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_TRUST_CHECK_DEADLINE_MS:-3500}" 3500 json "$BASH" "$0" "$@"
+
 set +e
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -17,7 +20,7 @@ CHECK="${PLUGIN_ROOT}/scripts/codex_hook_trust_check.py"
 [ -f "${WORKDIR}/.codex/hooks.json" ] || { printf '{}'; exit 0; }
 command -v python3 >/dev/null 2>&1 || { printf '{}'; exit 0; }
 
-REPORT="$(python3 "$CHECK" --workdir "$WORKDIR" 2>/dev/null)"
+REPORT="$(python3 "$CHECK" --workdir "$WORKDIR" --quiet-unknown 2>/dev/null)"
 [ -n "$REPORT" ] || { printf '{}'; exit 0; }
 
 REPORT="$REPORT" python3 -c '
