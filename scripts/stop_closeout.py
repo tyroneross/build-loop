@@ -57,7 +57,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -102,6 +104,60 @@ def _agent_rally_runner(
         return None
 
 
+# Whole-job deadline for the detached Rally release (seconds). The foreground
+# Stop hook never waits on it; this only bounds how long the orphan may live.
+_DETACHED_RELEASE_DEADLINE_S = 8
+
+
+def _release_args(workdir: Path, session_id: str, tool: str) -> list[str]:
+    return [
+        "stop",
+        "--workdir",
+        str(workdir),
+        "--tool",
+        tool,
+        "--session-id",
+        session_id,
+        "--reason",
+        "stop: exact session ended",
+        "--json",
+    ]
+
+
+def release_my_claims_detached(
+    workdir: Path, session_id: str, tool: str = _RALLY_TOOL
+) -> bool:
+    """Start the Rally claim release in its own session and return at once.
+
+    The release emits nothing Claude or the user reads (its envelope was only
+    parsed for a count nobody consumed), so Stop must not wait ~0.3-5 s for it.
+    The child gets its own process group, stdin/stdout/stderr on /dev/null and a
+    hard deadline (perl ``alarm`` survives ``exec``; SIGALRM is a plain
+    termination signal, not SIGKILL). Fail-open: returns False, never raises.
+    """
+    if not str(session_id or "").strip():
+        return False
+    script = Path(__file__).resolve().with_name("agent_rally.py")
+    if not script.is_file():
+        return False
+    cmd = [sys.executable, str(script), *_release_args(workdir, session_id, tool)]
+    perl = shutil.which("perl", path=os.defpath + os.pathsep + os.environ.get("PATH", ""))
+    if perl:
+        cmd = [perl, "-e", f"alarm {_DETACHED_RELEASE_DEADLINE_S}; exec @ARGV", *cmd]
+    try:
+        subprocess.Popen(
+            cmd,
+            cwd=str(workdir),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def release_my_claims(
     workdir: Path,
     session_id: str,
@@ -112,21 +168,7 @@ def release_my_claims(
     if not str(session_id or "").strip():
         return 0
     try:
-        proc = runner(
-            [
-                "stop",
-                "--workdir",
-                str(workdir),
-                "--tool",
-                tool,
-                "--session-id",
-                session_id,
-                "--reason",
-                "stop: exact session ended",
-                "--json",
-            ],
-            workdir,
-        )
+        proc = runner(_release_args(workdir, session_id, tool), workdir)
     except Exception:  # noqa: BLE001 — closeout must never raise
         return 0
     if proc is None or proc.returncode != 0 or not (proc.stdout or "").strip():
@@ -709,7 +751,7 @@ def _release_identity(workdir: Path, run_id: str) -> None:
         )
 
 
-def run_stop(workdir: Path, session_id: str) -> dict:
+def run_stop(workdir: Path, session_id: str, defer_release: bool = False) -> dict:
     """Stop-mode entrypoint. Returns a Stop-hook JSON dict (always exit 0 upstream)."""
     # Release this tool's Rally file-claims FIRST, unconditionally: a stopped
     # session is no longer editing, so its claims must not leak past Stop (the
@@ -717,8 +759,13 @@ def run_stop(workdir: Path, session_id: str) -> dict:
     # 112→127 because nothing released them). Independent of the run-record path
     # below: it runs even when no build-loop run touched this session (an editing
     # session still auto-claims files), and even when state.json is absent.
+    # ``defer_release`` (hook path): start it detached so Stop does not wait on
+    # the Rally subprocess; the claim is still released, just off the critical path.
     try:
-        release_my_claims(workdir, session_id=session_id)
+        if defer_release:
+            release_my_claims_detached(workdir, session_id)
+        else:
+            release_my_claims(workdir, session_id=session_id)
     except Exception:  # noqa: BLE001 — claim release is best-effort; never break Stop
         pass
     state = _read_state(workdir)
@@ -953,7 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.mode == "session-start":
             out, archive_after_emit = run_session_start(workdir)
         else:
-            out = run_stop(workdir, _read_session_id(args.session_id))
+            out = run_stop(workdir, _read_session_id(args.session_id), defer_release=args.hook)
     except KeyboardInterrupt:
         raise
     except BaseException:
