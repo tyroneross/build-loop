@@ -37,5 +37,6 @@
       "Read",
       "Write"
     ]
-  }
+  },
+  "hooks": "./hooks/codex.json"
 }

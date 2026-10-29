@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REF_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_][A-Za-z0-9_./\-]*[A-Za-z0-9_])")
@@ -125,6 +126,9 @@ def find_codex_surfaces(source: Path, manifest: dict | None = None) -> set[str]:
     mcp_ref = _manifest_path_ref((manifest or {}).get("mcpServers"))
     if mcp_ref:
         refs.add(mcp_ref)
+    hooks_ref = _manifest_path_ref((manifest or {}).get("hooks")) or "hooks/hooks.json"
+    if (source / hooks_ref).is_file():
+        refs.add(hooks_ref)
 
     for root_name in root_names:
         root_path = source / root_name
@@ -196,7 +200,7 @@ def find_installed_versions(cache_root: Path, name: str) -> list[Path]:
         plugin_dir = marketplace / name
         if not plugin_dir.is_dir():
             continue
-        versions.extend([p for p in plugin_dir.iterdir() if p.is_dir()])
+        versions.extend([p for p in plugin_dir.iterdir() if p.is_dir() and not p.name.startswith(".")])
     return sorted(versions, key=lambda p: p.name, reverse=True)
 
 
@@ -232,7 +236,8 @@ def default_cache(source: Path, host: str, name: str, version: str, marketplace:
         chosen_marketplace = marketplace or default_marketplace(source)
         return Path.home() / ".claude" / "plugins" / "cache" / chosen_marketplace / name / version, []
 
-    cache_root = Path.home() / ".codex" / "plugins" / "cache"
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    cache_root = codex_home / "plugins" / "cache"
     if marketplace:
         plugin_root = cache_root / marketplace / name
         stale = []
@@ -243,10 +248,66 @@ def default_cache(source: Path, host: str, name: str, version: str, marketplace:
     installed_versions = find_installed_versions(cache_root, name)
     stale = [p for p in installed_versions if p.name != version]
     exact_matches = [p for p in installed_versions if p.name == version]
+    config = codex_home / 'config.toml'
+    if config.is_file():
+        plugins = tomllib.loads(config.read_text()).get('plugins', {})
+        configured = {key.split('@', 1)[1] for key, value in plugins.items()
+                      if key.startswith(name + '@') and isinstance(value, dict)
+                      and value.get('enabled', True) is not False}
+        if any(key.startswith(name + '@') for key in plugins):
+            exact_matches = [p for p in exact_matches if p.parents[1].name in configured]
+            if not exact_matches:
+                raise ValueError('no enabled registered Codex installation at this version; use the native plugin updater')
+    if len(exact_matches) > 1:
+        raise ValueError('multiple Codex installations; select --marketplace explicitly')
     if exact_matches:
         return exact_matches[0], sorted(stale, key=lambda p: p.name, reverse=True)
 
     return cache_root / CODEX_DEFAULT_MARKETPLACE / name / version, sorted(stale, key=lambda p: p.name, reverse=True)
+
+
+def selected_origin(cache: Path, host: str) -> dict | None:
+    """Read user-selected provenance; never infer it from a Git remote or sibling repo."""
+    home = Path.home()
+    host_home = Path(os.environ.get('CODEX_HOME') or home / '.codex') if host == 'codex' else home / '.claude'
+    managed = host_home / 'plugins/cache'
+    try:
+        marketplace, name, version = cache.resolve().relative_to(managed.resolve()).parts
+    except ValueError:
+        return None  # An explicit export outside the host cache is not an installed plugin.
+    receipt = cache / '.et-source-receipt.json'
+    if receipt.is_file():
+        data = json.loads(receipt.read_text())
+        if data.get('source_kind') in {'local', 'github'} and isinstance(data.get('source'), str):
+            return {'kind': data['source_kind'], 'source': data['source']}
+        raise ValueError('installation source receipt is incomplete')
+    if host == 'codex':
+        data = tomllib.loads((host_home / 'config.toml').read_text())
+        origin = data.get('marketplaces', {}).get(marketplace, {})
+        kind, location = origin.get('source_type'), origin.get('source')
+    else:
+        data = json.loads((host_home / 'plugins/known_marketplaces.json').read_text())
+        origin = data.get(marketplace, {}).get('source', {})
+        kind, location = origin.get('source'), origin.get('path') or origin.get('repo')
+    if not isinstance(location, str) or not location:
+        raise ValueError('selected installation source is unavailable; update through the native host')
+    if kind not in {'local', 'directory'}:
+        return {'kind': 'github' if kind in {'github', 'git'} else kind, 'source': location}
+    root = Path(location).expanduser().resolve()
+    for directory in ['.claude-plugin', '.codex-plugin']:
+        manifest = root / directory / 'marketplace.json'
+        if not manifest.is_file():
+            continue
+        entries = [p for p in json.loads(manifest.read_text()).get('plugins', []) if p.get('name') == name]
+        if len(entries) != 1 or not isinstance(entries[0].get('source'), str):
+            raise ValueError('selected marketplace does not identify one local plugin source')
+        return {'kind': 'local', 'source': str((root / entries[0]['source']).resolve())}
+    # Some native local entries point directly at the plugin root.
+    for directory in ['.claude-plugin', '.codex-plugin']:
+        manifest = root / directory / 'plugin.json'
+        if manifest.is_file() and json.loads(manifest.read_text()).get('name') == name:
+            return {'kind': 'local', 'source': str(root)}
+    raise ValueError('selected local source does not contain this plugin')
 
 
 def check_sync(source: Path, cache: Path, refs: set[str]) -> list[dict]:

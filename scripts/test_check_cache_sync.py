@@ -319,5 +319,39 @@ class CoordinationCacheParityTests(unittest.TestCase):
         self.assertIn("cache for codex build-loop@1.0.0 not installed", result.stderr)
 
 
+class SelectedOriginTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+        self.env = patch.dict(os.environ, {'HOME': str(self.home), 'CODEX_HOME': str(self.home / '.codex')})
+        self.env.start()
+        self.source = self.home / 'source'
+        write_codex_source(self.source)
+        self.cache = self.home / '.codex/plugins/cache/remote/build-loop/1.0.0'
+        write(self.cache / 'README.md', 'remote')
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+    def test_registered_marketplace_beats_equal_version_copy(self):
+        other = self.home / '.codex/plugins/cache/local/build-loop/1.0.0'
+        write(other / 'README.md', 'local')
+        write(self.home / '.codex/config.toml', '[plugins."build-loop@remote"]\nenabled=true\n')
+        chosen, _ = check_cache_sync.default_cache(self.source, 'codex', 'build-loop', '1.0.0', None)
+        self.assertEqual(chosen, self.cache)
+    def test_ambiguous_unregistered_copies_fail_closed(self):
+        write(self.home / '.codex/plugins/cache/local/build-loop/1.0.0/README.md', 'local')
+        with self.assertRaisesRegex(ValueError, 'multiple'):
+            check_cache_sync.default_cache(self.source, 'codex', 'build-loop', '1.0.0', None)
+    def test_github_origin_stays_github(self):
+        write(self.home / '.codex/config.toml', '[marketplaces.remote]\nsource_type="github"\nsource="owner/repo"\n')
+        self.assertEqual(check_cache_sync.selected_origin(self.cache, 'codex'), {'kind':'github','source':'owner/repo'})
+    def test_explicit_selection_receipt_beats_original_registry(self):
+        write(self.home / '.codex/config.toml', '[marketplaces.remote]\nsource_type="github"\nsource="owner/repo"\n')
+        write(self.cache / '.et-source-receipt.json', json.dumps({'source_kind':'local','source':str(self.source)}))
+        self.assertEqual(check_cache_sync.selected_origin(self.cache, 'codex'), {'kind':'local','source':str(self.source)})
+    def test_local_plugin_origin_stays_local(self):
+        write(self.home / '.codex/config.toml', '[marketplaces.remote]\nsource_type="local"\nsource=' + json.dumps(str(self.source)) + '\n')
+        self.assertEqual(check_cache_sync.selected_origin(self.cache, 'codex'), {'kind':'local','source':str(self.source)})
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

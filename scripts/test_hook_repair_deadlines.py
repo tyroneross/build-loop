@@ -1,3 +1,4 @@
+import unittest
 """Optional startup maintenance must finish before the host cancels it."""
 from pathlib import Path
 import json
@@ -18,7 +19,8 @@ def plugin(tmp_path):
     (root / 'scripts/worktree_reaper').mkdir(parents=True)
     for name in ['_bounded_hook.sh', '_resolve_python.sh',
                  'session-start-worktree-gc.sh', 'session-start-closeout.sh',
-                 'session-start-codex-hook-trust.sh']:
+                 'session-start-codex-hook-trust.sh', 'session-start-architecture.sh',
+                 'session-start-extensions.sh', '_session_start_lib.sh']:
         shutil.copy2(ROOT / 'hooks' / name, root / 'hooks' / name)
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
     env = {k: v for k, v in os.environ.items()
@@ -90,3 +92,47 @@ def test_slow_trust_preflight_returns_before_host_deadline(plugin):
                              BUILD_LOOP_TRUST_CHECK_DEADLINE_MS='300')
     assert result.returncode == 0 and elapsed < 2
     assert json.loads(result.stdout) == {}
+
+
+@pytest.mark.parametrize('name', ['session-start-architecture.sh', 'session-start-extensions.sh'])
+def test_optional_preflight_bounds_interpreter_startup(plugin, name):
+    import sys
+    root, env = plugin
+    (root / '.build-loop/architecture').mkdir(parents=True)
+    (root / '.build-loop/architecture/manifest.json').write_text('{}')
+    (root / 'hooks/_arch_scan_bg.py').write_text('raise AssertionError("fresh manifest")')
+    (root / 'scripts/extensions_pending_count.py').write_text('print(0)')
+    binary = root / 'bin'
+    binary.mkdir()
+    python = binary / 'python3'
+    python.write_text('#!/bin/sh\n/bin/sleep 2.4\nexec ' + sys.executable + ' "$@"\n')
+    python.chmod(0o700)
+    result, elapsed = invoke(plugin, name, PATH=str(binary) + ':' + env['PATH'])
+    assert elapsed < 2
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {}
+
+
+def test_extensions_preserves_completed_context(plugin):
+    root, _ = plugin
+    (root / 'scripts/extensions_pending_count.py').write_text('print(2)')
+    result, _ = invoke(plugin, 'session-start-extensions.sh')
+    output = json.loads(result.stdout)['hookSpecificOutput']
+    assert output['hookEventName'] == 'SessionStart'
+    assert '2 pending extension' in output['additionalContext']
+
+class CodexPackagingTests(unittest.TestCase):
+    def test_host_manifest_uses_supported_events_and_session_end_deadline(self):
+        root = Path(__file__).resolve().parent.parent
+        shared = json.loads((root / 'hooks/hooks.json').read_text())
+        expected = json.loads(json.dumps(shared))
+        expected['hooks'].pop('PostToolUseFailure', None)
+        for group in expected['hooks'].get('SessionEnd', []):
+            for handler in group.get('hooks', []):
+                if isinstance(handler.get('timeout'), (int, float)):
+                    handler['timeout'] = min(handler['timeout'], 3)
+        manifest = json.loads((root / '.codex-plugin/plugin.json').read_text())
+        self.assertEqual(manifest['hooks'], './hooks/codex.json')
+        actual = json.loads((root / manifest['hooks']).read_text())
+        self.assertEqual(actual, expected)
+        self.assertIn('PostToolUseFailure', shared['hooks'])

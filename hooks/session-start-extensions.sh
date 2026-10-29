@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_EXTENSIONS_DEADLINE_MS:-1200}" 1400 optional-json "$BASH" "$0" "$@"
+
 set -u
 PY="$(command -v python3 || true)"; [ -z "$PY" ] && exit 0
 ROOT="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}"

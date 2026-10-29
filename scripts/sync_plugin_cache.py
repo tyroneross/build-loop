@@ -13,6 +13,9 @@ copy a targeted slice without deleting the rest of the cache.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
+from contextlib import contextmanager
 import io
 import json
 import os
@@ -23,6 +26,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -143,21 +147,69 @@ def copy_tree_to_temp(source: Path, target_parent: Path) -> Path:
     target_parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".build-loop-sync-", dir=str(target_parent)))
     shutil.rmtree(tmp)
-    shutil.copytree(source, tmp, ignore=ignore_dirty_tree)
+    try:
+        shutil.copytree(source, tmp, ignore=ignore_dirty_tree)
+    except BaseException:
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        raise
     return tmp
 
 
+def tree_fingerprint(root: Path) -> str:
+    value = hashlib.sha256()
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise SyncError('cache contains a link; use the native updater')
+        if path.is_file():
+            content = hashlib.sha256()
+            with path.open('rb') as stream:
+                for block in iter(lambda: stream.read(65536), b''):
+                    content.update(block)
+            # JSON framing separates paths, modes and content digests.
+            value.update(json.dumps([str(path.relative_to(root)), path.stat().st_mode & 0o777,
+                                     content.hexdigest()], separators=(',', ':')).encode() + b'\n')
+    return value.hexdigest()
+
+
 def sync_full_tree(source: Path, cache: Path, dry_run: bool) -> int:
-    files = [p for p in source.rglob("*") if p.is_file() and not any(part in EXCLUDE_DIRS for part in p.parts)]
+    files = [p for p in source.rglob('*') if p.is_file() and not any(part in EXCLUDE_DIRS for part in p.parts)]
     if dry_run:
         return len(files)
     if cache.resolve() == source.resolve() or cache.resolve() in source.resolve().parents:
-        raise SyncError(f"refusing to sync into source path: {cache}")
+        raise SyncError(f'refusing to sync into source path: {cache}')
     parent = cache.parent
+    parent.mkdir(parents=True, exist_ok=True)
     tmp = copy_tree_to_temp(source, parent)
-    if cache.exists():
-        shutil.rmtree(cache)
-    os.replace(tmp, cache)
+    archive = parent / ('.et-previous-' + cache.name + '-' + uuid.uuid4().hex)
+    try:
+        receipt = cache / '.et-source-receipt.json'
+        if receipt.is_file():
+            shutil.copy2(receipt, tmp / receipt.name)
+        expected = tree_fingerprint(tmp)
+        if cache.is_dir() and tree_fingerprint(cache) == expected:
+            return 0
+        archives = [p for pattern in ['.et-previous-*', '.et-failed-*', '.build-loop-sync-*']
+                    for p in parent.glob(pattern) if p != tmp]
+        archive_bytes = sum(p.stat().st_size for a in archives for p in a.rglob('*') if p.is_file())
+        current_bytes = sum(p.stat().st_size for p in cache.rglob('*') if p.is_file())
+        if len(archives) >= 32 or archive_bytes + current_bytes > 1024 ** 3:
+            raise SyncError('rollback archives reached 32 installations or 1 GiB; retain/review them before another update')
+        if cache.exists():
+            os.replace(cache, archive)
+        try:
+            os.replace(tmp, cache)
+            if tree_fingerprint(cache) != expected:
+                raise SyncError('cache readback did not match the prepared tree')
+        except BaseException:
+            if cache.exists():
+                os.replace(cache, parent / ('.et-failed-' + uuid.uuid4().hex))
+            if archive.exists():
+                os.replace(archive, cache)
+            raise
+    finally:
+        if tmp.exists():
+            shutil.rmtree(tmp)
     return len(files)
 
 
@@ -214,7 +266,10 @@ def resolve_cache(
     version = manifest.get("version")
     if not name or not version:
         raise SyncError(f"{host} plugin.json missing name or version")
-    return cache_sync.default_cache(source, host, str(name), str(version), args.marketplace)
+    try:
+        return cache_sync.default_cache(Path(args.source).expanduser().resolve(), host, str(name), str(version), args.marketplace)
+    except (ValueError, OSError) as exc:
+        raise SyncError(str(exc)) from exc
 
 
 def refs_for_host(source: Path, host: str, manifest: dict[str, Any], files: list[str]) -> set[str]:
@@ -233,6 +288,24 @@ def verify_host(source: Path, host: str, manifest: dict[str, Any], cache: Path, 
     return cache_sync.check_sync(source, cache, refs_for_host(source, host, manifest, files))
 
 
+@contextmanager
+def cache_lock(cache: Path):
+    # Same sidecar lock used by Easy Terminal's source updater. Never place it
+    # inside the directory that either process replaces.
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = cache.parent / ('.' + cache.name + '.et-repair.lock')
+    fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(fd, 'wb') as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            raise SyncError('cache lock is not an owned regular file')
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SyncError('cache update is already in progress; retry after it finishes') from exc
+        yield
+
+
 def sync_one_host(
     *,
     host: str,
@@ -245,30 +318,39 @@ def sync_one_host(
     if manifest is None:
         return {"host": host, "action": "skipped", "reason": "missing_manifest"}
     cache, stale_versions = resolve_cache(source=source_for_manifest, host=host, manifest=manifest, args=args)
-    if args.files:
-        copied, missing = sync_targeted_files(source_for_sync, cache, args.files, args.dry_run)
-        action = "dry_run" if args.dry_run else "targeted_sync"
-    else:
-        copied = sync_full_tree(source_for_sync, cache, args.dry_run)
-        missing = []
-        action = "dry_run" if args.dry_run else "full_sync"
+    with cache_lock(cache):
+        try:
+            origin = cache_sync.selected_origin(cache, host)
+            if origin is not None and (origin['kind'] != 'local' or
+                    Path(origin['source']).expanduser().resolve() != Path(args.source).expanduser().resolve()):
+                return {'host': host, 'action': 'skipped', 'reason': 'selected_source_not_owned',
+                        'cache': str(cache), 'selected_source': origin, 'ok': True}
+        except (ValueError, OSError, KeyError) as exc:
+            raise SyncError(f'cannot verify selected {host} source: {exc}') from exc
+        if args.files:
+            copied, missing = sync_targeted_files(source_for_sync, cache, args.files, args.dry_run)
+            action = "dry_run" if args.dry_run else "targeted_sync"
+        else:
+            copied = sync_full_tree(source_for_sync, cache, args.dry_run)
+            missing = []
+            action = "dry_run" if args.dry_run else "full_sync"
 
-    diffs: list[dict[str, Any]] = []
-    if not args.no_verify and not args.dry_run:
-        diffs = verify_host(source_for_sync, host, manifest, cache, args.files)
+        diffs: list[dict[str, Any]] = []
+        if not args.no_verify and not args.dry_run:
+            diffs = verify_host(source_for_sync, host, manifest, cache, args.files)
 
-    return {
-        "host": host,
-        "action": action,
-        "plugin": manifest.get("name"),
-        "version": manifest.get("version"),
-        "cache": str(cache),
-        "files_copied": copied,
-        "missing_files": missing,
-        "stale_versions": [str(path) for path in stale_versions],
-        "verification_diffs": diffs,
-        "ok": not missing and not diffs,
-    }
+        return {
+            "host": host,
+            "action": action,
+            "plugin": manifest.get("name"),
+            "version": manifest.get("version"),
+            "cache": str(cache),
+            "files_copied": copied,
+            "missing_files": missing,
+            "stale_versions": [str(path) for path in stale_versions],
+            "verification_diffs": diffs,
+            "ok": not missing and not diffs,
+        }
 
 
 def repo_toplevel(source: Path) -> Path:

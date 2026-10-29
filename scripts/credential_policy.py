@@ -99,7 +99,7 @@ _LOCAL_GIT = {
     "merge", "rebase", "reset", "restore", "stash", "tag", "rev-parse", "rev-list",
     "worktree", "config", "ls-files", "cat-file", "grep", "blame", "cherry-pick",
     "cherry", "revert", "init", "mv", "rm", "describe", "shortlog", "reflog", "notes",
-    "apply", "am", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
+    "apply", "am", "bundle", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
     "update-ref", "for-each-ref", "show-ref", "ls-tree", "hash-object", "count-objects",
     "fsck", "gc", "prune", "clean", "bisect", "help", "version", "var", "check-ignore",
     "diff-tree", "diff-index", "diff-files", "name-rev", "range-diff", "whatchanged",
@@ -194,6 +194,38 @@ def _heredoc_operators(line: str):
         index += 1
 
 
+def _heredoc_context(line: str, offset: int) -> str:
+    """Keep the consuming pipeline and enclosing substitutions, not sibling commands.
+
+    Separators inside quotes/substitutions are data or nested execution. Preserve
+    that context so eval, shell readers and downstream pipes remain inspected.
+    """
+    quote, stack, index, start = None, [], 0, 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if quote != "'" and line.startswith("$(", index):
+            stack.append(quote)
+            quote = None
+            index += 2
+            continue
+        if quote is None and char == ")" and stack:
+            quote = stack.pop()
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"', '`'}:
+            quote = char
+        elif not stack and (char == ";" or line[index:index + 2] in {"&&", "||"}):
+            if index > offset:
+                return line[start:index]
+            start = index + (1 if char == ";" else 2)
+        index += 1
+    return line[start:]
+
+
 def _split_heredocs(command: str):
     """Separate heredoc bodies from shell text. A body is data for its reader;
     only a shell or interpreter reader turns it into code (checked by caller)."""
@@ -218,7 +250,7 @@ def _split_heredocs(command: str):
                 if candidate == delimiter:
                     break
                 body.append(lines[index - 1])
-            bodies.append((quoted, _line_commands(line), "\n".join(body)))
+            bodies.append((quoted, _line_commands(_heredoc_context(line, start)), "\n".join(body)))
     return "\n".join(shell_lines), bodies
 
 

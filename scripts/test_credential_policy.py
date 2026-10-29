@@ -343,6 +343,21 @@ class CredentialPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.reason(command))
 
+    def test_heredoc_is_owned_by_its_pipeline_not_sibling_commands(self):
+        body = "import json\nprint(json.loads('{\"groups\": []}')['groups'])\n"
+        for separator in [';', '&&', '||']:
+            command = f"sed -n '1p' /dev/null {separator} python3 - <<'PY'\n{body}PY"
+            self.assertIsNone(self.reason(command), command)
+        self.assertIsNone(self.reason("python3 - <<'PY'; sed -n '1p' /dev/null\n" + body + 'PY'))
+        for command in [
+            "sed -n '1p' /dev/null; bash <<'PY'\nsecurity find-generic-password\nPY",
+            "sed -n '1p' /dev/null; cat <<'PY' | sh\nsecurity find-generic-password\nPY",
+            "sed -n '1p' /dev/null; python3 - <<'PY'\nimport keyring\nkeyring.get_password('s','u')\nPY",
+            "sed -n '1p' /dev/null; eval \"$(cat <<'PY'\nsecurity find-generic-password\nPY\n)\"",
+            "sed -n '1p' /dev/null; cat <<PY\n$(security find-generic-password)\nPY",
+        ]:
+            self.assertIsNotNone(self.reason(command), command)
+
 
     # Regressions from 2026-10-24 (BUIL-CREDENTIAL-POLICY-m5rnsgd3): each was
     # refused with "Keychain credential access is prohibited" although none

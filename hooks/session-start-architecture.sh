@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Incremental architecture scan when manifest is missing or >24h old.
+. "$(dirname "$0")/_bounded_hook.sh"
+bl_bound_hook "${BUILD_LOOP_ARCHITECTURE_DEADLINE_MS:-1200}" 1400 optional-json "$BASH" "$0" "$@"
+
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$D/_session_start_lib.sh"
 W="${CLAUDE_PROJECT_DIR:-$PWD}"

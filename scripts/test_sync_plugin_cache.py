@@ -74,6 +74,87 @@ class SyncPluginCacheTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_full_sync_retains_archive_and_source_choice(self):
+        import sync_plugin_cache
+        write(self.codex_cache / 'old.txt', 'keep original')
+        receipt = {'source_kind': 'local', 'source': str(self.source)}
+        write(self.codex_cache / '.et-source-receipt.json', json.dumps(receipt))
+        sync_plugin_cache.sync_full_tree(self.source, self.codex_cache, False)
+        archives = list(self.codex_cache.parent.glob('.et-previous-*'))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual((archives[0] / 'old.txt').read_text(), 'keep original')
+        self.assertEqual(json.loads((self.codex_cache / '.et-source-receipt.json').read_text()), receipt)
+
+    def test_tree_fingerprint_frames_names_modes_and_content(self):
+        import sync_plugin_cache as sync
+        a, b = self.root / 'tree-a', self.root / 'tree-b'
+        write(a / 'a', '')
+        write(a / 'b', 'X')
+        write(b / 'a', 'b420X')
+        self.assertNotEqual(sync.tree_fingerprint(a), sync.tree_fingerprint(b))
+
+    def test_staging_copy_failure_removes_partial_tree(self):
+        from unittest.mock import patch
+        import sync_plugin_cache as sync
+        def fail_copy(source, target, **kwargs):
+            write(Path(target) / 'partial', 'partial')
+            raise OSError('injected copy failure')
+        with patch.object(sync.shutil, 'copytree', side_effect=fail_copy):
+            with self.assertRaisesRegex(OSError, 'injected'):
+                sync.sync_full_tree(self.source, self.codex_cache, False)
+        self.assertEqual(list(self.codex_cache.parent.glob('.build-loop-sync-*')), [])
+
+    def test_identical_full_sync_does_not_grow_archives(self):
+        import sync_plugin_cache as sync
+        sync.sync_full_tree(self.source, self.codex_cache, False)
+        for _ in range(3):
+            self.assertEqual(sync.sync_full_tree(self.source, self.codex_cache, False), 0)
+        self.assertEqual(list(self.codex_cache.parent.glob('.et-previous-*')), [])
+
+    def test_full_sync_rolls_back_failed_rename_and_readback(self):
+        from unittest.mock import patch
+        import sync_plugin_cache as sync
+        write(self.codex_cache / 'old.txt', 'original')
+        real_replace = sync.os.replace
+        def replace(source, destination):
+            if Path(source).name.startswith('.build-loop-sync-'):
+                raise OSError('injected rename failure')
+            return real_replace(source, destination)
+        with patch.object(sync.os, 'replace', side_effect=replace):
+            with self.assertRaisesRegex(OSError, 'injected'):
+                sync.sync_full_tree(self.source, self.codex_cache, False)
+        self.assertEqual((self.codex_cache / 'old.txt').read_text(), 'original')
+        real_fingerprint = sync.tree_fingerprint
+        reads = 0
+        def fingerprint(root):
+            nonlocal reads
+            if root == self.codex_cache:
+                reads += 1
+                if reads == 2:
+                    return 'bad readback'
+            return real_fingerprint(root)
+        with patch.object(sync, 'tree_fingerprint', side_effect=fingerprint):
+            with self.assertRaisesRegex(sync.SyncError, 'readback'):
+                sync.sync_full_tree(self.source, self.codex_cache, False)
+        self.assertEqual((self.codex_cache / 'old.txt').read_text(), 'original')
+        self.assertEqual(len(list(self.codex_cache.parent.glob('.et-failed-*'))), 1)
+
+    def test_archive_budget_retains_existing_installation(self):
+        import sync_plugin_cache as sync
+        write(self.codex_cache / 'old.txt', 'original')
+        for number in range(32):
+            (self.codex_cache.parent / ('.et-previous-' + str(number))).mkdir()
+        with self.assertRaisesRegex(sync.SyncError, 'archives reached'):
+            sync.sync_full_tree(self.source, self.codex_cache, False)
+        self.assertEqual((self.codex_cache / 'old.txt').read_text(), 'original')
+
+    def test_other_writer_lock_refuses_update(self):
+        import sync_plugin_cache as sync
+        with sync.cache_lock(self.codex_cache):
+            with self.assertRaisesRegex(sync.SyncError, 'already in progress'):
+                with sync.cache_lock(self.codex_cache):
+                    self.fail('must not acquire the same installation twice')
+
     def test_default_sync_uses_committed_head_not_dirty_worktree(self) -> None:
         write(self.source / "README.md", "dirty\n")
 
@@ -213,6 +294,11 @@ class HookBranchGateTests(unittest.TestCase):
         git(self.src, ["config", "user.email", "test@example.com"])
         git(self.src, ["config", "user.name", "Test User"])
         write_dual_plugin(self.src)
+        # Native installation provenance, independent of source/cache heuristics.
+        write(self.home / '.claude/plugins/known_marketplaces.json', json.dumps({
+            'rosslabs-ai-toolkit': {'source': {'source': 'directory', 'path': str(self.src)}}}))
+        write(self.home / '.codex/config.toml',
+              '[marketplaces.local-marketplace]\nsource_type="local"\nsource=' + json.dumps(str(self.src)) + '\n')
         env = self.env()
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--source", str(self.src), "--host", "all",
@@ -280,7 +366,7 @@ class HookBranchGateTests(unittest.TestCase):
         self.assertIn(self.SKIP_MSG, result.stderr)
         self.assertEqual(before, self.snapshot())
 
-    def test_branch_override_forces_worktree_sync(self) -> None:
+    def test_branch_override_preserves_selected_source(self) -> None:
         self.seed_main()
         git(self.src, ["worktree", "add", "-b", "feature", str(self.wt)])
         write(self.wt / "README.md", "worktree forced\n")
@@ -288,7 +374,7 @@ class HookBranchGateTests(unittest.TestCase):
         self.assertNotIn(self.SKIP_MSG, result.stderr)
         contents = [p.read_text(encoding="utf-8") for p in self.cache_files(".claude") + self.cache_files(".codex")]
         self.assertTrue(contents)
-        self.assertTrue(all(c == "worktree forced\n" for c in contents), contents)
+        self.assertTrue(all(c == "committed\n" for c in contents), contents)
 
 
 if __name__ == "__main__":
