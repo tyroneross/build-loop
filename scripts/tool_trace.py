@@ -234,7 +234,43 @@ def _payload() -> dict[str, Any]:
         return {}
 
 
+_EXIT_KEYS = ("exit_code", "exitCode", "returncode", "status_code")
+
+
+def _codex_response_failed(response: Any) -> bool:
+    """Failure test for a Codex PostToolUse tool_response (shape is not documented)."""
+    response = _decode_maybe_json(response)
+    if isinstance(response, str):
+        return bool(FAILED_PROCESS.search(response))
+    if not isinstance(response, dict):
+        return False
+    if response.get("is_error") is True or response.get("error"):
+        return True
+    for key in _EXIT_KEYS:
+        code = response.get(key)
+        if isinstance(code, (int, float)) and not isinstance(code, bool) and code != 0:
+            return True
+    for key in ("output", "stdout", "content"):
+        if isinstance(response.get(key), str) and FAILED_PROCESS.search(response[key]):
+            return True
+    return False
+
+
+def codex_failure_phase(phase: str, payload: dict[str, Any]) -> str:
+    """Codex has no PostToolUseFailure event: it runs PostToolUse for failed tools too.
+
+    `turn_id` is a documented Codex-only PostToolUse field, so Claude payloads (which
+    get a separate PostToolUseFailure event) never take this path and cannot double-fire.
+    """
+    if phase == "end" and "turn_id" in payload and _codex_response_failed(
+        payload.get("tool_response", payload.get("tool_result"))
+    ):
+        return "error"
+    return phase
+
+
 def record_hook(workdir: Path, phase: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    phase = codex_failure_phase(phase, payload)
     tool_name = str(payload.get("tool_name") or payload.get("tool") or "")
     if not tool_name:
         return None

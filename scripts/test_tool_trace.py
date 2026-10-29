@@ -503,3 +503,46 @@ def test_malformed_receipt_timestamp_cannot_hide_failure(tmp_path):
     coverage.write_text(json.dumps({"receipts": [{"run_id": "ours",
         "status": "skipped", "updated_at_unix": int(time.time()) - 3600}]}))
     assert not trace.ingestion_incomplete(trace.summarize(tmp_path, "ours", recent_seconds=60))
+
+
+def _spans(workdir: Path) -> list[dict]:
+    path = workdir / trace.TRACE_PATH
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _codex_post(response, **extra) -> dict:
+    return {"session_id": "s", "turn_id": "t1", "hook_event_name": "PostToolUse", "model": "gpt",
+            "tool_name": "Bash", "tool_use_id": "u1", "tool_input": {"command": "false"},
+            "tool_response": response, **extra}
+
+
+def test_codex_post_tool_use_failure_runs_error_handler_once(tmp_path: Path) -> None:
+    for response in ({"exit_code": 1, "output": "boom"}, {"error": "denied"}, "Process exited with code 2"):
+        workdir = tmp_path / str(abs(hash(str(response))))
+        workdir.mkdir()
+        trace.record_hook(workdir, "end", _codex_post(response))
+        spans = _spans(workdir)
+        assert len(spans) == 1
+        assert spans[0]["event"] == "error"
+        assert spans[0]["status"]["code"] == "ERROR"
+
+
+def test_codex_post_tool_use_success_is_not_a_failure(tmp_path: Path) -> None:
+    trace.record_hook(tmp_path, "end", _codex_post({"exit_code": 0, "output": "ok"}))
+    spans = _spans(tmp_path)
+    assert len(spans) == 1
+    assert spans[0]["event"] == "end"
+    assert spans[0]["status"]["code"] == "OK"
+
+
+def test_claude_post_tool_use_never_double_fires_failure(tmp_path: Path) -> None:
+    payload = _codex_post({"exit_code": 1, "output": "boom"})
+    del payload["turn_id"]  # Claude payloads carry no turn_id; failures arrive via PostToolUseFailure
+    trace.record_hook(tmp_path, "end", payload)
+    spans = _spans(tmp_path)
+    assert len(spans) == 1
+    assert spans[0]["event"] == "end"
+    trace.record_hook(tmp_path, "error", {k: v for k, v in payload.items() if k != "tool_response"})
+    assert [s["event"] for s in _spans(tmp_path)] == ["end", "error"]
