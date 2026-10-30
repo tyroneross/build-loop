@@ -17,6 +17,90 @@
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
+## [0.48.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.47.0...build-loop-v0.48.0) (2026-10-30)
+
+
+### Features
+
+* **acp-practice:** add ACP best-practice skill and Review checklist hook ([e4fa665](https://github.com/tyroneross/build-loop/commit/e4fa66518b6a6b613bb250c013b1f3444fc19e53))
+* **hooks:** block worktree removal until ignored files are archived ([823d4e1](https://github.com/tyroneross/build-loop/commit/823d4e1a79cbca96a73b6c179a0813d24d85cab6))
+* **learn:** require compatibility disposition and local evidence links ([7012d9f](https://github.com/tyroneross/build-loop/commit/7012d9f8e8a7da75672a9502342e4f597afdb291))
+* **maintenance:** integrate guarded batch reconciliation skill ([8571d93](https://github.com/tyroneross/build-loop/commit/8571d93236eecc85c13387fdb1008d642c9ff471))
+* **plan:** measured effort estimates, dispatch waves and critical path in Phase 2 ([596002b](https://github.com/tyroneross/build-loop/commit/596002bdd5f01bb555ef4118ddced38088522cee))
+* **repo-maintenance:** resolve branches already on main without an owner card ([7e7b17c](https://github.com/tyroneross/build-loop/commit/7e7b17c1e525608fc70d4d1a772baf84148efa1f))
+* **task-queue:** look up open cards before filing; refuse unready intake ([678e7e6](https://github.com/tyroneross/build-loop/commit/678e7e675578dfbc88c28e842f89a562e6bf7502))
+
+
+### Bug Fixes
+
+* **artifacts:** keep architecture snapshots fresh across commits ([fcd1c1b](https://github.com/tyroneross/build-loop/commit/fcd1c1ba065fbfe7e51281ebf02c191ed8394f39))
+* **audit:** accept status strings in run trajectory metadata ([3feadbd](https://github.com/tyroneross/build-loop/commit/3feadbd97401f47dc0d7541c61c480729c81b675))
+* **build-loop:** automatically repair confirmed authorized findings ([d3dda1c](https://github.com/tyroneross/build-loop/commit/d3dda1c0c36844525b900acc2c06d4a3067c9f3b))
+* **cache-sync:** sync plugin caches only from main in the primary checkout ([33936bb](https://github.com/tyroneross/build-loop/commit/33936bb49b7c4574bc2c8d247a1b771f2b03ec9e))
+* **cache:** sync Claude plugins to their registered active installation ([45266af](https://github.com/tyroneross/build-loop/commit/45266afefedf5be6daddf6e78c44fc81488ab997))
+* **catalogs:** reverify provider lifecycle pricing and evidence ([131830b](https://github.com/tyroneross/build-loop/commit/131830b5d4be9f1481a093dbbf63c988ed170447))
+* **config:** validate runtime inputs and gate TypeScript changes ([c3b9de0](https://github.com/tyroneross/build-loop/commit/c3b9de0ba8fa8720173594c7c3dc1089ecc00a44))
+* **coordination:** distinguish fresh heartbeats from evidence progress ([6d1b927](https://github.com/tyroneross/build-loop/commit/6d1b927f435dc82a4913e3bd2615897bb8e9b118))
+* **credential_policy:** approve git clone from https://github.com over the gh helper ([aa23a05](https://github.com/tyroneross/build-loop/commit/aa23a05ea8b9aaebe74b7fbd9ef405f2f1ef3c88))
+* **credential_policy:** close the 7 Keychain paths from the 2026-10-25 review ([b223e3a](https://github.com/tyroneross/build-loop/commit/b223e3a21be7a47c4c27f7ee2d5954db208aa431))
+* **credential_policy:** match only real Keychain triggers and name them in refusals ([e7f447f](https://github.com/tyroneross/build-loop/commit/e7f447fdb794c65af75b9606769b6f6c6d6ebac3))
+* **credential-policy:** distinguish executable lookup from launch ([cbb0adf](https://github.com/tyroneross/build-loop/commit/cbb0adfc807e3af124611994629aa13b12e74622))
+* **evidence:** bind retrospectives and telemetry to exact run identities ([03746b3](https://github.com/tyroneross/build-loop/commit/03746b3044e50840d30b40994d3ca7b0f27fc586))
+* **groundwork:** accept Groundwork 0.5.0 write-boundary and exchange effect fields ([d45121b](https://github.com/tyroneross/build-loop/commit/d45121be68c46b3fb6dbea11d2bfd1862c5052de))
+* **hook-lint:** heredoc bodies and quoted-command arguments are not commands ([10237d0](https://github.com/tyroneross/build-loop/commit/10237d0521183e063ad22c3003776ee822b997b9))
+* **hooks:** add a fail-closed backstop and close round-2 review findings ([09ec8d2](https://github.com/tyroneross/build-loop/commit/09ec8d27e7a0c78e80d81596d82d8d1abc0e96ea))
+* **hooks:** bound complete lifecycle and preserve incomplete gate decisions ([7660f5f](https://github.com/tyroneross/build-loop/commit/7660f5f380c41cc720b491c0a7f3a9844cd478ff))
+* **hooks:** bound remaining SessionStart work before host deadlines ([3ad7696](https://github.com/tyroneross/build-loop/commit/3ad769614d2f19610500dbb022d61b4e2d2e1c8b))
+* **hooks:** bound startup maintenance and report Codex trust honestly ([97d8b8b](https://github.com/tyroneross/build-loop/commit/97d8b8b69d7c7184c6f7d87aa9fa4d9b75100c43))
+* **hooks:** close the 15 review findings in the worktree-removal guard ([e0f5b60](https://github.com/tyroneross/build-loop/commit/e0f5b605dbaba8f39397bd6ec3f178d3038731bc))
+* **hooks:** drain completed output and guard JSON runtime ([79c37df](https://github.com/tyroneross/build-loop/commit/79c37dff0c57a33c3e27ee208d937e3ed430c9d6))
+* **hooks:** emit Codex-valid PreToolUse and Stop output ([9e81c06](https://github.com/tyroneross/build-loop/commit/9e81c0624cdfad8b88cef9235ae939b51af194c2))
+* **hooks:** emit valid startup JSON within the host deadline ([815da4b](https://github.com/tyroneross/build-loop/commit/815da4ba6dd4172c388bcf23b5fee12a910f121f))
+* **hooks:** keep Rally and observational hooks inside Claude Code timeouts ([8524b29](https://github.com/tyroneross/build-loop/commit/8524b293038f61444ce3867e3924d305789632cc))
+* **hooks:** keep the rest of a double-quoted substitution whole instead of parsing its boundaries ([2510b39](https://github.com/tyroneross/build-loop/commit/2510b393d460eec4ed8d6f3e07515050ce65ec88))
+* **hooks:** preserve explicit session when cache import fails ([dc4bdfe](https://github.com/tyroneross/build-loop/commit/dc4bdfea63eff3372c39f9f875bdc6363b47a2df))
+* **hooks:** preserve manual diagnosis and handle missing modules ([386bd7d](https://github.com/tyroneross/build-loop/commit/386bd7d5770595fcfb88028e6b236632f66518f7))
+* **hooks:** preserve native events and remove invalid Stop observers ([69d09f7](https://github.com/tyroneross/build-loop/commit/69d09f7c7356d76904b4630e265e60b6097aecf9))
+* **hooks:** preserve session identity on failure and protect literal quotes ([c223d56](https://github.com/tyroneross/build-loop/commit/c223d564c67563a6a856eacb5fe7a18d127379aa))
+* **hooks:** record Codex tool failures from PostToolUse ([271c938](https://github.com/tyroneross/build-loop/commit/271c93887599f6dd8f0784fcd01f62405ffd327f))
+* **hooks:** run plugin drift check without credential helpers ([4eea859](https://github.com/tyroneross/build-loop/commit/4eea859f30853ef3b4d1a4f5d4ac668fdb53e894))
+* **hooks:** worktree guard counts quoted command substitutions and archives deinitialized submodules ([c61d542](https://github.com/tyroneross/build-loop/commit/c61d54250be2c27f750fff5822e47234afd6df19))
+* **identity:** reject conflicting history and undated discovery ([053a5ed](https://github.com/tyroneross/build-loop/commit/053a5ed3ba87c3bad1c1227be96f0b14701cc67e))
+* **ingestion:** guard source descriptors and preserve exact outcomes ([11db0d2](https://github.com/tyroneross/build-loop/commit/11db0d218423dcd8e4bbc00375ae07a40fa28bba))
+* **learn:** execute RossLabs LSP for applicable compatibility reviews ([10d7d7d](https://github.com/tyroneross/build-loop/commit/10d7d7d64d908b8de44e99531c32e1af889f3241))
+* **learning:** retain provisional source evidence and stable suppression ([64157ba](https://github.com/tyroneross/build-loop/commit/64157ba8ea665d5f3375b5d6e95a4779c1ac50b2))
+* **optimize:** enforce evaluator scope and keep accounting ([21b77e8](https://github.com/tyroneross/build-loop/commit/21b77e8d3f8c8c29430635120c2cc62ed39c861a))
+* **orchestrator:** move the reassess-before-retry paragraph into iterate-protocol ([2986c0a](https://github.com/tyroneross/build-loop/commit/2986c0aa734497b36715cc43c7b8709b3e514800))
+* preserve Stop payloads and reject incomplete transcript formats ([d5cdd44](https://github.com/tyroneross/build-loop/commit/d5cdd44ae29fa619bcdf3c96e2d8eb1cae27ccb3))
+* **rally:** let RALLY_TOOL_ID name the native actor ([80a01ec](https://github.com/tyroneross/build-loop/commit/80a01ecdf9af858b8ea7240af56bf928bf664bd5))
+* **rally:** refuse to install git hooks into a tracked core.hooksPath dir ([3ed8fec](https://github.com/tyroneross/build-loop/commit/3ed8feced758c6c0c73d051a764f5753696a0934))
+* reassess related failures and preserve embedding provenance ([f4d113c](https://github.com/tyroneross/build-loop/commit/f4d113c872486f19fbfff2f6cff750ff4eb3f924))
+* **reliability:** repair full-suite root causes and outcome boundaries ([f196d0d](https://github.com/tyroneross/build-loop/commit/f196d0d026a50e8fcd0cd05474a4278919b28eff))
+* respect release ownership and complete direct test discovery ([87ed973](https://github.com/tyroneross/build-loop/commit/87ed97346d80fbbb82e2e6b9436753dc1b61d702))
+* retain usable transcript prose with explicit coverage gaps ([b292560](https://github.com/tyroneross/build-loop/commit/b292560bd4f2a8a0f8c8ff8191ec51ff9af99685))
+* **review:** keep unrepaired statuses blocking despite closed flags ([46b3bab](https://github.com/tyroneross/build-loop/commit/46b3bab3dcbdf17d344df0dafdc3477b1ab353ad))
+* **security-scan:** grade tool dispatch per site, and catch open MCP dispatch ([cb2f293](https://github.com/tyroneross/build-loop/commit/cb2f2938f5457f3eab2c907e98d99b95a533aaf2))
+* **storage:** bind guarded reads to verified file identities ([ff48312](https://github.com/tyroneross/build-loop/commit/ff48312a1b38f85a121544818127d13a13d32d39))
+* **storage:** isolate corrupt records and expose partial coverage ([a9a8fb2](https://github.com/tyroneross/build-loop/commit/a9a8fb20d8e3ce4a978854f1d0c680db67648751))
+* **storage:** publish validated trace revisions and bound log scans ([56fe9c4](https://github.com/tyroneross/build-loop/commit/56fe9c465ae3326723749677763a59e2b96b00d5))
+* **storage:** reject blocking sources and preserve trace contracts ([d04418f](https://github.com/tyroneross/build-loop/commit/d04418fb2a2214e3be9504b045a6f27ae2752590))
+* **storage:** scope canonical lookups independently of legacy faults ([69571d3](https://github.com/tyroneross/build-loop/commit/69571d38d2cc74d0b568561a4bdefcf39b7b9c32))
+* **task-queue:** address Codex review round 1 (13 findings) ([0ae24b6](https://github.com/tyroneross/build-loop/commit/0ae24b6fd2b118713a7abdf7b45d225dd91331db))
+* **task-queue:** address Codex review round 2 (10 findings) ([154d976](https://github.com/tyroneross/build-loop/commit/154d97686cc06dfe00898748243d2e2bb18e1f6c))
+* **task-queue:** address Codex review round 3 (7 findings) ([ba373fd](https://github.com/tyroneross/build-loop/commit/ba373fddee1fa91d78c1c32e5faaf3abbed43447))
+* **tasks:** share outcome validation and expose live ref inventory ([1508000](https://github.com/tyroneross/build-loop/commit/150800025decca2891ffb85fec6ee4457cf61b85))
+* **telemetry:** share bounded ingestion and preserve source attribution ([5e1d305](https://github.com/tyroneross/build-loop/commit/5e1d3058431ae479d1b9910cb8cf8513996f5239))
+* **transcripts:** preserve discovery failures in coverage receipts ([606f788](https://github.com/tyroneross/build-loop/commit/606f788fd606d4a15fa235768bb5a1e0c61a15f1))
+* **verification:** share full-suite coverage across local and CI gates ([ad35231](https://github.com/tyroneross/build-loop/commit/ad35231624b1c724bc3b407abaa2716aecddfca6))
+* **wake:** preserve requested and earlier deadline bounds ([de3f690](https://github.com/tyroneross/build-loop/commit/de3f690ba4a053b8486d701f32e31fc1544e203d))
+
+
+### Performance Improvements
+
+* **ingestion:** stream canonical transcript events with revision-safe caching ([df7392d](https://github.com/tyroneross/build-loop/commit/df7392dc84be92d58b9ad7037b62e36ca9ae81ce))
+* **rally:** cut pre-edit hook latency by deduping git lookups and lazy imports ([ccf8b34](https://github.com/tyroneross/build-loop/commit/ccf8b3461e120ab3dcd9c9aeb5d9668394c7d1e4))
+* **rally:** keep the per-tool hook off the rally CLI (1,550 ms -&gt; 180 ms) ([ecc9068](https://github.com/tyroneross/build-loop/commit/ecc9068c342a5fa6d0383d1686485c0f04b37314))
+
 ## [0.47.0](https://github.com/tyroneross/build-loop/compare/build-loop-v0.46.0...build-loop-v0.47.0) (2026-09-27)
 
 
