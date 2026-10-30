@@ -886,6 +886,155 @@ _TOOL_POLICY_RE = re.compile(
 )
 
 
+# --- N4 helpers -------------------------------------------------------------
+# N4 grades each dispatch SITE, not the file. Two facts decide the threat:
+#   1. Who proposes the call. An agent loop dispatches what a model returned
+#      (`tool_calls` / `tool_use` read next to the dispatch). An MCP server
+#      answers `tools/call` from a host that already showed the call to a user
+#      for approval, so its own threat is narrower: a caller-chosen name
+#      reaching a method that was never meant to be a tool.
+#   2. Whether the name is closed. A `switch`/`match`/`if name == "x"` over
+#      literal names is an allowlist; `handlers[name](...)` or
+#      `getattr(obj, name)(...)` is open, and resolves inherited members
+#      (`constructor`, `__class__`) or any method on the object.
+# Evidence must sit near the site: a bundle concatenates modules, and a
+# transcript parser's `tool_use` 1,200 lines away says nothing about the
+# dispatcher (bookmark bundle/mcp/server.mjs, 2026-10-28).
+_TOOL_CONTEXT_WINDOW = 60
+_MCP_TOOLS_CALL_RE = re.compile(r"""["'`]tools/call["'`]|\bCallToolRequestSchema\b|\bcall_tool\b""")
+_OPEN_DISPATCH_RE = re.compile(
+    r"\b\w+\s*\[[^\]\n]{1,60}\]\s*\(|"
+    r"\bgetattr\s*\(\s*\w+\s*,\s*[^,)\n]+\)\s*\("
+)
+_GETATTR_DISPATCH_RE = re.compile(r"\bgetattr\s*\(\s*\w+\s*,\s*[^,)\n]+\)\s*\(")
+_OWN_KEY_GUARD_RE = re.compile(
+    r"\bhasOwn(?:Property)?\s*\(|\bObject\.hasOwn\b|\.has\s*\(|"
+    r"\bin\s+(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|"
+    r"toolRegistry|tool_registry|TOOL_HANDLERS)\b|"
+    r"\bnew\s+Map\s*\(|\bObject\.create\s*\(\s*null\s*\)",
+    re.IGNORECASE,
+)
+_NAMED_ENTRY_RE = re.compile(
+    r"\b(executeTool|execute_tool|callTool|dispatchTool|dispatch_tool|invokeTool|"
+    r"invoke_tool|runTool|run_tool|handleToolCall|handle_tool_call)\b"
+)
+_CLOSED_CASE_RE = re.compile(
+    r"""^\s*case\s+["'`][^"'`]+["'`]|"""
+    r"""^\s*(?:if|elif|else\s+if)\s*\(?\s*\w+\s*===?\s*["'`]"""
+)
+
+
+def _definition_re(name: str) -> re.Pattern[str]:
+    n = re.escape(name)
+    return re.compile(
+        rf"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*{n}\s*\(|"
+        rf"^\s*(?:async\s+)?def\s+{n}\s*\(|"
+        rf"^\s*(?:export\s+)?(?:const|let|var)\s+{n}\s*=\s*(?:async\s*)?(?:function\b|\()|"
+        rf"^\s*(?:(?:public|private|protected|static|async)\s+)*{n}\s*\([^)]*\)\s*(?::[^{{]*)?\{{"
+    )
+
+
+def _body_after(lines: list[str], def_idx: int) -> list[str]:
+    """Lines of the function starting at 0-based ``def_idx`` (braces or indent)."""
+    head = lines[def_idx]
+    if re.match(r"^\s*(?:async\s+)?def\s", head):
+        indent = len(head) - len(head.lstrip())
+        body = []
+        for ln in lines[def_idx + 1: def_idx + 300]:
+            if ln.strip() and len(ln) - len(ln.lstrip()) <= indent:
+                break
+            body.append(ln)
+        return body
+    depth, body, opened = 0, [], False
+    for ln in lines[def_idx: def_idx + 300]:
+        depth += ln.count("{") - ln.count("}")
+        opened = opened or "{" in ln
+        body.append(ln)
+        if opened and depth <= 0:
+            break
+    return body[1:]
+
+
+def _closed_dispatcher(body: list[str]) -> bool:
+    """True when the body routes by literal names and never indexes by name."""
+    code = [l for l in body if not _COMMENT_LINE_RE.match(l)]
+    literal_cases = sum(1 for l in code if _CLOSED_CASE_RE.search(l))
+    open_calls = any(_OPEN_DISPATCH_RE.search(l) for l in code)
+    return literal_cases >= 1 and not open_calls
+
+
+def _site_is_closed(lines: list[str], idx: int) -> bool | None:
+    """Closed / open / unknown (None) for the dispatch at 0-based ``idx``."""
+    line = lines[idx]
+    if _OPEN_DISPATCH_RE.search(line):
+        return False
+    m = _NAMED_ENTRY_RE.search(line)
+    if not m:
+        return None
+    pat = _definition_re(m.group(1))
+    if pat.search(line):
+        return _closed_dispatcher(_body_after(lines, idx))
+    for j, ln in enumerate(lines):
+        if pat.search(ln):
+            return _closed_dispatcher(_body_after(lines, j))
+    return None  # defined in another module — judge by context alone
+
+
+def _check_tool_dispatch(path: Path, lines: list[str], text: str) -> list[dict[str, Any]]:
+    if _TOOL_POLICY_RE.search(text):
+        return []
+    is_mcp_server = bool(_MCP_TOOLS_CALL_RE.search(text))
+    for i, raw in enumerate(lines):
+        if _COMMENT_LINE_RE.match(raw) or not _TOOL_DISPATCH_RE.search(raw):
+            continue
+        lo, hi = max(0, i - _TOOL_CONTEXT_WINDOW), i + _TOOL_CONTEXT_WINDOW + 1
+        window = [l for l in lines[lo:hi] if not _COMMENT_LINE_RE.match(l)]
+        agent_loop = any(_TOOL_LOOP_CONTEXT_RE.search(l) for l in window)
+        if not (agent_loop or is_mcp_server):
+            continue
+        closed = _site_is_closed(lines, i)
+        guarded = any(_OWN_KEY_GUARD_RE.search(l) for l in window)
+        snippet = raw.strip()[:120]
+        if agent_loop:
+            if closed:
+                sev, msg = "MEDIUM", (
+                    "Model-proposed tool calls reach a fixed tool list but no approval step — "
+                    "the model alone decides when a side-effecting tool runs"
+                )
+            else:
+                sev, msg = "HIGH", (
+                    "Model-proposed tool calls are dispatched with no authorization layer — "
+                    "the model decides what executes instead of proposing it for deterministic approval"
+                )
+        else:
+            # MCP server: the host approves each call; the server must not let a
+            # caller-chosen name reach a method that is not a declared tool.
+            if closed or guarded:
+                continue
+            if closed is None and not _OPEN_DISPATCH_RE.search(raw):
+                continue  # entry call into a dispatcher defined elsewhere
+            sev = "HIGH" if _GETATTR_DISPATCH_RE.search(raw) else "MEDIUM"
+            msg = (
+                "MCP tool name indexes a handler lookup with no own-key check — a caller "
+                "can reach inherited or non-tool members (constructor, __class__, private methods)"
+            )
+        return _emit(
+            lines, i + 1,
+            severity=sev,
+            owasp_ids="LLM08/ASI02/ASI03",
+            file_path=path,
+            message=msg,
+            snippet=snippet,
+            fix=(
+                "route every tool call through a policy check: authenticated caller, allowed "
+                "tool, parameter schema, resource ownership, budget, approval requirement; "
+                "resolve tool names through a closed switch or an own-key/Map lookup"
+            ),
+            check_id="N",
+        )
+    return []
+
+
 def check_N_ai_boundary(path: Path, lines: list[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     text = _file_text(lines)
@@ -962,29 +1111,7 @@ def check_N_ai_boundary(path: Path, lines: list[str]) -> list[dict[str, Any]]:
         ))
 
     # N4 — a model-proposed tool call dispatched with no deterministic gate.
-    dispatch_line = _first_code_match(lines, _TOOL_DISPATCH_RE)
-    if (
-        dispatch_line is not None
-        and _TOOL_LOOP_CONTEXT_RE.search(text)
-        and not _TOOL_POLICY_RE.search(text)
-    ):
-        line_no, snippet = dispatch_line
-        out.extend(_emit(
-            lines, line_no,
-            severity="HIGH",
-            owasp_ids="LLM08/ASI02/ASI03",
-            file_path=path,
-            message=(
-                "Model-proposed tool calls are dispatched with no authorization layer — "
-                "the model decides what executes instead of proposing it for deterministic approval"
-            ),
-            snippet=snippet,
-            fix=(
-                "route every tool call through a policy check: authenticated caller, allowed "
-                "tool, parameter schema, resource ownership, budget, approval requirement"
-            ),
-            check_id="N",
-        ))
+    out.extend(_check_tool_dispatch(path, lines, text))
 
     return out
 

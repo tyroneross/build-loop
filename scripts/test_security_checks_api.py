@@ -450,6 +450,95 @@ def count_tool_use(record):
 ''', Path("scripts/parse.py"))
         self.assertEqual([x for x in f if "authorization layer" in x["message"]], [])
 
+    # --- N4 site-level classification (2026-10-30) -------------------------
+    # The false positive: a bundled MCP server whose closed switch dispatcher
+    # shared a file with a transcript parser's `tool_use` mentions.
+
+    _MCP_CLOSED = """
+switch (req.method) {
+  case "tools/call": {
+    const result = await handleToolCall(name, args || {});
+    break;
+  }
+}
+async function handleToolCall(name, args) {
+  switch (name) {
+    case "snapshot":
+      return await handleSnapshot(args);
+    case "list":
+      return await handleList(args);
+    default:
+      return errorResponse(`Unknown tool: ${name}`);
+  }
+}
+"""
+
+    def test_mcp_closed_switch_dispatcher_clears(self):
+        f = self._n(self._MCP_CLOSED, Path("src/mcp/server.ts"))
+        self.assertEqual([x for x in f if x["check_id"] == "N" and "LLM08" in x["owasp_ids"]], [])
+
+    def test_distant_transcript_mentions_do_not_make_an_agent_loop(self):
+        parser = "\n".join(
+            ['if (block.type === "tool_use") count++;'] + ["const x = 1;"] * 200
+        )
+        f = self._n(parser + self._MCP_CLOSED, Path("bundle/mcp/server.mjs"))
+        self.assertEqual([x for x in f if "LLM08" in x["owasp_ids"]], [])
+
+    def test_mcp_open_map_dispatch_is_flagged(self):
+        f = self._n("""
+case "tools/call":
+  return await HANDLERS[params.name](params.arguments);
+""", Path("src/mcp/server.ts"))
+        hits = [x for x in f if "own-key" in x["message"]]
+        self.assertEqual([x["severity"] for x in hits], ["MEDIUM"])
+
+    def test_mcp_getattr_dispatch_is_high(self):
+        f = self._n("""
+@server.call_tool()
+async def call_tool(name, arguments):
+    return getattr(self, name)(**arguments)
+""", Path("server.py"))
+        self.assertTrue(any(x["severity"] == "HIGH" and "own-key" in x["message"] for x in f))
+
+    def test_mcp_open_dispatch_with_own_key_guard_clears(self):
+        f = self._n("""
+case "tools/call":
+  if (!Object.hasOwn(HANDLERS, params.name)) throw new Error("unknown tool");
+  return await HANDLERS[params.name](params.arguments);
+""", Path("src/mcp/server.ts"))
+        self.assertEqual([x for x in f if "LLM08" in x["owasp_ids"]], [])
+
+    def test_agent_loop_closed_dispatcher_is_medium_not_clear(self):
+        f = self._n("""
+for (const call of message.tool_calls) {
+  const result = await executeTool(call.name, call.arguments);
+}
+function executeTool(name, args) {
+  switch (name) {
+    case "delete_file":
+      return fs.rmSync(args.path);
+  }
+}
+""")
+        hits = [x for x in f if "LLM08" in x["owasp_ids"]]
+        self.assertEqual([x["severity"] for x in hits], ["MEDIUM"])
+
+    def test_agent_loop_dispatcher_with_dynamic_default_stays_high(self):
+        f = self._n("""
+for (const call of message.tool_calls) {
+  const result = await executeTool(call.name, call.arguments);
+}
+function executeTool(name, args) {
+  switch (name) {
+    case "search":
+      return search(args);
+    default:
+      return TOOLS[name](args);
+  }
+}
+""")
+        self.assertTrue(any(x["severity"] == "HIGH" and "authorization layer" in x["message"] for x in f))
+
     def test_plain_registry_without_llm_context_clears(self):
         f = self._n("""
 const result = handlers[event.type](event.payload);
