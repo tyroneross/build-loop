@@ -253,3 +253,32 @@ def test_slow_process_check_does_not_delay_the_hook(tmp_path: Path) -> None:
     assert elapsed < 2.0
     out = _wait_for_sweep(root)
     assert "Ready to remove" in out and str(wt.resolve()) in out
+
+
+def test_sweep_survives_the_hook_being_killed_at_its_deadline(tmp_path: Path) -> None:
+    """The bounded-hook wrapper TERMs the hook's whole process group at the
+    deadline; the detached sweep runs in its own session and must still finish."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _commit(root, "base")
+    (root / ".build-loop").mkdir()
+    (root / ".build-loop" / "state.json").write_text(json.dumps({"execution": {}, "runs": []}))
+    wt = tmp_path / "elsewhere" / "feat"
+    _git(root, "worktree", "add", "-q", "-b", "feat", str(wt), "main")
+    _commit(wt, "feature")
+    _git(root, "merge", "-q", "--ff-only", "feat")
+    old = time.time() - 3 * 3600
+    for p in (wt, root / ".git" / "worktrees" / "feat" / "HEAD", root / ".git" / "worktrees" / "feat" / "index",
+              root / ".git" / "worktrees" / "feat" / "logs" / "HEAD"):
+        os.utime(p, (old, old))
+    stub = tmp_path / "lsof-slow"
+    stub.write_text("#!/bin/sh\nsleep 2\nprintf 'p1\\nfcwd\\nn/\\n'\n")
+    stub.chmod(0o755)
+    # 100 ms is below Python start-up for the reaper, so the wrapper kills the hook.
+    env = {**_osenv(), "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_PLUGIN_ROOT": str(_HOOK.parent.parent),
+           "BUILD_LOOP_SWEEP_LSOF": str(stub), "BUILD_LOOP_WORKTREE_REPORT_DEADLINE_MS": "100"}
+    subprocess.run(["bash", str(_HOOK)], env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    assert not (root / ".build-loop" / "worktree-gc-last.txt").exists(), "hook should have been cut off"
+    out = _wait_for_sweep(root)
+    assert "Ready to remove" in out and str(wt.resolve()) in out

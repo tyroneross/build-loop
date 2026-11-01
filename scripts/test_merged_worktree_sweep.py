@@ -251,3 +251,58 @@ def test_parse_porcelain_flags() -> None:
     assert [x["path"] for x in e] == ["/r", "/w", "/p", "/b"]
     assert e[0]["branch"] == "main" and e[1]["locked"] == "why" and e[1]["detached"]
     assert e[2]["prunable"].startswith("gitdir") and e[3]["bare"]
+
+
+# ── safety regressions (Codex gpt-6.1-sol review, 2026-11-01) ─────────────────
+
+def _age(repo: Path, wt: Path, name: str, hours: float = 3.0) -> None:
+    old = __import__("time").time() - hours * 3600
+    admin = repo / ".git" / "worktrees" / name
+    for p in (wt, admin / "HEAD", admin / "index", admin / "logs" / "HEAD", *[q for q in wt.iterdir() if q.name != ".git"]):
+        os.utime(p, (old, old))
+
+
+def test_lsof_nonzero_exit_counts_as_unchecked(repo: Path, env: dict[str, str], tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """Partial lsof output (exit 1) may omit the process using a worktree."""
+    wt = add_worktree(env, repo, "feat", merge=True)
+    stub = tmp_path / "lsof-partial"
+    stub.write_text("#!/bin/sh\nprintf 'p1\\nfcwd\\nn/\\n'\nexit 1\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("BUILD_LOOP_SWEEP_LSOF", str(stub))
+    r = run(repo, mode="act")
+    assert os.path.realpath(wt) in paths(r["unchecked"])
+    assert wt.exists()
+
+
+def test_recent_edit_to_a_tracked_file_counts_as_activity(repo: Path, env: dict[str, str]) -> None:
+    wt = add_worktree(env, repo, "feat", merge=True)
+    _age(repo, wt, "feat")
+    (wt / "feat-0.txt").write_text("edited just now\n")  # editor cwd elsewhere; root mtime unchanged
+    os.utime(wt, (__import__("time").time() - 3 * 3600,) * 2)
+    r = run(repo, mode="act", min_idle_minutes=60)
+    assert os.path.realpath(wt) in paths(r["recently_active"])
+    assert wt.exists()
+
+
+def test_head_moving_after_classification_blocks_removal(repo: Path, env: dict[str, str]) -> None:
+    wt = add_worktree(env, repo, "feat", merge=True)
+    old_head = git(env, wt, "rev-parse", "HEAD").stdout.strip()
+    commit(env, wt, "late.txt")  # unmerged commit lands after classification
+    out = sweep_mod.remove(wt, repo, "feat", expected_head=old_head, bases=["main"], idle_s=0)
+    assert out["removed"] is False and "HEAD moved" in out["error"]
+    assert wt.exists() and branch_exists(env, repo, "feat")
+
+
+def test_act_does_not_prune_other_worktrees_admin_dirs(repo: Path, env: dict[str, str]) -> None:
+    """A missing-directory worktree with unmerged commits keeps its admin dir
+    (HEAD, reflog) after another worktree is removed."""
+    add_worktree(env, repo, "merged", merge=True)
+    gone = add_worktree(env, repo, "gone", merge=False)
+    import shutil
+    shutil.rmtree(gone)
+    admin = repo / ".git" / "worktrees" / "gone"
+    assert admin.is_dir()
+    r = run(repo, mode="act")
+    assert r["removed"], r
+    assert admin.is_dir(), "act must not run a repo-wide git worktree prune"

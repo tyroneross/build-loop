@@ -188,8 +188,24 @@ def _admin_dir(wt: Path) -> Path | None:
     return worktree_archive.linked_worktree_admin(wt)
 
 
+MAX_DIRTY_FILES = 2000
+
+
+def _dirty_files(wt: Path) -> list[Path]:
+    """Changed and untracked (not ignored) files: an editor whose cwd is elsewhere
+    still leaves its edits here, and they bump neither HEAD nor the root dir."""
+    proc = _git(wt, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if proc.returncode != 0:
+        return []
+    out = []
+    for item in proc.stdout.split("\0")[:MAX_DIRTY_FILES]:
+        if len(item) > 3:
+            out.append(wt / item[3:])
+    return out
+
+
 def last_activity(wt: Path, admin: Path | None) -> float:
-    candidates = [wt]
+    candidates = [wt, *_dirty_files(wt)]
     if admin is not None:
         candidates += [admin / "HEAD", admin / "index", admin / "logs" / "HEAD"]
     newest = 0.0
@@ -232,10 +248,14 @@ def lsof_cwds(timeout: float) -> tuple[list[str] | None, str | None]:
         return None, "lsof did not finish within the time budget"
     except OSError as exc:
         return None, f"lsof failed: {exc}"
-    # lsof exits 1 when some process could not be inspected; output still counts.
-    if proc.returncode not in (0, 1) or not proc.stdout.strip():
-        return None, f"lsof returned {proc.returncode} with no usable output"
-    return [_real(ln[1:]) for ln in proc.stdout.splitlines() if ln.startswith("n/")], None
+    # Fail closed: a nonzero exit means some process was not inspected, and that
+    # process could be the one using a worktree. Partial output is not a clearance.
+    if proc.returncode != 0:
+        return None, f"lsof exited {proc.returncode}; process check incomplete"
+    cwds = [_real(ln[1:]) for ln in proc.stdout.splitlines() if ln.startswith("n/")]
+    if not cwds:
+        return None, "lsof returned no process cwd records"
+    return cwds, None
 
 
 def allocated_bytes(root: Path, deadline: float | None) -> tuple[int, bool]:
@@ -329,10 +349,35 @@ def run_archiver(wt: Path) -> tuple[dict[str, Any] | None, str | None]:
         return None, "worktree_archive.py printed no receipt"
 
 
-def remove(wt: Path, primary: Path, branch: str | None) -> dict[str, Any]:
+def recheck(wt: Path, primary: Path, expected_head: str, bases: list[str], idle_s: float) -> str | None:
+    """Re-verify eligibility immediately before removal; return why not, or None.
+    Classification ran earlier, and a commit, an edit or a new process may have
+    arrived since then."""
+    head = _git(wt, "rev-parse", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != expected_head:
+        return "HEAD moved since classification"
+    if not any(_git(primary, "merge-base", "--is-ancestor", expected_head, ref).returncode == 0 for ref in bases):
+        return "HEAD is no longer merged"
+    if time.time() - last_activity(wt, _admin_dir(wt)) < idle_s:
+        return "worktree became active since classification"
+    cwds, why = lsof_cwds(30.0)
+    if cwds is None:
+        return why
+    if any(_inside(c, str(wt)) for c in cwds):
+        return "a process now has its cwd inside it"
+    return None
+
+
+def remove(wt: Path, primary: Path, branch: str | None, *, expected_head: str | None = None,
+           bases: list[str] | None = None, idle_s: float = 0.0) -> dict[str, Any]:
     import worktree_archive  # noqa: PLC0415 — only --act needs the guard's verdict
 
     out: dict[str, Any] = {"removed": False, "branch_deleted": False}
+    if expected_head is not None:
+        why = recheck(wt, primary, expected_head, bases or [], idle_s)
+        if why:
+            out["error"] = "not removed: " + why
+            return out
     verdict, detail = worktree_archive.receipt_verdict(wt)
     if verdict != "ok":
         out["error"] = f"archive receipt {verdict}: {detail}"
@@ -342,7 +387,9 @@ def remove(wt: Path, primary: Path, branch: str | None) -> dict[str, Any]:
         out["error"] = "git worktree remove failed: " + (proc.stderr or proc.stdout).strip()
         return out
     out["removed"] = True
-    _git(primary, "worktree", "prune")
+    # No repo-wide `git worktree prune`: `worktree remove` already deregisters this
+    # worktree, and a global prune would delete admin dirs (HEAD, reflog) of other
+    # worktrees skipped as prunable, unprotecting their unmerged commits.
     if branch:
         bd = _git(primary, "branch", "-d", branch)
         out["branch_deleted"] = bd.returncode == 0
@@ -462,7 +509,8 @@ def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str
             if mode != "act":
                 report["ready_to_remove"].append(rec)
                 continue
-            rec.update(remove(wt, primary, rec.get("branch")))
+            rec.update(remove(wt, primary, rec.get("branch"), expected_head=rec["head"],
+                              bases=bases, idle_s=idle_s))
             (report["removed"] if rec["removed"] else report["errors"]).append(rec)
 
     report["free_bytes_after"] = free_bytes(primary)

@@ -280,9 +280,6 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class NumericStringWithUnitKeyTests(unittest.TestCase):
     """Text fields that must stay strings pass when the key names the unit."""
@@ -315,3 +312,7 @@ class NumericStringWithUnitKeyTests(unittest.TestCase):
                     out = json.loads(p.stdout)
                     warns = [x for x in out.get("findings", []) if x.get("severity") == "warn"]
                     self.assertEqual(len(warns), want_warn, p.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
