@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "427aa137e733c7ebbf066842b629fa2b48426166cf1ffc9b52860f69a2f9b74a"
+    "content_sha256": "9dde473f6ea54da4eb94191edbf4a4252d5c585089d4ab18e838c7f8d469e5b8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1656,6 +1656,7 @@
       "scripts/transcript_pattern_miner/secrets_scan.py": "secrets_scan — pattern-based secret detection and rotation-tracker aggregation.\"\"\"",
       "scripts/transcript_pattern_miner/session.py": "session — SessionAggregate dataclass, per-session JSONL streaming, outcome classification.",
       "scripts/transcript_pattern_miner/textproc.py": "textproc — message text extraction, meta-block stripping, bash normalization.\"\"\"",
+      "scripts/unit_guard.py": "unit_guard.py — make a wrong unit hard to write and easy to catch.",
       "scripts/ux_triage.py": "Static-scan UX-impacting issues and write queue entries for build-loop Review Sub-step D.",
       "scripts/validate_knowledge.py": "Validate the `.episodic/` + `.semantic/` + `.procedural/` tree.",
       "scripts/verification_claim_probe.py": "Re-execute the literal command behind a subagent verification claim.",
