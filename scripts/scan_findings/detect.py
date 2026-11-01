@@ -421,7 +421,11 @@ def iter_finding_blocks_from_jsonl(transcript_path: Path) -> Iterable[tuple[str,
     except OSError:
         return
 
-    pending_agent: str | None = None
+    # Results are matched to their call by id, so parallel Agent calls in one
+    # message each keep their own attribution. Id-less blocks (older transcripts)
+    # fall back to call order.
+    agent_by_call_id: dict[str, str] = {}
+    unmatched_agents: list[str] = []
     for raw in text.splitlines():
         raw = raw.strip()
         if not raw or not raw.startswith("{"):
@@ -456,13 +460,20 @@ def iter_finding_blocks_from_jsonl(transcript_path: Path) -> Iterable[tuple[str,
             elif btype in ("tool_use", "tool_call"):
                 agent = _agent_from_tool_use(block)
                 if agent:
-                    pending_agent = agent
+                    call_id = block.get("id") or block.get("call_id")
+                    if call_id:
+                        agent_by_call_id[call_id] = agent
+                    else:
+                        unmatched_agents.append(agent)
             elif btype == "tool_result":
+                call_id = block.get("tool_use_id") or block.get("call_id")
+                if call_id:
+                    agent = agent_by_call_id.pop(call_id, None)
+                else:
+                    agent = unmatched_agents.pop(0) if unmatched_agents else None
                 tr = _tool_result_text(block.get("content"))
                 if tr.strip():
-                    yield tr[:_MAX_BLOCK_CHARS], "tool_result", (pending_agent or "session")
-                # A result consumes the pending attribution.
-                pending_agent = None
+                    yield tr[:_MAX_BLOCK_CHARS], "tool_result", (agent or "session")
         if text_parts:
             yield ("\n".join(text_parts))[:_MAX_BLOCK_CHARS], "assistant_text", "session"
 

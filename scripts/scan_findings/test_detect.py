@@ -246,3 +246,20 @@ def test_assistant_prose_finding_without_severity_still_routes_to_review():
     cands = detect_findings(text_blocks=[("I suspect a race condition in the worker pool",
                                           "assistant_text", "session")])
     assert [c.route for c in cands] == ["review"]
+
+
+def test_parallel_agent_results_keep_their_own_attribution(tmp_path: Path):
+    """Two Agent calls in one message: each result maps to its own agent by id."""
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join([
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"subagent_type": "security-reviewer"}},
+            {"type": "tool_use", "id": "a2", "name": "Agent", "input": {"subagent_type": "independent-auditor"}},
+        ]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "a1", "content": [{"type": "text", "text": "I suspect a race condition in the worker pool"}]},
+            {"type": "tool_result", "tool_use_id": "a2", "content": [{"type": "text", "text": "I suspect a race condition in the retry loop"}]},
+        ]}}),
+    ]), encoding="utf-8")
+    review = [c for c in detect_findings(transcript_path=transcript) if c.route == "review"]
+    assert sorted(c.agent for c in review) == ["independent-auditor", "security-reviewer"]
