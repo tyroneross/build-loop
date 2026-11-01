@@ -204,9 +204,52 @@ def test_report_lists_merged_worktree_outside_build_loop_dir(tmp_path: Path) -> 
     stub.write_text("#!/bin/sh\nprintf 'p1\\nfcwd\\nn/\\n'\n")
     stub.chmod(0o755)
     report, _ = _run_hook(root, extra={"BUILD_LOOP_SWEEP_LSOF": str(stub)})
-
     assert "## Merged worktrees (any location)" in report
-    assert "Ready to remove" in report
+
+    # The sweep runs detached and writes its own result file.
+    out = _wait_for_sweep(root)
+    assert "Ready to remove" in out
+    assert str(wt.resolve()) in out
+    # The next session's report carries that result.
+    report, _ = _run_hook(root, extra={"BUILD_LOOP_SWEEP_LSOF": str(stub)})
     assert str(wt.resolve()) in report
+    _wait_for_sweep(root)
     assert wt.exists()
     assert _git(root, "show-ref", "--verify", "refs/heads/feat", check=False).strip()
+
+
+def _wait_for_sweep(root: Path, timeout: float = 30.0) -> str:
+    gc = root / ".build-loop" / "worktree-gc"
+    out, lock = gc / "merged-sweep-last.txt", gc / "merged-sweep.lock"
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if out.exists() and not lock.exists():
+            return out.read_text()
+        time.sleep(0.1)
+    raise AssertionError("detached merged-worktree sweep did not finish")
+
+
+def test_slow_process_check_does_not_delay_the_hook(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _commit(root, "base")
+    (root / ".build-loop").mkdir()
+    (root / ".build-loop" / "state.json").write_text(json.dumps({"execution": {}, "runs": []}))
+    wt = tmp_path / "elsewhere" / "feat"
+    _git(root, "worktree", "add", "-q", "-b", "feat", str(wt), "main")
+    _commit(wt, "feature")
+    _git(root, "merge", "-q", "--ff-only", "feat")
+    old = time.time() - 3 * 3600
+    for p in (wt, root / ".git" / "worktrees" / "feat" / "HEAD", root / ".git" / "worktrees" / "feat" / "index",
+              root / ".git" / "worktrees" / "feat" / "logs" / "HEAD"):
+        os.utime(p, (old, old))
+    # lsof that takes 3 s: longer than the host's 2 s SessionStart timeout.
+    stub = tmp_path / "lsof-slow"
+    stub.write_text("#!/bin/sh\nsleep 3\nprintf 'p1\\nfcwd\\nn/\\n'\n")
+    stub.chmod(0o755)
+
+    _, elapsed = _run_hook(root, extra={"BUILD_LOOP_SWEEP_LSOF": str(stub)})
+    assert elapsed < 2.0
+    out = _wait_for_sweep(root)
+    assert "Ready to remove" in out and str(wt.resolve()) in out

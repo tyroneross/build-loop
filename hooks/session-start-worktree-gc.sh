@@ -34,19 +34,32 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 tmp="${REPORT}.tmp.$$"
 json_tmp="${REPORT_DIR}/${stamp}-$$.json"
 err_tmp="${REPORT_DIR}/${stamp}-$$.stderr"
-sweep_tmp="${REPORT_DIR}/${stamp}-$$.sweep.txt"
 
-# Merged-worktree sweep, read-only (--dry-run), in parallel with the reaper.
-# Its own budget sits under the hook deadline; lsof that cannot finish in it
-# reports worktrees as "unchecked" instead of slowing session start.
-sweep_pid=""
+# Merged-worktree sweep, read-only (--dry-run). It runs fully detached so it is
+# not bound by the host's SessionStart timeout (2 s; Codex runs this hook
+# synchronously). On a loaded Mac `lsof` alone takes ~0.5 s, so a sub-second
+# in-hook budget left most merged worktrees "unchecked". Detached, it gets a
+# real budget and writes its own report; this run's report shows the previous
+# sweep's result. Single-flight via a lock directory (stale after 10 min).
+SWEEP_OUT="${REPORT_DIR}/merged-sweep-last.txt"
+SWEEP_LOCK="${REPORT_DIR}/merged-sweep.lock"
 if [ -n "$_py" ] && [ -f "$SWEEP" ]; then
-    "$_py" "$SWEEP" --repo "$PWD" --dry-run --no-sizes \
-        --budget-s "${BUILD_LOOP_MERGED_SWEEP_BUDGET_S:-0.9}" --max-worktrees 40 \
-        >"$sweep_tmp" 2>&1 &
-    sweep_pid=$!
-else
-    printf '%s\n' "merged-worktree sweep unavailable (python or script missing)" >"$sweep_tmp"
+    if [ -d "$SWEEP_LOCK" ] && [ -z "$(find "$SWEEP_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+        :  # a sweep is already running
+    else
+        rm -rf "$SWEEP_LOCK" 2>/dev/null
+        if mkdir "$SWEEP_LOCK" 2>/dev/null; then
+            (
+                trap '' HUP
+                "$_py" "$SWEEP" --repo "$PWD" --dry-run --no-sizes \
+                    --budget-s "${BUILD_LOOP_MERGED_SWEEP_BUDGET_S:-30}" --max-worktrees 200 \
+                    >"${SWEEP_OUT}.tmp.$$" 2>&1
+                mv "${SWEEP_OUT}.tmp.$$" "$SWEEP_OUT" 2>/dev/null
+                rmdir "$SWEEP_LOCK" 2>/dev/null
+            ) </dev/null >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+        fi
+    fi
 fi
 
 if [ -n "$_py" ] && [ -f "$REAPER" ]; then
@@ -57,8 +70,6 @@ else
     : >"$json_tmp"
     printf '%s\n' "worktree reporter unavailable (python or reaper missing)" >"$err_tmp"
 fi
-
-[ -n "$sweep_pid" ] && wait "$sweep_pid" 2>/dev/null
 
 {
     printf '# Worktree report — %s\n\n' "$(date -u +%FT%TZ)"
@@ -73,10 +84,16 @@ fi
     cat "$json_tmp"
     printf '\n```\n'
     printf '\n## Merged worktrees (any location)\n\n'
-    cat "$sweep_tmp"
+    if [ -f "$SWEEP_OUT" ]; then
+        printf 'Last sweep: %s (a fresh one runs in the background and replaces %s)\n\n' \
+            "$(date -u -r "$SWEEP_OUT" +%FT%TZ 2>/dev/null)" "$SWEEP_OUT"
+        cat "$SWEEP_OUT"
+    else
+        printf 'First sweep is running in the background; result: %s\n' "$SWEEP_OUT"
+    fi
     printf '\nArchive + free them: python3 %s --repo %s --act\n' "$SWEEP" "$PWD"
 } >"$tmp" 2>/dev/null
 
 mv "$tmp" "$REPORT" 2>/dev/null || true
-rm -f "$err_tmp" "$sweep_tmp"
+rm -f "$err_tmp"
 exit 0
