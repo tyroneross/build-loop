@@ -498,7 +498,7 @@ case "tools/call":
 async def call_tool(name, arguments):
     return getattr(self, name)(**arguments)
 """, Path("server.py"))
-        self.assertTrue(any(x["severity"] == "HIGH" and "own-key" in x["message"] for x in f))
+        self.assertTrue(any(x["severity"] == "HIGH" and "reflection" in x["message"] for x in f))
 
     def test_mcp_open_dispatch_with_own_key_guard_clears(self):
         f = self._n("""
@@ -559,6 +559,132 @@ function executeTool(name, args) {
         )
         f = self._n(src)
         self.assertEqual([x["severity"] for x in f if "LLM08" in x["owasp_ids"]], ["MEDIUM"])
+
+    # --- N4 across languages (2026-11-01) ------------------------------------
+
+    def _llm08(self, src, name):
+        return [x["severity"] for x in self._n(src, Path(name)) if "LLM08" in x["owasp_ids"]]
+
+    def test_rust_mcp_closed_match_clears(self):
+        self.assertEqual(self._llm08("""
+// CallToolRequestParam handler
+pub async fn handle_tool_call(name: &str, args: Value) -> Result<Value> {
+    match name {
+        "search" => search(args).await,
+        "list" | "show" => list(args).await,
+        _ => Err(anyhow!("unknown tool")),
+    }
+}
+fn route(req: CallToolRequestParam) { handle_tool_call(&req.name, req.arguments); }
+""", "src/server.rs"), [])
+
+    def test_rust_agent_loop_registry_get_is_high(self):
+        self.assertEqual(self._llm08("""
+for call in response.tool_calls {
+    let out = (registry.get(&call.name).unwrap())(call.arguments);
+}
+""", "src/agent.rs"), ["HIGH"])
+
+    def test_go_mcp_reflection_is_high(self):
+        self.assertEqual(self._llm08("""
+func (s *Server) handle(req mcp.CallToolRequest) {
+    reflect.ValueOf(s).MethodByName(req.Params.Name).Call(nil)
+}
+""", "server.go"), ["HIGH"])
+
+    def test_go_mcp_closed_switch_clears(self):
+        self.assertEqual(self._llm08("""
+func (s *Server) handle(req mcp.CallToolRequest) { return callTool(req.Params.Name) }
+func callTool(name string) error {
+    switch name {
+    case "search":
+        return search()
+    }
+    return errUnknown
+}
+""", "server.go"), [])
+
+    def test_go_mcp_map_lookup_clears(self):
+        """Go maps hold only registered keys — no inherited-member reach."""
+        self.assertEqual(self._llm08("""
+func (s *Server) handle(req mcp.CallToolRequest) {
+    handlers[req.Params.Name](req.Params.Arguments)
+}
+""", "server.go"), [])
+
+    def test_python_mcp_dict_lookup_clears_but_js_object_flags(self):
+        src = """
+case "tools/call":
+  return HANDLERS[params.name](params.arguments)
+"""
+        self.assertEqual(self._llm08(src, "server.py"), [])
+        self.assertEqual(self._llm08(src, "server.ts"), ["MEDIUM"])
+
+    def test_java_mcp_get_method_is_high(self):
+        self.assertEqual(self._llm08("""
+public Object onCallTool(CallToolRequest req) throws Exception {
+    return this.getClass().getMethod(req.name()).invoke(this);
+}
+""", "Server.java"), ["HIGH"])
+
+    def test_java_mcp_reflection_with_allowlist_guard_clears(self):
+        self.assertEqual(self._llm08("""
+public Object onCallTool(CallToolRequest req) throws Exception {
+    if (!TOOL_NAMES.contains(req.name())) throw new IllegalArgumentException();
+    return this.getClass().getMethod(req.name()).invoke(this);
+}
+""", "Server.java"), [])
+
+    def test_kotlin_agent_loop_closed_when_is_medium(self):
+        self.assertEqual(self._llm08("""
+for (call in message.toolCalls) { executeTool(call.name, call.args) }
+suspend fun executeTool(name: String, args: Map<String, Any>): String {
+    return when (name) {
+        "search" -> search(args)
+        else -> error("unknown")
+    }
+}
+""", "Agent.kt"), ["MEDIUM"])
+
+    def test_swift_agent_loop_optional_dict_call_is_high(self):
+        self.assertEqual(self._llm08("""
+for call in response.toolCalls {
+    let out = try await handlers[call.name]?(call.arguments)
+}
+""", "Agent.swift"), ["HIGH"])
+
+    def test_ruby_mcp_send_is_high_and_case_when_clears(self):
+        self.assertEqual(self._llm08("""
+def call_tool(name, args)
+  public_send(name, **args)
+end
+""", "server.rb"), ["HIGH"])
+        self.assertEqual(self._llm08("""
+def call_tool(name, args)
+  case name
+  when "search" then search(args)
+  else raise ArgumentError
+  end
+end
+""", "server.rb"), [])
+
+    def test_php_mcp_dynamic_method_is_high(self):
+        self.assertEqual(self._llm08("""
+public function onCall(CallToolRequest $req) {
+    $name = $req->name;
+    return $this->$name($req->arguments);
+}
+""", "Server.php"), ["HIGH"])
+
+    def test_registry_get_read_is_not_a_dispatch(self):
+        """`registry.get(key, default)` reads a value; only a call on the result
+        dispatches (false positive seen 2026-11-01 in privileged_audit.py and a
+        private agent-scorecard module)."""
+        self.assertEqual(self._llm08("""
+calls = record["tool_use"]
+entries = registry.get("entries", [])
+desc = str(registry.get("orchestrator", {}).get("description", ""))
+""", "audit.py"), [])
 
     def test_plain_registry_without_llm_context_clears(self):
         f = self._n("""
