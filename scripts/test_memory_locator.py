@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pytest
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import memory_locator as locator
 from scripts import memory_telemetry
+
+
+def test_store_owned_verifier_filters_invalidated_records(tmp_path, monkeypatch):
+    verifier=tmp_path/'scripts/memory_search/evidence.py'
+    verifier.parent.mkdir(parents=True);verifier.write_text('# evaluator installed')
+    rows=[{'path':'lessons/current.md'},{'path':'lessons/stale.md'}]
+    def verified(command, **kwargs):
+        assert command[-3:] == ['verify','lessons/current.md','lessons/stale.md']
+        return type('Result',(),{'stdout':json.dumps({'snapshot_valid':True,'records':{
+            'lessons/current.md':{'available':True,'review_state':'unknown'},
+            'lessons/stale.md':{'available':False,'validity_state':'needs_revalidation'}}})})()
+    monkeypatch.setattr(locator.subprocess,'run',verified)
+    kept,reasons=locator.verify_evidence(tmp_path,rows)
+    assert [r['path'] for r in kept]==['lessons/current.md']
+    assert kept[0]['evidence']['review_state']=='unknown'
+    assert reasons and 'invalidated' in reasons[0]
+
+
+def test_store_verifier_failure_never_returns_unchecked_evidence(tmp_path,monkeypatch):
+    p=tmp_path/'scripts/memory_search/evidence.py';p.parent.mkdir(parents=True);p.write_text('# installed')
+    def failed(*args,**kwargs):raise OSError('failed')
+    monkeypatch.setattr(locator.subprocess,'run',failed)
+    rows,reasons=locator.verify_evidence(tmp_path,[{'path':'lessons/a.md'}])
+    assert not rows and 'verification_failed' in reasons[0]
+
+
+def test_legacy_store_does_not_invent_review_or_validity(tmp_path):
+    rows,reasons=locator.verify_evidence(tmp_path,[{'path':'lessons/a.md'}])
+    assert rows[0]['evidence']['validity_state']=='unknown'
+    assert rows[0]['evidence']['review_state']=='unknown'
+
+
+def test_verifier_refuses_paths_outside_owner_store(tmp_path):
+    p=tmp_path/'scripts/memory_search/evidence.py';p.parent.mkdir(parents=True);p.write_text('# installed')
+    rows,reasons=locator.verify_evidence(tmp_path,[{'path':'/outside/a.md'}])
+    assert not rows and 'outside canonical' in reasons[0]
 
 
 def _write_index(root: Path, rows: list[dict]) -> Path:
@@ -388,3 +425,20 @@ def test_summary_field_ranks_and_function_words_are_ignored(tmp_path: Path) -> N
 
     assert "do" not in locator.query_terms("do it")
     assert [r["path"] for r in receipt["results"]] == ["projects/demo/lessons/procedure.md"]
+
+
+@pytest.mark.parametrize('packet',[[],{'snapshot_valid':True,'records':[]},{'snapshot_valid':True,'records':{'lessons/a.md':[]}}])
+def test_malformed_evidence_packet_fails_closed(tmp_path, monkeypatch, packet):
+    from types import SimpleNamespace
+    verifier=tmp_path/'scripts/memory_search/evidence.py';verifier.parent.mkdir(parents=True);verifier.write_text('')
+    monkeypatch.setattr(locator.subprocess,'run',lambda *a,**kw:SimpleNamespace(stdout=json.dumps(packet)))
+    kept,reasons=locator.verify_evidence(tmp_path,[{'path':'lessons/a.md'}])
+    assert kept==[] and reasons[0].startswith('evidence_verification_failed')
+
+
+def test_store_root_alias_preserves_internal_symlink_rejection(tmp_path):
+    root=tmp_path/'store';root.mkdir()
+    alias=tmp_path/'alias';alias.symlink_to(root,target_is_directory=True)
+    assert locator.store_relative_path(root,alias/'lessons/a.md')=='lessons/a.md'
+    internal=root/'shortcut';internal.symlink_to(root,target_is_directory=True)
+    assert locator.store_relative_path(root,internal/'a.md')=='shortcut/a.md'

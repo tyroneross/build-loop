@@ -38,6 +38,7 @@ Public API (frozen — all consumers import these directly):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -353,6 +354,68 @@ def recall(
     fetch_limit = max(limit * 3, MIN_BACKEND_FETCH)
     results, reasons = _fan_out(workdir, query, fetch_limit, kind, project,
                                 skip_postgres)
+
+    # File-backed building knowledge shares one evaluator with the locator.
+    # Run/backlog/provider records outside the canonical store keep their own contracts.
+    from _paths import memory_store_root
+    from memory_locator import verify_evidence
+    memory_root = memory_store_root().resolve()
+    local = []
+    paths = {}
+    from memory_locator import store_relative_path
+    for rows in results.values():
+        for row in rows:
+            value = row.get('path')
+            if not value:
+                continue
+            path = Path(str(value))
+            if not path.is_absolute():
+                path = workdir / path
+            try:
+                relative = store_relative_path(memory_root, path)
+            except ValueError:
+                continue
+            paths[id(row)] = relative
+            local.append(dict(row, path=relative))
+    verified, evidence_reasons = verify_evidence(memory_root, local)
+    reasons.extend(evidence_reasons)
+    by_path = {row['path']: row['evidence'] for row in verified}
+    for k, rows in results.items():
+        checked = []
+        for row in rows:
+            relative = paths.get(id(row))
+            if relative is None:
+                checked.append(row)
+                continue
+            evidence = by_path.get(relative)
+            if evidence is None:
+                continue
+            if evidence.get('source_sha256') is None:
+                checked.append(dict(row, evidence=evidence))
+                continue
+            # Backend text may come from an older index. Recreate returned
+            # text from exactly the bytes covered by the evidence receipt.
+            source = memory_root / relative
+            try:
+                if any(p.is_symlink() for p in (source, *source.parents)):
+                    raise ValueError('source symlink')
+                data = source.read_bytes()
+                if hashlib.sha256(data).hexdigest() != evidence.get('source_sha256'):
+                    raise ValueError('source changed after verification')
+                text = data.decode('utf-8')
+                match = DECISION_FRONTMATTER_RE.match(text)
+                body = text[match.end():] if match else text
+                lines = [line.strip() for line in body.splitlines() if line.strip()]
+                heading = next((line.lstrip('#').strip() for line in lines if line.startswith('# ')), source.stem)
+                current = dict(row, evidence=evidence, title=heading)
+                if 'snippet' in current:
+                    current['snippet'] = body.strip()[:240]
+                if 'summary' in current:
+                    current['summary'] = next((line for line in lines if not line.startswith('#')), '')[:240]
+                checked.append(current)
+            except (OSError, ValueError, UnicodeError):
+                reasons.append('evidence_source_changed: record withheld; retry')
+        results[k] = checked
 
     candidates: List[Dict[str, Any]] = []
     bucket_of: Dict[int, str] = {}

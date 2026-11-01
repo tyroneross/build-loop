@@ -413,6 +413,56 @@ def _rank_fallback(
     return ranked[:limit]
 
 
+def store_relative_path(root: Path, path: Path) -> str:
+    """Normalize root aliases without resolving symlinks inside the store."""
+    if not path.is_absolute():
+        return path.as_posix()
+    canonical = root.resolve()
+    for parent in reversed(path.parents):
+        if parent.resolve() == canonical:
+            return path.relative_to(parent).as_posix()
+    raise ValueError('path outside canonical memory store')
+
+
+def verify_evidence(root: Path, results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Use the store-owned evaluator for every file-backed recall surface."""
+    verifier = root / 'scripts' / 'memory_search' / 'evidence.py'
+    if not results:
+        return results, []
+    if not verifier.is_file():
+        # Older stores have no dependency contract. Never invent verification.
+        return [dict(row, evidence={'validity_state': 'unknown', 'review_state': 'unknown',
+                                   'evidence_origin': 'unknown'}) for row in results], []
+    paths = []
+    for row in results:
+        path = Path(str(row.get('path', '')))
+        try:
+            relative = store_relative_path(root, path)
+        except ValueError:
+            return [], ['evidence_verification_failed: path outside canonical memory store']
+        paths.append(relative)
+    try:
+        proc = subprocess.run([sys.executable, str(verifier.parent), '--root', str(root),
+                               'verify', *paths], capture_output=True, text=True, timeout=5, check=True)
+        packet = json.loads(proc.stdout)
+        if not isinstance(packet, dict) or packet.get('snapshot_valid') is not True:
+            raise ValueError('supporting sources changed during verification')
+        records = packet['records']
+        if not isinstance(records, dict):
+            raise ValueError('invalid evidence records')
+        kept = []
+        for row, path in zip(results, paths):
+            evidence = records[path]
+            if not isinstance(evidence, dict):
+                raise ValueError('invalid record evidence')
+            if evidence.get('available') is True:
+                kept.append(dict(row, evidence=evidence))
+        reasons = ['evidence_invalidated: dependent records withheld pending revalidation'] if len(kept) != len(results) else []
+        return kept, reasons
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return [], ['evidence_verification_failed: canonical evidence unavailable; retry after repair']
+
+
 def locate(
     query: str,
     *,
@@ -469,6 +519,8 @@ def locate(
         reasons.extend(fallback_reasons)
         results = _rank_fallback(candidates, root=root, terms=terms, project=project, limit=limit)
 
+    results, evidence_reasons = verify_evidence(root, results)
+    reasons.extend(evidence_reasons)
     latency_ms = round((time.perf_counter() - started) * 1000, 3)
     receipt: dict[str, Any] = {
         "query": query,
