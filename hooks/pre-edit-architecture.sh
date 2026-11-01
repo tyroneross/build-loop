@@ -6,7 +6,8 @@
 # Contract:
 #   - command-type only (NEVER prompt-type)
 #   - no stdout, no stderr (exit 0 always — never blocks the Edit/Write)
-#   - fire-and-forget via `nohup ... &`; hook returns in <100ms
+#   - fire-and-forget: a detached runner (own process group, deadline, SIGTERM only)
+#     does the classify + mark-stale + scan; hook returns in <20ms
 #   - tool input arrives on stdin as JSON: {"tool_input": {"file_path": "..."}}
 #
 # Behavior:
@@ -38,54 +39,27 @@ WORKER="$SCRIPT_DIR/_arch_scan_bg.py"
 [ -f "$FRESHNESS_SCRIPT" ] || exit 0
 [ -f "$WORKER" ] || exit 0
 
-# Read stdin (may be empty — bail cleanly).
-STDIN_JSON=$(cat 2>/dev/null)
-[ -n "$STDIN_JSON" ] || exit 0
+# Everything past the three stat() checks runs in a detached background job
+# (hooks/_arch_pre_edit_bg.py): classify the path, mark stale / .enrich-needed,
+# start _arch_scan_bg.py. The hook itself does no python, no JSON parsing and
+# no waiting, so it returns in single-digit ms regardless of host load.
+# Nothing reads the stale mark within the hook window (readers run at later
+# phase boundaries via architecture_freshness.py --check), and the job still
+# marks stale BEFORE it starts the scan.
+RUNNER="$SCRIPT_DIR/_arch_pre_edit_bg.py"
+[ -f "$RUNNER" ] || exit 0
 
-# Classify the edited path. Emits one of:
-#   "MANIFEST"  → dependency manifest changed: mark enrich-needed, DEFER the
-#                 actual enrich to the scout pass (OQ3) — do NOT scan inline.
-#   "<rel>"     → tracked source file: the existing mark-stale + bg-scan path.
-#   ""          → bail (doc-only, untracked, unparseable).
-# The manifest check runs BEFORE the source-extension allowlist so a
-# package.json / requirements.txt edit is no longer excluded.
-REL_PATHS=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" HOOK_SCRIPTS="$SCRIPT_DIR/../scripts" python3 - <<'PYEOF' 2>/dev/null
-import json, os, sys
-from pathlib import Path
-sys.path.insert(0, os.environ["HOOK_SCRIPTS"])
-from hook_payload import edited_paths
-try:
-    payload = json.loads(os.environ["STDIN_JSON"])
-    file_map = json.loads(Path(os.environ["FILE_MAP"]).read_text())
-except (ValueError, OSError):
-    raise SystemExit(0)
-workdir = Path(os.environ["WORKDIR"]).resolve()
-for path in edited_paths(payload):
-    absolute = (workdir / path).resolve()
-    try:
-        rel = absolute.relative_to(workdir).as_posix()
-    except ValueError:
-        continue
-    if absolute.name in {"package.json", "package-lock.json", "pnpm-lock.yaml", "requirements.txt", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "go.mod", "Gemfile"}:
-        print("MANIFEST")
-    elif absolute.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"} and rel in file_map.get("files", {}):
-        print(rel)
-PYEOF
-)
-[ -n "$REL_PATHS" ] || exit 0
-NEED_SCAN=0
-while IFS= read -r REL_PATH; do
-    if [ "$REL_PATH" = MANIFEST ]; then
-        : > "$ARCH_DIR/.enrich-needed" 2>/dev/null || true
-    else
-        python3 "$FRESHNESS_SCRIPT" --mark-stale --file "$REL_PATH" --workdir "$WORKDIR" >/dev/null 2>&1 || true
-        NEED_SCAN=1
-    fi
-done <<< "$REL_PATHS"
-[ "$NEED_SCAN" = 1 ] || exit 0
+# Spill stdin to a file: the Write tool's payload can be megabytes, too big for
+# argv/env. The runner deletes the file.
+PAYLOAD=$(mktemp "${TMPDIR:-/tmp}/bl-pre-edit.XXXXXX" 2>/dev/null) || exit 0
+cat > "$PAYLOAD" 2>/dev/null
+[ -s "$PAYLOAD" ] || { rm -f "$PAYLOAD"; exit 0; }
 
-# Fire the background worker. Single-flight handled inside the worker.
-nohup python3 "$WORKER" --workdir "$WORKDIR" </dev/null >/dev/null 2>&1 &
+# `set -m` gives the background job its own process group (so the runner can
+# SIGTERM the whole tree at its deadline); stdio is fully detached.
+set -m
+( exec python3 "$RUNNER" --workdir "$WORKDIR" --payload "$PAYLOAD" \
+    </dev/null >/dev/null 2>&1 ) &
 disown 2>/dev/null || true
 
 exit 0

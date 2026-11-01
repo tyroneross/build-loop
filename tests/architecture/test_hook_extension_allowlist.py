@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.architecture.hook_async import stub_uv_env, wait_for, wait_idle
+
 REPO = Path(__file__).resolve().parents[2]
 HOOK = REPO / "hooks" / "pre-edit-architecture.sh"
 
@@ -56,6 +58,7 @@ def _seed_workspace(tmp_path: Path) -> Path:
     hooks_dir.mkdir(exist_ok=True)
     shutil.copy(HOOK, hooks_dir / "pre-edit-architecture.sh")
     shutil.copy(REPO / "hooks" / "_arch_scan_bg.py", hooks_dir / "_arch_scan_bg.py")
+    shutil.copy(REPO / "hooks" / "_arch_pre_edit_bg.py", hooks_dir / "_arch_pre_edit_bg.py")
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(exist_ok=True)
     shutil.copy(
@@ -75,7 +78,7 @@ def _run_hook(hook: Path, workdir: Path, file_path: str) -> int:
         input=payload,
         capture_output=True,
         text=True,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": str(workdir)},
+        env=stub_uv_env(workdir),
         timeout=10,
     )
     return proc.returncode
@@ -92,6 +95,7 @@ def test_md_edit_does_not_mark_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "README.md")
     assert rc == 0
+    wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False, "stale must remain false after .md edit"
 
 
@@ -100,6 +104,7 @@ def test_txt_edit_does_not_mark_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "notes.txt")
     assert rc == 0
+    wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False
 
 
@@ -108,6 +113,7 @@ def test_json_edit_does_not_mark_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "config.json")
     assert rc == 0
+    wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False
 
 
@@ -116,7 +122,8 @@ def test_py_edit_marks_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "src/foo.py")
     assert rc == 0
-    assert _is_stale(tmp_path) is True, "stale must flip to true after .py edit"
+    assert wait_for(lambda: _is_stale(tmp_path)), "stale must flip to true after .py edit"
+    wait_idle(tmp_path)
 
 
 def test_rs_edit_marks_stale(tmp_path: Path) -> None:
@@ -125,7 +132,8 @@ def test_rs_edit_marks_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "src/lib.rs")
     assert rc == 0
-    assert _is_stale(tmp_path) is True, "stale must flip to true after .rs edit"
+    assert wait_for(lambda: _is_stale(tmp_path)), "stale must flip to true after .rs edit"
+    wait_idle(tmp_path)
 
 
 def test_untracked_py_does_not_mark_stale(tmp_path: Path) -> None:
@@ -134,4 +142,5 @@ def test_untracked_py_does_not_mark_stale(tmp_path: Path) -> None:
     hook = _seed_workspace(tmp_path)
     rc = _run_hook(hook, tmp_path, "src/not_tracked.py")
     assert rc == 0
+    wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False
