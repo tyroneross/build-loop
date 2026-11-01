@@ -191,3 +191,54 @@ def test_migrate_apply_backs_up_before_writing(fake_world):
     (state / "drain-state.json").write_text(json.dumps(before))
     assert dp.cmd_migrate(dp.argparse.Namespace(state_dir=str(state), apply=True)) == 0
     assert json.loads((state / "drain-state.backup.json").read_text()) == before
+
+
+# --- generator tiers, capped digest, bulk triage ---------------------------
+
+def _add_auto_findings(repo: Path, n: int, source_kind: str = "tool_result") -> None:
+    d = repo / ".build-loop" / "proposals"
+    for k in range(n):
+        h = f"{k:016x}"
+        (d / f"auto-finding-20261101T000000Z-{h}.md").write_text(
+            f"---\nid: {h}\nfinding_hash: {h}\nsource: auto-finding-sweep\n"
+            f"source_kind: {source_kind}\ntitle: \"noise line {k}\"\n---\n\n"
+            "## Finding (no severity asserted — needs human triage)\n"
+        )
+
+
+def test_auto_finding_row_shows_its_title_not_the_boilerplate_heading(fake_world):
+    _add_auto_findings(fake_world["repo_a"], 1)
+    items = dp.build_digest(fake_world["state"])["items"]
+    auto = [i for i in items if i["generator"] == "auto-finding-sweep"]
+    assert [i["one_line"] for i in auto] == ["noise line 0"]
+
+
+def test_markdown_digest_caps_rows_and_ranks_owner_proposals_first(fake_world):
+    _add_auto_findings(fake_world["repo_a"], 30)
+    md = dp._render_md(dp.build_digest(fake_world["state"]), max_rows=5)
+    table = [l for l in md.splitlines() if l.startswith("| new |")]
+    assert len(table) == 5
+    assert "| hand-written |" in table[0]
+    assert "more open items in proposal-digest.json" in md
+    assert "| auto-finding-sweep | 30 | 0 |" in md
+
+
+def test_bulk_is_a_dry_run_by_default(fake_world, capsys):
+    _add_auto_findings(fake_world["repo_a"], 3)
+    assert dp.main(["--state-dir", str(fake_world["state"]), "bulk",
+                    "--generator", "auto-finding-sweep", "--status", "reject"]) == 0
+    assert json.loads(capsys.readouterr().out.split("\n\n")[0])["matched"] == 3
+    assert not (fake_world["state"] / "drain-state.json").exists()
+
+
+def test_bulk_apply_decides_only_the_selected_source_kind(fake_world):
+    _add_auto_findings(fake_world["repo_a"], 3, "tool_result")
+    _add_auto_findings(fake_world["repo_a"].parent / "repo-b", 2, "assistant_text")
+    sd = str(fake_world["state"])
+    assert dp.main(["--state-dir", sd, "bulk", "--generator", "auto-finding-sweep",
+                    "--source-kind", "tool_result", "--status", "reject", "--apply"]) == 0
+    counts = dp.build_digest(fake_world["state"])["counts"]
+    assert counts["rejected"] == 3
+    left = [i for i in dp.build_digest(fake_world["state"])["items"]
+            if i["status"] == "new" and i["generator"] == "auto-finding-sweep"]
+    assert {i["source_kind"] for i in left} == {"assistant_text"}

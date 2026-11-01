@@ -421,7 +421,11 @@ def iter_finding_blocks_from_jsonl(transcript_path: Path) -> Iterable[tuple[str,
     except OSError:
         return
 
-    pending_agent: str | None = None
+    # Results are matched to their call by id, so parallel Agent calls in one
+    # message each keep their own attribution. Id-less blocks (older transcripts)
+    # fall back to call order.
+    agent_by_call_id: dict[str, str] = {}
+    unmatched_agents: list[str] = []
     for raw in text.splitlines():
         raw = raw.strip()
         if not raw or not raw.startswith("{"):
@@ -456,13 +460,20 @@ def iter_finding_blocks_from_jsonl(transcript_path: Path) -> Iterable[tuple[str,
             elif btype in ("tool_use", "tool_call"):
                 agent = _agent_from_tool_use(block)
                 if agent:
-                    pending_agent = agent
+                    call_id = block.get("id") or block.get("call_id")
+                    if call_id:
+                        agent_by_call_id[call_id] = agent
+                    else:
+                        unmatched_agents.append(agent)
             elif btype == "tool_result":
+                call_id = block.get("tool_use_id") or block.get("call_id")
+                if call_id:
+                    agent = agent_by_call_id.pop(call_id, None)
+                else:
+                    agent = unmatched_agents.pop(0) if unmatched_agents else None
                 tr = _tool_result_text(block.get("content"))
                 if tr.strip():
-                    yield tr[:_MAX_BLOCK_CHARS], "tool_result", (pending_agent or "session")
-                # A result consumes the pending attribution.
-                pending_agent = None
+                    yield tr[:_MAX_BLOCK_CHARS], "tool_result", (agent or "session")
         if text_parts:
             yield ("\n".join(text_parts))[:_MAX_BLOCK_CHARS], "assistant_text", "session"
 
@@ -493,10 +504,20 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
     if not text or len(text) > _MAX_BLOCK_CHARS:
         text = (text or "")[:_MAX_BLOCK_CHARS]
     out: list[FindingCandidate] = []
+    # An unattributed tool_result is the output of Read/Grep/Bash/an MCP call, not
+    # an agent's verdict: source code and docs that merely MENTION "injection" or
+    # carry a JSON "severity" field. Measured 2026-11-01: 4,317 of 6,121 open
+    # review proposals were unattributed tool_result prose (raw tool JSON, code
+    # lines), a sampled 24 held no actionable finding, and none of the 6,121 was
+    # ever promoted to the backlog. Severity-less candidates from these blocks are
+    # dropped; severity-tagged ones still route to the backlog exactly as before.
+    unattributed_tool_output = source_kind == "tool_result" and agent == "session"
 
     # Structured JSON payloads (highest precision).
     for value in _iter_json_values(text):
         for sev, title, evidence in _findings_from_json_value(value):
+            if sev is None and unattributed_tool_output:
+                continue
             out.append(FindingCandidate(
                 severity=sev,
                 title=_clean_title(title),
@@ -508,6 +529,8 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
 
     # Prose findings.
     for sev, title, evidence in _prose_findings_from_text(text):
+        if sev is None and unattributed_tool_output:
+            continue
         out.append(FindingCandidate(
             severity=sev,
             title=title,
