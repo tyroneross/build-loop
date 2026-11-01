@@ -44,21 +44,22 @@ err_tmp="${REPORT_DIR}/${stamp}-$$.stderr"
 SWEEP_OUT="${REPORT_DIR}/merged-sweep-last.txt"
 SWEEP_LOCK="${REPORT_DIR}/merged-sweep.lock"
 if [ -n "$_py" ] && [ -f "$SWEEP" ]; then
-    if [ -d "$SWEEP_LOCK" ] && [ -z "$(find "$SWEEP_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
-        :  # a sweep is already running
-    else
-        rm -rf "$SWEEP_LOCK" 2>/dev/null
-        if mkdir "$SWEEP_LOCK" 2>/dev/null; then
-            (
-                trap '' HUP
-                "$_py" "$SWEEP" --repo "$PWD" --dry-run --no-sizes \
-                    --budget-s "${BUILD_LOOP_MERGED_SWEEP_BUDGET_S:-30}" --max-worktrees 200 \
-                    >"${SWEEP_OUT}.tmp.$$" 2>&1
-                mv "${SWEEP_OUT}.tmp.$$" "$SWEEP_OUT" 2>/dev/null
-                rmdir "$SWEEP_LOCK" 2>/dev/null
-            ) </dev/null >/dev/null 2>&1 &
-            disown 2>/dev/null || true
-        fi
+    # Take the lock atomically; reclaim it only when it is stale (a crashed run).
+    got_lock=0
+    if mkdir "$SWEEP_LOCK" 2>/dev/null; then
+        got_lock=1
+    elif [ -n "$(find "$SWEEP_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+        rmdir "$SWEEP_LOCK" 2>/dev/null && mkdir "$SWEEP_LOCK" 2>/dev/null && got_lock=1
+    fi
+    if [ "$got_lock" = 1 ]; then
+        # New session (setsid): the bounded-hook wrapper kills this hook's whole
+        # process group at its deadline, and the sweep must outlive that.
+        perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 1' -- /bin/sh -c '
+            "$1" "$2" --repo "$3" --dry-run --no-sizes --budget-s "$4" --max-worktrees 200 >"$5.tmp.$$" 2>&1
+            mv "$5.tmp.$$" "$5" 2>/dev/null
+            rmdir "$6" 2>/dev/null' sweep "$_py" "$SWEEP" "$PWD" "${BUILD_LOOP_MERGED_SWEEP_BUDGET_S:-30}" \
+            "$SWEEP_OUT" "$SWEEP_LOCK" </dev/null >/dev/null 2>&1 &
+        disown 2>/dev/null || true
     fi
 fi
 
