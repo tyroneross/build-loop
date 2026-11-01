@@ -421,7 +421,7 @@ def worktrees_under(target: str, res: Result) -> tuple[list[str], str | None]:
             path = e.path
             if os.path.isfile(os.path.join(path, ".git")) and wa.linked_worktree_admin(path):
                 found.append(os.path.realpath(path))
-            if wa.is_cache_root(Path(path)):
+            if wa.is_named_cache_root(Path(path)):
                 continue
             stack.append(path)
     return found, None
@@ -454,7 +454,7 @@ def judge_root(word: Word, cwd: str | None, res: Result, verb: str) -> None:
             continue
         if os.path.islink(full):
             continue  # rm/trash remove the link itself
-        if wa.is_cache_root(Path(full)):
+        if wa.is_named_cache_root(Path(full)):
             continue  # a verified regenerable cache root holds no worktree we track
         found, gap = worktrees_under(full, res)
         for wt in found:

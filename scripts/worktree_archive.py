@@ -209,14 +209,34 @@ def has_cachedir_tag(directory: Path) -> bool:
 
 
 def is_xcode_derived_data(directory: Path) -> bool:
-    """Xcode derived-data layout: info.plist + Build/ + a .noindex module cache."""
+    """Xcode derived-data layout: Xcode's own info.plist + Build/ + a .noindex cache.
+
+    The name match is exact (an app target's `Info.plist` matches `info.plist` on
+    a case-insensitive disk) and the plist must carry derived data's
+    `WorkspacePath` key, which an app's Info.plist never has.
+    """
     try:
-        return ((directory / "info.plist").is_file()
-                and (directory / "Build").is_dir()
+        if "info.plist" not in os.listdir(directory):
+            return False
+        if not ((directory / "Build").is_dir()
                 and ((directory / "ModuleCache.noindex").is_dir()
-                     or (directory / "Build" / "Intermediates.noindex").is_dir()))
+                     or (directory / "Build" / "Intermediates.noindex").is_dir())):
+            return False
+        plist = directory / "info.plist"
+        if plist.is_symlink() or plist.stat().st_size > 64 * 1024:
+            return False
+        return b"<key>WorkspacePath</key>" in plist.read_bytes()
     except OSError:
         return False
+
+
+def is_named_cache_root(directory: Path) -> bool:
+    """Name-and-place cache roots only (CACHE_ROOTS). The removal guard uses this
+    narrower test: evidence-based roots (CACHEDIR.TAG, Xcode layout) can be
+    planted on any folder, so the guard still searches them for worktrees."""
+    if directory.is_symlink() or os.path.lexists(directory / ".git"):
+        return False
+    return _named_cache_root(directory)
 
 
 def _named_cache_root(directory: Path) -> bool:
@@ -265,8 +285,9 @@ class BudgetExceeded(Exception):
     pass
 
 
-def _index_info(wt: Path, timeout: float) -> tuple[str, list[str], list[str]]:
-    """(digest of staged entries, assume-unchanged/skip-worktree paths, submodule paths).
+def _index_info(wt: Path, timeout: float) -> tuple[str, list[str], list[str], set[str]]:
+    """(digest of staged entries, assume-unchanged/skip-worktree paths, submodule
+    paths, every directory that holds a tracked path).
 
     `git status` and `git diff` hide edits to files marked assume-unchanged
     (lowercase tag) or skip-worktree ('S'), so those files are kept outright.
@@ -277,6 +298,7 @@ def _index_info(wt: Path, timeout: float) -> tuple[str, list[str], list[str]]:
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or b"").decode("utf-8", "replace").strip() or "git ls-files failed")
     hidden, subs = [], []
+    tracked_dirs: set[str] = set()
     for rec in proc.stdout.split(b"\0"):
         if not rec:
             continue
@@ -288,7 +310,12 @@ def _index_info(wt: Path, timeout: float) -> tuple[str, list[str], list[str]]:
             hidden.append(rel)
         if len(parts) > 1 and parts[1] == b"160000":
             subs.append(rel)
-    return hashlib.sha256(proc.stdout).hexdigest(), hidden, subs
+        # Case-folded: on a case-insensitive disk the walk may spell a folder
+        # differently from the index; over-matching only archives more.
+        segs = rel.split("/")[:-1]
+        for i in range(1, len(segs) + 1):
+            tracked_dirs.add("/".join(segs[:i]).casefold())
+    return hashlib.sha256(proc.stdout).hexdigest(), hidden, subs, tracked_dirs
 
 
 class Snapshot:
@@ -306,12 +333,18 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
     snap = Snapshot()
     entries, warnings = _status(wt, timeout)
     snap.incomplete += [f"git warned: {w}" for w in warnings]
-    snap.index_digest, hidden, submodules = _index_info(wt, timeout)
+    snap.index_digest, hidden, submodules, tracked_dirs = _index_info(wt, timeout)
     subset = set(submodules)
     budget = [CACHE_SCAN_BUDGET]
 
     def over_time() -> bool:
         return deadline is not None and time.monotonic() > deadline
+
+    def cache_root(directory: Path) -> bool:
+        # A folder holding tracked content is source, whatever tag or layout
+        # it carries; its untracked files are new work, never cache.
+        rel = directory.relative_to(wt).as_posix()
+        return rel.casefold() not in tracked_dirs and is_cache_root(directory)
 
     def scan_cache(root: Path, rel_root: str) -> None:
         snap.caches.append(rel_root + "/")
@@ -341,7 +374,7 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
         if base.is_symlink() or not base.is_dir():
             snap.files.setdefault(base.relative_to(wt).as_posix(), kind)
             return
-        if not caches_too and is_cache_root(base):
+        if not caches_too and cache_root(base):
             scan_cache(base, base.relative_to(wt).as_posix())
             return
         errors: list[OSError] = []
@@ -354,7 +387,7 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
                 full = Path(dirpath) / d
                 if full.is_symlink():
                     snap.files.setdefault(full.relative_to(wt).as_posix(), kind)
-                elif not caches_too and is_cache_root(full):
+                elif not caches_too and cache_root(full):
                     scan_cache(full, full.relative_to(wt).as_posix())
                 else:
                     keep.append(d)
@@ -382,7 +415,7 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
             prefix = "/".join(parts[:i])
             if prefix in subset:
                 return None
-            if is_cache_root(wt / prefix):
+            if cache_root(wt / prefix):
                 return prefix
         return None
 
