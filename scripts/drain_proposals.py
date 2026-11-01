@@ -449,6 +449,10 @@ def cmd_path(args: argparse.Namespace) -> int:
 
 
 def _notify(digest: dict[str, Any]) -> None:
+    # Pop-up off by default (owner, 2026-11-01): the digest file carries the
+    # result. Set PROPOSAL_DRAIN_BANNER=1 to re-enable.
+    if os.environ.get("PROPOSAL_DRAIN_BANNER") != "1":
+        return
     n = digest.get("new", 0)
     msg = f"{n} new build-loop proposal(s) to review" if n else "Proposal drain: nothing new"
     # macOS user notification; silent no-op if osascript is unavailable.
