@@ -38,6 +38,8 @@ Commands
     scan                produce the digest (JSON + markdown) at the state dir.
     list                print the current digest (new items first).
     set --key K --status S [--note ...]   record a decision for one item.
+    bulk --generator G --status S [--source-kind K] [--apply]
+                        decide every open item of one generator (dry run default).
     migrate [--apply]   re-key path-derived decisions onto content identities.
     path                print the resolved state dir + digest paths.
 
@@ -115,6 +117,10 @@ def _parse_meta(text: str) -> dict[str, str]:
 
 
 def _one_line(text: str, meta: dict[str, str]) -> str:
+    # A producer-stamped title beats the heading: auto-finding proposals all share
+    # one boilerplate heading, so the heading made 6,121 rows read identically.
+    if meta.get("title"):
+        return meta["title"][:120]
     m = _HEADING_RE.search(text)
     if m:
         return m.group(1).strip()[:120]
@@ -162,6 +168,29 @@ def _stable_key(repo: str, path: Path, identity: str | None = None) -> str:
     """
     basis = f"{repo}::{identity}" if identity else f"{repo}::{path}"
     return hashlib.sha1(basis.encode()).hexdigest()[:16]
+
+
+# Generators, highest decision value first. Owner-authored or retro-derived
+# proposals ask for a real decision; machine findings are triage candidates.
+GENERATORS = (
+    "hand-written",
+    "enforce-from-retro",
+    "ai-assistant",
+    "self-review",
+    "auto-finding-sweep",
+)
+
+
+def _generator(repo: str, path: Path, meta: dict[str, str]) -> str:
+    if path.name.startswith("auto-finding-") or meta.get("source", "").startswith("auto-finding-sweep"):
+        return "auto-finding-sweep"
+    if path.name.startswith("self-review-"):
+        return "self-review"
+    if "enforce-from-retro" in path.parts:
+        return "enforce-from-retro"
+    if repo == "ai-assistant":
+        return "ai-assistant"
+    return "hand-written"
 
 
 def _age_days(path: Path) -> int:
@@ -214,6 +243,8 @@ def _collect_items() -> list[dict[str, Any]]:
                     "one_line": _one_line(text, meta),
                     "age_days": _age_days(path),
                     "meta_status": (meta.get("status") or "").lower(),
+                    "generator": _generator(repo_label, path, meta),
+                    "source_kind": meta.get("source_kind", ""),
                 }
             )
     return _collapse(items)
@@ -287,7 +318,39 @@ def build_digest(state_dir: Path) -> dict[str, Any]:
     }
 
 
-def _render_md(digest: dict[str, Any]) -> str:
+DEFAULT_MAX_ROWS = 50
+
+
+def _rank(item: dict[str, Any]) -> tuple[int, int]:
+    """Decision value: generator tier first, then oldest first within a tier."""
+    gen = item.get("generator", "hand-written")
+    tier = GENERATORS.index(gen) if gen in GENERATORS else 0
+    return (tier, -(item["age_days"] if item["age_days"] >= 0 else 0))
+
+
+def _generator_summary(items: list[dict[str, Any]]) -> list[str]:
+    rows = ["| generator | open | decided | oldest open |", "|---|---|---|---|"]
+    for gen in GENERATORS:
+        group = [i for i in items if i.get("generator") == gen]
+        if not group:
+            continue
+        open_ = [i for i in group if i["status"] == "new"]
+        oldest = max((i["age_days"] for i in open_), default=-1)
+        rows.append(
+            f"| {gen} | {len(open_)} | {len(group) - len(open_)} | "
+            f"{f'{oldest}d' if oldest >= 0 else '-'} |"
+        )
+    return rows
+
+
+def _render_md(digest: dict[str, Any], max_rows: int = DEFAULT_MAX_ROWS) -> str:
+    """Summary per generator, then the top ``max_rows`` open items by value.
+
+    The full list stays in proposal-digest.json. An uncapped table reached 7,378
+    rows / 980 KB on 2026-11-01, which no person reads; ``max_rows <= 0`` restores it.
+    """
+    open_items = sorted((i for i in digest["items"] if i["status"] == "new"), key=_rank)
+    shown = open_items if max_rows <= 0 else open_items[:max_rows]
     lines = [
         "# Proposal Drain Digest",
         "",
@@ -296,20 +359,28 @@ def _render_md(digest: dict[str, Any]) -> str:
         + ", ".join(f"{k}: {v}" for k, v in digest["counts"].items() if v),
         "",
         "Decide each with: `/drain-proposals` (interactive) or "
-        "`drain_proposals.py set --key <key> --status apply|reject|defer`.",
+        "`drain_proposals.py set --key <key> --status apply|reject|defer`. "
+        "Triage a whole generator with `drain_proposals.py bulk` (dry run by default).",
         "",
-        "| status | repo | id | age | one-line | key |",
-        "|--------|------|----|-----|----------|-----|",
+        *_generator_summary(digest["items"]),
+        "",
+        f"## Top {len(shown)} of {len(open_items)} open, by decision value",
+        "",
+        "| status | repo | generator | age | one-line | key |",
+        "|--------|------|-----------|-----|----------|-----|",
     ]
-    for it in digest["items"]:
+    for it in shown:
         age = f"{it['age_days']}d" if it["age_days"] >= 0 else "?"
         one = it["one_line"].replace("|", "\\|")
         dup = it.get("duplicate_count", 1)
         if dup > 1:
             one = f"{one} _(×{dup} open copies)_"
         lines.append(
-            f"| {it['status']} | {it['repo']} | {it['id']} | {age} | {one} | `{it['key']}` |"
+            f"| {it['status']} | {it['repo']} | {it.get('generator', '')} | {age} | {one} "
+            f"| `{it['key']}` |"
         )
+    if len(shown) < len(open_items):
+        lines += ["", f"_{len(open_items) - len(shown)} more open items in proposal-digest.json._"]
     return "\n".join(lines) + "\n"
 
 
@@ -317,7 +388,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     state_dir = _state_dir(args.state_dir)
     digest = build_digest(state_dir)
     _atomic_write(state_dir / "proposal-digest.json", json.dumps(digest, indent=2))
-    _atomic_write(state_dir / "proposal-digest.md", _render_md(digest))
+    _atomic_write(state_dir / "proposal-digest.md", _render_md(digest, args.max_rows))
     if args.notify:
         _notify(digest)
     if args.json:
@@ -366,6 +437,51 @@ def cmd_set(args: argparse.Namespace) -> int:
     }
     _atomic_write(state_path, json.dumps(state, indent=2, sort_keys=True))
     print(f"{args.key} -> {status}")
+    return 0
+
+
+def select_bulk(items: list[dict[str, Any]], generator: str, source_kind: str | None,
+                min_age_days: int) -> list[dict[str, Any]]:
+    """Open items matching one generator (and optionally one source_kind)."""
+    return [
+        i for i in items
+        if i["status"] == "new"
+        and i.get("generator") == generator
+        and (source_kind is None or i.get("source_kind") == source_kind)
+        and i["age_days"] >= min_age_days
+    ]
+
+
+def cmd_bulk(args: argparse.Namespace) -> int:
+    """Record one decision for every open item of a generator. Dry run unless --apply."""
+    state_dir = _state_dir(args.state_dir)
+    status_map = {"apply": "applied", "reject": "rejected", "defer": "deferred", "review": "reviewed"}
+    status = status_map.get(args.status, args.status)
+    if status not in DECIDED_STATUSES:
+        print(f"invalid status: {args.status}", file=sys.stderr)
+        return 2
+    picked = select_bulk(build_digest(state_dir)["items"], args.generator,
+                         args.source_kind, args.min_age_days)
+    summary = {
+        "generator": args.generator, "source_kind": args.source_kind,
+        "min_age_days": args.min_age_days, "status": status,
+        "matched": len(picked), "applied": bool(args.apply),
+        "state_file": str(state_dir / "drain-state.json"),
+    }
+    if args.apply and picked:
+        state_path = state_dir / "drain-state.json"
+        state = _load_state(state_path)
+        if state:
+            _atomic_write(state_dir / "drain-state.backup.json",
+                          json.dumps(state, indent=2, sort_keys=True))
+        now = datetime.now(timezone.utc).isoformat()
+        note = args.note or f"bulk {status}: generator={args.generator}"
+        for it in picked:
+            state[it["key"]] = {"status": status, "decided_at": now, "note": note}
+        _atomic_write(state_path, json.dumps(state, indent=2, sort_keys=True))
+    print(json.dumps(summary, indent=2))
+    if not args.apply:
+        print("\ndry run — re-run with --apply to write", file=sys.stderr)
     return 0
 
 
@@ -475,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
     p_scan = sub.add_parser("scan", help="build the digest")
     p_scan.add_argument("--json", action="store_true")
     p_scan.add_argument("--notify", action="store_true", help="post a macOS notification")
+    p_scan.add_argument("--max-rows", type=int, default=DEFAULT_MAX_ROWS,
+                        help="open rows in the markdown digest (<=0 = all)")
     p_scan.set_defaults(func=cmd_scan)
 
     p_list = sub.add_parser("list", help="print the digest")
@@ -488,6 +606,16 @@ def main(argv: list[str] | None = None) -> int:
                        help="apply|reject|defer|review (or a raw VALID_STATUS)")
     p_set.add_argument("--note", default="")
     p_set.set_defaults(func=cmd_set)
+
+    p_bulk = sub.add_parser("bulk", help="decide every open item of one generator")
+    p_bulk.add_argument("--generator", required=True, choices=GENERATORS)
+    p_bulk.add_argument("--source-kind", default=None,
+                        help="restrict to one source_kind (auto-finding-sweep only)")
+    p_bulk.add_argument("--min-age-days", type=int, default=0)
+    p_bulk.add_argument("--status", required=True, help="reject|defer|review|apply")
+    p_bulk.add_argument("--note", default="")
+    p_bulk.add_argument("--apply", action="store_true", help="write (default is a dry run)")
+    p_bulk.set_defaults(func=cmd_bulk)
 
     p_mig = sub.add_parser("migrate", help="re-key path-derived decisions onto content keys")
     p_mig.add_argument("--apply", action="store_true", help="write (default is a dry run)")
