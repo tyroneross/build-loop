@@ -471,10 +471,6 @@ class TaxonomyTests(unittest.TestCase):
         self.assertIsNone(self.mt.model_meta(""))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OpenAIRoutingFreshnessTests(unittest.TestCase):
     """Routed OpenAI ids are the newest registered member of their family."""
 
@@ -501,3 +497,6 @@ class OpenAIRoutingFreshnessTests(unittest.TestCase):
             with self.subTest(model=mid):
                 self.assertEqual(mid, newest[family(mid)], f"{mid} is routed but {newest[family(mid)]} is newer")
 
+
+if __name__ == "__main__":
+    unittest.main()

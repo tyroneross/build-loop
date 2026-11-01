@@ -686,7 +686,7 @@ class ResolveRoleTests(unittest.TestCase):
     def test_host_neutral_still_picks_by_rank_not_recency(self) -> None:
         """With the host filter off, rank still decides — not release date.
 
-        gpt-6.1-terra (2026-07-09) is newer than sonnet (2026-06-01) and used to
+        gpt-6.1-terra (2026-10-26) is newer than sonnet (2026-06-01) and used to
         win here. Removing the host filter must not smuggle recency back in: the
         preferred-list order is the capability rank, and it is the only key.
         """

@@ -326,6 +326,7 @@
       ],
       "T2": [
         "opus",
+        "gpt-6.1-sol",
         "gpt-5.5"
       ],
       "T3": [
@@ -579,7 +580,7 @@
         "gpt-6.1-terra-medium",
         "gpt-6.1-terra-high"
       ],
-      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..ultra; owner's ~/.codex/config.toml default model. Release: 9to5Mac 2026-10-26 'OpenAI upgrades ChatGPT and Codex with new GPT-6.1 Terra model'; Codex CLI >= 0.159.0."
+      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..ultra. Release: 9to5Mac 2026-10-26 'OpenAI upgrades ChatGPT and Codex with new GPT-6.1 Terra model'; Codex CLI >= 0.159.0."
     },
     "gpt-5.6-terra": {
       "provider": "openai",
@@ -619,7 +620,7 @@
         "gpt-6-luna-high",
         "gpt-6-luna-medium"
       ],
-      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..ultra. Release: TechCrunch 2026-09-22 'OpenAI launches GPT-6 Sol and Luna'; openai.com/index/introducing-gpt-6-sol-and-luna (not opened)."
+      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..max. Release: TechCrunch 2026-09-22 'OpenAI launches GPT-6 Sol and Luna'; openai.com/index/introducing-gpt-6-sol-and-luna (not opened)."
     },
     "gpt-5.6-luna": {
       "provider": "openai",

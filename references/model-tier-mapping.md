@@ -59,7 +59,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** SWE-bench Verified ≥75% AND tool-use accuracy ≥85% AND multi-turn coding rollout ≥80%.
 - **Cost expectation:** ~3-5× cheaper than Thinking tier per token. The default for the bulk of build-loop work.
 - **Anthropic default:** Sonnet 5 (`claude-sonnet-5`; alias `sonnet` auto-tracks the latest Sonnet generation)
-- **Verified equivalents:** GPT-5.6 Terra (`gpt-6.1-terra`) is the Codex-host default for scoped implementation, bounded assessment, and routine coordination; GPT-5.4 Mini remains a fallback seed
+- **Verified equivalents:** GPT-6.1 Terra (`gpt-6.1-terra`) is the Codex-host default for scoped implementation, bounded assessment, and routine coordination; GPT-5.4 Mini remains a fallback seed
 - **Effort default:** `high` for `agentic_execution/T3` on both hosts. A caller may select another supported effort for a bounded task; the resolver reports this as a preference rather than a lock.
 - **Local equivalents:** qwen2.5-coder-32B-instruct (mid-quality), Codestral 22B (reasonable substitute for bounded refactor work)
 
@@ -68,7 +68,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** none formal. Empirical: doesn't hallucinate on bounded structured tasks; runs fast.
 - **Cost expectation:** ~10-20× cheaper than Thinking tier. Use for high-volume mechanical sweeps.
 - **Anthropic default:** Haiku 4.5 (`claude-haiku-4-5-20251001`)
-- **Verified equivalents:** GPT-5.6 Luna (`gpt-6-luna`) for short, repeatable extraction, classification, scanning, and structured summaries with an output check; GPT-5 Nano remains a fallback seed
+- **Verified equivalents:** GPT-6 Luna (`gpt-6-luna`) for short, repeatable extraction, classification, scanning, and structured summaries with an output check; GPT-5 Nano remains a fallback seed
 - **Local equivalents:** llama3.2-3b, qwen2.5-3b
 
 ## Substitution table (advisory, 2026 Q3)

@@ -635,11 +635,17 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["model"], "haiku")
 
     def test_resolve_role_unavailable_falls_to_next_preferred(self) -> None:
-        # GR/T2 preferred = [opus, gpt-5.5]; opus down -> gpt-5.5.
+        # GR/T2 preferred = [opus, gpt-6.1-sol, gpt-5.5]; opus down -> gpt-6.1-sol,
+        # then gpt-5.5 when Sol is also down.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="thinking",
                 workdir=Path(td), unavailable={"opus"},
+            )
+            self.assertEqual(r["model"], "gpt-6.1-sol")
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), unavailable={"opus", "gpt-6.1-sol"},
             )
             self.assertEqual(r["model"], "gpt-5.5")
 
@@ -719,7 +725,7 @@ class TwoAxisRoleTests(unittest.TestCase):
 
     # --- Rank dominance (was: recency tiebreak) ----------------------------
     def test_rank_wins_over_recency_regardless_of_flag(self) -> None:
-        # GR/T3 = [sonnet(2026-06-01), gpt-6.1-terra(2026-07-09), gpt-5.4].
+        # GR/T3 = [sonnet(2026-06-01), gpt-6.1-terra(2026-10-26), gpt-5.4].
         # terra is NEWER than the list-order head. Under the old whole-list date
         # sort terra won; rank now wins, so sonnet does — and critically the
         # answer is the same with the flag ON, since recency_tiebreak is
