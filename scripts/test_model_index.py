@@ -114,7 +114,7 @@ class AgreementTests(unittest.TestCase):
             "resolve", "--tier", "code", "--segment", "agentic_execution",
             "--host", "openai",
         )
-        self.assertEqual(payload["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+        self.assertEqual(payload["preferred_models"][:2], ["gpt-6.1-terra", "gpt-5.4"])
         self.assertEqual(payload["preferred_effort"], "high")
         self.assertTrue(payload["resolved"])
 

@@ -251,7 +251,7 @@ class TestResourceAwareFanout:
                 tmp_workdir,
                 requested=8,
                 execution_location="cloud",
-                model="gpt-5.6-terra",
+                model="gpt-6.1-terra",
                 output_size="large",
                 effort="xhigh",
                 token_budget=100_000,
@@ -265,7 +265,7 @@ class TestResourceAwareFanout:
         profile = resolve_fanout(
             tmp_workdir,
             execution_location="cloud",
-            model="gpt-5.6-terra",
+            model="gpt-6.1-terra",
             segment="agentic_execution",
             tier="code",
             token_budget=100_000,
@@ -292,10 +292,10 @@ class TestResourceAwareFanout:
     def test_sol_high_is_more_conservative_than_terra_medium(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=16):
             terra = resolve_fanout(
-                tmp_workdir, model="gpt-5.6-terra", effort="medium", token_budget=96_000
+                tmp_workdir, model="gpt-6.1-terra", effort="medium", token_budget=96_000
             )
             sol = resolve_fanout(
-                tmp_workdir, model="gpt-5.6-sol", effort="high", token_budget=96_000
+                tmp_workdir, model="gpt-6.1-sol", effort="high", token_budget=96_000
             )
         assert terra["effective_max"] == 6
         assert sol["effective_max"] == 2
@@ -348,8 +348,8 @@ class TestResourceAwareFanout:
         assert classify_execution_location("qwen-32b", provider="ollama") == "local"
 
     def test_model_size_classification(self) -> None:
-        assert classify_model_size("gpt-5.6-sol") == "xlarge"
-        assert classify_model_size("gpt-5.6-terra") == "medium"
+        assert classify_model_size("gpt-6.1-sol") == "xlarge"
+        assert classify_model_size("gpt-6.1-terra") == "medium"
         assert classify_model_size("claude-haiku") == "small"
 
 

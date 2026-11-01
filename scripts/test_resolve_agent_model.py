@@ -108,41 +108,41 @@ class OpenAIAgentApprovals(unittest.TestCase):
 
     EXPECT = {
         # Planning + gating verification: strongest model.
-        "advisor": "gpt-5.6-sol",
-        "fact-checker": "gpt-5.6-sol",
-        "fix-critique": "gpt-5.6-sol",
-        "plan-critic": "gpt-5.6-sol",
-        "independent-auditor": "gpt-5.6-sol",
-        "overfitting-reviewer": "gpt-5.6-sol",
-        "promotion-reviewer": "gpt-5.6-sol",
-        "scope-auditor": "gpt-5.6-sol",
-        "security-reviewer": "gpt-5.6-sol",
+        "advisor": "gpt-6.1-sol",
+        "fact-checker": "gpt-6.1-sol",
+        "fix-critique": "gpt-6.1-sol",
+        "plan-critic": "gpt-6.1-sol",
+        "independent-auditor": "gpt-6.1-sol",
+        "overfitting-reviewer": "gpt-6.1-sol",
+        "promotion-reviewer": "gpt-6.1-sol",
+        "scope-auditor": "gpt-6.1-sol",
+        "security-reviewer": "gpt-6.1-sol",
         # DB actions are pinned to Frontier by standing rule (3271e57,
         # skills/model-tiering/SKILL.md §"All database actions run at Frontier
         # tier"): migrations, schema/constraint DDL, data-plane rehearsals and
         # repair are irreversible-leaning and high blast-radius, so they run a
         # rung above the other bounded assessors. NOT a typo -- do not "restore"
         # this to terra to match api/frontend/perf.
-        "database-assessor": "gpt-5.6-sol",
+        "database-assessor": "gpt-6.1-sol",
         # Coordination + bounded execution: capable lower-cost workhorse.
-        "build-orchestrator": "gpt-5.6-terra",
-        "assessment-orchestrator": "gpt-5.6-terra",
-        "implementer": "gpt-5.6-terra",
-        "api-assessor": "gpt-5.6-terra",
-        "architecture-scout": "gpt-5.6-terra",
-        "design-contract-specialist": "gpt-5.6-terra",
-        "frontend-assessor": "gpt-5.6-terra",
-        "optimize-runner": "gpt-5.6-terra",
-        "performance-assessor": "gpt-5.6-terra",
-        "retrospective-synthesizer": "gpt-5.6-terra",
-        "self-improvement-architect": "gpt-5.6-terra",
-        "synthesis-critic": "gpt-5.6-terra",
-        "ui-validator": "gpt-5.6-terra",
-        "alignment-checker": "gpt-5.6-terra",
+        "build-orchestrator": "gpt-6.1-terra",
+        "assessment-orchestrator": "gpt-6.1-terra",
+        "implementer": "gpt-6.1-terra",
+        "api-assessor": "gpt-6.1-terra",
+        "architecture-scout": "gpt-6.1-terra",
+        "design-contract-specialist": "gpt-6.1-terra",
+        "frontend-assessor": "gpt-6.1-terra",
+        "optimize-runner": "gpt-6.1-terra",
+        "performance-assessor": "gpt-6.1-terra",
+        "retrospective-synthesizer": "gpt-6.1-terra",
+        "self-improvement-architect": "gpt-6.1-terra",
+        "synthesis-critic": "gpt-6.1-terra",
+        "ui-validator": "gpt-6.1-terra",
+        "alignment-checker": "gpt-6.1-terra",
         # Bounded recognition: fastest efficient model.
-        "mock-scanner": "gpt-5.6-luna",
-        "recurring-pattern-detector": "gpt-5.6-luna",
-        "transcript-pattern-miner": "gpt-5.6-luna",
+        "mock-scanner": "gpt-6-luna",
+        "recurring-pattern-detector": "gpt-6-luna",
+        "transcript-pattern-miner": "gpt-6-luna",
     }
 
     def test_openai_host_role_resolution(self):
@@ -196,32 +196,32 @@ class AgentPreferences(unittest.TestCase):
 
     def test_coordinator_preference_does_not_upgrade_other_roles(self):
         self.configure({"agents": {"build-orchestrator": {
-            "model": "gpt-5.6-sol", "source": "chat", "evidence": "Use Sol to coordinate."
+            "model": "gpt-6.1-sol", "source": "chat", "evidence": "Use Sol to coordinate."
         }}})
         selected = self.resolve("build-orchestrator")
-        self.assertEqual(selected["model"], "gpt-5.6-sol")
+        self.assertEqual(selected["model"], "gpt-6.1-sol")
         self.assertEqual(selected["source"], "config")
-        self.assertEqual(self.resolve("assessment-orchestrator")["model"], "gpt-5.6-terra")
-        self.assertEqual(self.resolve("implementer")["model"], "gpt-5.6-terra")
-        self.assertEqual(self.resolve("mock-scanner")["model"], "gpt-5.6-luna")
+        self.assertEqual(self.resolve("assessment-orchestrator")["model"], "gpt-6.1-terra")
+        self.assertEqual(self.resolve("implementer")["model"], "gpt-6.1-terra")
+        self.assertEqual(self.resolve("mock-scanner")["model"], "gpt-6-luna")
 
     def test_explicit_cheap_coordinator_overrides_broader_tier_preference(self):
-        self.configure({"thinking": "gpt-5.6-sol", "agents": {
-            "build-orchestrator": "gpt-5.6-terra"
+        self.configure({"thinking": "gpt-6.1-sol", "agents": {
+            "build-orchestrator": "gpt-6.1-terra"
         }})
-        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-terra")
-        self.assertEqual(self.resolve("scope-auditor")["model"], "gpt-5.6-sol")
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-6.1-terra")
+        self.assertEqual(self.resolve("scope-auditor")["model"], "gpt-6.1-sol")
 
     def test_below_floor_judge_preference_falls_back(self):
-        self.configure({"agents": {"independent-auditor": "gpt-5.6-luna"}})
+        self.configure({"agents": {"independent-auditor": "gpt-6-luna"}})
         result = self.resolve("independent-auditor")
-        self.assertEqual(result["model"], "gpt-5.6-sol")
+        self.assertEqual(result["model"], "gpt-6.1-sol")
         self.assertEqual(result["resolution_path"][0]["skipped"], "below-floor")
 
     def test_unavailable_agent_preference_falls_back_to_role(self):
-        self.configure({"agents": {"build-orchestrator": "gpt-5.6-sol"}})
-        result = self.resolve("build-orchestrator", extra_unavailable={"gpt-5.6-sol"})
-        self.assertEqual(result["model"], "gpt-5.6-terra")
+        self.configure({"agents": {"build-orchestrator": "gpt-6.1-sol"}})
+        result = self.resolve("build-orchestrator", extra_unavailable={"gpt-6.1-sol"})
+        self.assertEqual(result["model"], "gpt-6.1-terra")
         self.assertEqual(result["resolution_path"][0]["skipped"], "unavailable")
 
     def test_chat_metadata_does_not_grant_cross_provider_access(self):
@@ -229,22 +229,22 @@ class AgentPreferences(unittest.TestCase):
             "model": "claude-fable-5-1", "source": "user", "evidence": "Prefer Fable."
         }}})
         result = self.resolve("build-orchestrator")
-        self.assertEqual(result["model"], "gpt-5.6-terra")
+        self.assertEqual(result["model"], "gpt-6.1-terra")
         self.assertEqual(result["resolution_path"][0]["skipped"], "unavailable")
 
     def test_state_agent_preference_remains_compatible_with_config_precedence(self):
         (self.workdir / ".build-loop/state.json").write_text(json.dumps({
-            "config": {"modelOverrides": {"agents": {"build-orchestrator": "gpt-5.6-sol"}}}
+            "config": {"modelOverrides": {"agents": {"build-orchestrator": "gpt-6.1-sol"}}}
         }), encoding="utf-8")
-        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-sol")
-        self.configure({"thinking": "gpt-5.6-terra"})
-        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-terra")
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-6.1-sol")
+        self.configure({"thinking": "gpt-6.1-terra"})
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-6.1-terra")
 
     def test_invalid_agent_entry_does_not_hide_tier_preference(self):
-        self.configure({"thinking": "gpt-5.6-sol", "agents": {
+        self.configure({"thinking": "gpt-6.1-sol", "agents": {
             "build-orchestrator": {"model": None, "source": "chat"}
         }})
-        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-5.6-sol")
+        self.assertEqual(self.resolve("build-orchestrator")["model"], "gpt-6.1-sol")
 
     def test_exhausted_valid_role_cannot_revive_frontmatter(self):
         result = self.resolve("implementer", host_providers={"unreachable-provider"})
@@ -361,8 +361,8 @@ class PromptingProfileEnvelope(unittest.TestCase):
         )
         self.assertEqual(anthropic["model"], "sonnet")
         self.assertEqual(anthropic["preferred_models"], ["sonnet"])
-        self.assertEqual(openai["model"], "gpt-5.6-terra")
-        self.assertEqual(openai["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+        self.assertEqual(openai["model"], "gpt-6.1-terra")
+        self.assertEqual(openai["preferred_models"][:2], ["gpt-6.1-terra", "gpt-5.4"])
         self.assertEqual(anthropic["preferred_effort"], "high")
         self.assertEqual(openai["preferred_effort"], "high")
         self.assertTrue(anthropic["resolved"])
@@ -370,10 +370,10 @@ class PromptingProfileEnvelope(unittest.TestCase):
 
     def test_openai_effort_matches_the_verified_task_shape(self):
         cases = {
-            "implementer": ("gpt-5.6-terra", "high"),
-            "mock-scanner": ("gpt-5.6-luna", "medium"),
-            "scope-auditor": ("gpt-5.6-sol", "medium"),
-            "security-reviewer": ("gpt-5.6-sol", "high"),
+            "implementer": ("gpt-6.1-terra", "high"),
+            "mock-scanner": ("gpt-6-luna", "medium"),
+            "scope-auditor": ("gpt-6.1-sol", "medium"),
+            "security-reviewer": ("gpt-6.1-sol", "high"),
         }
         for agent, (model, effort) in cases.items():
             with self.subTest(agent=agent):
