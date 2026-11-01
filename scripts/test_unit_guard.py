@@ -56,14 +56,22 @@ class TestIncident(unittest.TestCase):
         self.assertIn("implausible", kinds(result))
         self.assertIn("mixed-magnitude", kinds(result))
 
-    def test_unit_mix_across_separate_arrays_sharing_a_key(self):
-        # The incident shape: the bytes value sat in its own single-element array.
-        doc = {"validate": {"mb": [3614, 3616]}, "pipeline": {"mb": [4962435]}}
-        self.assertIn("mixed-magnitude", kinds(check(doc)))
+    def test_bytes_value_in_its_own_array_under_a_sibling_record(self):
+        # The incident shape: the bytes value sat in its own single-element array
+        # under the same key in a sibling record. Mixed-magnitude compares only
+        # siblings, so the implausibility bound must catch it.
+        doc = {"store": {"validate": {"before": {"mib": [3614]}},
+                         "pipeline": {"before": {"mib": [4962435072]}}}}
+        result = check(doc)
+        self.assertEqual(kinds(result), ["implausible"])
+        self.assertEqual(result["findings"][0]["path"], "store.pipeline.before.mib[0]")
 
     def test_unit_mix_across_sibling_records(self):
+        # KB stored as MiB: each value is plausible alone, so the spread warns.
         doc = {"rows": [{"rss_mib": 3614}, {"rss_mib": 4962435}]}
-        self.assertIn("mixed-magnitude", kinds(check(doc)))
+        self.assertEqual(kinds(check(doc), "warn"), ["mixed-magnitude"])
+        doc = {"rows": [{"rss_mib": 3614}, {"rss_mib": 4962435072}]}
+        self.assertEqual(sorted(kinds(check(doc))), ["implausible", "mixed-magnitude"])
 
     def test_decimal_mb_key_warns_without_failing(self):
         result = check({"mb": [3614]})
@@ -173,6 +181,77 @@ class TestCheck(unittest.TestCase):
     def test_records_mode_flags_unknown_unit(self):
         doc = {"memory": {"unit": "megs", "records": [{"value": 3614.0}]}}
         self.assertEqual(kinds(check(doc)), ["unknown-unit"])
+
+
+class TestReviewFindings(unittest.TestCase):
+    """Regressions for the 2026-11-01 independent review of unit_guard."""
+
+    # 1. Statistic and dimension suffixes are not units.
+    def test_statistic_suffix_keeps_the_unit_before_it(self):
+        doc = {"latency_ms_min": 12, "latency_ms_max": 40, "latency_ms_p95": 31,
+               "wall_s_mean": 2.5, "rss_mib_total": 900}
+        self.assertEqual(check(doc)["findings"], [])
+        # 12 MINUTES would pass; 2e7 ms read as ms is still checked as ms.
+        self.assertEqual(kinds(check({"latency_ms_min": -1})), ["implausible"])
+
+    def test_single_letter_h_and_min_are_not_units(self):
+        self.assertEqual(kinds(check({"box_h": 900})), ["missing-unit"])
+        self.assertEqual(kinds(check({"duration_min": 5})), ["missing-unit"])
+        self.assertEqual(check({"box_h_px": 900, "duration_minutes": 5,
+                                "uptime_hours": 3, "idle_mins": 2, "job_hrs": 1})["findings"], [])
+
+    # 2. Rates are compound units, never the last token.
+    def test_rate_is_a_compound_unit(self):
+        doc = {"throughput_mib_per_s": 300, "ops_per_s": 1.2e5, "tokens_per_s": 80,
+               "price_usd_per_mtok": 3.0}
+        self.assertEqual(check(doc)["findings"], [])
+        # Read as seconds, 2e7 would be implausible; as bytes/s it is a rate.
+        self.assertEqual(kinds(check({"throughput_bytes_per_s": 2e7})), [])
+        self.assertEqual(kinds(check({"throughput_mib_per_s": 2e7})), ["implausible"])
+
+    def test_rate_with_unknown_side_is_flagged(self):
+        result = check({"speed_furlongs_per_s": 3, "load_mib_per_fortnight": 4})
+        self.assertEqual(kinds(result), ["unknown-unit", "unknown-unit"])
+
+    def test_negative_rate_is_implausible(self):
+        self.assertEqual(kinds(check({"throughput_mib_per_s": -5})), ["implausible"])
+
+    # 3. Mixed magnitude compares siblings only, and plausible spreads only warn.
+    def test_unrelated_subtrees_are_not_compared(self):
+        doc = {"unit_tests": {"wall_s": 0.004}, "pipeline": {"wall_s": 30}}
+        self.assertEqual(check(doc)["findings"], [])
+
+    def test_before_after_speedup_is_not_a_unit_mix(self):
+        self.assertEqual(check({"time_s": {"before": 15, "after": 0.01}})["findings"], [])
+
+    def test_plausible_spread_in_one_array_warns_without_failing(self):
+        result = check({"wall_s": [0.004, 30]})
+        self.assertEqual(kinds(result), [])
+        self.assertEqual(kinds(result, "warn"), ["mixed-magnitude"])
+
+    def test_spread_with_implausible_value_still_errors(self):
+        result = check({"mib": [3614, 4962435072]})
+        self.assertIn("mixed-magnitude", kinds(result))
+        self.assertIn("implausible", kinds(result))
+
+    def test_spread_across_records_in_one_list_warns(self):
+        doc = {"rows": [{"wall_s": 0.004}, {"wall_s": 30}]}
+        self.assertEqual(kinds(check(doc), "warn"), ["mixed-magnitude"])
+
+    # 4. Labels, declared-unit siblings, numeric strings.
+    def test_version_is_a_label(self):
+        self.assertEqual(check({"version": 1.2, "schema_version": 3})["findings"], [])
+
+    def test_declared_unit_covers_sibling_statistics(self):
+        doc = {"latency": {"unit": "ms", "p50": 12, "p90": 30, "min": 1, "max": 80, "mean": 20}}
+        self.assertEqual(check(doc)["findings"], [])
+        bad = {"rss": {"unit": "MiB", "p50": 3614, "max": 4962435072}}
+        self.assertIn("implausible", kinds(check(bad)))
+
+    def test_numeric_string_warns(self):
+        result = check({"rss_mib": "3614"})
+        self.assertEqual(kinds(result), [])
+        self.assertEqual(kinds(result, "warn"), ["numeric-string"])
 
 
 class TestCli(unittest.TestCase):

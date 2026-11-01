@@ -21,7 +21,10 @@ This module has three parts:
   ``real_s``). An unrecognised format raises; it never guesses.
 * ``check`` — walks a JSON document and flags every number whose key does not
   name a unit, whose magnitude is implausible for its unit, or whose siblings
-  differ by more than 1000x (the signature of a unit mix).
+  differ by more than 1000x (the signature of a unit mix). Siblings are the
+  elements of one array and the same key across the records of one list; a
+  spread is an error only when a value in it is also implausible, else a
+  warning (a real 1500x speedup is not a unit mix).
 
 CLI
 ---
@@ -30,14 +33,19 @@ CLI
     unit_guard.py check <file.json> [--allow key,...] [--json]
 
 Exit 0 when clean, 1 on any error finding, 2 when the file cannot be read.
-Warnings (decimal KB/MB/GB names, which memory tools rarely mean) print but
-do not fail the check.
+Warnings (decimal KB/MB/GB names, plausible sibling spreads, numbers stored as
+strings) print but do not fail the check.
 
 Key rule: a numeric leaf's key (for arrays, the nearest named ancestor) must
 end in a unit suffix such as ``_mib``, ``_s``, ``_pct``, ``_count``, or be a
-bare unit name (``s``, ``pct``, ``n``). A dict holding a string ``unit`` field
-supplies the unit for its ``value``/``values`` fields and for the ``value``
-of each entry in its ``records`` list.
+bare unit name (``s``, ``pct``, ``n``). Trailing statistic tokens are skipped
+(``latency_ms_p95`` is ms). Minutes and hours must be spelled out
+(``_minutes``/``_mins``, ``_hours``/``_hrs``): ``_min`` is a statistic and
+``_h`` a height. ``<a>_per_<b>`` is a rate whose both sides must be known
+(``_mib_per_s``, ``_ops_per_s``, ``_usd_per_mtok``). A dict holding a string
+``unit`` field supplies the unit for its ``value``/``values`` fields, for its
+other unit-less numeric fields (``p50``, ``max``), and for the ``value`` of
+each entry in its ``records`` list. ``version`` keys are labels, not numbers.
 """
 from __future__ import annotations
 
@@ -93,8 +101,37 @@ ALIASES: dict[str, str] = {
     "px": "px", "usd": "usd", "$": "usd",
 }
 
+# Spellings accepted as a KEY suffix. Stricter than ALIASES: a key's unit must
+# be unambiguous, so "min" (minimum) and "h" (height) are not accepted here.
+KEY_ALIASES: dict[str, str] = {
+    "bytes": "bytes", "byte": "bytes",
+    "kib": "kib", "mib": "mib", "gib": "gib", "tib": "tib",
+    "kb": "kb", "mb": "mb", "gb": "gb", "tb": "tb",
+    "ns": "ns", "us": "us", "µs": "us", "ms": "ms",
+    "s": "s", "sec": "s", "secs": "s", "seconds": "s",
+    "mins": "min", "minutes": "min", "hrs": "h", "hr": "h", "hours": "h",
+    "pct": "pct", "percent": "pct", "ratio": "ratio",
+    "count": "count", "n": "count", "tokens": "tokens",
+    "px": "px", "usd": "usd",
+}
+
+# Count nouns accepted on either side of a rate (ops_per_s, usd_per_mtok).
+RATE_NOUNS: dict[str, tuple[str, float]] = {
+    "ops": ("count", 1.0), "op": ("count", 1.0), "requests": ("count", 1.0),
+    "req": ("count", 1.0), "calls": ("count", 1.0), "items": ("count", 1.0),
+    "events": ("count", 1.0), "files": ("count", 1.0), "runs": ("count", 1.0),
+    "tok": ("count", 1.0), "token": ("count", 1.0),
+    "ktok": ("count", 1e3), "mtok": ("count", 1e6),
+}
+
+# Trailing statistic tokens: latency_ms_p95 is ms, not "p95".
+_STAT_TOKEN = re.compile(r"^(min|max|mean|avg|median|p\d+|std|stddev|total|sum)$")
+
 # Unitless ordinals: positions, not quantities. Accepted as bare keys.
-ORDINAL_KEYS = frozenset({"index", "idx", "rank", "stage", "step", "level", "version", "seed"})
+ORDINAL_KEYS = frozenset({"index", "idx", "rank", "stage", "step", "level", "seed"})
+# Labels: identifiers that happen to be numeric. Not checked as quantities.
+LABEL_KEYS = frozenset({"version"})
+_NUMERIC_STRING = re.compile(r"^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$")
 
 # Dimensions where a 1000x spread among siblings signals a unit mix. Counts,
 # percentages, pixels and money legitimately span orders of magnitude.
@@ -106,6 +143,7 @@ MAX_DATA_BYTES = 1e7 * 1024.0 ** 2   # 1e7 MiB (~10 TiB)
 MAX_TIME_S = 1e7                     # ~116 days
 PCT_RANGE = (-1000.0, 1000.0)
 MAX_PX = 1e6
+MAX_DATA_RATE_BYTES_S = 1e13         # 10 TB/s, beyond any single host
 
 
 class UnitError(ValueError):
@@ -143,15 +181,45 @@ class Quantity:
         return f"{self.value:g} {self.unit}"
 
 
+def unit_info(unit: str) -> tuple[str, float]:
+    """(dimension, factor to base) for a canonical unit or a ``a/b`` rate."""
+    if "/" in unit:
+        num, den = unit.split("/", 1)
+        ndim, nf = UNITS.get(num) or RATE_NOUNS[num]
+        ddim, df = UNITS.get(den) or RATE_NOUNS[den]
+        return f"{ndim}/{ddim}", nf / df
+    return UNITS[unit]
+
+
+def _rate_side(token: str) -> str | None:
+    if token in KEY_ALIASES:
+        return KEY_ALIASES[token]
+    return token if token in RATE_NOUNS else None
+
+
+def parse_key_unit(key: str) -> tuple[str | None, str | None]:
+    """Return (unit, error) for a key. ``unit`` is canonical or ``a/b`` for a
+    rate; ``error`` names an unknown side of a rate. Both None = no unit."""
+    tokens = key.strip().lower().split("_")
+    while len(tokens) > 1 and _STAT_TOKEN.match(tokens[-1]):
+        tokens.pop()
+    if "per" in tokens:
+        i = len(tokens) - 1 - tokens[::-1].index("per")
+        if i == 0 or i == len(tokens) - 1:
+            return None, f"rate key {key!r} needs a unit on both sides of 'per'"
+        num_tok = tokens[i - 1]
+        den_tok = "_".join(tokens[i + 1:])
+        num, den = _rate_side(num_tok), _rate_side(den_tok)
+        if num is None or den is None:
+            bad = num_tok if num is None else den_tok
+            return None, f"rate key {key!r}: {bad!r} is not a known unit"
+        return f"{num}/{den}", None
+    return KEY_ALIASES.get(tokens[-1]), None
+
+
 def unit_for_key(key: str) -> str | None:
     """Canonical unit named by a key's suffix or bare name, else None."""
-    k = key.strip().lower()
-    if k in ALIASES and k not in {"b", "x", "$", "%"}:
-        return ALIASES[k]
-    for suffix in sorted(UNITS, key=len, reverse=True):
-        if k.endswith("_" + suffix):
-            return suffix
-    return None
+    return parse_key_unit(key)[0]
 
 
 # --- /usr/bin/time parsing --------------------------------------------------
@@ -228,7 +296,13 @@ def _finding(kind: str, path: str, key: str | None, message: str, value: Any = N
 def _plausibility(value: float, unit: str) -> str | None:
     if isinstance(value, float) and not math.isfinite(value):
         return "value is not finite"
-    dim, factor = UNITS[unit]
+    dim, factor = unit_info(unit)
+    if "/" in dim:
+        if value < 0:
+            return f"negative rate ({unit})"
+        if dim == "data/time" and value * factor > MAX_DATA_RATE_BYTES_S:
+            return f"{value:g} {unit} is over {MAX_DATA_RATE_BYTES_S / factor:g} {unit}"
+        return None
     if dim == "data":
         if value < 0:
             return "negative data size"
@@ -253,18 +327,43 @@ def _plausibility(value: float, unit: str) -> str | None:
     return None
 
 
+def _is_label(key: str | None) -> bool:
+    k = (key or "").strip().lower()
+    return k in LABEL_KEYS or k.endswith("_version")
+
+
+def _shape(path: str) -> str:
+    return re.sub(r"\[\d+\]", "[]", path)
+
+
 def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
     """Return {"findings": [...], "checked": n} for a parsed JSON document.
 
     A key without a unit inherits the unit of its nearest ancestor key that
     names one (``pipeline_time_s: {"before": 15.07}`` is seconds). An
     allow-listed key exempts itself and everything below it.
+
+    Mixed-magnitude groups are keyed by path shape (array indices collapsed),
+    so only elements of one array, or one key across the records of one list,
+    are compared. Unrelated subtrees and before/after keys never are.
     """
     findings: list[dict] = []
-    groups: dict[str, list[tuple[str, float, str | None]]] = {}
-    missing: dict[str, dict] = {}
+    # (shape, unit) -> [(path, value, key, implausible)]
+    groups: dict[tuple[str, str], list[tuple[str, float, str | None, bool]]] = {}
+    once: dict[tuple[str, str], dict] = {}
     warned: dict[str | None, dict] = {}
     checked = 0
+
+    def report_once(kind: str, path: str, key: str | None, message: str, value: Any,
+                    severity: str = "error") -> None:
+        shape = _shape(path)
+        if (kind, shape) in once:
+            once[(kind, shape)]["occurrences"] += 1
+            return
+        f = _finding(kind, shape, key, message, value, severity)
+        f["occurrences"] = 1
+        once[(kind, shape)] = f
+        findings.append(f)
 
     def warn_decimal(unit: str, path: str, key: str | None, value: Any) -> None:
         if unit not in DECIMAL_DATA:
@@ -279,36 +378,33 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
         warned[key]["occurrences"] = 1
         findings.append(warned[key])
 
-    def leaf(value: float, path: str, key: str | None, unit: str | None, group: str,
-             allowed: bool) -> None:
+    def leaf(value: float, path: str, key: str | None, unit: str | None, allowed: bool) -> None:
         nonlocal checked
         checked += 1
         if allowed:
             return
         if unit is None:
-            shape = re.sub(r"\[\d+\]", "[]", path)
-            if shape in missing:
-                missing[shape]["occurrences"] += 1
-            else:
-                missing[shape] = _finding("missing-unit", shape, key,
-                                          f"key {key!r} names no unit; add a suffix such as _mib, _s, "
-                                          "_pct, _count or allow-list it", value)
-                missing[shape]["occurrences"] = 1
-                findings.append(missing[shape])
-        else:
-            problem = _plausibility(value, unit)
-            if problem:
-                findings.append(_finding("implausible", path, key, problem, value))
-        if unit is None or UNITS[unit][0] in MIX_DIMENSIONS:
-            groups.setdefault(group, []).append((path, value, key))
+            report_once("missing-unit", path, key,
+                        f"key {key!r} names no unit; add a suffix such as _mib, _s, "
+                        "_pct, _count or allow-list it", value)
+            return
+        problem = _plausibility(value, unit)
+        if problem:
+            findings.append(_finding("implausible", path, key, problem, value))
+        if unit_info(unit)[0] in MIX_DIMENSIONS:
+            groups.setdefault((_shape(path), unit), []).append((path, value, key, bool(problem)))
 
-    def walk(node: Any, path: str, key: str | None, unit: str | None, group: str,
-             allowed: bool) -> None:
+    def walk(node: Any, path: str, key: str | None, unit: str | None, allowed: bool) -> None:
         if _is_number(node):
-            leaf(node, path, key, unit, group, allowed)
+            leaf(node, path, key, unit, allowed)
+        elif isinstance(node, str):
+            if not allowed and not _is_label(key) and _NUMERIC_STRING.match(node):
+                report_once("numeric-string", path, key,
+                            f"numeric string {node!r}; store as a number with a "
+                            "unit-suffixed key", node, severity="warn")
         elif isinstance(node, list):
             for i, item in enumerate(node):
-                walk(item, f"{path}[{i}]", key, unit, group, allowed)
+                walk(item, f"{path}[{i}]", key, unit, allowed)
         elif isinstance(node, dict):
             declared = node.get("unit") if isinstance(node.get("unit"), str) else None
             declared_unit = None
@@ -319,52 +415,70 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
                 except UnitError:
                     findings.append(_finding("unknown-unit", f"{path}.unit" if path else "unit", "unit",
                                              f"unit {declared!r} is not a known unit", declared))
-            unit_group = f"{path or '$'}<unit>"
+            # An unknown declared unit was already reported; do not re-report
+            # every number it would have covered as missing-unit.
+            covered_allowed = declared is not None and declared_unit is None
             for k, v in node.items():
+                if k == "unit" and declared is not None:
+                    continue
                 child = f"{path}.{k}" if path else k
                 child_allowed = allowed or k in allow
-                if declared is not None and k in ("value", "values"):
-                    if declared_unit is not None or allowed:
-                        walk(v, child, k, declared_unit, unit_group, child_allowed)
+                if _is_label(k):
+                    walk(v, child, k, None, True)
                 elif declared is not None and k == "records" and isinstance(v, list):
-                    rgroup = f"{child}<unit>"
                     for i, rec in enumerate(v):
                         rpath = f"{child}[{i}]"
                         if not isinstance(rec, dict):
-                            walk(rec, rpath, k, None, _key_group(k), child_allowed)
+                            walk(rec, rpath, k, None, child_allowed)
                             continue
                         for rk, rv in rec.items():
                             rallowed = child_allowed or rk in allow
                             if rk == "value":
-                                if declared_unit is not None or rallowed:
-                                    walk(rv, f"{rpath}.value", rk, declared_unit, rgroup, rallowed)
+                                walk(rv, f"{rpath}.value", rk, declared_unit,
+                                     rallowed or covered_allowed)
                             else:
-                                ru = _key_unit(rk)
-                                walk(rv, f"{rpath}.{rk}", rk, ru, _key_group(rk), rallowed)
+                                walk_key(rv, f"{rpath}.{rk}", rk, None, rallowed)
+                elif declared is not None and k in ("value", "values"):
+                    walk(v, child, k, declared_unit, child_allowed or covered_allowed)
+                elif declared is not None:
+                    # Sibling statistics (p50, max) inherit the declared unit.
+                    walk_key(v, child, k, declared_unit, child_allowed or
+                             (covered_allowed and _key_unit(k) is None))
                 else:
-                    own = _key_unit(k)
-                    if own is not None:
-                        if not child_allowed:
-                            warn_decimal(own, child, k, None)
-                        walk(v, child, k, own, _key_group(k), child_allowed)
-                    else:
-                        # Inherit the nearest ancestor's unit and mix group.
-                        walk(v, child, k, unit, group if unit else _key_group(k), child_allowed)
+                    walk_key(v, child, k, unit, child_allowed)
 
-    walk(doc, "", None, None, "$root", False)
+    def walk_key(v: Any, child: str, k: str, inherited: str | None, child_allowed: bool) -> None:
+        own, err = parse_key_unit(k)
+        if k.strip().lower() in ORDINAL_KEYS:
+            own, err = "count", None
+        if err is not None:
+            if not child_allowed:
+                report_once("unknown-unit", child, k, err, None)
+            walk(v, child, k, None, True)  # reported once; skip the subtree
+        elif own is not None:
+            if not child_allowed:
+                warn_decimal(own, child, k, None)
+            walk(v, child, k, own, child_allowed)
+        else:
+            walk(v, child, k, inherited, child_allowed)
 
-    for group, items in groups.items():
-        nonzero = [(p, abs(v), k) for p, v, k in items if v != 0 and math.isfinite(v)]
+    walk(doc, "", None, None, False)
+
+    for (shape, unit), items in groups.items():
+        nonzero = [(p, abs(v), k, bad) for p, v, k, bad in items if v != 0 and math.isfinite(v)]
         if len(nonzero) < 2:
             continue
         lo = min(nonzero, key=lambda t: t[1])
         hi = max(nonzero, key=lambda t: t[1])
         if hi[1] / lo[1] > MIX_RATIO:
+            implausible = any(t[3] for t in nonzero)
             findings.append(_finding(
                 "mixed-magnitude", hi[0], hi[2],
-                f"values sharing key {group.split(':', 1)[-1]!r} span {hi[1] / lo[1]:.3g}x "
-                f"({lo[0]}={lo[1]:g} vs {hi[0]}={hi[1]:g}); likely a unit mix",
-                hi[1]))
+                f"sibling values at {shape!r} span {hi[1] / lo[1]:.3g}x "
+                f"({lo[0]}={lo[1]:g} vs {hi[0]}={hi[1]:g}); "
+                + ("likely a unit mix" if implausible else
+                   "every value is plausible for its unit; confirm this is not a unit mix"),
+                hi[1], severity="error" if implausible else "warn"))
     return {"findings": findings, "checked": checked}
 
 
@@ -372,10 +486,6 @@ def _key_unit(key: str) -> str | None:
     if key.strip().lower() in ORDINAL_KEYS:
         return "count"
     return unit_for_key(key)
-
-
-def _key_group(key: str) -> str:
-    return f"key:{key}"
 
 
 def check_file(path: str, allow: set[str] | frozenset[str] = frozenset()) -> dict:
