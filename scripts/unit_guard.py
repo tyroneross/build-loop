@@ -131,6 +131,12 @@ _STAT_TOKEN = re.compile(r"^(min|max|mean|avg|median|p\d+|std|stddev|total|sum)$
 ORDINAL_KEYS = frozenset({"index", "idx", "rank", "stage", "step", "level", "seed"})
 # Labels: identifiers that happen to be numeric. Not checked as quantities.
 LABEL_KEYS = frozenset({"version"})
+
+
+def _is_ordinal(key: str | None) -> bool:
+    """Positions, not quantities: `stage`, `index`, or a `<name>_index` style key."""
+    k = (key or "").strip().lower()
+    return k in ORDINAL_KEYS or any(k.endswith("_" + o) for o in ORDINAL_KEYS)
 _NUMERIC_STRING = re.compile(r"^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$")
 
 # Dimensions where a 1000x spread among siblings signals a unit mix. Counts,
@@ -399,6 +405,11 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
             leaf(node, path, key, unit, allowed)
         elif isinstance(node, str):
             if not allowed and not _is_label(key) and _NUMERIC_STRING.match(node):
+                # Text fields that must stay strings (e.g. chart facets) are fine when
+                # the key names the unit: check the number like any other value.
+                if (key and (unit_for_key(key) or _is_ordinal(key))) or unit:
+                    leaf(float(node), path, key, unit, allowed)
+                    return
                 report_once("numeric-string", path, key,
                             f"numeric string {node!r}; store as a number with a "
                             "unit-suffixed key", node, severity="warn")
@@ -449,7 +460,7 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
 
     def walk_key(v: Any, child: str, k: str, inherited: str | None, child_allowed: bool) -> None:
         own, err = parse_key_unit(k)
-        if k.strip().lower() in ORDINAL_KEYS:
+        if _is_ordinal(k):
             own, err = "count", None
         if err is not None:
             if not child_allowed:
@@ -483,7 +494,7 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
 
 
 def _key_unit(key: str) -> str | None:
-    if key.strip().lower() in ORDINAL_KEYS:
+    if _is_ordinal(key):
         return "count"
     return unit_for_key(key)
 

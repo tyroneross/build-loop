@@ -249,9 +249,11 @@ class TestReviewFindings(unittest.TestCase):
         self.assertIn("implausible", kinds(check(bad)))
 
     def test_numeric_string_warns(self):
-        result = check({"rss_mib": "3614"})
-        self.assertEqual(kinds(result), [])
-        self.assertEqual(kinds(result, "warn"), ["numeric-string"])
+        # A unit-keyed numeric string is checked like a number (some consumers,
+        # e.g. chart facets, require text); only a key with no unit warns.
+        self.assertEqual(kinds(check({"rss_mib": "3614"}), "warn"), [])
+        self.assertEqual(kinds(check({"rss_mib": "4962435072"})), ["implausible"])
+        self.assertEqual(kinds(check({"rss": "3614"}), "warn"), ["numeric-string"])
 
 
 class TestCli(unittest.TestCase):
@@ -280,3 +282,36 @@ class TestCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NumericStringWithUnitKeyTests(unittest.TestCase):
+    """Text fields that must stay strings pass when the key names the unit."""
+
+    def _check(self, doc):
+        import unit_guard
+        return unit_guard.check_document(doc) if hasattr(unit_guard, "check_document") else None
+
+    def test_unit_keyed_numeric_strings(self) -> None:
+        import json
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "unit_guard.py"
+        cases = {
+            "unit-keyed ok": ({"facets": {"before_mib": "3614.0", "after_s": "4.2", "pair_index": "1"}}, 0, 0),
+            "bare key warns": ({"facets": {"before": "3614.0"}}, 0, 1),
+            "unit-keyed but implausible": ({"facets": {"before_mib": "4962435072"}}, 1, None),
+        }
+        for name, (doc, want_rc, want_warn) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as td:
+                f = Path(td) / "f.json"
+                f.write_text(json.dumps(doc))
+                p = subprocess.run([sys.executable, str(script), "check", str(f), "--json"],
+                                   capture_output=True, text=True)
+                self.assertEqual(p.returncode, want_rc, p.stdout + p.stderr)
+                if want_warn is not None:
+                    out = json.loads(p.stdout)
+                    warns = [x for x in out.get("findings", []) if x.get("severity") == "warn"]
+                    self.assertEqual(len(warns), want_warn, p.stdout)
