@@ -1238,5 +1238,35 @@ class PrivilegedGateTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "{}")
 
 
+class CredentialHeredocBoundaryTests(unittest.TestCase):
+    """The real dispatcher inspects fixture input; it never runs that input."""
+
+    def dispatch(self, command: str):
+        with tempfile.TemporaryDirectory() as temporary:
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": temporary,
+                   "BUILD_LOOP_HOOKS": "off", "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT),
+                   "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+            return subprocess.run(["bash", str(DISPATCH)], cwd=temporary, env=env,
+                input=json.dumps({"tool_input": {"command": command}, "cwd": temporary}),
+                capture_output=True, text=True, check=False)
+
+    def test_compound_python_data_reaches_the_nonblocking_dispatch_path(self):
+        command = "rally room --json && python3 - <<'PY'\nvalues = [1]\nprint(values[:12000])\nPY"
+        result = self.dispatch(command)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_redirected_executable_body_remains_denied_before_the_convenience_switch(self):
+        for command in [
+            "2>/dev/null sh <<'EOF'\nsecurity find-generic-password\nEOF",
+            "2>/dev/null python3 - <<'PY'\nimport keyring\nkeyring.get_password('fixture','fixture')\nPY",
+            "cat <<'PY' | python3 - | sh\nprint('security find-generic-password')\nPY",
+        ]:
+            with self.subTest(command=command):
+                result = self.dispatch(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

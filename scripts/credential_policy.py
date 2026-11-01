@@ -96,7 +96,7 @@ _EXEC_GIT_KEYS = re.compile(r"^(core\.(pager|editor|sshcommand|askpass|fsmonitor
 # fetch against the repository's remotes (git lfs, remote update, aliases …).
 _LOCAL_GIT = {
     "status", "log", "diff", "show", "add", "commit", "checkout", "switch", "branch",
-    "merge", "rebase", "reset", "restore", "stash", "tag", "rev-parse", "rev-list",
+    "merge", "rebase", "reset", "restore", "stash", "tag", "bundle", "rev-parse", "rev-list",
     "worktree", "config", "ls-files", "cat-file", "grep", "blame", "cherry-pick",
     "cherry", "revert", "init", "mv", "rm", "describe", "shortlog", "reflog", "notes",
     "apply", "am", "bundle", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
@@ -132,9 +132,8 @@ def _heredoc_word(word: str):
     return "".join(out), quoted
 
 
-# Readers that only pass text along. A heredoc body is data only when EVERY
-# command on its line is one of these; `cat <<EOF | sh` or `eval "$(cat <<EOF`
-# execute the body, so any other command word makes the body a script.
+# Readers that only pass text along. Consider the actual heredoc consumer and
+# its downstream pipeline, not unrelated commands elsewhere on the same line.
 _DATA_READERS = {"cat", "tee", "wc", "head", "tail", "sort", "uniq", "grep", "rg",
                  "jq", "diff", "cut", "tr", "column", "fold", "pbcopy", "echo", "printf",
                  # these do not read stdin at all
@@ -142,102 +141,185 @@ _DATA_READERS = {"cat", "tee", "wc", "head", "tail", "sort", "uniq", "grep", "rg
 _INTERPRETERS = ("python", "swift", "osascript")
 
 
-def _line_commands(line: str) -> set:
-    """Every command word on one shell line, including inside $( ) and backticks."""
-    words = set()
-    for piece in re.split(r"&&|\|\||\$\(|[;|&()`]", line):
-        piece = re.sub(r"<<-?\s*\S+", " ", piece)
-        tokens = [t for t in piece.split() if not re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", t)]
-        tokens = [t.strip("\"'") for t in tokens]
-        while tokens and Path(tokens[0]).name in {"env", "sudo", "command", "exec", "nohup", "time"}:
-            tokens = [t for t in tokens[1:] if not t.startswith("-")]
-        if tokens and not re.match(r"^[0-9]*[<>]", tokens[0]):
-            words.add(Path(tokens[0]).name)
-    return words
+HEREDOC_EXECUTION_REFUSAL = (
+    "The credential policy cannot establish how this heredoc reaches an executable reader "
+    "(nested shell context or generated code piped to an interpreter). Separate generation "
+    "from execution and review the generated script. This is not a Keychain finding."
+)
 
 
-def _heredoc_operators(line: str):
+def _heredoc_readers(line: str, operator: int):
+    """Consumer and downstream stages of one heredoc; None means opaque syntax.
+
+    Split only on unquoted shell controls, retaining source offsets so a quoted
+    semicolon stays an argument. An fd duplication is a redirect, not `&`.
+    """
+    parts, begin, index, quote = [], 0, 0, None
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
+            break
+        elif char in ";&|()":
+            if char in "&|" and index and line[index - 1] in "<>":
+                index += 1
+                continue
+            control = line[index:index + 2] if line[index:index + 2] in {"&&", "||", "|&"} else char
+            parts.append((begin, index, control))
+            index += len(control)
+            begin = index
+            continue
+        index += 1
+    parts.append((begin, index, ""))
+    if quote:
+        return None
+    selected = next((i for i, (start, end, _) in enumerate(parts) if start <= operator < end), None)
+    if selected is None:
+        return None
+    readers = []
+    for start, end, control in parts[selected:]:
+        text = line[start:end]
+        # Remove real heredoc operators/delimiters, never quoted mentions.
+        for offset in reversed(list(_heredoc_operators(text))):
+            match = _HEREDOC.match(text, offset)
+            if match:
+                text = text[:offset] + " " + text[match.end():]
+        try:
+            tokens = _without_redirects(shlex.split(text, comments=False))
+        except ValueError:
+            return None
+        while tokens:
+            if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", tokens[0]) or tokens[0] in _KEYWORDS - {"time"}:
+                tokens = tokens[1:]
+            else:
+                wrapper = Path(tokens[0]).name
+                if wrapper in _EXEC_WRAPPERS:
+                    valued, positional = _EXEC_WRAPPERS[wrapper]
+                elif wrapper in {"env", "sudo", "command", "exec", "nohup", "time", "builtin"}:
+                    valued = ({"-u", "--unset", "-C", "--chdir"} if wrapper == "env" else
+                              {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
+                               "-R", "--chroot", "-D", "--chdir"} if wrapper == "sudo" else
+                              {"-a"} if wrapper == "exec" else set())
+                    positional = 0
+                else:
+                    break
+                tokens = tokens[1:]
+                while tokens and tokens[0].startswith("-") and tokens[0] != "--":
+                    option = tokens.pop(0)
+                    if wrapper == "env" and (option in {"-S", "--split-string"} or option.startswith(("--split-string=", "-S"))):
+                        text = (option.split("=", 1)[1] if option.startswith("--split-string=") else
+                                option[2:] if option.startswith("-S") and len(option) > 2 else
+                                tokens.pop(0) if tokens else "")
+                        try:
+                            tokens = shlex.split(text) + tokens
+                        except ValueError:
+                            return None
+                        break
+                    if option in valued and tokens:
+                        tokens.pop(0)
+                if tokens and tokens[0] == "--":
+                    tokens = tokens[1:]
+                tokens = tokens[positional:]
+        if not tokens:
+            return None
+        readers.append(Path(tokens[0]).name)
+        if control not in {"|", "|&"}:
+            break
+    return readers
+
+
+def _heredoc_operators(line: str, *, contexts=False, state=None):
     """Offsets of `<<` that the shell treats as heredoc operators: unquoted,
     not `<<<`, and before an unquoted `#` comment. A quoted "<<EOF" argument or
     a commented `# <<EOF` opens nothing, so the next lines stay commands."""
-    # `stack` holds the quote state outside each open $( ): inside "$( … )"
-    # the shell starts a fresh, unquoted context where heredocs are real.
-    quote, index, stack = None, 0, []
+    # Nested execution/grouping retains its outer quote state. We flag these
+    # contexts as opaque rather than lose an outer eval/source/pipeline reader.
+    state = {} if state is None else state
+    quote, index, stack = state.get("quote"), 0, state.setdefault("stack", [])
+    line_number = state.get("line_number", 0)
+    state["line_number"] = line_number + 1
     while index < len(line):
         char = line[index]
         if char == "\\" and quote != "'":
             index += 2
             continue
         if quote != "'" and line.startswith("$(", index):
-            stack.append(quote)
+            # A simple non-executable variable assignment captures output as
+            # data. Keep its consumer visible, including the common quoted
+            # JSON=$(cat <<EOF...) form; eval/source/process contexts stay opaque.
+            assignment = re.fullmatch(r"\s*([A-Za-z_][A-Za-z_0-9]*)=\"?", line[:index])
+            data_capture = not stack and assignment is not None and assignment.group(1) not in _EXEC_ENV
+            stack.append((")", quote, data_capture, index + 2, line_number))
             quote = None
             index += 2
             continue
-        if quote is None and char == ")" and stack:
-            quote = stack.pop()
+        if char == "`" and quote != "'":
+            if stack and stack[-1][0] == "`":
+                quote = stack.pop()[1]
+            else:
+                stack.append(("`", quote, False, 0, line_number))
+                quote = None
             index += 1
             continue
+        if quote is None and char == "(":
+            stack.append((")", quote, False, 0, line_number))
+            index += 1
+            continue
+        if quote is None and char == ")" and stack and stack[-1][0] == ")":
+            quote = stack.pop()[1]
+            index += 1
+            continue
+        prefix = line[:index].rstrip()
+        group_position = (not prefix or prefix[-1] in ";&|(){}" or
+                          re.search(r"\b(?:then|do|else)$", prefix))
+        if quote is None and char == "{" and group_position and (index + 1 == len(line) or line[index + 1].isspace()):
+            stack.append(("}", quote, False, 0, line_number))
+        elif quote is None and char == "}" and group_position and stack and stack[-1][0] == "}":
+            quote = stack.pop()[1]
         if quote:
             if char == quote:
                 quote = None
         elif char in {"'", '"'}:
             quote = char
         elif char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
+            state["quote"] = quote
             return
         elif line.startswith("<<<", index):
             index += 3
             continue
         elif line.startswith("<<", index):
-            yield index
+            if contexts:
+                captured_data = bool(stack) and all(frame[2] for frame in stack)
+                reader_start = stack[-1][3] if captured_data and stack[-1][4] == line_number else 0
+                yield index, bool(stack) and not captured_data, reader_start
+            else:
+                yield index
             index += 2
             continue
         index += 1
-
-
-def _heredoc_context(line: str, offset: int) -> str:
-    """Keep the consuming pipeline and enclosing substitutions, not sibling commands.
-
-    Separators inside quotes/substitutions are data or nested execution. Preserve
-    that context so eval, shell readers and downstream pipes remain inspected.
-    """
-    quote, stack, index, start = None, [], 0, 0
-    while index < len(line):
-        char = line[index]
-        if char == "\\" and quote != "'":
-            index += 2
-            continue
-        if quote != "'" and line.startswith("$(", index):
-            stack.append(quote)
-            quote = None
-            index += 2
-            continue
-        if quote is None and char == ")" and stack:
-            quote = stack.pop()
-        elif quote:
-            if char == quote:
-                quote = None
-        elif char in {"'", '"', '`'}:
-            quote = char
-        elif not stack and (char == ";" or line[index:index + 2] in {"&&", "||"}):
-            if index > offset:
-                return line[start:index]
-            start = index + (1 if char == ";" else 2)
-        index += 1
-    return line[start:]
+    state["quote"] = quote
 
 
 def _split_heredocs(command: str):
     """Separate heredoc bodies from shell text. A body is data for its reader;
     only a shell or interpreter reader turns it into code (checked by caller)."""
     lines = command.split("\n")
-    shell_lines, bodies, index = [], [], 0
+    shell_lines, bodies, index, state = [], [], 0, {}
     while index < len(lines):
         line = lines[index]
         shell_lines.append(line)
         index += 1
-        if "<<" not in line:
-            continue
-        for start in _heredoc_operators(line):
+        # Advance shell context even on lines without a heredoc; an opening
+        # group or substitution can precede the consumer on another line.
+        operators = list(_heredoc_operators(line, contexts=True, state=state))
+        for start, nested, reader_start in operators:
             match = _HEREDOC.match(line, start)
             if match is None:
                 continue
@@ -250,7 +332,13 @@ def _split_heredocs(command: str):
                 if candidate == delimiter:
                     break
                 body.append(lines[index - 1])
-            bodies.append((quoted, _line_commands(_heredoc_context(line, start)), "\n".join(body)))
+            readers = None if nested else _heredoc_readers(line[reader_start:], start - reader_start)
+            # An interpreter's output is not its input program. Do not parse
+            # Python as shell when its generated output feeds another executor.
+            opaque = readers is None or any(reader.startswith(_INTERPRETERS)
+                and any(later not in _DATA_READERS for later in readers[position + 1:])
+                for position, reader in enumerate(readers))
+            bodies.append((quoted, set(readers or ()), "\n".join(body), opaque))
     return "\n".join(shell_lines), bodies
 
 
@@ -835,7 +923,7 @@ def _without_redirects(args):
             continue
         match = re.match(r"^[0-9]*(?:>>?|<)(&?[0-9-]*)(.*)$", arg)
         if match:
-            skip = not match.group(1) and not match.group(2)
+            skip = not match.group(2) and match.group(1) in {"", "&"}
             continue
         out.append(arg)
     return out
@@ -976,7 +1064,9 @@ def command_reason(command: str, *, cwd: str | None = None,
     platform = sys.platform if platform is None else platform
     command = command.replace("\\\n", "")  # `git \<newline> fetch` is one command
     command, bodies = _split_heredocs(command)
-    for quoted, readers, body in bodies:
+    for quoted, readers, body, opaque in bodies:
+        if opaque:
+            return HEREDOC_EXECUTION_REFUSAL
         if not quoted:
             # The shell expands $( ) and backticks in an unquoted body BEFORE
             # any reader sees it, and quotes inside the body do not protect.
