@@ -36,7 +36,10 @@ def main(argv: list | None = None) -> int:
 
     workdir = Path(args.workdir).resolve()
     lockpath = workdir / ".build-loop" / "architecture" / ".scan.lock"
-    script = workdir / "scripts" / "architecture_freshness.py"
+    # The freshness script ships with the plugin; a project copy is only a fallback.
+    script = Path(__file__).resolve().parent.parent / "scripts" / "architecture_freshness.py"
+    if not script.is_file():
+        script = workdir / "scripts" / "architecture_freshness.py"
 
     try:
         lockpath.parent.mkdir(parents=True, exist_ok=True)

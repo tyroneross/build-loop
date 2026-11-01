@@ -27,8 +27,10 @@
 WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 ARCH_DIR="$WORKDIR/.build-loop/architecture"
 FILE_MAP="$ARCH_DIR/file_map.json"
-FRESHNESS_SCRIPT="$WORKDIR/scripts/architecture_freshness.py"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The freshness script ships with the plugin; a project copy is only a fallback.
+FRESHNESS_SCRIPT="$SCRIPT_DIR/../scripts/architecture_freshness.py"
+[ -f "$FRESHNESS_SCRIPT" ] || FRESHNESS_SCRIPT="$WORKDIR/scripts/architecture_freshness.py"
 WORKER="$SCRIPT_DIR/_arch_scan_bg.py"
 
 # Fast bail-out: arch engine not initialized.

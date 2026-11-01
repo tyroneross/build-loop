@@ -104,3 +104,24 @@ def test_doc_edit_still_bails(tmp_path: Path):
     assert rc == 0
     assert _is_stale(tmp_path) is False
     assert not _marker(tmp_path).exists()
+
+
+def test_plugin_hook_works_in_a_project_without_scripts(tmp_path: Path) -> None:
+    """The installed hook runs from the plugin against a user project that has
+    no scripts/ dir of its own; it must still mark manifests and stale files."""
+    arch = tmp_path / ".build-loop" / "architecture"
+    arch.mkdir(parents=True)
+    (arch / "file_map.json").write_text(
+        json.dumps({"schema_version": "1.0.0", "files": {"src/foo.py": "abc"}}), encoding="utf-8")
+    (tmp_path / ".build-loop" / "state.json").write_text(
+        json.dumps({"schema_version": "1.0.0", "active": True, "phase": "execute",
+                    "architecture": {"stale": False, "staleFiles": []}}), encoding="utf-8")
+    assert not (tmp_path / "scripts").exists()
+
+    assert _run(HOOK, tmp_path, "go.mod") == 0
+    assert _marker(tmp_path).exists(), "manifest edit must mark enrich-needed from the plugin path"
+
+    assert _run(HOOK, tmp_path, "src/foo.py") == 0
+    state = json.loads((tmp_path / ".build-loop" / "state.json").read_text(encoding="utf-8"))
+    assert state["architecture"]["stale"] is True
+    assert "src/foo.py" in state["architecture"]["staleFiles"]
