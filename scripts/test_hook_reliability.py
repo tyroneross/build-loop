@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class HookReliabilityTests(unittest.TestCase):
     def test_both_hosts_avoid_startup_maintenance(self):
         removed = ('retrieval', 'worktree-gc', 'git-hooks', 'plugin-drift', 'plugin-heal', 'memory', 'extensions', 'session-start-closeout')
-        for name in ('hooks.json', 'codex.json'):
-            commands = json.dumps(json.loads((ROOT / 'hooks' / name).read_text())['hooks']['SessionStart'])
+        for name in ('hooks/hooks.json', 'hooks/codex.json', '.codex/hooks.json'):
+            commands = json.dumps(json.loads((ROOT / name).read_text())['hooks']['SessionStart'])
             for item in removed:
                 self.assertNotIn(item, commands)
 
