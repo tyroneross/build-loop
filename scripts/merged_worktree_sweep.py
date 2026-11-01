@@ -453,8 +453,8 @@ def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str
                 continue
             rec["records_copied"], rec["records_kept_existing"] = copy_records(wt, primary)
             receipt, err = run_archiver(wt)
-            if err:
-                rec["error"] = "archiver refused: " + err
+            if err or receipt is None:
+                rec["error"] = "archiver refused: " + (err or "no receipt")
                 report["errors"].append(rec)
                 continue
             rec["archive_path"] = receipt.get("archive_path")
