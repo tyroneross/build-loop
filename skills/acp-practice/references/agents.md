@@ -16,7 +16,7 @@ release dates, so the date on every row is the fetch date.
 | Claude | ACP | `npx @agentclientprotocol/claude-agent-acp@0.94.0` | 0.94.0 | Old `@zed-industries/claude-code-acp` is dead at 0.16.2. Pins drift fast: one local host pinned 0.63.0 on the fetch date. |
 | Codex | app-server (primary) | `codex app-server` | — (ships with `@openai/codex`) | OpenAI labels app-server experimental. Exposes `turn/steer`, `thread/fork`, `review/start`, which codex-acp does not forward. |
 | Codex | ACP (parity / uniform-renderer option) | `npx @agentclientprotocol/codex-acp@2.2.2` | 2.2.2 | Spawns `codex app-server` and translates; `CODEX_PATH` overrides the bundled codex. Replaces `@zed-industries/codex-acp` (frozen 0.16.0). |
-| Cursor | ACP | `cursor-agent acp` | 2026.10.19 | Blocking `cursor/ask_question`, `cursor/create_plan`: the client must reply or the agent hangs. Auth `cursor_login` or `CURSOR_API_KEY`. |
+| Cursor | ACP | `cursor-agent acp` | 2026.10.19 | Blocking `cursor/ask_question`, `cursor/create_plan`: the client must reply or the agent hangs. Auth `cursor_login` or `CURSOR_API_KEY`. Headless one-shot (`cursor-agent -p`, no ACP): pass `--trust` or it stops at "Workspace Trust Required" and exits with empty output; omit `--force` for read-only review; pick the model with `--model` (e.g. `grok-4.7-high`, see `--list-models`); add other repos with `--add-dir`. Rally has no first-class `rally run cursor`. |
 | Gemini CLI | ACP | `gemini --acp` (registry: `npx @google/gemini-cli@0.65.0 --acp`) | 0.65.0 | Past stdout-pollution bug (#25345, closed): drop non-JSON lines. |
 | OpenCode | ACP | `opencode acp` | 1.19.3 | Native. |
 | Muse | MSP, not ACP | `muse serve` | — | Its own protocol. Do not route through ACP. |
