@@ -178,7 +178,7 @@ def test_judge_record_enriches_ledger_agent_and_preserves_recorded_model(tmp_pat
             "judge_decisions": [{
                 "judge_id": "independent-auditor",
                 "verdict": "yay",
-                "model": "gpt-5.6-sol",
+                "model": "gpt-6.1-sol",
             }],
         }],
     })
@@ -196,7 +196,7 @@ def test_judge_record_enriches_ledger_agent_and_preserves_recorded_model(tmp_pat
 
     assert len(result["agents"]) == 1
     assert result["agents"][0]["judge"] is True
-    assert result["agents"][0]["model"] == "gpt-5.6-sol"
+    assert result["agents"][0]["model"] == "gpt-6.1-sol"
     assert "run judge record" in result["agents"][0]["source"]
     assert result["metrics"]["judges_used"] == 1
     assert result["metrics"]["models_used"] == 1

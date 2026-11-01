@@ -255,7 +255,7 @@ def test_supervisor_passes_role_effort_preferences_to_capacity(repo: Path) -> No
         "independent_items": 2,
         "segment": "agentic_execution",
         "tier": "code",
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6.1-terra",
         "signals": {"current_concurrency": 0},
     })
     assert result["capacity"]["effort"] == "high"
@@ -427,9 +427,9 @@ def test_queue_candidates_do_not_schedule_archives_decisions_or_proposals(repo: 
 def test_supervisor_fanout_consumes_ledger_measurements(repo: Path, monkeypatch) -> None:
     monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
     ledger = repo / 'usage.jsonl'
-    ledger.write_text(json.dumps({'model': 'gpt-5.6-terra', 'status': 'completed',
+    ledger.write_text(json.dumps({'model': 'gpt-6.1-terra', 'status': 'completed',
                                   'input_tokens': 40000, 'output_tokens': 8000}) + '\n')
-    result = supervisor.select_fanout(repo, {'independent_items': 8, 'model': 'gpt-5.6-terra',
+    result = supervisor.select_fanout(repo, {'independent_items': 8, 'model': 'gpt-6.1-terra',
                                             'ledger_path': str(ledger)})
     assert result['capacity']['tokens_per_worker'] == 48000
     assert result['capacity']['effective_max'] == 2
@@ -439,7 +439,7 @@ def test_shared_reservations_hold_capacity_until_release(repo: Path, monkeypatch
     monkeypatch.setattr(supervisor, 'host_signals', lambda _: {})
     store = repo / 'capacity.json'
     request = {'capacity_path': str(store), 'shared_capacity': 4, 'independent_items': 4,
-               'model': 'gpt-5.6-luna', 'reservation_id': 'a', 'ledger_path': str(repo / 'absent')}
+               'model': 'gpt-6-luna', 'reservation_id': 'a', 'ledger_path': str(repo / 'absent')}
     first = supervisor.reserve_fanout(repo, request)
     assert first['reservation']['workers'] == 4
     assert supervisor.reserve_fanout(repo, request)['action'] == 'renewed'
@@ -462,7 +462,7 @@ def test_concurrent_reservation_processes_do_not_exceed_shared_limit(repo: Path)
         workdir = repo / str(index)
         workdir.mkdir()
         request = {'capacity_path': str(repo / 'shared.json'), 'shared_capacity': 4,
-                   'independent_items': 4, 'reservation_id': str(index), 'model': 'gpt-5.6-luna',
+                   'independent_items': 4, 'reservation_id': str(index), 'model': 'gpt-6-luna',
                    'ledger_path': str(repo / 'missing'),
                    'signals': {'load_ratio': 0, 'memory_percent': 0, 'thermal_state': 'nominal'}}
         processes.append(subprocess.Popen([sys.executable, str(script), '--workdir', str(workdir),
@@ -534,7 +534,7 @@ def test_select_fanout_preserves_cloud_progress_under_real_failure_signal(repo, 
         "thermal_state": "nominal", "current_concurrency": 0,
     })
     result = supervisor.select_fanout(repo, {
-        "independent_items": 1, "model": "gpt-5.6-sol", "execution_location": "cloud",
+        "independent_items": 1, "model": "gpt-6.1-sol", "execution_location": "cloud",
         "ledger_path": str(repo / "isolated-cost-ledger.jsonl"),
     })
     assert result["admission"]["next_concurrency"] == 1

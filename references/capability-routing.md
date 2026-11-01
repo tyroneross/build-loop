@@ -14,7 +14,7 @@ provider API:
 1. Claude Code when the session is Claude Code; keep Claude-native aliases and
    its permission/tool loop.
 2. Codex when the session is Codex; keep Codex-native model selection and
-   OpenAI role routing (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`).
+   OpenAI role routing (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`).
 3. Direct API only for application/data-plane integrations, explicit API tests,
    or when no supported host adapter is available.
 

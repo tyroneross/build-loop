@@ -43,7 +43,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Anthropic default:** Claude Opus 5 (`opus`; aliases `claude-opus-5`, `claude-opus-5[1m]` — the 4.8 aliases stay valid for back-compat). Promoted T2→T1 on 2026-07-28.
 - **Second Anthropic Frontier entry:** Fable 5 (`fable`) — kept in the T1 preferred list, and the in-tier successor `scripts/dispatch_fallback.py` returns when `opus` is unavailable. It is also the **deliberate override for high-coupling PLANNING work**, routed by `scripts/frontier_gate.py`; see the evidence scope below.
 - **Evidence + its limits (do not overstate):** `prompt-model-benchmark-lab/observations/2026-07-28-audit-bakeoff-fable-vs-opus5-vs-sonnet5.json` records Opus 5 as a strict superset of Fable in 3/3 adversarial-audit rounds, including round 2 where Opus reversed a defect Fable had explicitly cleared. Carry the file's own caveats: n=3 rounds, one repo, one task family; not a clean single-blind design (Fable ran live under time pressure, the others re-audited frozen pre-fix commits); reasoning effort was not pinned per arm; grading was orchestrator-adjudicated; and Opus ran ~10.5 min vs Fable's ~3.5 min in round 3, so longer runs plausibly explain part of the coverage gap. **That evidence is verification-shaped — it says nothing about plan/spec authoring.** The only spec-authoring bake-off on record (Fable vs Codex, 2026-07-09) went to Fable, which is why high-coupling planning still routes to Fable.
-- **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol (`gpt-5.6-sol`) for open, complex, hard-to-verify, or high-consequence planning and verdicts; GPT-5.5 and GPT-5.4 remain fallback seeds
+- **Verified equivalents (2026 Q3, advisory):** GPT-6.1 Sol (`gpt-6.1-sol`) for open, complex, hard-to-verify, or high-consequence planning and verdicts; GPT-5.5 and GPT-5.4 remain fallback seeds
 - **Local equivalents:** none — Frontier-class capability is not yet matched locally
 
 ### Thinking tier
@@ -59,7 +59,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** SWE-bench Verified ≥75% AND tool-use accuracy ≥85% AND multi-turn coding rollout ≥80%.
 - **Cost expectation:** ~3-5× cheaper than Thinking tier per token. The default for the bulk of build-loop work.
 - **Anthropic default:** Sonnet 5 (`claude-sonnet-5`; alias `sonnet` auto-tracks the latest Sonnet generation)
-- **Verified equivalents:** GPT-5.6 Terra (`gpt-5.6-terra`) is the Codex-host default for scoped implementation, bounded assessment, and routine coordination; GPT-5.4 Mini remains a fallback seed
+- **Verified equivalents:** GPT-5.6 Terra (`gpt-6.1-terra`) is the Codex-host default for scoped implementation, bounded assessment, and routine coordination; GPT-5.4 Mini remains a fallback seed
 - **Effort default:** `high` for `agentic_execution/T3` on both hosts. A caller may select another supported effort for a bounded task; the resolver reports this as a preference rather than a lock.
 - **Local equivalents:** qwen2.5-coder-32B-instruct (mid-quality), Codestral 22B (reasonable substitute for bounded refactor work)
 
@@ -68,7 +68,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** none formal. Empirical: doesn't hallucinate on bounded structured tasks; runs fast.
 - **Cost expectation:** ~10-20× cheaper than Thinking tier. Use for high-volume mechanical sweeps.
 - **Anthropic default:** Haiku 4.5 (`claude-haiku-4-5-20251001`)
-- **Verified equivalents:** GPT-5.6 Luna (`gpt-5.6-luna`) for short, repeatable extraction, classification, scanning, and structured summaries with an output check; GPT-5 Nano remains a fallback seed
+- **Verified equivalents:** GPT-5.6 Luna (`gpt-6-luna`) for short, repeatable extraction, classification, scanning, and structured summaries with an output check; GPT-5 Nano remains a fallback seed
 - **Local equivalents:** llama3.2-3b, qwen2.5-3b
 
 ## Substitution table (advisory, 2026 Q3)
@@ -76,7 +76,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 | Provider | Frontier | Thinking | Code | Pattern |
 |---|---|---|---|---|
 | Anthropic (default) | Claude Opus 5 (`opus`); Fable 5 (`fable`) as the deliberate override for high-coupling planning (`scripts/frontier_gate.py`) and the in-tier fallback | Claude Opus 5 (`opus`) | Sonnet 5 (`sonnet`) | Haiku 4.5 (`haiku`) |
-| OpenAI | `gpt-5.6-sol` | `gpt-5.6-sol` for hard escalation; `gpt-5.6-terra` for routine orchestration | `gpt-5.6-terra` | `gpt-5.6-luna` |
+| OpenAI | `gpt-6.1-sol` | `gpt-6.1-sol` for hard escalation; `gpt-6.1-terra` for routine orchestration | `gpt-6.1-terra` | `gpt-6-luna` |
 | Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
 | xAI | n/a — `grok-4.6` is a T3 `candidate-unverified` seed, not on a preferred list | n/a | `grok-4.6` (Cursor Task slug `cursor-grok-4.6-high-fast`; not preferred — recency would steal T3) | n/a |
 | Cursor-native | n/a | n/a | Composer 2.5 (`composer-2.5`, Task slug `composer-2.5-fast`); not on a preferred list — Sonnet/Terra win when those providers are in the host set | n/a |
@@ -84,7 +84,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 
 ### Cursor is a host, not a provider
 
-Cursor dispatches Anthropic, OpenAI, xAI, Google, and Composer ids in one session. Resolve with `--host cursor` (or run inside Cursor so `detect_host` returns `cursor`); `scripts/host_model_map.py` expands that family to the provider set in `references/model-taxonomy.json` `hosts.cursor`. `resolve_agent_model.py` keeps the taxonomy id on `model` / `canonical_model` and puts the fused Task slug on `dispatch_model` (`opus` → `claude-opus-5-thinking-high`, `gpt-5.6-sol` + high → `gpt-5.6-sol-high`; `--plain` prints `dispatch_model`). Optional session allowlist: `BUILD_LOOP_HOST_MODELS` or `.build-loop/host-models.json` `{"slugs":[...]}` so dispatch picks a slug the current picker can actually send. New fused variants of a known family inherit; a new family still goes through `classify_model_tier.py lookup` / `detect`.
+Cursor dispatches Anthropic, OpenAI, xAI, Google, and Composer ids in one session. Resolve with `--host cursor` (or run inside Cursor so `detect_host` returns `cursor`); `scripts/host_model_map.py` expands that family to the provider set in `references/model-taxonomy.json` `hosts.cursor`. `resolve_agent_model.py` keeps the taxonomy id on `model` / `canonical_model` and puts the fused Task slug on `dispatch_model` (`opus` → `claude-opus-5-thinking-high`, `gpt-6.1-sol` + high → `gpt-6.1-sol-high`; `--plain` prints `dispatch_model`). Optional session allowlist: `BUILD_LOOP_HOST_MODELS` or `.build-loop/host-models.json` `{"slugs":[...]}` so dispatch picks a slug the current picker can actually send. New fused variants of a known family inherit; a new family still goes through `classify_model_tier.py lookup` / `detect`.
 
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying. Treat model + thinking level/mode as the comparison identity: capture the exact source-reported or runtime-configured value and its evidence. If a document omits row-level effort, record `unknown` and mark the ranking effort-confounded rather than inferring a default. Build Loop bake-offs preserve this metadata in the existing `abc-comparison/v2` observation artifact. Prompt Model Benchmark Lab owns normalization and aggregation; structured retention there is pending, so preserve raw observations and do not aggregate across thinking settings.
 
@@ -148,10 +148,10 @@ Change the ordered preferred list for the relevant `(segment, tier)` cell in `re
 ```json
 {
   "modelOverrides": {
-    "frontier": "gpt-5.6-sol",
-    "thinking": "gpt-5.6-sol",
-    "code": "gpt-5.6-terra",
-    "pattern": "gpt-5.6-luna"
+    "frontier": "gpt-6.1-sol",
+    "thinking": "gpt-6.1-sol",
+    "code": "gpt-6.1-terra",
+    "pattern": "gpt-6-luna"
   }
 }
 ```

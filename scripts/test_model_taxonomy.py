@@ -126,7 +126,7 @@ class TaxonomyTests(unittest.TestCase):
         # fable is retained as the second frontier choice.
         self.assertEqual(
             self.mt.preferred("generative_reasoning", "T1"),
-            ["opus", "fable", "gpt-5.6-sol"],
+            ["opus", "fable", "gpt-6.1-sol"],
         )
 
     def test_preferred_empty_cell_returns_list(self) -> None:
@@ -143,7 +143,7 @@ class TaxonomyTests(unittest.TestCase):
 
     def test_gpt_routing_effort_policy_covers_execution_and_verification(self) -> None:
         self.assertEqual(
-            self.mt.preferred_effort("agentic_execution", "T4", "gpt-5.6-luna"), "medium"
+            self.mt.preferred_effort("agentic_execution", "T4", "gpt-6-luna"), "medium"
         )
         self.assertEqual(self.mt.preferred_effort("governance_evaluation", "T1"), "high")
         self.assertEqual(self.mt.preferred_effort("governance_evaluation", "T2"), "medium")
@@ -190,9 +190,17 @@ class TaxonomyTests(unittest.TestCase):
         self.assertEqual(self.mt.released("fable"), "2025-11-01")
         self.assertEqual(self.mt.released("gpt-5.5"), "2026-02-01")
         self.assertEqual(self.mt.released("gpt-5.6-sol"), "2026-07-09")
+        self.assertEqual(self.mt.released("gpt-6.1-sol"), "2026-09-29")
+        self.assertEqual(self.mt.released("gpt-6.1-terra"), "2026-10-26")
+        self.assertEqual(self.mt.released("gpt-6-luna"), "2026-09-22")
 
-    def test_gpt_5_6_family_is_classified_by_work_role(self) -> None:
+    def test_gpt_6_family_is_classified_by_work_role(self) -> None:
+        # The 6.x ids are the routed defaults; the 5.6 ids stay registered so
+        # explicit overrides keep resolving, with the same tiers.
         expected = {
+            "gpt-6.1-sol": "T1",
+            "gpt-6.1-terra": "T2",
+            "gpt-6-luna": "T4",
             "gpt-5.6-sol": "T1",
             "gpt-5.6-terra": "T2",
             "gpt-5.6-luna": "T4",
@@ -204,13 +212,13 @@ class TaxonomyTests(unittest.TestCase):
                 self.assertEqual(meta["provider"], "openai")
                 self.assertEqual(meta["tier"], tier)
 
-        self.assertIn("gpt-5.6-sol", self.mt.preferred("governance_evaluation", "frontier"))
+        self.assertIn("gpt-6.1-sol", self.mt.preferred("governance_evaluation", "frontier"))
         self.assertEqual(
             self.mt.preferred("governance_evaluation", "thinking"),
-            ["opus", "gpt-5.6-sol"],
+            ["opus", "gpt-6.1-sol"],
         )
-        self.assertIn("gpt-5.6-terra", self.mt.preferred("agentic_execution", "code"))
-        self.assertIn("gpt-5.6-luna", self.mt.preferred("governance_evaluation", "pattern"))
+        self.assertIn("gpt-6.1-terra", self.mt.preferred("agentic_execution", "code"))
+        self.assertIn("gpt-6-luna", self.mt.preferred("governance_evaluation", "pattern"))
 
     def test_break_ties_by_recency_preserves_rank_order(self) -> None:
         """Rank is the only key; this helper must not reorder anything.
@@ -465,3 +473,31 @@ class TaxonomyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenAIRoutingFreshnessTests(unittest.TestCase):
+    """Routed OpenAI ids are the newest registered member of their family."""
+
+    def test_routed_openai_ids_are_newest_in_family(self) -> None:
+        import json
+        import re
+        from pathlib import Path
+
+        tax = json.loads((Path(__file__).resolve().parent.parent / "references" / "model-taxonomy.json").read_text())
+        models = tax["models"]
+
+        def family(mid: str) -> str | None:
+            m = re.fullmatch(r"gpt-[\d.]+-(sol|terra|luna)", mid)
+            return m.group(1) if m else None
+
+        newest: dict[str, str] = {}
+        for mid, meta in models.items():
+            fam = family(mid)
+            if fam and (fam not in newest or meta["released"] > models[newest[fam]]["released"]):
+                newest[fam] = mid
+        routed = {x for cells in tax["preferred"].values() if isinstance(cells, dict)
+                  for lst in cells.values() if isinstance(lst, list) for x in lst if family(x)}
+        for mid in routed:
+            with self.subTest(model=mid):
+                self.assertEqual(mid, newest[family(mid)], f"{mid} is routed but {newest[family(mid)]} is newer")
+
