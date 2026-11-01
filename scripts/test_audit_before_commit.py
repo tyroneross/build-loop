@@ -552,6 +552,43 @@ class EscalatedPacketTests(_GitRepoCase):
         self.assertIn("yay (approve)", result.stderr)
 
 
+class StaleIntentPacketTests(_GitRepoCase):
+    """A packet must not offer a prior run's intent/goal as the judging basis.
+
+    Regression, 2026-10-30: build-loop commit cb2f2938 (a security-scan fix) was
+    packaged with an intent.md stamped for an unrelated September run and its
+    goal.md about hook matcher groups; the packet said "stale" yet still pasted
+    both as the north star.
+    """
+
+    UNRELATED = "Close the 13 audit findings on the owed-verification gate"
+
+    def _seed(self, stamped: str, current: str) -> None:
+        bl = self.repo / ".build-loop"
+        bl.mkdir(exist_ok=True)
+        (bl / "intent.md").write_text(
+            f"<!-- intent_run_id: {stamped} -->\n# Intent\n\n{self.UNRELATED}.\n", encoding="utf-8"
+        )
+        (bl / "goal.md").write_text("# Goal\n\nOne matcher group per event.\n", encoding="utf-8")
+        (bl / "state.json").write_text(
+            '{"execution": {"run_id": "%s"}, "runs": []}' % current, encoding="utf-8"
+        )
+        self._write_and_stage("docs/notes.md", "prose\n")
+
+    def test_stale_intent_and_goal_are_withheld(self) -> None:
+        self._seed("bl-old", "bl-new")
+        err = self._run_hook().stderr
+        self.assertIn("verdict: **stale**", err)
+        self.assertNotIn(self.UNRELATED, err)
+        self.assertNotIn("One matcher group per event", err)
+        self.assertIn("withheld", err)
+        self.assertNotIn("Preflight: spec inputs missing", err)
+
+    def test_fresh_intent_is_still_shown(self) -> None:
+        self._seed("bl-same", "bl-same")
+        self.assertIn(self.UNRELATED, self._run_hook().stderr)
+
+
 class OptInBlockTests(_GitRepoCase):
     def _stage_persisted_model(self) -> None:
         self._write_and_stage(

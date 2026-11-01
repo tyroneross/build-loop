@@ -1152,6 +1152,16 @@ def _graded_content_alignment(root: Path) -> str:
     return "".join(lines)
 
 
+def _intent_verdict(root: Path) -> str | None:
+    """`intent_freshness` verdict for ``root``; None on any error (fail-open)."""
+    try:
+        import intent_freshness as _if
+
+        return _if.evaluate(root).get("verdict")
+    except Exception:  # noqa: BLE001 — never crash a commit over a report section
+        return None
+
+
 def _intent_freshness(root: Path) -> str:
     """Report whether `.build-loop/intent.md` describes THIS run or a prior one.
 
@@ -1509,11 +1519,24 @@ def _build_packet(root: Path, cmd: str, decision: dict) -> int:
     out(_intent_freshness(root))
     out("\n")
 
-    out("### Intent\n")
-    out((intent or "_(none found)_") + "\n\n")
+    # A stale intent.md (stamped for a prior run) and the goal.md written beside
+    # it describe OTHER work. Pasting them here made auditors grade the diff
+    # against an unrelated goal; withhold them and name the honest basis.
+    if _intent_verdict(root) == "stale":
+        withheld = (
+            "_(withheld: intent.md and goal.md are stamped for a prior run and describe "
+            "other work. Judge this diff on its own evidence: the diff, its tests, and the "
+            "commit message. Do not score alignment against these files.)_\n\n"
+        )
+        out("### Intent\n" + withheld)
+        out("### Goal\n" + withheld)
+        intent = goal = "withheld-stale"  # present on disk; skip the missing-spec preflight
+    else:
+        out("### Intent\n")
+        out((intent or "_(none found)_") + "\n\n")
 
-    out("### Goal\n")
-    out((goal or "_(none found)_") + "\n\n")
+        out("### Goal\n")
+        out((goal or "_(none found)_") + "\n\n")
 
     missing_spec = [rel for rel, body in zip(PREFLIGHT_REQUIRED, (intent, goal)) if not body.strip()]
     if missing_spec:

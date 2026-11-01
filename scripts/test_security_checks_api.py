@@ -539,6 +539,27 @@ function executeTool(name, args) {
 """)
         self.assertTrue(any(x["severity"] == "HIGH" and "authorization layer" in x["message"] for x in f))
 
+    def test_agent_loop_far_from_open_dispatch_stays_high(self):
+        """Distance alone must not hide an agent loop: tool_calls read 100 lines
+        above an open dispatch is the same threat as reading it next to it."""
+        src = "\n".join(
+            ["const calls = message.tool_calls;"] + ["const pad = 1;"] * 100
+            + ["for (const c of calls) { await TOOLS[c.name](c.arguments); }"]
+        )
+        f = self._n(src)
+        self.assertTrue(any(x["severity"] == "HIGH" and "authorization layer" in x["message"] for x in f))
+
+    def test_agent_loop_far_from_closed_dispatcher_with_model_call_is_medium(self):
+        src = "\n".join(
+            ['const r = await anthropic.messages.create({ max_tokens: 5, messages });',
+             "const calls = r.tool_calls;"] + ["const pad = 1;"] * 100
+            + ["async function executeTool(name, args) {",
+               "  switch (name) {", '    case "search":', "      return search(args);",
+               "  }", "}"]
+        )
+        f = self._n(src)
+        self.assertEqual([x["severity"] for x in f if "LLM08" in x["owasp_ids"]], ["MEDIUM"])
+
     def test_plain_registry_without_llm_context_clears(self):
         f = self._n("""
 const result = handlers[event.type](event.payload);

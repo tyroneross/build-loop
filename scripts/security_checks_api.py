@@ -989,10 +989,15 @@ def _check_tool_dispatch(path: Path, lines: list[str], text: str) -> list[dict[s
             continue
         lo, hi = max(0, i - _TOOL_CONTEXT_WINDOW), i + _TOOL_CONTEXT_WINDOW + 1
         window = [l for l in lines[lo:hi] if not _COMMENT_LINE_RE.match(l)]
+        closed = _site_is_closed(lines, i)
         agent_loop = any(_TOOL_LOOP_CONTEXT_RE.search(l) for l in window)
+        if not agent_loop and _TOOL_LOOP_CONTEXT_RE.search(text):
+            # Distant evidence still counts unless it is the bundle shape: a closed
+            # dispatcher in a file that never calls a model (a transcript parser's
+            # `tool_use` mentions are not a model handing over tool calls).
+            agent_loop = not closed or bool(_LLM_CALL_RE.search(text))
         if not (agent_loop or is_mcp_server):
             continue
-        closed = _site_is_closed(lines, i)
         guarded = any(_OWN_KEY_GUARD_RE.search(l) for l in window)
         snippet = raw.strip()[:120]
         if agent_loop:
