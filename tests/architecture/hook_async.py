@@ -21,7 +21,11 @@ def stub_uv_env(tmp_path: Path, sleep_s: float = 0.6) -> dict:
     uv = bindir / "uv"
     uv.write_text(f"#!/bin/sh\nsleep {sleep_s}\n", encoding="utf-8")
     uv.chmod(0o755)
-    return {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
+    # The hook spills its payload to $TMPDIR/bl-pre-edit.*; the runner deletes
+    # it once it has read it, so wait_idle can see that the runner started.
+    spill = tmp_path / "_tmp"
+    spill.mkdir(exist_ok=True)
+    return {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path), "TMPDIR": str(spill),
             "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
 
 
@@ -43,5 +47,13 @@ def _busy(tmp_path: Path) -> bool:
 
 
 def wait_idle(tmp_path: Path, timeout: float = 15.0) -> None:
-    """Block until the hook's detached runner and scan worker have exited."""
-    wait_for(lambda: not _busy(tmp_path), timeout)
+    """Block until the hook's detached runner and scan worker have exited.
+
+    First wait for the runner to consume the spilled payload: before the
+    background subshell execs python, ps shows only the hook's bash line, so
+    a process check alone can pass before the runner has done anything.
+    """
+    spill = tmp_path / "_tmp"
+    assert wait_for(lambda: not any(spill.glob("bl-pre-edit.*")), timeout), \
+        "runner never consumed the hook payload"
+    assert wait_for(lambda: not _busy(tmp_path), timeout), "runner/scan still running"

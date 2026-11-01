@@ -99,7 +99,7 @@ _LOCAL_GIT = {
     "merge", "rebase", "reset", "restore", "stash", "tag", "bundle", "rev-parse", "rev-list",
     "worktree", "config", "ls-files", "cat-file", "grep", "blame", "cherry-pick",
     "cherry", "revert", "init", "mv", "rm", "describe", "shortlog", "reflog", "notes",
-    "apply", "am", "bundle", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
+    "apply", "am", "format-patch", "merge-base", "merge-tree", "symbolic-ref",
     "update-ref", "for-each-ref", "show-ref", "ls-tree", "hash-object", "count-objects",
     "fsck", "gc", "prune", "clean", "bisect", "help", "version", "var", "check-ignore",
     "diff-tree", "diff-index", "diff-files", "name-rev", "range-diff", "whatchanged",

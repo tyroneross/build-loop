@@ -135,8 +135,10 @@ def test_plugin_hook_works_in_a_project_without_scripts(tmp_path: Path) -> None:
     assert _run(HOOK, tmp_path, "src/foo.py") == 0
     # Read the mark while the scan runs; a finished scan marks the map fresh.
     state_path = tmp_path / ".build-loop" / "state.json"
-    assert wait_for(lambda: "src/foo.py" in json.loads(state_path.read_text(encoding="utf-8"))
-                    .get("architecture", {}).get("staleFiles", []))
+    def marked() -> bool:
+        arch = json.loads(state_path.read_text(encoding="utf-8")).get("architecture", {})
+        return arch.get("stale") is True and "src/foo.py" in arch.get("staleFiles", [])
+    assert wait_for(marked)
     wait_idle(tmp_path)
 
 
