@@ -124,6 +124,8 @@ a deterministic acceptance threshold, not a statistical significance claim.
 
 For latency work such as semantic search, do not optimize on one timer reading. Use a representative query set, run multiple measured samples, discard at least one warmup when cold starts matter, and aggregate with `median` or `p95`.
 
+For peak memory, do not hand-parse `/usr/bin/time`: macOS `-l` reports max RSS in bytes, GNU `-v` in kilobytes. Use `parse_time_l()` from `scripts/unit_guard.py`, which detects the format and returns `max_rss_bytes` and `real_s`, and store values under unit-suffixed keys (`rss_mib`, `real_s`).
+
 ## Phase 2: LOOP (Sonnet)
 
 ### Branch A/B (DOE) — run the matrix

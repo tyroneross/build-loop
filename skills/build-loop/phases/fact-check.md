@@ -14,6 +14,7 @@ Loaded on demand when entering Phase 7.
 | **Extreme language** | Flag "always", "never", "100%", "guaranteed", "impossible", "all", "none" in code, UI copy, error messages, docs. Replace with accurate qualified language unless genuinely absolute |
 | **Assessment integrity** | App displays quality scores, risk levels, health indicators? Verify scoring logic exists and produces the displayed value. No hardcoded "95%" without backing logic |
 | **Source traceability** | Every rendered metric: data source → transformation → display. Missing link = flag it |
+| **Units** | Every raw number traces to a source with an explicit unit. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/unit_guard.py check <file.json>` on facts/benchmark JSON before reporting its numbers; exit 1 blocks them |
 
 ## Gate B: Mock And Privacy Data Scanner
 
