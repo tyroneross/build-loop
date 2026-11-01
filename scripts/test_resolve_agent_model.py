@@ -15,6 +15,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "resolve_agent_model.py"
 REPO_AGENTS = HERE.parent / "agents"
+# Resolve against an empty project, never the checkout's own .build-loop/config.json:
+# local model overrides there would make these tests pass or fail by machine.
+CLEAN_WORKDIR = Path(tempfile.mkdtemp(prefix="resolve-agent-model-"))
 
 sys.path.insert(0, str(HERE))
 import model_taxonomy  # noqa: E402
@@ -90,12 +93,12 @@ class RealAgentsBackCompat(unittest.TestCase):
     def test_resolved_equals_frontmatter_model(self):
         for agent, expected in self.EXPECT.items():
             with self.subTest(agent=agent):
-                cp = run(agent, "--workdir", str(HERE.parent), "--plain")
+                cp = run(agent, "--workdir", str(CLEAN_WORKDIR), "--plain")
                 self.assertEqual(cp.returncode, 0, cp.stderr)
                 self.assertEqual(cp.stdout.strip(), expected)
 
     def test_envelope_keys(self):
-        cp = run("implementer", "--workdir", str(HERE.parent), "--json")
+        cp = run("implementer", "--workdir", str(CLEAN_WORKDIR), "--json")
         env = json.loads(cp.stdout)
         for key in ("agent", "segment", "tier", "model", "source", "resolution_path"):
             self.assertIn(key, env)
@@ -166,12 +169,12 @@ class OpenAIAgentApprovals(unittest.TestCase):
 
 class InheritAgent(unittest.TestCase):
     def test_root_cause_investigator_is_inherit(self):
-        cp = run("root-cause-investigator", "--workdir", str(HERE.parent), "--plain")
+        cp = run("root-cause-investigator", "--workdir", str(CLEAN_WORKDIR), "--plain")
         self.assertEqual(cp.returncode, 0, cp.stderr)
         self.assertEqual(cp.stdout.strip(), "inherit")
 
     def test_inherit_envelope_source(self):
-        env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
+        env = ram.resolve(agent="root-cause-investigator", workdir=CLEAN_WORKDIR)
         self.assertEqual(env["model"], "inherit")
         self.assertEqual(env["source"], "inherit")
 
@@ -338,7 +341,7 @@ class FallbackChain(unittest.TestCase):
             self.assertEqual(env["source"], "tier-default-fallback")
 
     def test_missing_agent_file(self):
-        cp = run("does-not-exist", "--workdir", str(HERE.parent), "--plain")
+        cp = run("does-not-exist", "--workdir", str(CLEAN_WORKDIR), "--plain")
         self.assertEqual(cp.returncode, 1)
 
 
@@ -347,17 +350,17 @@ class PromptingProfileEnvelope(unittest.TestCase):
 
     def test_role_resolved_agent_carries_its_tier_profile(self):
         # advisor is tier: frontier (legacy) -> normalizes to T1.
-        env = ram.resolve(agent="advisor", workdir=HERE.parent, host_providers={"anthropic"})
+        env = ram.resolve(agent="advisor", workdir=CLEAN_WORKDIR, host_providers={"anthropic"})
         self.assertEqual(env["source"], "role-preferred")
         self.assertEqual(env["prompting_profile"], model_taxonomy.prompting_profile(env["tier"]))
         self.assertIsNotNone(env["prompting_profile"])
 
     def test_implementer_exposes_host_specific_preferences_and_effort(self):
         anthropic = ram.resolve(
-            agent="implementer", workdir=HERE.parent, host_providers={"anthropic"}
+            agent="implementer", workdir=CLEAN_WORKDIR, host_providers={"anthropic"}
         )
         openai = ram.resolve(
-            agent="implementer", workdir=HERE.parent, host_providers={"openai"}
+            agent="implementer", workdir=CLEAN_WORKDIR, host_providers={"openai"}
         )
         self.assertEqual(anthropic["model"], "sonnet")
         self.assertEqual(anthropic["preferred_models"], ["sonnet"])
@@ -377,7 +380,7 @@ class PromptingProfileEnvelope(unittest.TestCase):
         }
         for agent, (model, effort) in cases.items():
             with self.subTest(agent=agent):
-                env = ram.resolve(agent=agent, workdir=HERE.parent, host_providers={"openai"})
+                env = ram.resolve(agent=agent, workdir=CLEAN_WORKDIR, host_providers={"openai"})
                 self.assertEqual(env["model"], model)
                 self.assertEqual(env["preferred_effort"], effort)
                 self.assertEqual(env["effort_guidance"]["preferred"], effort)
@@ -391,13 +394,13 @@ class PromptingProfileEnvelope(unittest.TestCase):
         }
         for agent, (model, effort, supported) in cases.items():
             with self.subTest(agent=agent):
-                env = ram.resolve(agent=agent, workdir=HERE.parent, host_providers={"anthropic"})
+                env = ram.resolve(agent=agent, workdir=CLEAN_WORKDIR, host_providers={"anthropic"})
                 self.assertEqual(env["model"], model)
                 self.assertEqual(env["preferred_effort"], effort)
                 self.assertEqual(env["effort_guidance"]["supported"], supported)
 
     def test_inherit_agent_carries_no_profile(self):
-        env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
+        env = ram.resolve(agent="root-cause-investigator", workdir=CLEAN_WORKDIR)
         self.assertEqual(env["source"], "inherit")
         self.assertIsNone(env["prompting_profile"])
 
@@ -431,7 +434,7 @@ class EnvelopeRegression(unittest.TestCase):
     OLD_KEYS = {"agent", "segment", "tier", "model", "source", "resolution_path"}
 
     def test_old_keys_are_a_subset_of_new_envelope(self):
-        env = ram.resolve(agent="implementer", workdir=HERE.parent, host_providers={"anthropic"})
+        env = ram.resolve(agent="implementer", workdir=CLEAN_WORKDIR, host_providers={"anthropic"})
         self.assertTrue(self.OLD_KEYS.issubset(env.keys()))
         self.assertIn("prompting_profile", env)
         self.assertIn("preferred_models", env)
@@ -440,18 +443,18 @@ class EnvelopeRegression(unittest.TestCase):
         self.assertIn("resolved", env)
 
     def test_plain_output_is_still_only_the_model_id(self):
-        cp = run("implementer", "--workdir", str(HERE.parent), "--plain")
+        cp = run("implementer", "--workdir", str(CLEAN_WORKDIR), "--plain")
         self.assertEqual(cp.returncode, 0, cp.stderr)
         self.assertEqual(cp.stdout, "sonnet\n")
 
     def test_prompting_profile_present_at_all_five_return_sites(self):
         # role-preferred (real agent, role resolves normally).
-        role_env = ram.resolve(agent="implementer", workdir=HERE.parent, host_providers={"anthropic"})
+        role_env = ram.resolve(agent="implementer", workdir=CLEAN_WORKDIR, host_providers={"anthropic"})
         self.assertEqual(role_env["source"], "role-preferred")
         self.assertIn("prompting_profile", role_env)
 
         # inherit.
-        inherit_env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
+        inherit_env = ram.resolve(agent="root-cause-investigator", workdir=CLEAN_WORKDIR)
         self.assertEqual(inherit_env["source"], "inherit")
         self.assertIn("prompting_profile", inherit_env)
         self.assertIsNone(inherit_env["prompting_profile"])
