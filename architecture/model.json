@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9dde473f6ea54da4eb94191edbf4a4252d5c585089d4ab18e838c7f8d469e5b8"
+    "content_sha256": "cb40de5369ac5423a87bd821c705e28239c61bd2d6c203820e0ca3e777244420"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1374,6 +1374,7 @@
       "scripts/hook_payload.py": "Normalize file changes from Claude, Codex and the generic JSON hook contract.\"\"\"",
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
+      "scripts/hooks/pre_bash_fastpath.py": "In-process runner for pre_bash_dispatch.sh's always-on Python gates.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
       "scripts/hooks/run_registration_gate.py": "run_registration_gate.py — warn, at commit time, that this run was never registered.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
