@@ -340,10 +340,24 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
     def over_time() -> bool:
         return deadline is not None and time.monotonic() > deadline
 
+    def foreign_index(rel: str) -> bool:
+        """True when `rel` lies inside a nested checkout (an embedded clone or a
+        submodule path) whose tracked files this worktree's index cannot see."""
+        parts = rel.split("/")
+        for i in range(1, len(parts)):
+            prefix = "/".join(parts[:i])
+            if prefix in subset or os.path.lexists(wt / prefix / ".git"):
+                return True
+        return rel in subset
+
     def cache_root(directory: Path) -> bool:
         # A folder holding tracked content is source, whatever tag or layout
-        # it carries; its untracked files are new work, never cache.
+        # it carries; its untracked files are new work, never cache. Inside a
+        # nested checkout tracked-ness is unknown, so only name-and-place
+        # roots count there.
         rel = directory.relative_to(wt).as_posix()
+        if foreign_index(rel):
+            return is_named_cache_root(directory)
         return rel.casefold() not in tracked_dirs and is_cache_root(directory)
 
     def scan_cache(root: Path, rel_root: str) -> None:

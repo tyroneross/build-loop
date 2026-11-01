@@ -161,6 +161,24 @@ class CacheEvidence(Base):
         self.assertIn("App/NewView.swift", self.paths(receipt))
         self.assertNotIn("App/", receipt["caches_listed_not_archived"])
 
+    def test_tagged_folder_tracked_by_embedded_clone_is_archived(self) -> None:
+        # Re-audit f1: vendor/lib is its own repo (not a submodule); its
+        # tracked cache/ carries a committed tag. The outer index cannot see it.
+        inner = self.wt / "vendor" / "lib"
+        (inner / "cache").mkdir(parents=True)
+        git(inner, "init", "-q", "-b", "main")
+        git(inner, "config", "user.email", "t@example.com")
+        git(inner, "config", "user.name", "Test")
+        (inner / "cache" / "CACHEDIR.TAG").write_text(SIGNATURE)
+        (inner / "cache" / "keep.txt").write_text("v1\n")
+        git_add_commit(inner, "cache")
+        (inner / "cache" / "keep.txt").write_text("v2 edit\n")
+        (inner / "cache" / "notes.md").write_text("new work\n")
+        receipt = wa.archive(self.wt)
+        self.assertIn("vendor/lib/cache/keep.txt", self.paths(receipt))
+        self.assertIn("vendor/lib/cache/notes.md", self.paths(receipt))
+        self.assertNotIn("vendor/lib/cache/", receipt["caches_listed_not_archived"])
+
     def test_guard_searches_tagged_folders_for_worktrees(self) -> None:
         # Audit F2: a tagged or Xcode-shaped folder can still hold worktrees.
         tagged = self.tmp / "cache-home"
