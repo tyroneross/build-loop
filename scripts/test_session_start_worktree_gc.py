@@ -17,7 +17,8 @@ _HOOK = Path(__file__).resolve().parent.parent / "hooks" / "session-start-worktr
 
 
 def _osenv() -> dict[str, str]:
-    return dict(os.environ)
+    # Hooks export GIT_DIR; inherited, it aims test git calls at the real repo.
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> str:
@@ -44,11 +45,12 @@ def _commit(repo: Path, name: str) -> None:
     _git(repo, "commit", "-m", name, "-q")
 
 
-def _run_hook(repo: Path, act: str | None = None) -> tuple[str, float]:
+def _run_hook(repo: Path, act: str | None = None, extra: dict[str, str] | None = None) -> tuple[str, float]:
     env = {
         **_osenv(),
         "CLAUDE_PROJECT_DIR": str(repo),
         "CLAUDE_PLUGIN_ROOT": str(_HOOK.parent.parent),
+        **(extra or {}),
     }
     if act is not None:
         env["BUILDLOOP_GC_ACT"] = act
@@ -178,3 +180,33 @@ def test_no_candidate_path_stays_under_two_second_budget(tmp_path: Path) -> None
     assert elapsed < 2.0
     assert "candidates=0" in report
     assert list((root / ".build-loop" / "worktree-gc").glob("*.json"))
+
+
+def test_report_lists_merged_worktree_outside_build_loop_dir(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _commit(root, "base")
+    (root / ".build-loop").mkdir()
+    (root / ".build-loop" / "state.json").write_text(json.dumps({"execution": {}, "runs": []}))
+    wt = tmp_path / "elsewhere" / "feat"
+    _git(root, "worktree", "add", "-q", "-b", "feat", str(wt), "main")
+    _commit(wt, "feature")
+    _git(root, "merge", "-q", "--ff-only", "feat")
+    old = time.time() - 3 * 3600
+    for p in (wt, root / ".git" / "worktrees" / "feat" / "HEAD", root / ".git" / "worktrees" / "feat" / "index",
+              root / ".git" / "worktrees" / "feat" / "logs" / "HEAD"):
+        os.utime(p, (old, old))
+
+    # Real lsof can miss the sweep budget on a loaded host (that path reports
+    # "unchecked"); a stub keeps this test about the listing.
+    stub = tmp_path / "lsof-stub"
+    stub.write_text("#!/bin/sh\nprintf 'p1\\nfcwd\\nn/\\n'\n")
+    stub.chmod(0o755)
+    report, _ = _run_hook(root, extra={"BUILD_LOOP_SWEEP_LSOF": str(stub)})
+
+    assert "## Merged worktrees (any location)" in report
+    assert "Ready to remove" in report
+    assert str(wt.resolve()) in report
+    assert wt.exists()
+    assert _git(root, "show-ref", "--verify", "refs/heads/feat", check=False).strip()

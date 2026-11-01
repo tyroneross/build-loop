@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1b335d1d4a2275c7d01574d77c88ba52e574b2194d9aa1992f937f0126fc05c2"
+    "content_sha256": "b3109bf441d57d731ccf6ff52c89914fcb42bb0210d93d3c91cb6632ed836fa8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1448,6 +1448,7 @@
       "scripts/memory_usability_eval.py": "Measure whether build-loop-memory is usable by a cold agent.",
       "scripts/memory_writer.py": "Canonical writer for build-loop-memory files with provenance frontmatter.",
       "scripts/merge_risk.py": "Merge-risk scoring that grades the BASE, not the test result.",
+      "scripts/merged_worktree_sweep.py": "merged_worktree_sweep.py — archive merged linked worktrees, then free them.",
       "scripts/mermaid_render.py": "Render mermaid diagrams from a markdown or .mmd file for visual QA.",
       "scripts/methodology_drift_lint.py": "Methodology drift lint — single-source guard for the four methodology docs.",
       "scripts/metric_runner.py": "Extract the last meaningful numeric value from command output.",

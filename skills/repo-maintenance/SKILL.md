@@ -117,6 +117,7 @@ the next commit.
 3. Run the narrow verifier during implementation and the canonical verifier on the final integration tip.
 4. Regenerate bundled outputs only from canonical source; verify code or artifact parity afterward.
 5. Collapse completed work back to one protected local `main`; remove temporary worktrees and branches only after ancestry or patch-equivalence proof, and remove a worktree only after `scripts/worktree_archive.py --path <wt>` has archived its ignored and untracked files (safety-protocol §7b; a PreToolUse guard enforces it).
+6. After merging a branch into the default branch, run `python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/merged_worktree_sweep.py" --repo <repo> --act` without asking (owner standing rule, 2026-11-01). It saves each merged worktree's tracked changes as a verified patch, copies its `.build-loop` records into the primary checkout, archives it, then removes it and `git branch -d`s its branch; unmerged, locked, busy and fresh worktrees are left alone. Report the archive and patch paths and the freed space it prints.
 
 ## Close completed local work
 
@@ -186,7 +187,7 @@ Verdicts, in priority order:
 
 Observed 2026-08-07: branch `bl/run-938939` passed `cargo build`, `cargo test`, and a Python↔Rust parity suite 5288/5288 — at a base of 2026-07-30, while `main` had since changed those same files twice. A scorer reading "tests pass" as low-risk would have auto-merged it. The rebase produced 5 conflict hunks, and the branch side did not compile against `main` (`E0609`, `E0599`).
 
-Clean in dependency order: auxiliary worktrees, contained branches, patch-equivalent branches with recovery proof, archived stashes, stale worktree metadata, then authorized generated artifacts. Never use `git reset --hard` or force-delete unique state as cleanup.
+Clean in dependency order: auxiliary worktrees (merged ones through `merged_worktree_sweep.py --act`, step 6 above), contained branches, patch-equivalent branches with recovery proof, archived stashes, stale worktree metadata, then authorized generated artifacts. Never use `git reset --hard` or force-delete unique state as cleanup.
 
 ## Report distinct truths
 

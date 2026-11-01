@@ -23,6 +23,7 @@ mkdir -p "$(dirname "$REPORT")" "$REPORT_DIR"
 HOOK_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HOOK_DIR/.." 2>/dev/null && pwd)}"
 REAPER="$PLUGIN_ROOT/scripts/worktree_reaper/__main__.py"
+SWEEP="$PLUGIN_ROOT/scripts/merged_worktree_sweep.py"
 _py=""
 if [ -f "$HOOK_DIR/_resolve_python.sh" ]; then
     # shellcheck source=hooks/_resolve_python.sh
@@ -33,6 +34,20 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 tmp="${REPORT}.tmp.$$"
 json_tmp="${REPORT_DIR}/${stamp}-$$.json"
 err_tmp="${REPORT_DIR}/${stamp}-$$.stderr"
+sweep_tmp="${REPORT_DIR}/${stamp}-$$.sweep.txt"
+
+# Merged-worktree sweep, read-only (--dry-run), in parallel with the reaper.
+# Its own budget sits under the hook deadline; lsof that cannot finish in it
+# reports worktrees as "unchecked" instead of slowing session start.
+sweep_pid=""
+if [ -n "$_py" ] && [ -f "$SWEEP" ]; then
+    "$_py" "$SWEEP" --repo "$PWD" --dry-run --no-sizes \
+        --budget-s "${BUILD_LOOP_MERGED_SWEEP_BUDGET_S:-0.9}" --max-worktrees 40 \
+        >"$sweep_tmp" 2>&1 &
+    sweep_pid=$!
+else
+    printf '%s\n' "merged-worktree sweep unavailable (python or script missing)" >"$sweep_tmp"
+fi
 
 if [ -n "$_py" ] && [ -f "$REAPER" ]; then
     "$_py" "$REAPER" --workdir "$PWD" --dry-run --json >"$json_tmp" 2>"$err_tmp"
@@ -42,6 +57,8 @@ else
     : >"$json_tmp"
     printf '%s\n' "worktree reporter unavailable (python or reaper missing)" >"$err_tmp"
 fi
+
+[ -n "$sweep_pid" ] && wait "$sweep_pid" 2>/dev/null
 
 {
     printf '# Worktree report — %s\n\n' "$(date -u +%FT%TZ)"
@@ -55,8 +72,11 @@ fi
     printf '\n## JSON\n\n```json\n'
     cat "$json_tmp"
     printf '\n```\n'
+    printf '\n## Merged worktrees (any location)\n\n'
+    cat "$sweep_tmp"
+    printf '\nArchive + free them: python3 %s --repo %s --act\n' "$SWEEP" "$PWD"
 } >"$tmp" 2>/dev/null
 
 mv "$tmp" "$REPORT" 2>/dev/null || true
-rm -f "$err_tmp"
+rm -f "$err_tmp" "$sweep_tmp"
 exit 0
