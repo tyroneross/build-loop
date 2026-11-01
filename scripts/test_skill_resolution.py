@@ -30,6 +30,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -189,6 +190,30 @@ class StrictExitCodeTests(unittest.TestCase):
     def test_default_exits_0(self) -> None:
         r = run_scanner()
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class LocalReferenceTargetTests(unittest.TestCase):
+    """A skill must load its local references after relocation into a plugin."""
+
+    @staticmethod
+    def missing_targets(entry: Path) -> list[str]:
+        targets = re.findall(r"\]\((references/[^)#]+)(?:#[^)]*)?\)", entry.read_text())
+        return [target for target in targets if not (entry.parent / target).is_file()]
+
+    def test_canonical_entry_references_exist(self):
+        entry = SKILLS_DIR / "build-loop" / "SKILL.md"
+        self.assertEqual(self.missing_targets(entry), [])
+
+    def test_relocated_entry_detects_omitted_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root / "SKILL.md"
+            entry.write_text("Read [collaboration](references/tool-collaboration.md).")
+            self.assertEqual(self.missing_targets(entry), ["references/tool-collaboration.md"])
+            references = root / "references"
+            references.mkdir()
+            (references / "tool-collaboration.md").write_text("# Collaboration")
+            self.assertEqual(self.missing_targets(entry), [])
 
 
 if __name__ == "__main__":

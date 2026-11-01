@@ -52,6 +52,15 @@ code comparison does not require external research merely because it says
 still receive evidence checks. Do not start a background reconciler from these
 requests.
 
+### Collaboration with specialist tools
+
+When Architect, Code Audit or Rally participates, or redundant workflows/tasks are
+in scope, read [tool collaboration](references/tool-collaboration.md). Use primary
+role ownership with useful overlap, one owner per deliverable and shared evidence.
+Keep the existing plan, budget and acceptance criteria; do not require every tool
+or restart the loop at each handoff. Scoped authorized Code Audit repairs remain
+valid. Optional tools do not become prerequisites.
+
 ### Parallelism config
 
 Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` previews capacity and live backpressure. Before concurrent dispatch, use `reserve-fanout` per `skills/build-loop/references/codex-subagents.md`; a preview alone reserves nothing. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 150. Default project capacity remains 8.
