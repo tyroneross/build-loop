@@ -306,3 +306,13 @@ def test_act_does_not_prune_other_worktrees_admin_dirs(repo: Path, env: dict[str
     r = run(repo, mode="act")
     assert r["removed"], r
     assert admin.is_dir(), "act must not run a repo-wide git worktree prune"
+
+
+def test_lock_taken_after_classification_blocks_removal(repo: Path, env: dict[str, str]) -> None:
+    """`git worktree remove --force` removes a locked worktree, so remove() re-checks."""
+    wt = add_worktree(env, repo, "feat", merge=True)
+    head = git(env, wt, "rev-parse", "HEAD").stdout.strip()
+    git(env, repo, "worktree", "lock", str(wt))
+    out = sweep_mod.remove(wt, repo, "feat", expected_head=head, bases=["main"], idle_s=0)
+    assert out["removed"] is False and "locked" in out["error"]
+    assert wt.exists()

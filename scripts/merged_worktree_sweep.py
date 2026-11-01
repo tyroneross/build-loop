@@ -353,6 +353,9 @@ def recheck(wt: Path, primary: Path, expected_head: str, bases: list[str], idle_
     """Re-verify eligibility immediately before removal; return why not, or None.
     Classification ran earlier, and a commit, an edit or a new process may have
     arrived since then."""
+    admin = _admin_dir(wt)
+    if admin is not None and (admin / "locked").exists():
+        return "worktree was locked since classification"
     head = _git(wt, "rev-parse", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != expected_head:
         return "HEAD moved since classification"
