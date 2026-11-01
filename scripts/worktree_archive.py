@@ -13,12 +13,21 @@ serving — was deleted with no copy. The guard
 before any removal.
 
 Contract:
-  - Everything a removal would delete is archived EXCEPT regenerable cache roots
-    recognised by name AND place (`node_modules/` beside a package.json,
-    `target/` beside a Cargo.toml, a venv holding pyvenv.cfg, `__pycache__/`,
-    ...; see CACHE_ROOTS). A directory merely NAMED like a cache (`build/`,
-    `vendor/`, `dist/`) is archived. Credential/database/patch-shaped files
-    found inside a cache root are archived too.
+  - Everything a removal would delete is archived EXCEPT regenerable cache roots,
+    recognised by evidence, never by name alone:
+      * name AND place (`node_modules/` beside a package.json, `target/` beside
+        a Cargo.toml, a venv holding pyvenv.cfg, `__pycache__/`, ...; see
+        CACHE_ROOTS);
+      * any directory holding a valid CACHEDIR.TAG — the file must begin with
+        the exact signature line of https://bford.info/cachedir/ (cargo writes
+        one into every target dir, whatever the dir is called);
+      * Xcode's derived-data layout: info.plist plus a Build/ directory plus
+        ModuleCache.noindex/ or Build/Intermediates.noindex/ (`xcodebuild
+        -derivedDataPath build-x`).
+    A directory merely NAMED like a cache (`build/`, `vendor/`, `dist/`) with no
+    such evidence is archived, as is an empty or wrong-signature CACHEDIR.TAG.
+    Credential/database/patch-shaped files found inside a cache root are
+    archived too.
   - The index survives: `git diff --cached --binary` and `git diff --binary`
     go into the tar beside the files, so staged and unstaged states restore.
   - An incomplete inventory issues NO receipt: git warnings, unreadable
@@ -100,6 +109,8 @@ CACHE_ROOTS: dict[str, tuple[str, ...] | None] = {
     "DerivedData": None,
 }
 CACHE_FILES = ("*.pyc", "*.pyo", ".DS_Store")
+# https://bford.info/cachedir/: a valid tag file begins with exactly these bytes.
+CACHEDIR_TAG_SIGNATURE = b"Signature: 8a477f597d28d172789f06886806bc55"
 
 
 # ── receipts (shared with the guard) ─────────────────────────────────────────
@@ -185,8 +196,31 @@ def linked_worktree_admin(path: str | os.PathLike[str]) -> Path | None:
 
 # ── snapshot: what removal would delete ──────────────────────────────────────
 
-def is_cache_root(directory: Path) -> bool:
-    if directory.name not in CACHE_ROOTS or directory.is_symlink():
+def has_cachedir_tag(directory: Path) -> bool:
+    """True when `directory` holds a CACHEDIR.TAG starting with the spec signature."""
+    tag = directory / "CACHEDIR.TAG"
+    try:
+        if tag.is_symlink() or not tag.is_file():
+            return False
+        with tag.open("rb") as fh:
+            return fh.read(len(CACHEDIR_TAG_SIGNATURE)) == CACHEDIR_TAG_SIGNATURE
+    except OSError:
+        return False
+
+
+def is_xcode_derived_data(directory: Path) -> bool:
+    """Xcode derived-data layout: info.plist + Build/ + a .noindex module cache."""
+    try:
+        return ((directory / "info.plist").is_file()
+                and (directory / "Build").is_dir()
+                and ((directory / "ModuleCache.noindex").is_dir()
+                     or (directory / "Build" / "Intermediates.noindex").is_dir()))
+    except OSError:
+        return False
+
+
+def _named_cache_root(directory: Path) -> bool:
+    if directory.name not in CACHE_ROOTS:
         return False
     markers = CACHE_ROOTS[directory.name]
     if markers is None:
@@ -196,6 +230,15 @@ def is_cache_root(directory: Path) -> bool:
         if target.exists():
             return True
     return False
+
+
+def is_cache_root(directory: Path) -> bool:
+    # A checkout (worktree or submodule root, `.git` present) is never a cache,
+    # whatever tag or layout it carries.
+    if directory.is_symlink() or os.path.lexists(directory / ".git"):
+        return False
+    return (_named_cache_root(directory) or has_cachedir_tag(directory)
+            or is_xcode_derived_data(directory))
 
 
 def is_cache_file(name: str) -> bool:
@@ -327,12 +370,34 @@ def snapshot(wt: Path, *, scan_caches: bool, include_caches: bool = False,
         if errors:
             snap.incomplete.append(f"could not read {errors[0].filename} ({errors[0].strerror})")
 
+    scanned_roots: set[str] = set()
+
+    def cache_ancestor(rel: str) -> str | None:
+        """Outermost cache root strictly above `rel`. git splits a directory into
+        per-child entries when some children are ignored (a `build/` pattern
+        matches `Build/` on a case-insensitive disk), so a cache root can hold
+        entries without ever being reported as one."""
+        parts = rel.rstrip("/").split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:i])
+            if prefix in subset:
+                return None
+            if is_cache_root(wt / prefix):
+                return prefix
+        return None
+
     for code, rel in entries:
         if rel.rstrip("/") in subset:
             continue  # submodule: its own contents are snapshotted below
         if code == "??" or code == "!!":
             kind = "untracked" if code == "??" else "ignored"
             path = wt / rel.rstrip("/")
+            root = None if include_caches else cache_ancestor(rel)
+            if root is not None:
+                if root not in scanned_roots:
+                    scanned_roots.add(root)
+                    scan_cache(wt / root, root)
+                continue
             if not rel.endswith("/") and is_cache_file(path.name) and not include_caches:
                 snap.caches.append(rel)
                 continue
