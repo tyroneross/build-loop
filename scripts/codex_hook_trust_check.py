@@ -70,8 +70,8 @@ def plugin_identity(hooks_json: Path) -> str | None:
     for i in range(len(parts) - 7):
         if parts[i:i + 3] == (".codex", "plugins", "cache"):
             tail = parts[i + 3:]
-            if len(tail) == 5 and tail[-2:] == ("hooks", "hooks.json"):
-                return f"{tail[1]}@{tail[0]}:hooks/hooks.json"
+            if len(tail) == 5 and tail[-2] == "hooks" and tail[-1].endswith(".json"):
+                return f"{tail[1]}@{tail[0]}:hooks/{tail[-1]}"
     return None
 
 
@@ -287,6 +287,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     hooks_json = args.hooks_json or (args.workdir / ".codex" / "hooks.json")
+    if not args.hooks_json and not hooks_json.is_file():
+        root = Path(__file__).resolve().parent.parent
+        manifest = root / ".codex-plugin/plugin.json"
+        try:
+            selected = json.loads(manifest.read_text()).get("hooks", "hooks/hooks.json")
+            if isinstance(selected, str):
+                candidate = (root / selected).resolve()
+                if candidate.is_relative_to(root):
+                    hooks_json = candidate
+        except (OSError, ValueError):
+            pass
     if not Path(hooks_json).is_file():
         if args.json:
             print(json.dumps({"hooks_registered": 0, "ok": True, "reason": "no .codex/hooks.json"}))

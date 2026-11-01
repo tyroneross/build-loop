@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -93,11 +94,15 @@ def _content_index_writethrough(target: Path) -> None:
         pass
 
 
-def atomic_write_bytes(target: Path, data: bytes) -> None:
+def atomic_write_bytes(target: Path, data: bytes, *, mode: int | None = None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
+    if mode is None and target.exists():
+        mode = stat.S_IMODE(target.stat().st_mode)
     fd, tmp = tempfile.mkstemp(prefix=target.name + ".tmp.", dir=str(target.parent))
     try:
         with os.fdopen(fd, "wb") as f:
+            if mode is not None:
+                os.fchmod(f.fileno(), mode)
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
@@ -109,3 +114,11 @@ def atomic_write_bytes(target: Path, data: bytes) -> None:
             pass
         raise
     _content_index_writethrough(target)
+
+
+def atomic_write_text(target: Path, text: str, encoding: str = "utf-8", *, executable: bool = False) -> None:
+    """Publish complete text; executable bits are set before the rename."""
+    mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644
+    if executable:
+        mode |= 0o111
+    atomic_write_bytes(target, text.encode(encoding), mode=mode)

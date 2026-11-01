@@ -791,8 +791,10 @@ def read_event_stdin(stream=None) -> dict[str, str]:
     def _s(value) -> str:
         return value if isinstance(value, str) else ""
 
+    from hook_payload import edited_paths
+    paths = edited_paths(data)
     return {
-        "file_path": _s(ti.get("file_path") or ti.get("path") or ti.get("filename")),
+        "file_path": paths[0] if paths else _s(ti.get("filename")),
         "command": _s(ti.get("command")),
         "session_id": _s(data.get("session_id")),
     }

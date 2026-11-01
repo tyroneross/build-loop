@@ -78,6 +78,8 @@ HOOKS_RELPATH = ("hooks", "git")
 # Path helpers
 # ---------------------------------------------------------------------------
 
+from atomic_io import LockedFile, atomic_write_text
+
 
 def _resolve_repo(arg_repo: str | None) -> Path:
     if arg_repo:
@@ -171,46 +173,47 @@ def _install_hook(repo: Path, name: str, *, force: bool) -> dict[str, Any]:
     hooks_dir = _git_hooks_dir(repo)
     hooks_dir.mkdir(parents=True, exist_ok=True)
     dst = hooks_dir / name
+    with LockedFile(dst, timeout_s=2):
 
-    body = src.read_text(encoding="utf-8")
-    # Ensure the marker is in the file body (helps `_is_buildloop_hook` work
-    # against the committed source unchanged).  We embed it as a comment line
-    # AFTER the shebang so it survives editing.
-    if HOOK_MARKER not in body:
-        lines = body.splitlines(keepends=True)
-        if lines and lines[0].startswith("#!"):
-            lines.insert(1, f"{HOOK_MARKER}\n")
-        else:
-            lines.insert(0, f"{HOOK_MARKER}\n")
-        body = "".join(lines)
+        body = src.read_text(encoding="utf-8")
+        # Ensure the marker is in the file body (helps `_is_buildloop_hook` work
+        # against the committed source unchanged).  We embed it as a comment line
+        # AFTER the shebang so it survives editing.
+        if HOOK_MARKER not in body:
+            lines = body.splitlines(keepends=True)
+            if lines and lines[0].startswith("#!"):
+                lines.insert(1, f"{HOOK_MARKER}\n")
+            else:
+                lines.insert(0, f"{HOOK_MARKER}\n")
+            body = "".join(lines)
 
-    if dst.exists() and not _is_buildloop_hook(dst):
-        if not force:
-            return {
-                "name": name,
-                "installed": False,
-                "skipped": True,
-                "reason": (
-                    f"refusing to overwrite foreign {name} at {dst} — "
-                    "rerun with --force to replace"
-                ),
-                "path": str(dst),
-            }
-        # Backup the foreign hook before overwriting.
-        backup = dst.with_suffix(dst.suffix + ".pre-buildloop.bak")
-        if not backup.exists():
-            shutil.copy2(dst, backup)
+        if dst.exists() and not _is_buildloop_hook(dst):
+            if not force:
+                return {
+                    "name": name,
+                    "installed": False,
+                    "skipped": True,
+                    "reason": (
+                        f"refusing to overwrite foreign {name} at {dst} — "
+                        "rerun with --force to replace"
+                    ),
+                    "path": str(dst),
+                }
+            # Backup the foreign hook before overwriting.
+            backup = dst.with_suffix(dst.suffix + ".pre-buildloop.bak")
+            if not backup.exists():
+                shutil.copy2(dst, backup)
 
-    dst.write_text(body, encoding="utf-8")
-    # chmod +x — preserve existing read/write bits if the umask was tight.
-    current = dst.stat().st_mode
-    dst.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return {
-        "name": name,
-        "installed": True,
-        "skipped": False,
-        "path": str(dst),
-    }
+        atomic_write_text(dst, body, encoding="utf-8", executable=True)
+        # chmod +x — preserve existing read/write bits if the umask was tight.
+        current = dst.stat().st_mode
+        dst.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return {
+            "name": name,
+            "installed": True,
+            "skipped": False,
+            "path": str(dst),
+        }
 
 
 def _uninstall_hook(repo: Path, name: str) -> dict[str, Any]:

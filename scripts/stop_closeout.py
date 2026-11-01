@@ -963,11 +963,8 @@ def main(argv: list[str] | None = None) -> int:
         out = {}
 
     print(json.dumps(out) if out else "{}")
-    # Archive surfaced markers only AFTER the reminder has been emitted.
-    try:
-        _archive_markers(workdir, archive_after_emit)
-    except BaseException:
-        pass
+    # Printing is not a host acknowledgment. Keep markers until explicit closeout
+    # resolves them; cancellation or output rejection must not consume recovery.
     return 0
 
 

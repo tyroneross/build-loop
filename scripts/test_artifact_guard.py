@@ -256,7 +256,7 @@ def test_hook_blocks_undeclared_import_and_advisory_bypasses(tmp_path):
     import os
     _git_init(tmp_path)
     (tmp_path / "scripts").mkdir()
-    for s in ("artifact_guard.py", "import_manifest_lint.py"):
+    for s in ("artifact_guard.py", "import_manifest_lint.py", "atomic_io.py"):
         (tmp_path / "scripts" / s).write_text((_REPO / "scripts" / s).read_text())
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname="t"\ndependencies=["pathspec"]\n')

@@ -47,57 +47,40 @@ STDIN_JSON=$(cat 2>/dev/null)
 #   ""          → bail (doc-only, untracked, unparseable).
 # The manifest check runs BEFORE the source-extension allowlist so a
 # package.json / requirements.txt edit is no longer excluded.
-REL_PATH=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
+REL_PATHS=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" HOOK_SCRIPTS="$SCRIPT_DIR/../scripts" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from pathlib import Path
-ALLOWED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"}
-MANIFESTS = {
-    "package.json", "package-lock.json", "pnpm-lock.yaml", "requirements.txt",
-    "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "go.mod", "Gemfile",
-}
+sys.path.insert(0, os.environ["HOOK_SCRIPTS"])
+from hook_payload import edited_paths
 try:
     payload = json.loads(os.environ["STDIN_JSON"])
-except (KeyError, json.JSONDecodeError):
-    sys.exit(0)
-ti = payload.get("tool_input") or {}
-fp = ti.get("file_path") or ti.get("path") or ti.get("filename")
-if not fp:
-    sys.exit(0)
-# Dependency-manifest unblock (OQ3) — runs before the extension allowlist.
-if Path(fp).name in MANIFESTS:
-    print("MANIFEST")
-    sys.exit(0)
-# Extension allowlist gate — bail on .md/.txt/.json/etc. before any I/O.
-ext = Path(fp).suffix.lower()
-if ext not in ALLOWED_EXTS:
-    sys.exit(0)
+    file_map = json.loads(Path(os.environ["FILE_MAP"]).read_text())
+except (ValueError, OSError):
+    raise SystemExit(0)
 workdir = Path(os.environ["WORKDIR"]).resolve()
-abs_path = (workdir / fp).resolve() if not os.path.isabs(fp) else Path(fp).resolve()
-try:
-    rel = abs_path.relative_to(workdir).as_posix()
-except ValueError:
-    sys.exit(0)
-try:
-    file_map = json.loads(Path(os.environ["FILE_MAP"]).read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
-    sys.exit(0)
-files = file_map.get("files") or {}
-if rel in files:
-    print(rel)
+for path in edited_paths(payload):
+    absolute = (workdir / path).resolve()
+    try:
+        rel = absolute.relative_to(workdir).as_posix()
+    except ValueError:
+        continue
+    if absolute.name in {"package.json", "package-lock.json", "pnpm-lock.yaml", "requirements.txt", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "go.mod", "Gemfile"}:
+        print("MANIFEST")
+    elif absolute.suffix.lower() in {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"} and rel in file_map.get("files", {}):
+        print(rel)
 PYEOF
 )
-
-[ -n "$REL_PATH" ] || exit 0
-
-# Dependency-manifest edit: mark enrich-needed and EXIT. The actual enriched
-# scan is deferred to the scout pass (OQ3) — never run inline here.
-if [ "$REL_PATH" = "MANIFEST" ]; then
-  : > "$ARCH_DIR/.enrich-needed" 2>/dev/null || true
-  exit 0
-fi
-
-# Mark stale immediately (cheap, atomic).
-python3 "$FRESHNESS_SCRIPT" --mark-stale --file "$REL_PATH" --workdir "$WORKDIR" >/dev/null 2>&1 || true
+[ -n "$REL_PATHS" ] || exit 0
+NEED_SCAN=0
+while IFS= read -r REL_PATH; do
+    if [ "$REL_PATH" = MANIFEST ]; then
+        : > "$ARCH_DIR/.enrich-needed" 2>/dev/null || true
+    else
+        python3 "$FRESHNESS_SCRIPT" --mark-stale --file "$REL_PATH" --workdir "$WORKDIR" >/dev/null 2>&1 || true
+        NEED_SCAN=1
+    fi
+done <<< "$REL_PATHS"
+[ "$NEED_SCAN" = 1 ] || exit 0
 
 # Fire the background worker. Single-flight handled inside the worker.
 nohup python3 "$WORKER" --workdir "$WORKDIR" </dev/null >/dev/null 2>&1 &

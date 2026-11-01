@@ -19,5 +19,5 @@ if [ ! -t 0 ]; then
     STDIN_JSON="$(head -c 65536 2>/dev/null || true)"
 fi
 
-printf '%s' "$STDIN_JSON" | python3 "$SCRIPT" snapshot --workdir "$W" --emit-context
+printf '%s' "$STDIN_JSON" | python3 "$SCRIPT" snapshot --workdir "$W" --no-exclude --emit-context
 exit 0

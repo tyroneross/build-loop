@@ -251,7 +251,7 @@ def test_legacy_stop_finalize_uses_exact_session_facade():
     text = LEGACY_STOP_HOOK.read_text(encoding="utf-8")
     assert "rally stop claude_code" not in text
     assert "agent_rally.py" in text
-    assert '--tool claude_code' in text
+    assert '--tool "$HOST_TOOL"' in text
     assert '--session-id "$SESSION_ID"' in text
 
 
@@ -285,6 +285,7 @@ print(\"{}\")
     capture = tmp_path / "facade-calls.jsonl"
     env = dict(os.environ)
     env["_BL_TEST_FACADE_CALLS"] = str(capture)
+    env["RALLY_HOST_FAMILY"] = "codex" if "turn_id" in event else "claude_code"
     proc = subprocess.run(
         ["bash", str(hook)],
         input=json.dumps({**event, "cwd": str(workdir)}),
@@ -644,7 +645,7 @@ def test_session_start_surfaces_then_archives_after_emit(tmp_path):
     assert stop_closeout.run_session_start(tmp_path) == ({}, [])
 
 
-def test_session_start_cli_archives_after_emit(tmp_path):
+def test_session_start_cli_retains_until_ack(tmp_path):
     _write_state(tmp_path, _base_state())
     stop_closeout.run_stop(tmp_path, SESSION)
     res = subprocess.run(
@@ -654,7 +655,8 @@ def test_session_start_cli_archives_after_emit(tmp_path):
     assert res.returncode == 0
     payload = json.loads(res.stdout)
     assert "bl-test-001" in payload["hookSpecificOutput"]["additionalContext"]
-    assert (tmp_path / ".build-loop" / "closeout-pending" / "surfaced" / "bl-test-001.md").exists()
+    assert (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
+    assert not (tmp_path / ".build-loop" / "closeout-pending" / "surfaced" / "bl-test-001.md").exists()
 
 
 def test_session_start_no_markers_is_silent(tmp_path):
@@ -1098,3 +1100,11 @@ def test_stop_keeps_missing_compatibility_review_open(tmp_path):
     assert receipt['status'] == 'error'
     assert receipt['stages']['compatibility']['status'] == 'error'
     assert 'closeout_incomplete: true' in (bl / 'closeout-pending' / 'bl-test-001.md').read_text()
+
+
+def test_stop_finalize_codex_uses_codex_session(tmp_path):
+    calls = _run_legacy_stop_hook(tmp_path, {"session_id": "codex-thread", "turn_id": "turn-1"})
+    assert len(calls) == 1
+    args = calls[0]
+    assert args[args.index("--tool") + 1] == "codex"
+    assert args[args.index("--session-id") + 1] == "codex-thread"
