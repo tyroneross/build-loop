@@ -493,10 +493,20 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
     if not text or len(text) > _MAX_BLOCK_CHARS:
         text = (text or "")[:_MAX_BLOCK_CHARS]
     out: list[FindingCandidate] = []
+    # An unattributed tool_result is the output of Read/Grep/Bash/an MCP call, not
+    # an agent's verdict: source code and docs that merely MENTION "injection" or
+    # carry a JSON "severity" field. Measured 2026-11-01: 4,317 of 6,121 open
+    # review proposals were unattributed tool_result prose (raw tool JSON, code
+    # lines), a sampled 24 held no actionable finding, and none of the 6,121 was
+    # ever promoted to the backlog. Severity-less candidates from these blocks are
+    # dropped; severity-tagged ones still route to the backlog exactly as before.
+    unattributed_tool_output = source_kind == "tool_result" and agent == "session"
 
     # Structured JSON payloads (highest precision).
     for value in _iter_json_values(text):
         for sev, title, evidence in _findings_from_json_value(value):
+            if sev is None and unattributed_tool_output:
+                continue
             out.append(FindingCandidate(
                 severity=sev,
                 title=_clean_title(title),
@@ -508,6 +518,8 @@ def _candidates_from_block(text: str, source_kind: str, agent: str) -> list[Find
 
     # Prose findings.
     for sev, title, evidence in _prose_findings_from_text(text):
+        if sev is None and unattributed_tool_output:
+            continue
         out.append(FindingCandidate(
             severity=sev,
             title=title,

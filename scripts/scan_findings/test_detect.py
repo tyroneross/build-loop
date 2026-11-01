@@ -194,3 +194,55 @@ def test_transcript_reads_tool_result_and_attributes_agent(tmp_path: Path):
 
 def test_missing_transcript_is_empty():
     assert detect_findings(transcript_path=Path("/no/such/transcript.jsonl")) == []
+
+
+# --- unattributed tool output (Read/Grep/Bash/MCP) never feeds the review queue --
+
+def _tool_result_transcript(tmp_path: Path, tool_use: dict, result_text: str) -> Path:
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join([
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Reading the file."}, tool_use,
+        ]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "content": [{"type": "text", "text": result_text}]},
+        ]}}),
+    ]), encoding="utf-8")
+    return transcript
+
+
+# Real shapes from the 2026-11-01 queue: a code line read from disk, and an MCP
+# result whose JSON names a docs file about "injection".
+_TOOL_NOISE = "\n".join([
+    "import { safeFetch } from '@/lib/ingestion/prevalidation/ssrf-guard'",
+    '{"chunk_id":"af0a72","exit_code":0,"output":"let docs = try source(\\"docs/agents/injection.md\\")"}',
+    '[{"severity": "info", "message": "designer/emit/init has no connections"}]',
+])
+
+
+def test_unattributed_tool_output_does_not_create_review_candidates(tmp_path: Path):
+    t = _tool_result_transcript(
+        tmp_path, {"type": "tool_use", "name": "Read", "input": {"file_path": "x.ts"}}, _TOOL_NOISE)
+    assert [c for c in detect_findings(transcript_path=t) if c.route == "review"] == []
+
+
+def test_unattributed_tool_output_still_routes_severity_findings_to_backlog(tmp_path: Path):
+    t = _tool_result_transcript(
+        tmp_path, {"type": "tool_use", "name": "Bash", "input": {"command": "audit"}},
+        "HIGH: hardcoded credential in `config/loader.py`")
+    cands = detect_findings(transcript_path=t)
+    assert [c.route for c in cands] == ["backlog"]
+
+
+def test_dispatched_agent_tool_result_still_feeds_review_queue(tmp_path: Path):
+    t = _tool_result_transcript(
+        tmp_path, {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "security-reviewer"}},
+        _TOOL_NOISE)
+    review = [c for c in detect_findings(transcript_path=t) if c.route == "review"]
+    assert review and all(c.agent == "security-reviewer" for c in review)
+
+
+def test_assistant_prose_finding_without_severity_still_routes_to_review():
+    cands = detect_findings(text_blocks=[("I suspect a race condition in the worker pool",
+                                          "assistant_text", "session")])
+    assert [c.route for c in cands] == ["review"]
