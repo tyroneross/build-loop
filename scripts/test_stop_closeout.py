@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -260,6 +261,7 @@ def _run_legacy_stop_hook(
     event: dict,
     *,
     state: dict | None = None,
+    expect_call: bool = True,
 ) -> list[list[str]]:
     """Run the shell hook against a recording facade in an isolated plugin."""
     plugin = tmp_path / "plugin"
@@ -295,6 +297,12 @@ print(\"{}\")
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
+    # The Rally release is detached (Stop must not wait on it): poll for the
+    # recording facade rather than assuming it ran before the hook returned.
+    # Re-entry/skip cases expect NO call, so they wait out a short grace window.
+    deadline = time.monotonic() + (5.0 if expect_call else 0.5)
+    while not capture.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
     if not capture.exists():
         return []
     return [json.loads(line) for line in capture.read_text().splitlines() if line]
@@ -338,6 +346,7 @@ def test_legacy_stop_finalize_reentry_guard_prevents_facade_call(tmp_path):
     calls = _run_legacy_stop_hook(
         tmp_path,
         {"session_id": "event-recursive", "stop_hook_active": True},
+        expect_call=False,
     )
     assert calls == []
 
@@ -1108,3 +1117,33 @@ def test_stop_finalize_codex_uses_codex_session(tmp_path):
     args = calls[0]
     assert args[args.index("--tool") + 1] == "codex"
     assert args[args.index("--session-id") + 1] == "codex-thread"
+
+
+def test_stop_finalize_does_not_wait_for_slow_rally_release(tmp_path):
+    """The hook returns while a 3 s facade is still running, and the release finishes."""
+    plugin = tmp_path / "plugin"
+    (plugin / "scripts" / "hooks").mkdir(parents=True)
+    shutil.copyfile(LEGACY_STOP_HOOK, plugin / "scripts" / "hooks" / "stop_finalize.sh")
+    done = tmp_path / "release-done"
+    (plugin / "scripts" / "agent_rally.py").write_text(
+        "import sys, time, pathlib\n"
+        "time.sleep(3)\n"
+        f"pathlib.Path({str(done)!r}).write_text(' '.join(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    start = time.monotonic()
+    proc = subprocess.run(
+        ["bash", str(plugin / "scripts" / "hooks" / "stop_finalize.sh")],
+        input=json.dumps({"session_id": "slow-1", "cwd": str(repo)}),
+        capture_output=True, text=True, check=False,
+    )
+    elapsed = time.monotonic() - start
+    assert proc.returncode == 0 and proc.stdout == "{}\n"
+    assert elapsed < 2.5, f"hook waited on the release ({elapsed:.1f}s)"
+    assert not done.exists()
+    deadline = time.monotonic() + 10
+    while not done.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert done.exists() and "--session-id slow-1" in done.read_text()

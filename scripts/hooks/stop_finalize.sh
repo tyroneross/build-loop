@@ -31,8 +31,10 @@ emit_empty() {
 INPUT=$(cat)
 export _BL_INPUT="$INPUT"
 
-# Step 1: extract the exact hook session and refuse recursive Stop re-entry.
-read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID CWD <<EOF_VARS
+# Steps 1-3 in ONE interpreter start (was five): parse the event and its host,
+# then read state.json phase + the idempotency check from the event's cwd. Output
+# is one tab-separated line; cwd is last so it may contain spaces.
+read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID HAS_STATE PHASE ALREADY CWD <<EOF_VARS
 $(python3 <<'PY'
 import json, os, sys
 try:
@@ -47,11 +49,30 @@ cwd = d.get('cwd', '') or ''
 # But guard against newlines / tabs anyway by replacing them with spaces.
 def safe(v): return str(v).replace('\t', ' ').replace('\n', ' ')
 host = os.environ.get("RALLY_HOST_FAMILY") or os.environ.get("BUILD_LOOP_RALLY_TOOL") or ("codex" if "turn_id" in d or os.environ.get("CODEX_THREAD_ID") else "claude_code" if os.environ.get("CLAUDE_PROJECT_DIR") else "other")
+has_state, phase, already = 'no', '', 'no'
+if not stop_hook_active and not agent_id:
+    state_file = os.path.join(cwd or '.', '.build-loop', 'state.json')
+    if os.path.isfile(state_file):
+        has_state = 'yes'
+        try:
+            with open(state_file) as f:
+                st = json.load(f)
+            phase = st.get('phase', '')
+            if phase == 'report' and session_id:
+                already = 'yes' if any(
+                    r.get('session_id') == session_id
+                    for r in st.get('runs', []) if isinstance(r, dict)
+                ) else 'no'
+        except Exception:
+            phase, already = '', 'no'
 print(
     f"{safe(host)}\t"
     f"{'true' if stop_hook_active else 'false'}\t"
     f"{safe(agent_id) or '-'}\t"
     f"{safe(session_id) or '-'}\t"
+    f"{has_state}\t"
+    f"{safe(phase) or '-'}\t"
+    f"{already}\t"
     f"{safe(cwd) or '-'}"
 )
 PY
@@ -62,6 +83,7 @@ EOF_VARS
 [ "$STOP_HOOK_ACTIVE" = "-" ] && STOP_HOOK_ACTIVE="false"
 [ "$AGENT_ID" = "-" ] && AGENT_ID=""
 [ "$SESSION_ID" = "-" ] && SESSION_ID=""
+[ "$PHASE" = "-" ] && PHASE=""
 [ "$CWD" = "-" ] && CWD=""
 
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
@@ -75,13 +97,27 @@ WORKDIR="${CWD:-.}"
 # outside Build Loop runs too, and stale Rally claims must not depend on a
 # state.json/report-phase marker. The re-entry guard above remains first so the
 # facade cannot recursively invoke itself.
+#
+# The release prints nothing the hook uses (stdout/stderr were already discarded
+# and failure ignored), so it runs DETACHED: own session via setsid, stdin/out/err
+# on /dev/null, and an `alarm` deadline that survives exec (SIGALRM terminates;
+# nothing is SIGKILLed). Stop no longer waits on the Rally subprocess.
 FACADE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent_rally.py"
 if [ -n "$SESSION_ID" ] && [ -f "$FACADE" ]; then
-    python3 "$FACADE" stop \
-        --workdir "$WORKDIR" \
-        --tool "$HOST_TOOL" \
-        --session-id "$SESSION_ID" \
-        --json >/dev/null 2>&1 || true
+    if command -v perl >/dev/null 2>&1; then
+        ( perl -e 'use POSIX (); POSIX::setsid(); alarm 8; exec @ARGV' \
+            python3 "$FACADE" stop \
+            --workdir "$WORKDIR" \
+            --tool "$HOST_TOOL" \
+            --session-id "$SESSION_ID" \
+            --json </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+    else
+        ( python3 "$FACADE" stop \
+            --workdir "$WORKDIR" \
+            --tool "$HOST_TOOL" \
+            --session-id "$SESSION_ID" \
+            --json </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+    fi
 fi
 
 if [ -n "$AGENT_ID" ]; then
@@ -93,47 +129,16 @@ STATE_FILE="${WORKDIR}/.build-loop/state.json"
 export _BL_STATE_FILE="$STATE_FILE"
 export _BL_SESSION_ID="$SESSION_ID"
 
-# Step 2: check state.json exists and phase == "report"
-if [ ! -f "$STATE_FILE" ]; then
+# Step 2: state.json must exist and phase == "report" (read above)
+if [ "$HAS_STATE" != "yes" ] || [ "$PHASE" != "report" ]; then
     emit_empty
     exit 0
 fi
 
-PHASE=$(python3 <<'PY'
-import json, os
-try:
-    with open(os.environ['_BL_STATE_FILE']) as f:
-        print(json.load(f).get('phase', ''))
-except Exception:
-    print('')
-PY
-) || PHASE=""
-
-if [ "$PHASE" != "report" ]; then
+# Step 3: idempotency — skip if session already recorded (read above)
+if [ -n "$SESSION_ID" ] && [ "$ALREADY" = "yes" ]; then
     emit_empty
     exit 0
-fi
-
-# Step 3: idempotency — skip if session already recorded
-if [ -n "$SESSION_ID" ]; then
-    ALREADY=$(python3 <<'PY'
-import json, os
-try:
-    with open(os.environ['_BL_STATE_FILE']) as f:
-        d = json.load(f)
-    target = os.environ.get('_BL_SESSION_ID', '')
-    runs = d.get('runs', [])
-    found = any(r.get('session_id') == target for r in runs if isinstance(r, dict))
-    print('yes' if found else 'no')
-except Exception:
-    print('no')
-PY
-) || ALREADY="no"
-
-    if [ "$ALREADY" = "yes" ]; then
-        emit_empty
-        exit 0
-    fi
 fi
 
 # Step 4: record an honest run-lifecycle marker.
