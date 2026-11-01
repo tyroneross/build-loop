@@ -108,7 +108,7 @@ class FloorInvariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _write_availability(
                 Path(td), [
-                    "opus", "fable", "gpt-5.6-sol", "gpt-5.6-terra",
+                    "opus", "fable", "gpt-6.1-sol", "gpt-6.1-terra",
                     "gpt-5.5", "gpt-5.4",
                 ]
             )
@@ -128,7 +128,7 @@ class FloorInvariantTests(unittest.TestCase):
                 "--workdir", td,
                 "--tier", "frontier",
                 "--unavailable",
-                "opus,fable,gpt-5.6-sol,gpt-5.6-terra,gpt-5.5,gpt-5.4",
+                "opus,fable,gpt-6.1-sol,gpt-6.1-terra,gpt-5.5,gpt-5.4",
                 "--require",
             )
             self.assertEqual(result.returncode, 1)
@@ -141,7 +141,7 @@ class FloorInvariantTests(unittest.TestCase):
             _write_availability(Path(td), ["opus", "fable"])
             payload = resolve(td, "frontier")
             self.assertEqual(payload["source"], "in-tier-chain")
-            self.assertEqual(payload["model"], "gpt-5.6-sol")
+            self.assertEqual(payload["model"], "gpt-6.1-sol")
 
 
 class FloorClampTests(unittest.TestCase):
@@ -169,12 +169,12 @@ class FloorClampTests(unittest.TestCase):
     # Every frontier registry model — the override path in
     # resolve_with_tier_fallback is only REACHED once the in-tier walk in
     # model_resolver.resolve() is exhausted, so the clamp tests must down them all.
-    ALL_FRONTIER = ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
+    ALL_FRONTIER = ["opus", "fable", "gpt-6.1-sol", "gpt-5.5", "gpt-5.4"]
 
     # The floor tier's live model once opus (its default) is in the down set.
     # These tests run host-neutral (`resolve` defaults to --host-providers any),
     # so the cross-vendor thinking entry is reachable.
-    LIVE_FLOOR_MODEL = "gpt-5.6-terra"
+    LIVE_FLOOR_MODEL = "gpt-6.1-terra"
 
     def test_frontier_override_to_haiku_is_clamped(self) -> None:
         # modelOverrides.frontier=haiku (PATTERN tier, two below floor) + all
@@ -200,15 +200,15 @@ class FloorClampTests(unittest.TestCase):
     def test_frontier_override_to_thinking_model_is_allowed(self) -> None:
         # A frontier override to a THINKING-tier model is permitted (frontier's
         # standing fallback is thinking) — it is honored as `source: config`, not
-        # clamped. gpt-5.6-terra is the probe rather than opus precisely because
+        # clamped. gpt-6.1-terra is the probe rather than opus precisely because
         # opus is also what the floor walk would return: only an honored override
-        # can produce gpt-5.6-terra here.
+        # can produce gpt-6.1-terra here.
         with tempfile.TemporaryDirectory() as td:
             self._write_config(
-                Path(td), {"frontier": "gpt-5.6-terra"}, self.ALL_FRONTIER
+                Path(td), {"frontier": "gpt-6.1-terra"}, self.ALL_FRONTIER
             )
             payload = resolve(td, "frontier")
-            self.assertEqual(payload["model"], "gpt-5.6-terra", payload)
+            self.assertEqual(payload["model"], "gpt-6.1-terra", payload)
             self.assertEqual(payload["source"], "config")
             self.assertNotIn("floor_clamped", payload)
 
@@ -231,7 +231,7 @@ class FloorClampTests(unittest.TestCase):
         # itself frontier-tier.
         with tempfile.TemporaryDirectory() as td:
             self._write_config(
-                Path(td), {}, ["opus", "gpt-5.6-terra", "gpt-5.4", "gemini-2.5-pro"]
+                Path(td), {}, ["opus", "gpt-6.1-terra", "gpt-5.4", "gemini-2.5-pro"]
             )
             payload = resolve(td, "thinking")
             self.assertEqual(payload["model"], "sonnet", payload)
@@ -336,14 +336,14 @@ class HostProvidersFilterTests(unittest.TestCase):
     def test_anthropic_only_host_skips_unreachable_frontier_alternate(self) -> None:
         # Claude Code can only dispatch Anthropic models, so cross-vendor frontier
         # alternates are unreachable. BOTH Anthropic frontier entries down + config
-        # hostProviders=[anthropic] -> the floor walk, NOT gpt-5.6-sol (which a
+        # hostProviders=[anthropic] -> the floor walk, NOT gpt-6.1-sol (which a
         # host-blind resolver would happily hand back). No manual config of each
         # cross-vendor id needed. The floor stops at thinking, whose default is
         # also opus — so the returned id is opus, reported as `tier-fallback`.
         with tempfile.TemporaryDirectory() as td:
             self._write_host(Path(td), ["opus", "fable"], ["anthropic"])
             payload = self._resolve_config_host(td)
-            self.assertNotEqual(payload["model"], "gpt-5.6-sol", payload)
+            self.assertNotEqual(payload["model"], "gpt-6.1-sol", payload)
             self.assertNotEqual(payload["model"], "gpt-5.5")
             self.assertEqual(payload["source"], "tier-fallback")
             self.assertNotEqual(payload["model"], "sonnet")
@@ -365,7 +365,7 @@ class HostProvidersFilterTests(unittest.TestCase):
                      "CODEX_SANDBOX": "", "CODEX_HOME": "", "OPENAI_API_KEY": ""},
             )
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["model"], "gpt-5.6-sol")
+            self.assertEqual(payload["model"], "gpt-6.1-sol")
 
     def test_anthropic_only_host_uses_anthropic_default_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -388,7 +388,7 @@ class AvailabilityPersistenceTests(unittest.TestCase):
             # flag; GPT-5.4 remains available in-tier. Dropping either source
             # would resolve to a member of that source instead.
             _write_availability(Path(td), ["opus", "fable"])
-            payload = resolve(td, "frontier", unavailable="gpt-5.6-sol,gpt-5.5")
+            payload = resolve(td, "frontier", unavailable="gpt-6.1-sol,gpt-5.5")
             self.assertEqual(payload["model"], "gpt-5.4")
             self.assertEqual(payload["source"], "in-tier-chain")
 
@@ -402,12 +402,12 @@ class AvailabilityPersistenceTests(unittest.TestCase):
         # next registered model, not hand back a dead id.
         with tempfile.TemporaryDirectory() as td:
             _write_availability(
-                Path(td), ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
+                Path(td), ["opus", "fable", "gpt-6.1-sol", "gpt-5.5", "gpt-5.4"]
             )
             payload = resolve(td, "frontier")
             self.assertEqual(payload["source"], "tier-fallback")
             self.assertEqual(payload["fallback_tier"], "thinking")
-            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertEqual(payload["model"], "gpt-6.1-terra")
             self.assertNotIn(payload["model"], {"opus", "sonnet", "haiku"})
 
 
@@ -469,7 +469,7 @@ class TierIntegrityGuardTests(unittest.TestCase):
     reached and the assertions pass for the wrong reason.
     """
 
-    ALL_FRONTIER = ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
+    ALL_FRONTIER = ["opus", "fable", "gpt-6.1-sol", "gpt-5.5", "gpt-5.4"]
 
     def test_unverified_cached_frontier_id_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -491,7 +491,7 @@ class TierIntegrityGuardTests(unittest.TestCase):
             self.assertEqual(payload["source"], "tier-fallback")
             # opus heads the thinking tier but is in the down set, so the floor
             # lands on the tier's next live entry.
-            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertEqual(payload["model"], "gpt-6.1-terra")
 
     def test_verified_cached_frontier_id_is_eligible(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -527,7 +527,7 @@ class TierIntegrityGuardTests(unittest.TestCase):
             payload = resolve(td, "frontier")
             self.assertNotEqual(payload["model"], "code-tier-model")
             self.assertEqual(payload["source"], "tier-fallback")
-            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertEqual(payload["model"], "gpt-6.1-terra")
 
 
 class CanonicalIdResolverTests(unittest.TestCase):
@@ -550,7 +550,7 @@ class CanonicalIdResolverTests(unittest.TestCase):
     def test_alias_and_canonical_both_recognized(self) -> None:
         # Both Anthropic frontier models down, declared by alias in one call and
         # by canonical id in the other. Host-neutral, so the surviving in-tier
-        # candidate (gpt-5.6-sol) is reachable and proves BOTH ids folded.
+        # candidate (gpt-6.1-sol) is reachable and proves BOTH ids folded.
         with tempfile.TemporaryDirectory() as td:
             by_alias = resolve(
                 td, "frontier", host_providers="any", unavailable="opus,fable"
@@ -560,7 +560,7 @@ class CanonicalIdResolverTests(unittest.TestCase):
                 unavailable="claude-opus-5,claude-fable-5",
             )
             self.assertEqual(by_alias["model"], by_canon["model"])
-            self.assertEqual(by_canon["model"], "gpt-5.6-sol")
+            self.assertEqual(by_canon["model"], "gpt-6.1-sol")
 
 
 class HostDetectionTests(unittest.TestCase):
@@ -568,20 +568,20 @@ class HostDetectionTests(unittest.TestCase):
 
     def test_explicit_anthropic_host_excludes_cross_vendor_frontier(self) -> None:
         # The exact GAP-2 failure: on a Claude host with BOTH Anthropic frontier
-        # entries down, resolution must NOT offer gpt-5.6-sol/gpt-5.5
+        # entries down, resolution must NOT offer gpt-6.1-sol/gpt-5.5
         # (undispatchable here) — it takes the floor walk instead.
         with tempfile.TemporaryDirectory() as td:
             payload = resolve(
                 td, "frontier", host_providers="anthropic", unavailable="opus,fable"
             )
-            self.assertNotEqual(payload["model"], "gpt-5.6-sol", payload)
+            self.assertNotEqual(payload["model"], "gpt-6.1-sol", payload)
             self.assertNotEqual(payload["model"], "gpt-5.5")
             self.assertEqual(payload["source"], "tier-fallback")
 
     def test_detected_anthropic_host_via_env_default(self) -> None:
         # No config, no explicit flag — host detection via env must fire so the
         # default dispatch path filters to anthropic. Without detection the next
-        # available frontier entry is the cross-vendor gpt-5.6-sol; with it, the
+        # available frontier entry is the cross-vendor gpt-6.1-sol; with it, the
         # walk floors at thinking (opus). Printing "opus" is therefore the proof
         # that the env-detected filter was applied.
         with tempfile.TemporaryDirectory() as td:
@@ -612,7 +612,7 @@ class HostDetectionTests(unittest.TestCase):
                 },
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "gpt-5.6-sol")
+            self.assertEqual(result.stdout.strip(), "gpt-6.1-sol")
 
     def test_host_filter_any_disables_filtering(self) -> None:
         # --host-providers any opts out: cross-vendor frontier alternate allowed
@@ -621,7 +621,7 @@ class HostDetectionTests(unittest.TestCase):
             payload = resolve(
                 td, "frontier", host_providers="any", unavailable="opus,fable"
             )
-            self.assertEqual(payload["model"], "gpt-5.6-sol")
+            self.assertEqual(payload["model"], "gpt-6.1-sol")
 
     def test_help_exposes_host_flag(self) -> None:
         result = run_resolver("--help")
@@ -638,7 +638,7 @@ class CliShapeTests(unittest.TestCase):
                 "--plain",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "gpt-5.6-sol")
+            self.assertEqual(result.stdout.strip(), "gpt-6.1-sol")
 
     def test_unknown_tier_rejected(self) -> None:
         result = run_resolver("--workdir", ".", "--tier", "bogus")
@@ -654,8 +654,8 @@ class ResolveRoleTests(unittest.TestCase):
         self.mr = importlib.import_module("model_resolver")
 
     def test_anthropic_host_filters_unreachable_recency_winner(self) -> None:
-        # GR/code preferred = [sonnet, gpt-5.6-terra, gpt-5.4, gemini-2.5-pro];
-        # gpt-5.6-terra is newer (recency promotes it to the front) but is
+        # GR/code preferred = [sonnet, gpt-6.1-terra, gpt-5.4, gemini-2.5-pro];
+        # gpt-6.1-terra is newer (recency promotes it to the front) but is
         # unreachable on a Claude host -> sonnet selected.
         with tempfile.TemporaryDirectory() as td:
             r = self.mr.resolve_role(
@@ -679,14 +679,14 @@ class ResolveRoleTests(unittest.TestCase):
                 workdir=Path(td), host_providers={"openai"},
             )
             self.assertEqual(claude["preferred_models"], ["sonnet"])
-            self.assertEqual(codex["preferred_models"][:2], ["gpt-5.6-terra", "gpt-5.4"])
+            self.assertEqual(codex["preferred_models"][:2], ["gpt-6.1-terra", "gpt-5.4"])
             self.assertEqual(claude["preferred_effort"], "high")
             self.assertEqual(codex["preferred_effort"], "high")
 
     def test_host_neutral_still_picks_by_rank_not_recency(self) -> None:
         """With the host filter off, rank still decides — not release date.
 
-        gpt-5.6-terra (2026-07-09) is newer than sonnet (2026-06-01) and used to
+        gpt-6.1-terra (2026-10-26) is newer than sonnet (2026-06-01) and used to
         win here. Removing the host filter must not smuggle recency back in: the
         preferred-list order is the capability rank, and it is the only key.
         """
@@ -715,7 +715,7 @@ class ResolveRoleTests(unittest.TestCase):
             cfg = wd / ".build-loop" / "config.json"
             cfg.parent.mkdir()
             cfg.write_text(
-                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                json.dumps({"modelOverrides": {"code": "gpt-6.1-terra"}}),
                 encoding="utf-8",
             )
             r = self.mr.resolve_role(
@@ -730,7 +730,7 @@ class ResolveRoleTests(unittest.TestCase):
 
         This test previously asserted they DIVERGED, and documented the `code`
         tier as the discriminator: the two-axis path date-sorted to
-        gpt-5.6-terra while the legacy in-tier walk kept rank order and gave
+        gpt-6.1-terra while the legacy in-tier walk kept rank order and gave
         sonnet. That divergence was the defect, not the contract — which model
         ran your work depended on which flag the caller passed. The test
         encoded the bug as spec, so it could never have caught it.
@@ -875,7 +875,7 @@ class HostRamFitTests(unittest.TestCase):
                  # excludes it. Declaring local reachable is what isolates the
                  # RAM-fit question this test is about.
                  "--host-providers", "anthropic,openai,local",
-                 "--unavailable", "sonnet,gpt-5.6-terra,gpt-5.4", "--json"],
+                 "--unavailable", "sonnet,gpt-6.1-terra,gpt-5.4", "--json"],
                 capture_output=True, text=True, env=env, check=False,
             )
             self.assertEqual(out.returncode, 0, out.stderr)

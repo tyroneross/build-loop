@@ -858,12 +858,26 @@ _RETRIEVAL_FILTER_RE = re.compile(
 # transcript parsers, loggers, and test fixtures all mention it without ever
 # executing anything. The invocation itself is the signal: a tool name indexing
 # into a registry and being called, or an explicit tool-execution entry point.
+# Reflective dispatch: a runtime string picks ANY method on an object. This is
+# the arbitrary-method shape in every language N4 reads: Python getattr, Go
+# reflect MethodByName, Java/Kotlin getMethod/getDeclaredMethod, C# GetMethod,
+# Ruby send/public_send/__send__, PHP call_user_func / $this->$name(), Swift
+# NSSelectorFromString.
+_REFLECTIVE_DISPATCH_RE = re.compile(
+    r"\bgetattr\s*\(\s*[\w.]+\s*,\s*[^,)\n]+\)\s*\(|"
+    r"\.MethodByName\s*\(|"
+    r"\.get(?:Declared)?Method\s*\(|\.GetMethod\s*\(|"
+    r"(?:\.|\b)(?:public_send|__send__)\s*\(|\.send\s*\(\s*:?\w*(?:name|tool|method)\w*|"
+    r"\bcall_user_func(?:_array)?\s*\(|\$this\s*->\s*\$\w+\s*\(|"
+    r"\bNSSelectorFromString\s*\(",
+    re.IGNORECASE,
+)
 _TOOL_DISPATCH_RE = re.compile(
-    r"\b(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|"
-    r"toolRegistry|tool_registry|TOOL_HANDLERS)\s*\[[^\]\n]{1,60}\]\s*\(|"
-    r"\b(?:executeTool|execute_tool|callTool|dispatchTool|dispatch_tool|"
+    r"\b(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|toolRegistry|tool_registry|TOOL_HANDLERS)\s*\[[^\]\n]{1,60}\]\s*[?!]?\s*\(|"
+    r"\b(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|toolRegistry|tool_registry|TOOL_HANDLERS)\s*\.\s*get\s*\([^()\n]*\)\s*(?:\??\s*\.\s*(?:unwrap|expect)\s*\([^()\n]*\)\s*)?\)?\s*[?!]?\s*\(|"
+    r"\b(?:executeTool|execute_tool|callTool|call_tool|dispatchTool|dispatch_tool|"
     r"invokeTool|invoke_tool|runTool|run_tool|handleToolCall|handle_tool_call)\s*\(|"
-    r"\bgetattr\s*\(\s*\w+\s*,\s*[^,)\n]*(?:tool|fn|func|name)[^,)\n]*\)\s*\(",
+    + _REFLECTIVE_DISPATCH_RE.pattern,
     re.IGNORECASE,
 )
 
@@ -901,14 +915,31 @@ _TOOL_POLICY_RE = re.compile(
 # transcript parser's `tool_use` 1,200 lines away says nothing about the
 # dispatcher (bookmark bundle/mcp/server.mjs, 2026-10-28).
 _TOOL_CONTEXT_WINDOW = 60
-_MCP_TOOLS_CALL_RE = re.compile(r"""["'`]tools/call["'`]|\bCallToolRequestSchema\b|\bcall_tool\b""")
-_OPEN_DISPATCH_RE = re.compile(
-    r"\b\w+\s*\[[^\]\n]{1,60}\]\s*\(|"
-    r"\bgetattr\s*\(\s*\w+\s*,\s*[^,)\n]+\)\s*\("
+# Model calls in SDKs `_LLM_CALL_RE` does not spell: anthropic-sdk-go
+# `client.Messages.New(`, go-openai `CreateChatCompletion(`, Rust async-openai
+# `client.chat().create(`. Used only by N4's distant-evidence rule.
+_MODEL_CALL_OTHER_LANG_RE = re.compile(
+    r"\.Messages\.New\s*\(|\bCreateChatCompletion\w*\s*\(|\.chat\(\)\s*\.create\s*\("
 )
-_GETATTR_DISPATCH_RE = re.compile(r"\bgetattr\s*\(\s*\w+\s*,\s*[^,)\n]+\)\s*\(")
+_MCP_TOOLS_CALL_RE = re.compile(
+    r"""["'`]tools/call["'`]|\bCallToolRequest\w*|\bcall_tool\b|\bCallTool\b"""
+)
+_MAP_INDEX_CALL_RE = re.compile(r"\b\w+\s*\[[^\]\n]{1,60}\]\s*[?!]?\s*\(")
+_OPEN_DISPATCH_RE = re.compile(
+    _MAP_INDEX_CALL_RE.pattern + r"|\b(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|toolRegistry|tool_registry|TOOL_HANDLERS)\s*\.\s*get\s*\([^()\n]*\)\s*(?:\??\s*\.\s*(?:unwrap|expect)\s*\([^()\n]*\)\s*)?\)?\s*[?!]?\s*\(|"
+    + _REFLECTIVE_DISPATCH_RE.pattern,
+    re.IGNORECASE,
+)
+# Plain JS objects resolve inherited members (`constructor`, `__proto__`) by
+# index. Maps in the other languages hold only the keys put in them, so an
+# index there reaches registered handlers only.
+_PROTOTYPE_INDEX_SUFFIXES = frozenset({
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro",
+})
 _OWN_KEY_GUARD_RE = re.compile(
     r"\bhasOwn(?:Property)?\s*\(|\bObject\.hasOwn\b|\.has\s*\(|"
+    r"\.contains(?:Key)?\s*\(|\.ContainsKey\s*\(|\.key\?\s*\(|\.include\?\s*\(|"
+    r"\barray_key_exists\s*\(|\bin_array\s*\(|,\s*ok\s*:?=|"
     r"\bin\s+(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|"
     r"toolRegistry|tool_registry|TOOL_HANDLERS)\b|"
     r"\bnew\s+Map\s*\(|\bObject\.create\s*\(\s*null\s*\)",
@@ -920,6 +951,8 @@ _NAMED_ENTRY_RE = re.compile(
 )
 _CLOSED_CASE_RE = re.compile(
     r"""^\s*case\s+["'`][^"'`]+["'`]|"""
+    r"""^\s*when\s+["'][^"']+["']|"""
+    r"""^\s*"[^"]+"\s*(?:[|,]\s*"[^"]+"\s*)*(?:=>|->)|"""
     r"""^\s*(?:if|elif|else\s+if)\s*\(?\s*\w+\s*===?\s*["'`]"""
 )
 
@@ -930,14 +963,20 @@ def _definition_re(name: str) -> re.Pattern[str]:
         rf"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*{n}\s*\(|"
         rf"^\s*(?:async\s+)?def\s+{n}\s*\(|"
         rf"^\s*(?:export\s+)?(?:const|let|var)\s+{n}\s*=\s*(?:async\s*)?(?:function\b|\()|"
-        rf"^\s*(?:(?:public|private|protected|static|async)\s+)*{n}\s*\([^)]*\)\s*(?::[^{{]*)?\{{"
+        rf"^\s*(?:(?:public|private|protected|static|async)\s+)*{n}\s*\([^)]*\)\s*(?::[^{{]*)?\{{|"
+        rf"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+{n}\s*[<(]|"           # Rust
+        rf"^\s*func\s+(?:\([^)]*\)\s*)?{n}\s*[<(]|"                               # Go, Swift
+        rf"^\s*(?:(?:public|private|internal|fileprivate|open|override|static|"
+        rf"suspend|protected|final)\s+)*(?:func|fun|function)\s+{n}\s*[<(]|"     # Swift, Kotlin, PHP
+        rf"^\s*(?:[\w<>\[\],.?]+\s+)+{n}\s*\([^)]*\)\s*(?:throws[^{{]*)?\{{|"   # Java, C#
+        rf"^\s*def\s+(?:self\.)?{n}\b"                                           # Ruby
     )
 
 
 def _body_after(lines: list[str], def_idx: int) -> list[str]:
     """Lines of the function starting at 0-based ``def_idx`` (braces or indent)."""
     head = lines[def_idx]
-    if re.match(r"^\s*(?:async\s+)?def\s", head):
+    if re.match(r"^\s*(?:async\s+)?def\s", head) and "{" not in head:
         indent = len(head) - len(head.lstrip())
         body = []
         for ln in lines[def_idx + 1: def_idx + 300]:
@@ -995,7 +1034,9 @@ def _check_tool_dispatch(path: Path, lines: list[str], text: str) -> list[dict[s
             # Distant evidence still counts unless it is the bundle shape: a closed
             # dispatcher in a file that never calls a model (a transcript parser's
             # `tool_use` mentions are not a model handing over tool calls).
-            agent_loop = not closed or bool(_LLM_CALL_RE.search(text))
+            agent_loop = not closed or bool(
+                _LLM_CALL_RE.search(text) or _MODEL_CALL_OTHER_LANG_RE.search(text)
+            )
         if not (agent_loop or is_mcp_server):
             continue
         guarded = any(_OWN_KEY_GUARD_RE.search(l) for l in window)
@@ -1016,13 +1057,21 @@ def _check_tool_dispatch(path: Path, lines: list[str], text: str) -> list[dict[s
             # caller-chosen name reach a method that is not a declared tool.
             if closed or guarded:
                 continue
-            if closed is None and not _OPEN_DISPATCH_RE.search(raw):
-                continue  # entry call into a dispatcher defined elsewhere
-            sev = "HIGH" if _GETATTR_DISPATCH_RE.search(raw) else "MEDIUM"
-            msg = (
-                "MCP tool name indexes a handler lookup with no own-key check — a caller "
-                "can reach inherited or non-tool members (constructor, __class__, private methods)"
-            )
+            if _REFLECTIVE_DISPATCH_RE.search(raw):
+                sev, msg = "HIGH", (
+                    "MCP tool name selects a method by reflection with no allowlist — a caller "
+                    "can invoke any method on the object, not just declared tools"
+                )
+            elif (
+                _MAP_INDEX_CALL_RE.search(raw)
+                and path.suffix.lower() in _PROTOTYPE_INDEX_SUFFIXES
+            ):
+                sev, msg = "MEDIUM", (
+                    "MCP tool name indexes a handler lookup with no own-key check — a caller "
+                    "can reach inherited members (constructor, __proto__, toString)"
+                )
+            else:
+                continue  # closed map or an entry call into a dispatcher defined elsewhere
         return _emit(
             lines, i + 1,
             severity=sev,

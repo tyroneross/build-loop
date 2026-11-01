@@ -211,7 +211,7 @@ class TierFallbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             payload = self._resolve(td, "thinking", "opus,sonnet")
             self.assertEqual(payload["fallback_tier"], "code")
-            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertEqual(payload["model"], "gpt-6.1-terra")
             self.assertNotEqual(payload["model"], "haiku")
 
     def test_frontier_falls_back_to_thinking(self) -> None:
@@ -238,7 +238,7 @@ class TierFallbackTests(unittest.TestCase):
             self.assertNotIn(payload["model"], {"sonnet", "haiku"})
 
     # The whole thinking tier, for the "nothing left at the floor" probe below.
-    WHOLE_THINKING_TIER = "opus,gpt-5.6-terra,gpt-5.4,gemini-2.5-pro"
+    WHOLE_THINKING_TIER = "opus,gpt-6.1-terra,gpt-5.4,gemini-2.5-pro"
 
     def test_invariant_frontier_never_resolves_below_thinking(self) -> None:
         # HARD INVARIANT: even when BOTH the frontier default (opus) AND the
@@ -253,7 +253,7 @@ class TierFallbackTests(unittest.TestCase):
             payload = self._resolve(td, "frontier", "fable,opus")
             self.assertEqual(payload["fallback_tier"], "thinking")
             self.assertNotIn(payload["model"], {"fable", "opus"})  # not a down id
-            self.assertEqual(payload["model"], "gpt-5.6-terra")  # thinking tier
+            self.assertEqual(payload["model"], "gpt-6.1-terra")  # thinking tier
             self.assertNotEqual(payload["model"], "sonnet")  # never code tier
             self.assertNotEqual(payload["model"], "haiku")  # never pattern tier
             self.assertNotIn(payload.get("fallback_tier"), {"code", "pattern"})
@@ -614,7 +614,7 @@ class TwoAxisRoleTests(unittest.TestCase):
                 segment="generative_reasoning", tier="frontier",
                 workdir=Path(td),
             )
-            # GR/T1 = [opus, fable, gpt-5.6-sol]. opus heads the cell by list
+            # GR/T1 = [opus, fable, gpt-6.1-sol]. opus heads the cell by list
             # order AND is the newest release (2026-07-25), so it wins under
             # either key; the recency tiebreak is proved separately below on a
             # cell where recency actually reorders.
@@ -624,7 +624,7 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["released"], "2026-07-25")
 
     def test_resolve_role_accepts_ladder_tier_directly(self) -> None:
-        # GR/T4 = [haiku, gpt-5.6-luna, gpt-5.4-mini]. haiku heads the cell by
+        # GR/T4 = [haiku, gpt-6-luna, gpt-5.4-mini]. haiku heads the cell by
         # list order = capability rank, so it wins. luna is NEWER (2026-07-09 vs
         # 2025-10-01) and used to win here — that date sort is what made
         # resolve_role disagree with `model_index resolve --tier`.
@@ -635,11 +635,17 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["model"], "haiku")
 
     def test_resolve_role_unavailable_falls_to_next_preferred(self) -> None:
-        # GR/T2 preferred = [opus, gpt-5.5]; opus down -> gpt-5.5.
+        # GR/T2 preferred = [opus, gpt-6.1-sol, gpt-5.5]; opus down -> gpt-6.1-sol,
+        # then gpt-5.5 when Sol is also down.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="thinking",
                 workdir=Path(td), unavailable={"opus"},
+            )
+            self.assertEqual(r["model"], "gpt-6.1-sol")
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), unavailable={"opus", "gpt-6.1-sol"},
             )
             self.assertEqual(r["model"], "gpt-5.5")
 
@@ -649,13 +655,13 @@ class TwoAxisRoleTests(unittest.TestCase):
             cfg = wd / ".build-loop" / "config.json"
             cfg.parent.mkdir()
             cfg.write_text(
-                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                json.dumps({"modelOverrides": {"code": "gpt-6.1-terra"}}),
                 encoding="utf-8",
             )
             r = self.mo.resolve_role(
                 segment="agentic_execution", tier="code", workdir=wd,
             )
-            self.assertEqual(r["model"], "gpt-5.6-terra")
+            self.assertEqual(r["model"], "gpt-6.1-terra")
             self.assertEqual(r["source"], "config")
 
     def test_resolve_role_unavailable_override_falls_to_preferred_list(self) -> None:
@@ -664,14 +670,14 @@ class TwoAxisRoleTests(unittest.TestCase):
             cfg = wd / ".build-loop" / "config.json"
             cfg.parent.mkdir()
             cfg.write_text(
-                json.dumps({"modelOverrides": {"code": "gpt-5.6-terra"}}),
+                json.dumps({"modelOverrides": {"code": "gpt-6.1-terra"}}),
                 encoding="utf-8",
             )
             r = self.mo.resolve_role(
                 segment="agentic_execution",
                 tier="code",
                 workdir=wd,
-                unavailable={"gpt-5.6-terra"},
+                unavailable={"gpt-6.1-terra"},
             )
             self.assertEqual(r["model"], "sonnet")
             self.assertEqual(r["source"], "role-preferred")
@@ -687,7 +693,7 @@ class TwoAxisRoleTests(unittest.TestCase):
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="frontier",
                 workdir=Path(td),
-                unavailable={"opus", "fable", "gpt-5.6-sol"},
+                unavailable={"opus", "fable", "gpt-6.1-sol"},
             )
             self.assertEqual(r["source"], "tier-fallback")
             self.assertEqual(r["fallback_tier"], "thinking")
@@ -695,7 +701,7 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertNotEqual(r["model"], "haiku")
             # Every T1 candidate was tried and skipped before the walk ran.
             skipped = [s["model"] for s in r["resolution_path"] if s.get("skipped")]
-            self.assertEqual(set(skipped), {"opus", "fable", "gpt-5.6-sol"})
+            self.assertEqual(set(skipped), {"opus", "fable", "gpt-6.1-sol"})
 
     def test_resolve_role_specialist_segment_unresolved_when_unavailable(self) -> None:
         # representation_retrieval is off-ladder (T-S only); if its sole model
@@ -719,7 +725,7 @@ class TwoAxisRoleTests(unittest.TestCase):
 
     # --- Rank dominance (was: recency tiebreak) ----------------------------
     def test_rank_wins_over_recency_regardless_of_flag(self) -> None:
-        # GR/T3 = [sonnet(2026-06-01), gpt-5.6-terra(2026-07-09), gpt-5.4].
+        # GR/T3 = [sonnet(2026-06-01), gpt-6.1-terra(2026-10-26), gpt-5.4].
         # terra is NEWER than the list-order head. Under the old whole-list date
         # sort terra won; rank now wins, so sonnet does — and critically the
         # answer is the same with the flag ON, since recency_tiebreak is

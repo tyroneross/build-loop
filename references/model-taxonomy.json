@@ -236,7 +236,8 @@
       "fable": "high",
       "opus": "high",
       "sonnet": "high",
-      "gpt-5.6-luna": "medium"
+      "gpt-5.6-luna": "medium",
+      "gpt-6-luna": "medium"
     },
     "effort_support_by_model": {
       "fable": true,
@@ -245,7 +246,10 @@
       "haiku": false,
       "gpt-5.6-sol": true,
       "gpt-5.6-terra": true,
-      "gpt-5.6-luna": true
+      "gpt-5.6-luna": true,
+      "gpt-6.1-sol": true,
+      "gpt-6.1-terra": true,
+      "gpt-6-luna": true
     },
     "effort_policy": {
       "xhigh": "Use only after a verifier establishes that the preferred effort missed the task's quality bar; record the miss and outcome.",
@@ -318,20 +322,21 @@
       "T1": [
         "opus",
         "fable",
-        "gpt-5.6-sol"
+        "gpt-6.1-sol"
       ],
       "T2": [
         "opus",
+        "gpt-6.1-sol",
         "gpt-5.5"
       ],
       "T3": [
         "sonnet",
-        "gpt-5.6-terra",
+        "gpt-6.1-terra",
         "gpt-5.4"
       ],
       "T4": [
         "haiku",
-        "gpt-5.6-luna",
+        "gpt-6-luna",
         "gpt-5.4-mini"
       ],
       "T5": [
@@ -341,12 +346,12 @@
     "agentic_execution": {
       "T2": [
         "opus",
-        "gpt-5.6-terra",
-        "gpt-5.6-sol"
+        "gpt-6.1-terra",
+        "gpt-6.1-sol"
       ],
       "T3": [
         "sonnet",
-        "gpt-5.6-terra",
+        "gpt-6.1-terra",
         "gpt-5.4",
         "qwen3-coder-30b",
         "qwen2.5-coder-32b"
@@ -356,19 +361,19 @@
       "T1": [
         "opus",
         "fable",
-        "gpt-5.6-sol"
+        "gpt-6.1-sol"
       ],
       "T2": [
         "opus",
-        "gpt-5.6-sol"
+        "gpt-6.1-sol"
       ],
       "T3": [
         "sonnet",
-        "gpt-5.6-terra"
+        "gpt-6.1-terra"
       ],
       "T4": [
         "haiku",
-        "gpt-5.6-luna"
+        "gpt-6-luna"
       ],
       "T5": [
         "gpt-5.4-nano"
@@ -486,6 +491,30 @@
         "gpt-5.5-codex"
       ]
     },
+    "gpt-6.1-sol": {
+      "provider": "openai",
+      "label": "GPT-6.1 Sol",
+      "segment": "generative_reasoning",
+      "tier": "T1",
+      "tags": [
+        "ultra-frontier",
+        "coding",
+        "agentic",
+        "tool-capable",
+        "multimodal-input",
+        "high-consequence"
+      ],
+      "released": "2026-09-29",
+      "status": "verified",
+      "aliases": [
+        "gpt-6.1-sol-medium",
+        "gpt-6.1-sol-high",
+        "gpt-6.1-sol-high-fast",
+        "gpt-6.1-sol-xhigh",
+        "gpt-6.1-sol-xhigh-fast"
+      ],
+      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..ultra; `codex exec -m gpt-6.1-sol` completed a 88k-token review run. RELEASE DATE SECONDARY: Wikipedia 'GPT-6.1' (DevDay 2026-09-29); OpenAI primary page not read. Supersedes gpt-6-sol (2026-09-22, TechCrunch 2026-09-22 / openai.com/index/introducing-gpt-6-sol-and-luna)."
+    },
     "gpt-5.6-sol": {
       "provider": "openai",
       "label": "GPT-5.6 Sol",
@@ -532,6 +561,27 @@
       "evidence": "Registered 2026-09-12. RELEASE CONFIRMED: OpenAI shipped GPT-6 Astra 2026-09-03 (openai.com/index/gpt-6-astra/, InfoQ 2026-09); available in ChatGPT, Codex and the API; ~1.05M context, MRCR 96.3% in the 512K-1M range. Codex CLI v0.153.1 added first-class gpt-6-astra config without changing the default model or showing it in the picker; this host runs codex-cli 0.154.0. Activation probe from this host succeeded: `codex exec --model gpt-6-astra` returned the requested sentinel. Host advertises it at ~/.codex/config.toml [tui.model_availability_nux]. Referenced before registration at scripts/parallelism.py:74 and asserted xlarge at scripts/test_parallelism.py:461; introduced 2026-09-07 in ed5d00fd into prose and the resource heuristic ONLY, never the registry. Tier T1 not T0: T0 denotes restricted access and Astra is generally available. NOTE: OpenAI's system card places Astra at a critical cyber capability threshold; treat high-consequence dispatch accordingly.",
       "evidence_tier": "T1 vendor release + T1 host activation probe"
     },
+    "gpt-6.1-terra": {
+      "provider": "openai",
+      "label": "GPT-6.1 Terra",
+      "segment": "generative_reasoning",
+      "tier": "T2",
+      "tags": [
+        "balanced-workhorse",
+        "coding",
+        "agentic",
+        "tool-capable",
+        "cost-sensitive",
+        "multimodal-input"
+      ],
+      "released": "2026-10-26",
+      "status": "verified",
+      "aliases": [
+        "gpt-6.1-terra-medium",
+        "gpt-6.1-terra-high"
+      ],
+      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..ultra. Release: 9to5Mac 2026-10-26 'OpenAI upgrades ChatGPT and Codex with new GPT-6.1 Terra model'; Codex CLI >= 0.159.0."
+    },
     "gpt-5.6-terra": {
       "provider": "openai",
       "label": "GPT-5.6 Terra",
@@ -551,6 +601,26 @@
         "gpt-5.6-terra-medium",
         "gpt-5.6-terra-high"
       ]
+    },
+    "gpt-6-luna": {
+      "provider": "openai",
+      "label": "GPT-6 Luna",
+      "segment": "generative_reasoning",
+      "tier": "T4",
+      "tags": [
+        "efficient",
+        "fast",
+        "cost-sensitive",
+        "bounded-work",
+        "multimodal-input"
+      ],
+      "released": "2026-09-22",
+      "status": "verified",
+      "aliases": [
+        "gpt-6-luna-high",
+        "gpt-6-luna-medium"
+      ],
+      "evidence": "Registered 2026-11-01. Live on this host 2026-11-01: listed in ~/.codex/models_cache.json (codex-cli 0.166.0) with efforts low..max. Release: TechCrunch 2026-09-22 'OpenAI launches GPT-6 Sol and Luna'; openai.com/index/introducing-gpt-6-sol-and-luna (not opened)."
     },
     "gpt-5.6-luna": {
       "provider": "openai",
@@ -1002,25 +1072,25 @@
     "frontier": [
       "opus",
       "fable",
-      "gpt-5.6-sol",
+      "gpt-6.1-sol",
       "gpt-5.5",
       "gpt-5.4"
     ],
     "thinking": [
       "opus",
-      "gpt-5.6-terra",
+      "gpt-6.1-terra",
       "gpt-5.4"
     ],
     "code": [
       "sonnet",
-      "gpt-5.6-terra",
+      "gpt-6.1-terra",
       "gpt-5.4-mini",
       "qwen3-coder-30b",
       "qwen2.5-coder-32b"
     ],
     "pattern": [
       "haiku",
-      "gpt-5.6-luna",
+      "gpt-6-luna",
       "gpt-5-nano",
       "llama3.2-3b"
     ]
