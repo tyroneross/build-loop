@@ -32,11 +32,38 @@ PY
 bl_spawn_daemon() {
   local script="$1" port="$2" pidfile="$5/$3.pid" log="$5/$4.log"
   [ -f "$script" ] || return 0
-  if [ -f "$pidfile" ]; then
-    local pid; pid=$(cat "$pidfile" 2>/dev/null)
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
-  fi
-  curl -fsS --max-time 0.2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1 && return 0
-  nohup python3 "$script" </dev/null >>"$log" 2>&1 &
-  disown 2>/dev/null || true
+  python3 - "$script" "$port" "$pidfile" "$log" <<'PY_LAUNCH' 2>/dev/null
+import fcntl, os, subprocess, sys, tempfile, urllib.request
+from pathlib import Path
+script, port, pidfile, logfile = sys.argv[1:]
+Path(pidfile).parent.mkdir(parents=True, exist_ok=True)
+with open(pidfile + '.lock', 'a') as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit(0)
+    try:
+        pid = int(Path(pidfile).read_text().strip())
+        command = subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=.2)
+        if command.returncode == 0 and script in command.stdout:
+            raise SystemExit(0)
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        urllib.request.urlopen('http://127.0.0.1:' + port + '/health', timeout=.2).close()
+        raise SystemExit(0)
+    except OSError:
+        pass
+    with open(logfile, 'ab') as log:
+        child = subprocess.Popen([sys.executable, script], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    fd, temporary = tempfile.mkstemp(dir=str(Path(pidfile).parent))
+    try:
+        with os.fdopen(fd, 'w') as out:
+            out.write(str(child.pid))
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, pidfile)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+PY_LAUNCH
 }

@@ -100,6 +100,7 @@ class TestInstallerIdempotence(unittest.TestCase):
         scripts_dir = self.workdir / "scripts"
         scripts_dir.mkdir()
         shutil.copy2(SCRIPT, scripts_dir / "install_git_hooks.py")
+        shutil.copy2(REPO_ROOT / "scripts" / "atomic_io.py", scripts_dir / "atomic_io.py")
         hooks_src_dir = self.workdir / "hooks" / "git"
         hooks_src_dir.mkdir(parents=True)
         shutil.copy2(HOOK_SOURCE, hooks_src_dir / "pre-push")
@@ -296,6 +297,7 @@ class TestSessionStartAutoInstall(unittest.TestCase):
         scripts_dir = self.workdir / "scripts"
         scripts_dir.mkdir()
         shutil.copy2(SCRIPT, scripts_dir / "install_git_hooks.py")
+        shutil.copy2(REPO_ROOT / "scripts" / "atomic_io.py", scripts_dir / "atomic_io.py")
         hooks_src_dir = self.workdir / "hooks" / "git"
         hooks_src_dir.mkdir(parents=True)
         shutil.copy2(HOOK_SOURCE, hooks_src_dir / "pre-push")

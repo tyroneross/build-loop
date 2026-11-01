@@ -249,6 +249,8 @@ def _existing_exclude_lines(exclude_path: Path) -> set[str]:
         return set()
 
 
+from atomic_io import LockedFile, atomic_write_text
+
 def _exclude_variants(dirname: str) -> tuple[str, ...]:
     return (f"/{dirname}/", f"{dirname}/", f"/{dirname}", dirname)
 
@@ -257,22 +259,21 @@ def _append_to_exclude(exclude_path: Path, dirnames: list[str]) -> list[str]:
     """Append `/<dir>/` lines for dirnames not already present. Returns appended."""
     if not dirnames:
         return []
-    existing = _existing_exclude_lines(exclude_path)
-    to_add = [d for d in dirnames if not any(v in existing for v in _exclude_variants(d))]
-    if not to_add:
-        return []
     try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        with exclude_path.open("a", encoding="utf-8") as fh:
+        with LockedFile(exclude_path, timeout_s=0.2):
+            existing = _existing_exclude_lines(exclude_path)
+            to_add = [d for d in dirnames if not any(v in existing for v in _exclude_variants(d))]
+            if not to_add:
+                return []
             current = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
             if current and not current.endswith("\n"):
-                fh.write("\n")
-            fh.write("# build-loop: tool state created by build-loop/rally hooks (local only)\n")
-            for d in to_add:
-                fh.write(f"/{d}/\n")
-    except OSError:
+                current += "\n"
+            current += "# build-loop: tool state created by build-loop/rally hooks (local only)\n"
+            current += "".join(f"/{d}/\n" for d in to_add)
+            atomic_write_text(exclude_path, current)
+            return to_add
+    except (OSError, TimeoutError):
         return []
-    return to_add
 
 
 _HOOK_MARKER_RE = re.compile(r"build-loop|rally", re.IGNORECASE)
@@ -365,8 +366,9 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
                 continue
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-            except OSError:
+                with LockedFile(target, timeout_s=0.2):
+                    atomic_write_text(target, json.dumps(state, indent=2) + "\n")
+            except (OSError, TimeoutError):
                 pass
 
         if args.emit_context:

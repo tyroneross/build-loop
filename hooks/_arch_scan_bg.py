@@ -52,7 +52,7 @@ def main(argv: list | None = None) -> int:
             ["uv", "run", "python", "-m", "build_loop.architecture", "acp"],
         ):
             try:
-                subprocess.run(
+                result = subprocess.run(
                     cmd,
                     cwd=str(workdir),
                     stdout=subprocess.DEVNULL,
@@ -61,8 +61,10 @@ def main(argv: list | None = None) -> int:
                     check=False,
                     timeout=120,
                 )
+                if result.returncode != 0:
+                    return 1
             except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+                return 1
 
         if script.exists():
             try:

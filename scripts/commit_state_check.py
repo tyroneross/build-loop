@@ -161,6 +161,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     workdir = str(Path(args.workdir).resolve())
+    if args.hook:
+        bl = Path(workdir) / ".build-loop"
+        if not ((bl / "state.json").is_file() or (bl / "optimize").is_dir()):
+            print("{}")
+            return 0
     result = check(workdir)
 
     if args.emit_json:

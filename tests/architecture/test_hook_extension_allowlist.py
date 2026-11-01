@@ -62,6 +62,7 @@ def _seed_workspace(tmp_path: Path) -> Path:
         REPO / "scripts" / "architecture_freshness.py",
         scripts_dir / "architecture_freshness.py",
     )
+    shutil.copy(REPO / "scripts" / "hook_payload.py", scripts_dir / "hook_payload.py")
     os.chmod(hooks_dir / "pre-edit-architecture.sh", 0o755)
     return hooks_dir / "pre-edit-architecture.sh"
 

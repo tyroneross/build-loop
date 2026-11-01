@@ -17,7 +17,7 @@ WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 CHECK="${PLUGIN_ROOT}/scripts/codex_hook_trust_check.py"
 
 [ -f "$CHECK" ] || { printf '{}'; exit 0; }
-[ -f "${WORKDIR}/.codex/hooks.json" ] || { printf '{}'; exit 0; }
+
 command -v python3 >/dev/null 2>&1 || { printf '{}'; exit 0; }
 
 REPORT="$(python3 "$CHECK" --workdir "$WORKDIR" --quiet-unknown 2>/dev/null)"

@@ -87,6 +87,8 @@ ARTIFACTS: tuple[Artifact, ...] = (
 # Helpers
 # ---------------------------------------------------------------------------
 
+from atomic_io import LockedFile, atomic_write_text
+
 
 def _detect_repo(arg: str | None) -> Path:
     if arg:
@@ -521,34 +523,35 @@ def install_hook(repo: Path) -> dict[str, Any]:
         return {"installed": False, "reason": f"source segment not found in {src}"}
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook = hooks_dir / "pre-commit"
-    fresh = not hook.exists()
-    # Fresh base is a bare shebang — NOT the standalone source's trailing
-    # ``exit 0``. Emitting a trailing ``exit 0`` would turn any later-APPENDED
-    # segment (the rally-point private-slug guard appends) into dead code,
-    # silently disabling it. The chainable hook therefore carries no trailing
-    # ``exit 0``; each segment exits non-zero only on its own failure and the
-    # hook's success status is the last segment's 0. (The standalone
-    # hooks/git/pre-commit keeps ``exit 0`` for manual single-segment use; the
-    # installer only ever extracts the marked segment, never that line.)
-    body = "#!/bin/sh\n" if fresh else hook.read_text(encoding="utf-8")
-    if not fresh and _MARKER in body:
-        # Idempotent re-sync: replace our segment in place.
-        new = _SEGMENT_RE.sub(segment, body)
-        if new != body:
-            hook.write_text(new, encoding="utf-8")
+    with LockedFile(hook, timeout_s=2):
+        fresh = not hook.exists()
+        # Fresh base is a bare shebang — NOT the standalone source's trailing
+        # ``exit 0``. Emitting a trailing ``exit 0`` would turn any later-APPENDED
+        # segment (the rally-point private-slug guard appends) into dead code,
+        # silently disabling it. The chainable hook therefore carries no trailing
+        # ``exit 0``; each segment exits non-zero only on its own failure and the
+        # hook's success status is the last segment's 0. (The standalone
+        # hooks/git/pre-commit keeps ``exit 0`` for manual single-segment use; the
+        # installer only ever extracts the marked segment, never that line.)
+        body = "#!/bin/sh\n" if fresh else hook.read_text(encoding="utf-8")
+        if not fresh and _MARKER in body:
+            # Idempotent re-sync: replace our segment in place.
+            new = _SEGMENT_RE.sub(segment, body)
+            if new != body:
+                atomic_write_text(hook, new, encoding="utf-8", executable=True)
+            _make_exec(hook)
+            return {"installed": True, "action": "resynced", "path": str(hook)}
+        # Insert our segment right after the shebang so it runs before any
+        # later-appended segment AND before a trailing ``exit 0`` left by an
+        # earlier installer (order-independent with the rally-point segment,
+        # whichever installs first).
+        lines = body.splitlines(keepends=True)
+        at = 1 if lines and lines[0].startswith("#!") else 0
+        new = "".join(lines[:at] + ["\n", segment] + lines[at:])
+        atomic_write_text(hook, new, encoding="utf-8", executable=True)
         _make_exec(hook)
-        return {"installed": True, "action": "resynced", "path": str(hook)}
-    # Insert our segment right after the shebang so it runs before any
-    # later-appended segment AND before a trailing ``exit 0`` left by an
-    # earlier installer (order-independent with the rally-point segment,
-    # whichever installs first).
-    lines = body.splitlines(keepends=True)
-    at = 1 if lines and lines[0].startswith("#!") else 0
-    new = "".join(lines[:at] + ["\n", segment] + lines[at:])
-    hook.write_text(new, encoding="utf-8")
-    _make_exec(hook)
-    return {"installed": True, "action": "created" if fresh else "chained",
-            "path": str(hook)}
+        return {"installed": True, "action": "created" if fresh else "chained",
+                "path": str(hook)}
 
 
 def uninstall_hook(repo: Path) -> dict[str, Any]:
@@ -561,7 +564,7 @@ def uninstall_hook(repo: Path) -> dict[str, Any]:
     body = hook.read_text(encoding="utf-8")
     if _MARKER not in body:
         return {"removed": False, "reason": "artifact-guard segment not present"}
-    hook.write_text(_SEGMENT_RE.sub("", body), encoding="utf-8")
+    atomic_write_text(hook, _SEGMENT_RE.sub("", body), encoding="utf-8", executable=True)
     return {"removed": True, "path": str(hook)}
 
 

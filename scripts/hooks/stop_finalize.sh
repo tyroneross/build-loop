@@ -32,7 +32,7 @@ INPUT=$(cat)
 export _BL_INPUT="$INPUT"
 
 # Step 1: extract the exact hook session and refuse recursive Stop re-entry.
-read -r STOP_HOOK_ACTIVE AGENT_ID SESSION_ID CWD <<EOF_VARS
+read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID CWD <<EOF_VARS
 $(python3 <<'PY'
 import json, os, sys
 try:
@@ -46,7 +46,9 @@ cwd = d.get('cwd', '') or ''
 # Tab-separated, no special chars in JSON-derived values would survive python's print()
 # But guard against newlines / tabs anyway by replacing them with spaces.
 def safe(v): return str(v).replace('\t', ' ').replace('\n', ' ')
+host = os.environ.get("RALLY_HOST_FAMILY") or os.environ.get("BUILD_LOOP_RALLY_TOOL") or ("codex" if "turn_id" in d or os.environ.get("CODEX_THREAD_ID") else "claude_code" if os.environ.get("CLAUDE_PROJECT_DIR") else "other")
 print(
+    f"{safe(host)}\t"
     f"{'true' if stop_hook_active else 'false'}\t"
     f"{safe(agent_id) or '-'}\t"
     f"{safe(session_id) or '-'}\t"
@@ -77,7 +79,7 @@ FACADE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent_rally.py"
 if [ -n "$SESSION_ID" ] && [ -f "$FACADE" ]; then
     python3 "$FACADE" stop \
         --workdir "$WORKDIR" \
-        --tool claude_code \
+        --tool "$HOST_TOOL" \
         --session-id "$SESSION_ID" \
         --json >/dev/null 2>&1 || true
 fi
@@ -174,6 +176,9 @@ try:
         data = json.load(f)
     if 'runs' not in data or not isinstance(data['runs'], list):
         data['runs'] = []
+    if session_id and any(isinstance(r, dict) and r.get('session_id') == session_id for r in data['runs']):
+        print('already_recorded', end='')
+        raise SystemExit(0)
     data['runs'].append({'run_id': run_id, 'date': now, 'session_id': session_id})
 
     tmp = tempfile.NamedTemporaryFile(
@@ -252,7 +257,7 @@ elif fcrit:
         )
     }))
 else:
-    print(json.dumps({'systemMessage': f'build-loop run entry {status}; all F-criteria passed'}))
+    print(json.dumps({'systemMessage': f'build-loop run entry {status}; no failed F-criterion was found; validation is not certified by this hook'}))
 PY
 
 exit 0

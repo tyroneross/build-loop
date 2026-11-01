@@ -22,6 +22,8 @@ def plugin(tmp_path):
                  'session-start-codex-hook-trust.sh', 'session-start-architecture.sh',
                  'session-start-extensions.sh', '_session_start_lib.sh']:
         shutil.copy2(ROOT / 'hooks' / name, root / 'hooks' / name)
+    for name in ["closeout_baton.py", "atomic_io.py"]:
+        shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(('CLAUDE_', 'CODEX_', 'BUILD_LOOP_', 'RALLY_'))}

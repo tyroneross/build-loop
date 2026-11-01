@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1b335d1d4a2275c7d01574d77c88ba52e574b2194d9aa1992f937f0126fc05c2"
+    "content_sha256": "87ca74e58c89235e01ad35e9a6a8431134c95ac7ea73621d4b7a74fe8a49c83a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -792,11 +792,11 @@
       "⊕ PROPOSED — launches the independent auditor peer process once per session."
     ],
     "session-start-retrieval.sh": [
-      "SessionStart",
+      "Hook",
       "load memory + retrieval context at session start"
     ],
     "session-start-memory.sh": [
-      "SessionStart",
+      "Hook",
       "bootstrap the build-loop memory root"
     ],
     "pre-edit-architecture.sh": [
@@ -1299,6 +1299,7 @@
       "scripts/closeout/__init__.py": "build-loop memory closeout — machine-readable status emit.",
       "scripts/closeout/__main__.py": "CLI: python3 -m closeout --workdir <repo> [--run-id <id>] [--source <s>] [--json]",
       "scripts/closeout/status.py": "Closeout status emit — the durable-signal classifier.",
+      "scripts/closeout_baton.py": "Claim and reconcile an armed closeout without consuming partial work.\"\"\"",
       "scripts/codex_hook_trust_check.py": "Report recorded Codex hook grants without claiming native trust verification.",
       "scripts/codex_preflight.py": "Codex preflight checker for the build-loop plugin.",
       "scripts/collapse_run.py": "collapse_run.py — End-of-run branch/worktree cleanup for build-loop.",
@@ -1370,6 +1371,7 @@
       "scripts/handoff/__main__.py": "Compose a build-loop handoff document from .build-loop/ run state.",
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",
       "scripts/hook_hygiene_lint.py": "hook_hygiene_lint.py — deterministic hook reliability lint for build-loop.",
+      "scripts/hook_payload.py": "Normalize file changes from Claude, Codex and the generic JSON hook contract.\"\"\"",
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
@@ -1699,16 +1701,8 @@
       "SessionStart": [
         "session-start-tool-state.sh",
         "session-start-architecture.sh",
-        "session-start-retrieval.sh",
         "session-start-rally-point.sh",
-        "session-start-worktree-gc.sh",
-        "session-start-git-hooks.sh",
-        "session-start-plugin-drift.sh",
-        "session-start-plugin-heal.sh",
-        "session-start-memory.sh",
-        "session-start-closeout.sh",
         "closeout.sh",
-        "session-start-extensions.sh",
         "session-start-codex-hook-trust.sh"
       ],
       "UserPromptSubmit": [

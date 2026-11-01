@@ -50,6 +50,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from atomic_io import LockedFile, atomic_write_text
+
 MARKER = "# --- BEGIN rally-point post-commit ---"
 MARKER_END = "# --- END rally-point post-commit ---"
 LEGACY_MARKER = "# --- BEGIN app-pulse post-commit ---"
@@ -135,6 +138,7 @@ from pathlib import Path
 
 _CHECKER = {checker!r}
 _REL = Path("scripts") / "check_private_slugs.py"
+
 
 
 def _version_key(p):
@@ -332,31 +336,32 @@ def _install_post_commit(hooks_dir: Path) -> None:
     """Install/chain the post-commit capture. Idempotent."""
     # The pinned capture script (rewritten each install — cheap, keeps
     # the package path current if the plugin moved).
-    capture = hooks_dir / ".rally-point-capture.py"
-    capture.write_text(_CAPTURE_SRC.format(pkg=str(_PKG_DIR)))
-    capture.chmod(0o755)
+    with LockedFile(hooks_dir / "post-commit", timeout_s=2):
+        capture = hooks_dir / ".rally-point-capture.py"
+        atomic_write_text(capture, _CAPTURE_SRC.format(pkg=str(_PKG_DIR)), executable=True)
+        capture.chmod(0o755)
 
-    hook = hooks_dir / "post-commit"
-    if not hook.exists():
-        hook.write_text("#!/bin/sh\n" + _SEGMENT + "exit 0\n")
-    else:
-        body = hook.read_text()
-        if MARKER in body:
-            # Re-install: replace our segment in place so the pinned
-            # capture wiring stays current if the plugin moved or the
-            # segment template changed.
-            hook.write_text(SEGMENT_RE.sub(_SEGMENT, body))
-            _make_executable(hook)
-            return
-        if LEGACY_MARKER in body:
-            hook.write_text(LEGACY_SEGMENT_RE.sub(_SEGMENT, body))
-            _make_executable(hook)
-            return
-        # Preserve the existing hook verbatim; append our segment.
-        if not body.endswith("\n"):
-            body += "\n"
-        hook.write_text(body + "\n" + _SEGMENT)
-    _make_executable(hook)
+        hook = hooks_dir / "post-commit"
+        if not hook.exists():
+            atomic_write_text(hook, "#!/bin/sh\n" + _SEGMENT + "exit 0\n", executable=True)
+        else:
+            body = hook.read_text()
+            if MARKER in body:
+                # Re-install: replace our segment in place so the pinned
+                # capture wiring stays current if the plugin moved or the
+                # segment template changed.
+                atomic_write_text(hook, SEGMENT_RE.sub(_SEGMENT, body), executable=True)
+                _make_executable(hook)
+                return
+            if LEGACY_MARKER in body:
+                atomic_write_text(hook, LEGACY_SEGMENT_RE.sub(_SEGMENT, body), executable=True)
+                _make_executable(hook)
+                return
+            # Preserve the existing hook verbatim; append our segment.
+            if not body.endswith("\n"):
+                body += "\n"
+            atomic_write_text(hook, body + "\n" + _SEGMENT, executable=True)
+        _make_executable(hook)
 
 
 def _repo_has_slug_denylist(hooks_dir: Path) -> bool:
@@ -386,48 +391,49 @@ def _install_pre_commit(hooks_dir: Path) -> None:
     the segment template changed, must refresh it — early-returning
     would leave a stale segment that can silently disable the guard.
     """
-    private_checker = _PKG_DIR.parent / "check_private_slugs.py"
-    runtime_checker = _PKG_DIR.parent / "check_runtime_memory_tracking.py"
-    if not private_checker.exists() and not runtime_checker.exists():
-        return  # nothing to guard with — skip silently
-    guard = hooks_dir / ".private-slug-check.py"
-    if private_checker.exists() and _repo_has_slug_denylist(hooks_dir):
-        guard.write_text(_PRE_GUARD_SRC.format(checker=str(private_checker)))
-        guard.chmod(0o755)
-    else:
-        # Self-heal: a previous install may have left a guard that can only
-        # exit 2. The generated segment is defensive (`if [ -f ... ]`), so
-        # removing the file disables the check cleanly and leaves every other
-        # guard in the segment running.
-        guard.unlink(missing_ok=True)
-    if runtime_checker.exists():
-        # Pin the shim to a LOCAL copy of the checker under .git/hooks, not to
-        # the plugin/package path: plugin caches get pruned (observed twice on
-        # 2026-08-28, bricking every commit in a consumer repo), while a copy
-        # inside .git/hooks lives exactly as long as the hooks that call it.
-        # The checker is stdlib-only and self-contained, so a copy is safe.
-        local_checker = hooks_dir / ".runtime-memory-checker.py"
-        local_checker.write_text(runtime_checker.read_text())
-        local_checker.chmod(0o755)
-        guard = hooks_dir / ".runtime-memory-tracking-check.py"
-        guard.write_text(_RUNTIME_GUARD_SRC.format(checker=str(local_checker)))
-        guard.chmod(0o755)
+    with LockedFile(hooks_dir / "pre-commit", timeout_s=2):
+        private_checker = _PKG_DIR.parent / "check_private_slugs.py"
+        runtime_checker = _PKG_DIR.parent / "check_runtime_memory_tracking.py"
+        if not private_checker.exists() and not runtime_checker.exists():
+            return  # nothing to guard with — skip silently
+        guard = hooks_dir / ".private-slug-check.py"
+        if private_checker.exists() and _repo_has_slug_denylist(hooks_dir):
+            atomic_write_text(guard, _PRE_GUARD_SRC.format(checker=str(private_checker)), executable=True)
+            guard.chmod(0o755)
+        else:
+            # Self-heal: a previous install may have left a guard that can only
+            # exit 2. The generated segment is defensive (`if [ -f ... ]`), so
+            # removing the file disables the check cleanly and leaves every other
+            # guard in the segment running.
+            guard.unlink(missing_ok=True)
+        if runtime_checker.exists():
+            # Pin the shim to a LOCAL copy of the checker under .git/hooks, not to
+            # the plugin/package path: plugin caches get pruned (observed twice on
+            # 2026-08-28, bricking every commit in a consumer repo), while a copy
+            # inside .git/hooks lives exactly as long as the hooks that call it.
+            # The checker is stdlib-only and self-contained, so a copy is safe.
+            local_checker = hooks_dir / ".runtime-memory-checker.py"
+            atomic_write_text(local_checker, runtime_checker.read_text(), executable=True)
+            local_checker.chmod(0o755)
+            guard = hooks_dir / ".runtime-memory-tracking-check.py"
+            atomic_write_text(guard, _RUNTIME_GUARD_SRC.format(checker=str(local_checker)), executable=True)
+            guard.chmod(0o755)
 
-    hook = hooks_dir / "pre-commit"
-    if not hook.exists():
-        hook.write_text("#!/bin/sh\n" + _PRE_SEGMENT + "exit 0\n")
-    else:
-        body = hook.read_text()
-        if PRE_MARKER in body:
-            # Re-install: replace our (possibly stale) segment in place
-            # so the pinned guard wiring is always current.
-            hook.write_text(PRE_SEGMENT_RE.sub(_PRE_SEGMENT, body))
-            _make_executable(hook)
-            return
-        if not body.endswith("\n"):
-            body += "\n"
-        hook.write_text(body + "\n" + _PRE_SEGMENT)
-    _make_executable(hook)
+        hook = hooks_dir / "pre-commit"
+        if not hook.exists():
+            atomic_write_text(hook, "#!/bin/sh\n" + _PRE_SEGMENT + "exit 0\n", executable=True)
+        else:
+            body = hook.read_text()
+            if PRE_MARKER in body:
+                # Re-install: replace our (possibly stale) segment in place
+                # so the pinned guard wiring is always current.
+                atomic_write_text(hook, PRE_SEGMENT_RE.sub(_PRE_SEGMENT, body), executable=True)
+                _make_executable(hook)
+                return
+            if not body.endswith("\n"):
+                body += "\n"
+            atomic_write_text(hook, body + "\n" + _PRE_SEGMENT, executable=True)
+        _make_executable(hook)
 
 
 def _git_out(repo: Path, args: list[str]) -> str | None:

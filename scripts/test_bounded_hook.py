@@ -187,7 +187,7 @@ def test_registered_bash_dispatcher_bounds_input_read(plugin):
 
 
 @pytest.mark.parametrize("name", ["session-start-git-hooks.sh", "session-start-tool-state.sh"])
-def test_startup_slow_interpreter_returns_before_host_deadline(plugin, name):
+def test_helpers_respect_caller_deadline_with_slow_interpreter(plugin, name):
     root, env = plugin
     subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
     (root / "scripts/tool_state_paths.py").write_text("print('{}')\n")
@@ -196,7 +196,8 @@ def test_startup_slow_interpreter_returns_before_host_deadline(plugin, name):
     python = bin_dir / "python3"
     python.write_text(f'#!/bin/sh\n/bin/sleep 3\nexec "{sys.executable}" "$@"\n')
     python.chmod(0o755)
-    proc, elapsed = run_hook(plugin, name, PATH=str(bin_dir) + ":" + env["PATH"])
+    proc, elapsed = run_hook(plugin, name, PATH=str(bin_dir) + ":" + env["PATH"],
+                             BUILD_LOOP_GIT_HOOKS_DEADLINE_MS="1500")
     assert elapsed < 2, f"{name} exceeded its 2s host deadline: {elapsed:.3f}s"
     assert proc.returncode == 0
     assert json.loads(proc.stdout) == {}

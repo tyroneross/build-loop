@@ -16,55 +16,13 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-retrieval.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2
-          },
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-rally-point.sh\" 2>/dev/null; exit 0",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-worktree-gc.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "async": true,
-            "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-git-hooks.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-plugin-drift.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-plugin-heal.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-memory.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 6
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-closeout.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "async": true,
-            "timeout": 3
-          },
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" session-start </dev/null 2>/dev/null; exit 0",
             "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-extensions.sh\" </dev/null 2>/dev/null; exit 0",
-            "timeout": 2
           }
         ]
       },
@@ -136,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase start >/dev/null 2>&1 || true",
+            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase start >/dev/null 2>&1 || true; fi",
             "async": true,
             "timeout": 1
           }
@@ -159,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase end >/dev/null 2>&1 || true",
+            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase end >/dev/null 2>&1 || true; fi",
             "async": true,
             "timeout": 1
           }
