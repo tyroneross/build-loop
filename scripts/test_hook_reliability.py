@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -53,9 +54,39 @@ class HookReliabilityTests(unittest.TestCase):
             state = root / '.build-loop/state.json'
             state.parent.mkdir()
             state.write_text(json.dumps({'phase': 'report', 'runs': []}))
+            # Hold every completed preflight snapshot until all four readers
+            # have observed the empty runs list. Run the real hook's Python
+            # unchanged; only delay delivery of its preflight output.
+            bin_dir = root / 'bin'
+            bin_dir.mkdir()
+            wrapper = bin_dir / 'python3'
+            wrapper.write_text(f'''#!{sys.executable}
+import os, subprocess, sys, time
+from pathlib import Path
+source = sys.stdin.read()
+result = subprocess.run([{sys.executable!r}], input=source, capture_output=True, text=True)
+if "r.get('session_id')" in source and 'fcntl' not in source:
+    barrier = Path({str(root)!r})
+    (barrier / ('ready-' + str(os.getpid()))).touch()
+    deadline = time.monotonic() + 10
+    while len(list(barrier.glob('ready-*'))) < 4:
+        if time.monotonic() >= deadline:
+            raise SystemExit('preflight barrier timed out')
+        time.sleep(.01)
+sys.stdout.write(result.stdout)
+sys.stderr.write(result.stderr)
+raise SystemExit(result.returncode)
+''')
+            wrapper.chmod(0o755)
+            env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ.get('PATH', '')}
             payload = json.dumps({'cwd': tmp, 'session_id': 'same-session'})
-            jobs = [subprocess.Popen(['bash', str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for _ in range(4)]
-            for job in jobs:
-                out, _ = job.communicate(payload, timeout=15)
-                self.assertNotIn('all F-criteria passed', out)
+            def stop(_):
+                return subprocess.run(['bash', str(script)], input=payload,
+                                      capture_output=True, text=True, env=env, timeout=15)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(stop, range(4)))
+            self.assertEqual(len(list(root.glob('ready-*'))), 4)
             self.assertEqual(len(json.loads(state.read_text())['runs']), 1)
+            for result in results:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn('all F-criteria passed', result.stdout)
