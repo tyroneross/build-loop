@@ -1270,3 +1270,74 @@ class CredentialHeredocBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class MixedSessionPushWarningTests(unittest.TestCase):
+    """Warn-only: a push carrying commits from more than one agent session.
+
+    Named failure (2026-11-01): a blocked commit's push still shipped 14 commits
+    from two other Claude sessions plus 3 untrailered ones, unreviewed."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+        self.branch = _git(self.repo, "branch", "--show-current").stdout.strip()
+        bare = self.tmp / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(self.repo, "remote", "add", "origin", str(bare))
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        self.log = self.tmp / "push-log.jsonl"
+        os.environ["BUILD_LOOP_PUSH_SESSIONS_LOG"] = str(self.log)
+
+    def tearDown(self) -> None:
+        os.environ.pop("BUILD_LOOP_PUSH_SESSIONS_LOG", None)
+        self._tmp.cleanup()
+
+    def _commit(self, name: str, session: str | None) -> None:
+        (self.repo / name).write_text(name + "\n", encoding="utf-8")
+        _git(self.repo, "add", name)
+        msg = f"add {name}" + (f"\n\nClaude-Session: https://claude.ai/code/{session}" if session else "")
+        _git(self.repo, "commit", "-q", "-m", msg)
+
+    def _system_message(self, r: subprocess.CompletedProcess) -> str:
+        try:
+            return json.loads(r.stdout.strip().splitlines()[-1]).get("systemMessage", "")
+        except (ValueError, IndexError):
+            return ""
+
+    def test_replay_of_2026_11_01_push_warns_and_names_each_source(self) -> None:
+        self._commit("a.txt", "session_01A8XkAms2dFjGXXxjg3bxZY")
+        self._commit("b.txt", "session_01Sk7nyStT37V2T7zdxA7Lsg")
+        self._commit("c.txt", None)
+        r = run_dispatch(self.repo, f"git -C {self.repo} push origin HEAD:{self.branch}")
+        self.assertEqual(r.returncode, 0, "warn-only: must never block")
+        msg = self._system_message(r)
+        self.assertIn("3 commits from 3 sources", msg)
+        for key in ("session_01A8XkAms2dFjGXXxjg3bxZY", "session_01Sk7nyStT37V2T7zdxA7Lsg", "no trailer"):
+            self.assertIn(key, msg)
+        rec = json.loads(self.log.read_text().splitlines()[-1])
+        self.assertTrue(rec["fired"])
+
+    def test_prefix_sharing_sessions_are_distinct(self) -> None:
+        """Two real session ids shared the prefix session_01Sk7ny on 2026-11-01."""
+        self._commit("a.txt", "session_01Sk7nyTTjXSKHx3QJkWXSr9")
+        self._commit("b.txt", "session_01Sk7nyStT37V2T7zdxA7Lsg")
+        r = run_dispatch(self.repo, f"git -C {self.repo} push")
+        self.assertIn("2 sources", self._system_message(r))
+
+    def test_single_session_push_is_silent_but_logged(self) -> None:
+        self._commit("a.txt", "session_01Sk7nyTTjXSKHx3QJkWXSr9")
+        self._commit("b.txt", "session_01Sk7nyTTjXSKHx3QJkWXSr9")
+        r = run_dispatch(self.repo, f"git -C {self.repo} push")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self._system_message(r), "")
+        self.assertFalse(json.loads(self.log.read_text().splitlines()[-1])["fired"])
+
+    def test_checker_fails_open_on_a_bad_range(self) -> None:
+        r = subprocess.run(
+            [sys.executable, str(PLUGIN_ROOT / "scripts/hooks/push_mixed_sessions.py"),
+             "--repo", str(self.repo), "--range", "nope..HEAD"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual((r.returncode, r.stdout), (0, ""))

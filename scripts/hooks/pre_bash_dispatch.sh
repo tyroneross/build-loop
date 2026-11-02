@@ -127,6 +127,7 @@ fi
 # a false positive costs one Python start. A warning (git error, unresolvable
 # target) is carried to the final envelope as a systemMessage, never a deny.
 _WT_SYSMSG=""
+_PUSH_SYSMSG=""
 _WT_Q="'"
 _WT_N="${CMD//\"/}"
 _WT_N="${_WT_N//$_WT_Q/}"
@@ -904,6 +905,13 @@ EOF
                 printf '\n[build-loop] Scan scope — %s\n' "$_SCOPE_NOTE" >&2
                 printf '[build-loop] Pre-push security scan found HIGH+ findings — push blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>` or `# nosec B###`, or set BUILD_LOOP_HOOKS=off to bypass.\n' >&2
             fi
+            # Warn (never block) when the outgoing commits come from more than
+            # one agent session. Named failure 2026-11-01: a blocked commit's
+            # push still shipped 17 commits from other sessions, unreviewed.
+            _MIXED="$PLUGIN_ROOT/scripts/hooks/push_mixed_sessions.py"
+            if [ -n "$_UPSTREAM" ] && [ -f "$_MIXED" ]; then
+                _PUSH_SYSMSG=$(python3 "$_MIXED" --repo "$_SCAN_TARGET" --range "$_UPSTREAM..HEAD" 2>/dev/null || true)
+            fi
         fi
         ;;
 esac
@@ -971,10 +979,10 @@ _ALL_EMPTY=1
 for _env in "${ENVELOPES[@]}"; do
     [ "$_env" = "{}" ] || { _ALL_EMPTY=0; break; }
 done
-if [ "$_ALL_EMPTY" = "1" ] && [ -z "$_WT_SYSMSG" ]; then
+if [ "$_ALL_EMPTY" = "1" ] && [ -z "$_WT_SYSMSG" ] && [ -z "$_PUSH_SYSMSG" ]; then
     printf '{}\n'
 else
-BL_WT_SYSMSG="$_WT_SYSMSG" python3 - "${ENVELOPES[@]}" <<'PY'
+BL_WT_SYSMSG="$_WT_SYSMSG" BL_PUSH_SYSMSG="$_PUSH_SYSMSG" python3 - "${ENVELOPES[@]}" <<'PY'
 import os, sys, json
 
 PRECEDENCE = {"deny": 3, "ask": 2, "allow": 1}
@@ -998,10 +1006,15 @@ for raw in sys.argv[1:]:
 if best and best["hookSpecificOutput"].get("permissionDecision") == "allow":
     best = None
 # Carry the worktree guard's warning (fail-open path) so it stays visible.
-try:
-    warn = json.loads(os.environ.get("BL_WT_SYSMSG") or "{}").get("systemMessage")
-except Exception:
-    warn = None
+warns = []
+for var in ("BL_WT_SYSMSG", "BL_PUSH_SYSMSG"):  # worktree guard, mixed-session push
+    try:
+        w = json.loads(os.environ.get(var) or "{}").get("systemMessage")
+    except Exception:
+        w = None
+    if w:
+        warns.append(w)
+warn = "\n\n".join(warns)
 if warn:
     best = dict(best or {})
     best["systemMessage"] = warn

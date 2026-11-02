@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "1250d72b06909acd32e9a0ef263a69bdf349c8ee8f69b168496519e8e902f53b"
+    "content_sha256": "3c9fce6b08661eb2cf02c0b725c8e30597dc7a6eed4407c24fac6a2389bd47dc"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1376,6 +1376,7 @@
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
       "scripts/hooks/pre_bash_fastpath.py": "In-process runner for pre_bash_dispatch.sh's always-on Python gates.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
+      "scripts/hooks/push_mixed_sessions.py": "Warn when a push carries commits from more than one agent session.",
       "scripts/hooks/run_registration_gate.py": "run_registration_gate.py — warn, at commit time, that this run was never registered.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/hooks/unbounded_load_gate.py": "Reject ad-hoc unbounded CPU probes and route callers to the owned supervisor.\"\"\"",
