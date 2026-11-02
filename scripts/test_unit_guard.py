@@ -186,6 +186,17 @@ class TestCheck(unittest.TestCase):
 class TestReviewFindings(unittest.TestCase):
     """Regressions for the 2026-11-01 independent review of unit_guard."""
 
+    def test_decimal_numeric_strings_cannot_bypass_checks(self):
+        for text in ("4962435072.", "+4962435072", ".4962435072e10", "-0.5", "-.5"):
+            with self.subTest(text=text):
+                result = check({"rss_mib": text})
+                self.assertEqual(result["checked"], 1)
+                self.assertIn("implausible", kinds(result))
+
+    def test_records_keep_version_label_semantics(self):
+        doc = {"unit": "ms", "records": [{"schema_version": 1, "value": 12}]}
+        self.assertEqual(check(doc)["findings"], [])
+
     # 1. Statistic and dimension suffixes are not units.
     def test_statistic_suffix_keeps_the_unit_before_it(self):
         doc = {"latency_ms_min": 12, "latency_ms_max": 40, "latency_ms_p95": 31,

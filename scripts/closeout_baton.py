@@ -32,7 +32,8 @@ def reconcile(workdir: Path, runner=subprocess.run) -> dict:
                             env={**os.environ, 'PYTHONPATH': str(Path(__file__).parent)},
                             capture_output=True, text=True, timeout=min(120, max(.1, float(os.environ.get("BUILD_LOOP_START_CLOSEOUT_DEADLINE_MS", "120000")) / 1000)))
             output = json.loads(result.stdout)
-            if result.returncode or output.get('error') or output.get('closeout_status') not in {
+            milestone = output.get('milestone') or {}
+            if result.returncode or output.get('error') or milestone.get('status') == 'error' or output.get('closeout_status') not in {
                 'wrote_memory', 'queued_pending_lesson', 'no_durable_lesson'
             }:
                 return {'status': 'incomplete', 'pending': True}

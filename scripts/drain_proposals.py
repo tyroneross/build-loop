@@ -49,6 +49,7 @@ is unknown so the caller can detect a typo.
 from __future__ import annotations
 
 import argparse
+from functools import wraps
 import hashlib
 import json
 import os
@@ -59,6 +60,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from atomic_io import LockedFile
 
 VALID_STATUSES = ("new", "reviewed", "applied", "rejected", "deferred")
 DECIDED_STATUSES = ("reviewed", "applied", "rejected", "deferred")
@@ -415,6 +418,18 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _state_transaction(command):
+    """Serialize every decision writer across selection, read and publication."""
+    @wraps(command)
+    def locked(args):
+        if not getattr(args, "apply", True):
+            return command(args)
+        with LockedFile(_state_dir(args.state_dir) / "drain-state.json"):
+            return command(args)
+    return locked
+
+
+@_state_transaction
 def cmd_set(args: argparse.Namespace) -> int:
     state_dir = _state_dir(args.state_dir)
     status_map = {"apply": "applied", "reject": "rejected", "defer": "deferred", "review": "reviewed"}
@@ -452,6 +467,7 @@ def select_bulk(items: list[dict[str, Any]], generator: str, source_kind: str | 
     ]
 
 
+@_state_transaction
 def cmd_bulk(args: argparse.Namespace) -> int:
     """Record one decision for every open item of a generator. Dry run unless --apply."""
     state_dir = _state_dir(args.state_dir)
@@ -525,6 +541,7 @@ def migrate_state(state: dict[str, Any], items: list[dict[str, Any]]) -> dict[st
     }
 
 
+@_state_transaction
 def cmd_migrate(args: argparse.Namespace) -> int:
     state_dir = _state_dir(args.state_dir)
     state_path = state_dir / "drain-state.json"
