@@ -112,6 +112,9 @@ CATEGORY_KEYWORDS = [
                       # same single-run worktree lifecycle family as worktree-gc.
                       "worktree_inventory", "worktree inventory",
                       "worktree removal",
+                      # Hook payload normalization and merged-worktree sweeps are
+                      # the same single-run hook/worktree lifecycle infra.
+                      "hook contract", "hook payload", "merged linked worktrees",
                       # Versioned goal contracts for createdRefs are run
                       # lifecycle metadata, not a new execution capability.
                       "ref_goals",
@@ -148,7 +151,7 @@ CATEGORY_KEYWORDS = [
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
-    ("coordination", ("rally", "coordination", "handoff", "presence", "roster",
+    ("coordination", ("parallel branches", "rally", "coordination", "handoff", "presence", "roster",
                       "inbox", "leadership", "mece", "channel",
                       "session-start-tool-state")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
@@ -158,7 +161,7 @@ CATEGORY_KEYWORDS = [
                       "trace", "logging-tracer", "memory-first", "sourcekit")),
     # Validation includes plugin-hygiene checks (cache sync, namesake
     # collisions) and api-dependency contract checks.
-    ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic", "acceptance",
+    ("validation",   ("wrong unit", "validate", "fact-check", "fact_check", "mock", "critic", "acceptance",
                       "review", "rubric", "lint", "cache sync", "cache-sync",
                       # Commit-time drift/hygiene gates: artifact regen guard
                       # (keeps checked-in generated artifacts in sync) sits with
