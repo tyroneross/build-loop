@@ -106,6 +106,8 @@ def run_dispatch(
         if path_env is not None:
             env["PATH"] = path_env
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root or PLUGIN_ROOT)
+    # Synthetic pushes must not land in the real push-guard telemetry.
+    env.setdefault("BUILD_LOOP_PUSH_SESSIONS_LOG", os.devnull)
     # Synthetic routing tests must not inherit the host credential helper.
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_NOSYSTEM"] = "1"

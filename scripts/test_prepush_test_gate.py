@@ -31,6 +31,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
 import textwrap
 import types
@@ -627,3 +628,21 @@ def test_parse_failed_ids_reads_pytest_short_summary():
     ]
     assert gate.parse_failed_ids("") == []
     assert gate.parse_failed_ids("everything passed") == []
+
+
+def test_linked_worktree_uses_the_main_checkout_venv(tmp_path):
+    """A linked worktree has no .venv; the gate must use the main checkout's
+    instead of the bare system python (false block on pathspec, 2026-11-01)."""
+    import subprocess as sp
+    main = tmp_path / "main"
+    main.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    run = lambda *a, cwd=main: sp.run(["git", *a], cwd=cwd, env=env, check=True, capture_output=True)
+    run("init", "-q")
+    run("-c", "user.email=t@e.x", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "seed")
+    wt = tmp_path / "wt"
+    run("worktree", "add", "-q", "--detach", str(wt))
+    venv_py = main / ".venv" / "bin" / "python"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.write_text("#!/bin/sh\n")
+    assert gate._resolve_interpreter(wt) == str(venv_py)

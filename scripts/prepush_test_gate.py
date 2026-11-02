@@ -231,12 +231,23 @@ def _resolve_interpreter(workdir: Path) -> str:
     one resolved interpreter keeps every gate's env identical and avoids per-gate
     subprocess overhead.
     """
-    for candidate in (
-        workdir / ".venv" / "bin" / "python",
-        workdir / "venv" / "bin" / "python",
-    ):
-        if candidate.exists():
-            return str(candidate)
+    roots = [workdir]
+    # A linked worktree has no .venv of its own; the synced env lives in the
+    # main checkout. Without this, a push from a worktree fell back to the bare
+    # system python and blocked on ModuleNotFoundError (pathspec, 2026-11-01).
+    try:
+        common = subprocess.run(
+            ["git", "-C", str(workdir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        if common:
+            roots.append(Path(common).parent)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for root in roots:
+        for candidate in (root / ".venv" / "bin" / "python", root / "venv" / "bin" / "python"):
+            if candidate.exists():
+                return str(candidate)
     return sys.executable or "python3"
 
 
