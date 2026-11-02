@@ -1,8 +1,8 @@
 # Fireworks AI provider catalog and workload guide
 
-Snapshot date: **2026-10-19**
+Snapshot date: **2026-11-01**
 
-Review by: **2026-11-02**
+Review by: **2026-11-06**
 
 Machine-readable companion: `references/provider-catalogs/fireworks-ai-models.json`
 
@@ -15,12 +15,14 @@ Use public evidence to select candidates for workload testing. Recommendation-pa
 | `accounts/fireworks/models/kimi-k3` | serverless | $3 / $0.3 / $15 | $3.75 / $0.375 / $18.75 |
 | `accounts/fireworks/models/qwen3p7-plus` | deployment_candidate | unknown | unknown |
 | `accounts/fireworks/models/minimax-m3` | serverless | $0.3 / $0.06 / $1.2 | $0.45 / $0.09 / $1.8 |
-| `accounts/fireworks/models/gpt-oss-120b` | serverless | $0.15 / $0.015 / $0.6 | $0.18 / $0.018 / $0.72 |
+| `accounts/fireworks/models/gpt-oss-120b` | serverless_deprecated | $0.15 / $0.015 / $0.6 | $0.18 / $0.018 / $0.72 |
 | `accounts/fireworks/models/step-3p7-flash-nvfp4` | deployment_candidate | unknown | unknown |
 | `accounts/fireworks/models/qwen3-omni-30b-a3b-instruct` | deployment_candidate | unknown | unknown |
 | `accounts/fireworks/models/qwen3-embedding-8b` | serverless | $0.1 input | unknown |
 | `accounts/fireworks/models/deepseek-v4p1-flash-1017` | serverless | $0.3 / $0.006 / $1.2 | $0.375 / $0.0075 / $1.5 |
 | `accounts/fireworks/models/glm-5p3` | serverless | $1.4 / $0.26 / $4.4 | $1.75 / $0.325 / $5.5 |
+| `accounts/fireworks/models/rune` | serverless input-only | $0.042 / $0.0084 / $0 | no premium documented |
+| `accounts/fireworks/models/muse-spark-open` | serverless US | $1.25 / $0.15 / $4.25 | $1.875 / $0.225 / $6.375 |
 
 Qwen3.7 Plus and Step3.7 public model cards say Serverless Not supported. Their prices remain unknown and they are deployment candidates. Context token counts remain null when the source only gives rounded values. Null capability values mean unknown support for that exact binding.
 
@@ -44,6 +46,8 @@ JSON object/schema and grammar modes are documented. Most JSON Schema 2020-12 an
 
 ## Confirmed serverless deprecations
 
+Scheduled for 2026-11-07: `accounts/fireworks/models/gpt-oss-120b` retires from serverless while dedicated and reserved routes remain; `accounts/fireworks/models/inkling` migrates to `accounts/fireworks/models/muse-spark-open`; `accounts/fireworks/models/nemotron-3-ultra-nvfp4` and `accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b` move to dedicated Nemotron Super VL; the US-only variants of `accounts/fireworks/models/minimax-m3` and `accounts/fireworks/models/glm-5p3-flash` migrate to `accounts/fireworks/routers/deepseek-v4p1-flash-1017-us`, while their global routes remain. Recheck before the November 7 change.
+
 The 2026-08-27 entries remain historical; subsequent September removals also retired some of their original replacement routes. Current migration destinations below follow that chain. September 25 removals were confirmed September 26; dedicated deployments were unaffected. The November 2 Flash-0731 training notice is a separate surface.
 
 - `accounts/fireworks/models/minimax-m2p7` (2026-08-27): `accounts/fireworks/models/minimax-m3`.
@@ -60,9 +64,9 @@ The 2026-08-27 entries remain historical; subsequent September removals also ret
 
 ## Freshness and evidence
 
-Recheck by 2026-11-02. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
+Recheck by 2026-11-06. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
 
-Reverified 2026-10-19: https://docs.fireworks.ai/updates/changelog confirms September 25 inference removals; https://docs.fireworks.ai/serverless/pricing and the listed public model cards verify current named prices and serving paths. https://docs.fireworks.ai/serverless/rate-limits verifies revised thresholds/ceilings. https://docs.fireworks.ai/serverless/overview verifies caching/batch; structured-output/reasoning/tool/input guides verify provider contracts. All original listed public sources were fetched, and additional model/card sources are recorded. Unknown exact contexts and unverified bindings stay null. No FIREWORKS_API_KEY or inference request was used.
+Reverified 2026-11-01: https://docs.fireworks.ai/updates/changelog confirms the Rune launch and November 7 serverless deprecations; pricing and rate-limit pages verify current commercial controls. All listed public sources were fetched. Unknown exact contexts and unverified bindings stay null. No FIREWORKS_API_KEY or inference request was used.
 
 ## Sources
 
@@ -87,3 +91,4 @@ Reverified 2026-10-19: https://docs.fireworks.ai/updates/changelog confirms Sept
 - [embedding_details](https://docs.fireworks.ai/guides/querying-embeddings-models)
 - [serverless_modes](https://docs.fireworks.ai/serverless/serverless-modes)
 - [anthropic_compatibility](https://docs.fireworks.ai/tools-sdks/anthropic-compatibility)
+- [rune_model](https://app.fireworks.ai/models/fireworks/rune)

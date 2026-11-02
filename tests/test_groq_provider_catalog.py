@@ -76,9 +76,10 @@ def test_catalog_covers_models_page_snapshot_without_duplicate_ids() -> None:
         "minimaxai/minimax-m2.7",
         "openai/gpt-oss-safeguard-20b",
         "qwen/qwen3.8-27b",
+        "meta-models/muse-spark-open",
         "qwen/qwen3.6-27b",
     }
-    assert len(ids) == len(set(ids)) == 16
+    assert len(ids) == len(set(ids)) == 17
     assert set(ids) == expected_ids
     source_ids = {source["id"] for source in catalog["sources"]}
     assert all(model["sources"] and set(model["sources"]) <= source_ids for model in catalog["models"])
@@ -92,14 +93,10 @@ def test_deprecation_schedule_overrides_models_page_badge() -> None:
     }
     for model_id, replacements in expected.items():
         model = models[model_id]
-        # These shut down on 2026-08-16 (confirmed absent from the models
-        # page, rate-limits page, and the runtime /models listing on
-        # 2026-08-18). Before that date "production_deprecated" was correct —
-        # the models page still advertised them while the deprecation page
-        # scheduled removal. Asserting it now would tell a reader they are
-        # still callable; they return errors. The migration record below is
-        # what earns these entries their continued place in the catalog.
-        assert model["lifecycle"] == "retired"
+        # Free and Developer access shut down on 2026-08-16, but the current
+        # models page lists both routes for Enterprise accounts and the notice
+        # explicitly excludes Enterprise committed-spend contracts.
+        assert model["lifecycle"] == "enterprise_only"
         assert model["deprecation"]["shutdown_at"] == "2026-08-16"
         assert model["deprecation"]["plans"] == ["free", "developer"]
         assert model["deprecation"]["replacements"] == replacements
@@ -113,8 +110,12 @@ def test_strict_structured_outputs_are_not_overclaimed() -> None:
         for model_id, model in models.items()
         if model.get("capabilities", {}).get("strict_structured_outputs") is True
     }
-    # Structured-outputs page (2026-09-23) lists strict mode for GPT-OSS 20B/120B and Qwen 3.8 27B.
-    assert strict_ids == {"openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"}
+    assert strict_ids == {
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b",
+        "meta-models/muse-spark-open",
+    }
 
 
 def test_reasoning_controls_are_model_family_specific() -> None:
@@ -127,6 +128,11 @@ def test_reasoning_controls_are_model_family_specific() -> None:
         capabilities = models[model_id]["capabilities"]
         assert capabilities["reasoning_interface"] == "reasoning_format"
         assert capabilities["reasoning_format_supported"] is True
+    muse = models["meta-models/muse-spark-open"]["capabilities"]
+    assert muse["reasoning_always_on"] is True
+    assert muse["default_reasoning_effort"] == "xhigh"
+    assert muse["reasoning_interface"] == "reasoning_effort"
+    assert muse["reasoning_format_supported"] is False
 
 
 def test_dynamic_fields_are_real_catalog_paths() -> None:
@@ -147,6 +153,7 @@ def test_preview_modalities_are_not_presented_as_stable_production() -> None:
     models = models_by_id(load_catalog())
     assert models["qwen/qwen3.8-27b"]["lifecycle"] == "preview"
     assert models["qwen/qwen3.8-27b"]["capabilities"]["vision"] is True
+    assert models["meta-models/muse-spark-open"]["capabilities"]["vision"] is True
     # Groq replaced 3.6 with 3.8 on 2026-09-14 (deprecations page).
     assert models["qwen/qwen3.6-27b"]["lifecycle"] == "retired"
     assert models["canopylabs/orpheus-v1-english"]["lifecycle"] == "preview"
@@ -173,8 +180,10 @@ def test_guide_covers_every_catalog_entry_and_dynamic_caveats() -> None:
         "2026-08-16",
         "do **not** support `reasoning_format`",
         "labels it **beta**",
+        "Muse Spark Open does **not** support `reasoning_format`",
     ):
         assert phrase in guide
+    assert "only documented vision model" not in guide
 
 
 def test_model_tiering_routes_groq_questions_to_catalog_without_enabling_models() -> None:

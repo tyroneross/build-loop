@@ -1,8 +1,8 @@
 # Together AI provider catalog and workload guide
 
-Snapshot date: **2026-10-19**
+Snapshot date: **2026-11-01**
 
-Review by: **2026-10-21**
+Review by: **2026-11-03**
 
 Machine-readable companion: `references/provider-catalogs/together-ai-models.json`
 
@@ -10,14 +10,18 @@ This is a curated, non-exhaustive public-documentation snapshot. Serverless and 
 
 ## Decision summary
 
-Evaluate `deepseek-ai/DeepSeek-V4.1-Flash` for general work, `MiniMaxAI/MiniMax-M3` for agent/vision work, and `zai-org/GLM-5.3` or `moonshotai/Kimi-K3` for harder coding/reasoning. These are candidates for workload measurement. Migrate off the scheduled routes below before October 22.
+Evaluate `deepseek-ai/DeepSeek-V4.1-Flash-1017` or `Qwen/Qwen3.8-Flash` for economical general work, `nvidia/NVIDIA-Nemotron-3.5-Super-VL` for vision, and `zai-org/GLM-5.3` or `moonshotai/Kimi-K3` for harder coding/reasoning. Migrate off `Qwen/Qwen3.8-2.4T-A95B`, `MiniMaxAI/MiniMax-M3`, and `thinkingmachines/Inkling` before their November removals.
 
 ## Current serverless decision candidates
 
 | Model | Context tokens | Input/cache/output per 1M | Tools / structured outputs |
 |---|---:|---:|---|
-| `thinkingmachines/Inkling` | 524,288 | $1 / $0.17 / $4.05 | yes / yes |
-| `MiniMaxAI/MiniMax-M3` | 524,288 | $0.3 / $0.06 / $1.2 | yes / yes |
+| `meta-models/Muse-Spark-Open-816B-A42B` | 1,048,576 | $1.25 / $0.15 / $4.25 | yes / yes |
+| `MiniMaxAI/MiniMax-M3.1-Flash` | 1,048,576 | $0.15 / $0.015 / $0.6 | yes / yes |
+| `Qwen/Qwen3.7-Max` | unknown | $2.5 / $0.5 / $7.5 | yes / yes |
+| `Qwen/Qwen3.8-Flash` | 1,000,000 | $0.15 / unknown / $0.47 | yes / yes |
+| `deepseek-ai/DeepSeek-V4.1-Flash-1017` | 1,000,000 | $0.3 / $0.006 / $1.2 | yes / yes |
+| `nvidia/NVIDIA-Nemotron-3.5-Super-VL` | 262,144 | $0.15 / $0.02 / $0.5 | yes / yes |
 | `moonshotai/Kimi-K3` | 1,048,576 | $3 / $0.3 / $15 | yes / yes |
 | `zai-org/GLM-5.3-Flash` | 1,048,575 | $0.15 / $0.03 / $0.5 | yes / yes |
 | `zai-org/GLM-5.3` | 1,048,575 | $1.4 / $0.26 / $4.4 | yes / yes |
@@ -33,7 +37,7 @@ These are model-table values. Null reasoning flags do not mean disabled support;
 
 ## Specialist surfaces
 
-- vision: `Qwen/Qwen3.8-2.4T-A95B`.
+- vision: `nvidia/NVIDIA-Nemotron-3.5-Super-VL`. The older `Qwen/Qwen3.8-2.4T-A95B` route is scheduled for removal.
 - image_generation: `openai/gpt-image-2`.
 - video_generation: `ByteDance/Seedance-2.5`.
 - text_to_speech: `cartesia/sonic-3`.
@@ -49,13 +53,16 @@ Rate limits are contract- and model-specific. Demand can cause 429 or 503: use b
 
 ## Scheduled removals
 
-- `deepseek-ai/DeepSeek-V4-Flash-0731`: 2026-10-22; documented replacement `deepseek-ai/DeepSeek-V4.1-Flash`; dedicated availability remains documented.
-- `meta-llama/Llama-3.3-70B-Instruct-Turbo`: 2026-10-22; documented replacement `meta-models/Muse-Glimmer-30B`; dedicated availability remains documented.
+- `Qwen/Qwen3.8-2.4T-A95B`: 2026-11-04; replace with `Qwen/Qwen3.7-Max`; no dedicated route documented.
+- `MiniMaxAI/MiniMax-M3`: 2026-11-06; replace with `MiniMaxAI/MiniMax-M3.1-Flash`; dedicated availability remains documented.
+- `thinkingmachines/Inkling`: 2026-11-06; replace with `meta-models/Muse-Spark-Open-816B-A42B`; dedicated availability remains documented.
 
 ## Recent removals
 
 The four September removals have September 15 in history and September 14 in the older schedule. Preserve the discrepancy rather than silently choosing one source statement.
 
+- `deepseek-ai/DeepSeek-V4-Flash-0731`: 2026-10-22; dedicated availability: yes.
+- `meta-llama/Llama-3.3-70B-Instruct-Turbo`: 2026-10-22; dedicated availability: yes.
 - `openai/gpt-oss-20b`: 2026-09-15; dedicated availability: yes.
 - `google/gemma-4-31B-it`: 2026-09-15; dedicated availability: yes.
 - `thinkingmachines/Inkling-Small`: 2026-09-15; dedicated availability: yes.
@@ -71,9 +78,9 @@ The 2026-08-27 removals remain historical records.
 
 ## Freshness and evidence
 
-Recheck by 2026-10-21. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
+Recheck by 2026-11-03. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
 
-Reverified 2026-10-19: https://docs.together.ai/docs/serverless/models supplies retained chat contexts/prices/tools/schema flags and the exact meta-models/Muse-Glimmer-30B route; https://docs.together.ai/docs/deprecations independently names that replacement and October 22 removals. https://docs.together.ai/docs/serverless/rate-limits supplies current demand/contract guidance. Pricing conflicts with https://www.together.ai/pricing are explicit. Capability guides verify provider contracts and specifically listed reasoning models; absent bindings stay null. All original listed public URLs were fetched. No TOGETHER_API_KEY or inference request was used.
+Reverified 2026-11-01: https://docs.together.ai/docs/serverless/models supplies current chat contexts, prices, tool flags, and schema flags; https://docs.together.ai/docs/deprecations supplies November 4 and November 6 removals plus October 22 history. The recommendation page still names routes scheduled for removal, so deprecations take precedence. All listed public URLs were fetched. No TOGETHER_API_KEY or inference request was used.
 
 ## Sources
 

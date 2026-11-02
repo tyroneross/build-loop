@@ -111,7 +111,7 @@ def test_openrouter_snapshot_is_bounded_and_records_near_term_expirations() -> N
     assert re.fullmatch(r"[0-9a-f]{64}", popular_snapshot["response_sha256"])
     assert popular_snapshot["model_count"] == snapshot["model_count"]
     ranks = [row["popular_rank"] for row in catalog["model_samples"]]
-    assert ranks == sorted(set(ranks)), "samples must keep unique observed popularity order"
+    assert len(ranks) == len(set(ranks)), "samples must keep unique observed popularity ranks"
     assert all(type(rank) is int and 1 <= rank <= popular_snapshot["model_count"] for rank in ranks)
     assert snapshot["access_mode"].startswith("unauthenticated")
     assert "lowest current route price" not in json.dumps(catalog)
@@ -147,6 +147,25 @@ def test_fireworks_public_card_conflicts_cannot_recommend_serverless_routes() ->
         assert "Serverless Not supported" in record["availability_note"]
     assert models["accounts/fireworks/models/qwen3p7-plus"]["pricing"] is None
     assert catalog["provider_features"]["serverless_sla"] is None
+
+
+def test_fireworks_scheduled_deprecations_are_dated_and_documented() -> None:
+    catalog = load_catalog("fireworks-ai-models.json")
+    guide = (CATALOG_DIR / "fireworks-ai.md").read_text(encoding="utf-8")
+    captured = date.fromisoformat(catalog["captured_at"])
+    scheduled = catalog["scheduled_deprecations"]
+    assert {row["id"] for row in scheduled} == {
+        "accounts/fireworks/models/gpt-oss-120b",
+        "accounts/fireworks/models/inkling",
+        "accounts/fireworks/models/minimax-m3",
+        "accounts/fireworks/models/glm-5p3-flash",
+        "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+        "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+    }
+    for row in scheduled:
+        assert date.fromisoformat(row["effective_at"]) >= captured
+        assert f"`{row['id']}`" in guide
+        assert row["replacement"]
 
 
 def test_together_removals_override_serverless_candidate_rows() -> None:

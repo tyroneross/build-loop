@@ -1,8 +1,8 @@
 # OpenRouter provider catalog and workload guide
 
-Snapshot date: **2026-10-19**
+Snapshot date: **2026-11-01**
 
-Review by: **2026-10-20**
+Review by: **2026-11-02**
 
 Machine-readable companion: `references/provider-catalogs/openrouter-models.json`
 
@@ -10,26 +10,26 @@ Use this bounded snapshot for downstream provider research, not a recommendation
 
 ## Anonymous snapshot
 
-685 models were returned without authentication. Counts are observed metadata, not quality or availability guarantees.
+687 models were returned without authentication. Counts are observed metadata, not quality or availability guarantees.
 
 | Capability | Models |
 |---|---:|
-| tools | 401 |
-| structured_outputs | 397 |
-| reasoning | 344 |
-| image_input | 411 |
+| tools | 386 |
+| structured_outputs | 383 |
+| reasoning | 336 |
+| image_input | 418 |
 | audio_input | 87 |
 
 ## Representative samples
 
 | Model | Weekly rank | Context tokens | Input / output per 1M |
 |---|---:|---:|---:|
-| `deepseek/deepseek-v4.1-flash` | 1 | 1,048,576 | $0.0304 / $0.08 |
-| `z-ai/glm-5.3-flash` | 2 | 1,048,576 | $0.048 / $0.16 |
+| `deepseek/deepseek-v4.1-flash` | 3 | 1,048,576 | $0.045 / $0.50 |
+| `z-ai/glm-5.3-flash` | 2 | 1,048,576 | $0.0285 / $0.0923 |
 | `tencent/hy4-preview` | 5 | 1,048,576 | $0.7506 / $2.2509 |
-| `tencent/hy3` | 13 | 262,144 | $0.0825 / $0.33 |
-| `google/gemini-3.8-flash` | 21 | 1,048,576 | $0.825 / $4.125 |
-| `openai/gpt-5.6-luna` | 22 | 1,050,000 | $0.2 / $1.2 |
+| `tencent/hy3` | 14 | 262,144 | $0.0825 / $0.33 |
+| `google/gemini-3.8-flash` | 25 | 1,048,576 | $0.825 / $4.125 |
+| `openai/gpt-5.6-luna` | 9 | 1,050,000 | $0.2 / $1.2 |
 
 All six samples currently report tools, structured outputs and reasoning parameters. Their original modality metadata remains in JSON. Prices describe the API top provider; conditional time/token overrides remain in their reported per-token units. Weekly popularity measures tokens processed, not independent model quality.
 
@@ -43,34 +43,31 @@ Free models allow 20 requests/minute and 50/day, rising to 1,000/day after $10 p
 
 ## Expiration watchlist
 
-- `google/gemini-2.5-flash`: 2026-10-20.
-- `google/gemini-2.5-flash-lite`: 2026-10-20.
-- `google/gemini-2.5-flash:batch`: 2026-10-20.
-- `google/gemini-2.5-pro`: 2026-10-20.
-- `google/gemini-2.5-pro:batch`: 2026-10-20.
-- `qwen/qwen3.5-9b`: 2026-10-21.
-- `xiaomi/mimo-v2.5`: 2026-10-21.
-- `xiaomi/mimo-v2.5-pro`: 2026-10-21.
-- `poolside/laguna-s-2.1`: 2026-10-31.
-- `poolside/laguna-s-2.1:free`: 2026-10-31.
-- `poolside/laguna-xs-2.1`: 2026-10-31.
-- `poolside/laguna-xs-2.1:free`: 2026-10-31.
 - `nousresearch/hermes-3-llama-3.1-405b`: 2026-11-02.
 - `nousresearch/hermes-3-llama-3.1-70b`: 2026-11-02.
+- `x-ai/grok-imagine-image-quality`: 2026-11-02.
+- `meta-llama/llama-3.1-70b-instruct`: 2026-11-03.
 - `bytedance-seed/seed-1.6`: 2026-11-11.
 - `bytedance-seed/seed-1.6-flash`: 2026-11-11.
 - `bytedance-seed/seed-2.0-code`: 2026-11-11.
 - `bytedance/seedance-1-5-pro`: 2026-11-11.
+- `liquid/d1`: 2026-11-20.
+- `heygen/heygen-voice-1-turbo:free`: 2026-11-30.
+- `microsoft/mai-transcribe-1.5`: 2026-12-22.
 - `dots-studio/dots-3-note-preview:free`: 2026-12-31.
+- `microsoft/mai-voice-2`: 2026-12-31.
+- `microsoft/mai-voice-2-flash`: 2026-12-31.
 - `z-ai/glm-4.5`: 2026-12-31.
+- `z-ai/glm-4.5v`: 2026-12-31.
+- `z-ai/glm-4.7`: 2026-12-31.
 
 Past dates removed from current metadata do not alone prove a model was retired. Requery the endpoint at the next review.
 
 ## Freshness and evidence
 
-Recheck by 2026-10-20. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
+Recheck by 2026-11-02. Recheck lifecycle changes before selecting a route. Public documentation and anonymous metadata do not prove account access, effective capacity, runtime quality, or a contractual SLA. This catalog does not enable a Build Loop host model.
 
-Reverified 2026-10-19: anonymous https://openrouter.ai/api/v1/models?output_modalities=all and the most-popular query supplied counts, sample metadata, prices and expiration records; exact response hashes are recorded. https://openrouter.ai/docs/guides/overview/models defines pricing and sort semantics. https://openrouter.ai/docs/guides/routing/provider-selection and https://openrouter.ai/pricing verified routing/privacy/performance and current commercial/free-limit controls. All listed public sources were fetched; this does not establish account access or end-to-end inference acceptance.
+Reverified 2026-11-01: anonymous https://openrouter.ai/api/v1/models?output_modalities=all and the most-popular query supplied counts, sample metadata, prices and expiration records; exact response hashes are recorded. https://openrouter.ai/docs/guides/overview/models defines pricing and sort semantics. https://openrouter.ai/docs/guides/routing/provider-selection and https://openrouter.ai/pricing verified routing/privacy/performance and current commercial/free-limit controls. All listed public sources were fetched; this does not establish account access or end-to-end inference acceptance.
 
 ## Sources
 
@@ -84,7 +81,7 @@ Reverified 2026-10-19: anonymous https://openrouter.ai/api/v1/models?output_moda
 - [tool_calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 - [multimodal](https://openrouter.ai/docs/guides/overview/multimodal/overview)
-- [latency](https://openrouter.ai/docs/features/latency-and-performance)
+- [latency](https://openrouter.ai/docs/guides/best-practices/latency-and-performance)
 - [pricing](https://openrouter.ai/pricing)
 - [faq](https://openrouter.ai/docs/faq)
 - [byok](https://openrouter.ai/docs/guides/overview/auth/byok)

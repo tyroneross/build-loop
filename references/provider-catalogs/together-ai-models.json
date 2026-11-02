@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "together_ai",
   "display_name": "Together AI",
-  "captured_at": "2026-10-19",
-  "review_after": "2026-10-21",
+  "captured_at": "2026-11-01",
+  "review_after": "2026-11-03",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "curated_serverless_snapshot",
   "coverage": {
@@ -32,73 +32,73 @@
     {
       "id": "serverless_models",
       "url": "https://docs.together.ai/docs/serverless/models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "recommended_models",
       "url": "https://docs.together.ai/docs/inference/recommended-models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "rate_limits",
       "url": "https://docs.together.ai/docs/serverless/rate-limits",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "deprecations",
       "url": "https://docs.together.ai/docs/deprecations",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "structured_outputs",
       "url": "https://docs.together.ai/docs/inference/chat/structured-outputs",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "reasoning",
       "url": "https://docs.together.ai/docs/inference/chat/reasoning",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "function_calling",
       "url": "https://docs.together.ai/docs/inference/function-calling/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "vision",
       "url": "https://docs.together.ai/docs/inference/vision/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "transcription",
       "url": "https://docs.together.ai/docs/inference/transcription/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "text_to_speech",
       "url": "https://docs.together.ai/docs/inference/text-to-speech/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "pricing",
       "url": "https://www.together.ai/pricing",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "openai_compatibility",
       "url": "https://docs.together.ai/docs/inference/openai-compatibility",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     }
   ],
@@ -142,15 +142,80 @@
   },
   "models": [
     {
-      "id": "thinkingmachines/Inkling",
-      "display_name": "Inkling",
+      "id": "meta-models/Muse-Spark-Open-816B-A42B",
+      "display_name": "Muse Spark Open 816B A42B",
       "lifecycle": "serverless",
-      "context_window_tokens": 524288,
+      "context_window_tokens": 1048576,
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 1.0,
-        "cached_input": 0.17,
-        "output": 4.05
+        "input": 1.25,
+        "cached_input": 0.15,
+        "output": 4.25
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null,
+        "vision": true
+      },
+      "sources": [
+        "serverless_models",
+        "deprecations",
+        "vision"
+      ]
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "display_name": "MiniMax M3.1 Flash",
+      "lifecycle": "serverless",
+      "context_window_tokens": 1048576,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.15,
+        "cached_input": 0.015,
+        "output": 0.6
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
+      },
+      "sources": [
+        "serverless_models",
+        "deprecations"
+      ]
+    },
+    {
+      "id": "Qwen/Qwen3.7-Max",
+      "display_name": "Qwen3.7 Max",
+      "lifecycle": "serverless",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 2.5,
+        "cached_input": 0.5,
+        "output": 7.5
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null
+      },
+      "sources": [
+        "serverless_models",
+        "deprecations"
+      ]
+    },
+    {
+      "id": "Qwen/Qwen3.8-Flash",
+      "display_name": "Qwen3.8 Flash",
+      "lifecycle": "serverless",
+      "context_window_tokens": 1000000,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.15,
+        "cached_input": null,
+        "output": 0.47
       },
       "capabilities": {
         "function_calling": true,
@@ -162,26 +227,44 @@
       ]
     },
     {
-      "id": "MiniMaxAI/MiniMax-M3",
-      "display_name": "MiniMax M3",
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "display_name": "DeepSeek V4.1 Flash 1017",
       "lifecycle": "serverless",
-      "context_window_tokens": 524288,
+      "context_window_tokens": 1000000,
       "pricing": {
         "unit": "usd_per_million_tokens",
         "input": 0.3,
-        "cached_input": 0.06,
+        "cached_input": 0.006,
         "output": 1.2
       },
       "capabilities": {
         "function_calling": true,
         "structured_outputs": true,
-        "reasoning": true,
+        "reasoning": null
+      },
+      "sources": [
+        "serverless_models"
+      ]
+    },
+    {
+      "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+      "display_name": "NVIDIA Nemotron 3.5 Super VL",
+      "lifecycle": "serverless",
+      "context_window_tokens": 262144,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "input": 0.15,
+        "cached_input": 0.02,
+        "output": 0.5
+      },
+      "capabilities": {
+        "function_calling": true,
+        "structured_outputs": true,
+        "reasoning": null,
         "vision": true
       },
       "sources": [
         "serverless_models",
-        "recommended_models",
-        "reasoning",
         "vision"
       ]
     },
@@ -423,17 +506,16 @@
   ],
   "specialist_models": [
     {
-      "id": "Qwen/Qwen3.8-2.4T-A95B",
+      "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
       "use": "vision",
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 2.0,
-        "cached_input": 0.5,
-        "output": 6.0
+        "input": 0.15,
+        "cached_input": 0.02,
+        "output": 0.5
       },
       "sources": [
         "serverless_models",
-        "recommended_models",
         "vision"
       ]
     },
@@ -484,6 +566,18 @@
     }
   ],
   "recent_removals": [
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "removed_at": "2026-10-22",
+      "replacement": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "dedicated_available": true
+    },
+    {
+      "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "removed_at": "2026-10-22",
+      "replacement": "meta-models/Muse-Glimmer-30B",
+      "dedicated_available": true
+    },
     {
       "id": "openai/gpt-oss-20b",
       "removed_at": "2026-09-15",
@@ -560,17 +654,23 @@
   },
   "scheduled_removals": [
     {
-      "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-      "removal_date": "2026-10-22",
-      "replacement": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "id": "Qwen/Qwen3.8-2.4T-A95B",
+      "removal_date": "2026-11-04",
+      "replacement": "Qwen/Qwen3.7-Max",
+      "dedicated_available": false
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M3",
+      "removal_date": "2026-11-06",
+      "replacement": "MiniMaxAI/MiniMax-M3.1-Flash",
       "dedicated_available": true
     },
     {
-      "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      "removal_date": "2026-10-22",
-      "replacement": "meta-models/Muse-Glimmer-30B",
+      "id": "thinkingmachines/Inkling",
+      "removal_date": "2026-11-06",
+      "replacement": "meta-models/Muse-Spark-Open-816B-A42B",
       "dedicated_available": true
     }
   ],
-  "provenance_note": "Reverified 2026-10-19: https://docs.together.ai/docs/serverless/models supplies retained chat contexts/prices/tools/schema flags and the exact meta-models/Muse-Glimmer-30B route; https://docs.together.ai/docs/deprecations independently names that replacement and October 22 removals. https://docs.together.ai/docs/serverless/rate-limits supplies current demand/contract guidance. Pricing conflicts with https://www.together.ai/pricing are explicit. Capability guides verify provider contracts and specifically listed reasoning models; absent bindings stay null. All original listed public URLs were fetched. No TOGETHER_API_KEY or inference request was used."
+  "provenance_note": "Reverified 2026-11-01: https://docs.together.ai/docs/serverless/models supplies current chat contexts, prices, tool flags, and schema flags; https://docs.together.ai/docs/deprecations supplies November 4 and November 6 removals plus October 22 history. https://docs.together.ai/docs/serverless/rate-limits supplies contract-specific limits. The recommendation page still names routes scheduled for removal, so deprecations take precedence. All listed public URLs were fetched. No TOGETHER_API_KEY or inference request was used."
 }

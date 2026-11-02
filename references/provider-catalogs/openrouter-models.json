@@ -2,15 +2,15 @@
   "schema_version": 1,
   "provider": "openrouter",
   "display_name": "OpenRouter",
-  "captured_at": "2026-10-19",
-  "review_after": "2026-10-20",
+  "captured_at": "2026-11-01",
+  "review_after": "2026-11-02",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "dynamic_aggregator_snapshot",
   "coverage": {
     "scope": "Provider controls, live aggregate counts, actionable expiration dates, and representative popular text models.",
     "exhaustive_models": false,
     "exhaustive_source": "https://openrouter.ai/api/v1/models?output_modalities=all",
-    "reason": "OpenRouter listed 685 models in this anonymous response; the samples are curated and non-exhaustive."
+    "reason": "OpenRouter listed 687 models in this anonymous response; the samples are curated and non-exhaustive."
   },
   "source_precedence": [
     "models_api",
@@ -37,98 +37,98 @@
     {
       "id": "models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "popular_models_api",
       "url": "https://openrouter.ai/api/v1/models?output_modalities=all&sort=most-popular",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "runtime"
     },
     {
       "id": "single_model_api",
       "url": "https://openrouter.ai/docs/guides/overview/models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "mimo_model_page",
       "url": "https://openrouter.ai/xiaomi/mimo-v2.5-20260422/apps",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "model_page"
     },
     {
       "id": "provider_routing",
       "url": "https://openrouter.ai/docs/guides/routing/provider-selection",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "model_fallbacks",
       "url": "https://openrouter.ai/docs/guides/routing/model-fallbacks",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "structured_outputs",
       "url": "https://openrouter.ai/docs/guides/features/structured-outputs",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "tool_calling",
       "url": "https://openrouter.ai/docs/guides/features/tool-calling",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "reasoning",
       "url": "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "multimodal",
       "url": "https://openrouter.ai/docs/guides/overview/multimodal/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "latency",
-      "url": "https://openrouter.ai/docs/features/latency-and-performance",
-      "captured_at": "2026-10-19",
+      "url": "https://openrouter.ai/docs/guides/best-practices/latency-and-performance",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     },
     {
       "id": "pricing",
       "url": "https://openrouter.ai/pricing",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "faq",
       "url": "https://openrouter.ai/docs/faq",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "commercial"
     },
     {
       "id": "byok",
       "url": "https://openrouter.ai/docs/guides/overview/auth/byok",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1",
       "kind": "documentation"
     }
@@ -136,65 +136,17 @@
   "runtime_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all",
     "access_mode": "unauthenticated public endpoint; no credential sent or retained",
-    "response_sha256": "1de58d261ec4965f5beec79ac311b774d0d07018080423849a1ced84ad1d407d",
-    "model_count": 685,
+    "response_sha256": "1eeed1318cefac5877160efdac5913df07dca76f42dd56b0acd22185ad663115",
+    "model_count": 687,
     "capability_counts": {
-      "tools": 401,
-      "structured_outputs": 397,
-      "reasoning": 344,
-      "image_input": 411,
+      "tools": 386,
+      "structured_outputs": 383,
+      "reasoning": 336,
+      "image_input": 418,
       "audio_input": 87
     },
-    "expiration_date_count": 20,
+    "expiration_date_count": 17,
     "actionable_expirations": [
-      {
-        "id": "google/gemini-2.5-flash",
-        "expiration_date": "2026-10-20"
-      },
-      {
-        "id": "google/gemini-2.5-flash-lite",
-        "expiration_date": "2026-10-20"
-      },
-      {
-        "id": "google/gemini-2.5-flash:batch",
-        "expiration_date": "2026-10-20"
-      },
-      {
-        "id": "google/gemini-2.5-pro",
-        "expiration_date": "2026-10-20"
-      },
-      {
-        "id": "google/gemini-2.5-pro:batch",
-        "expiration_date": "2026-10-20"
-      },
-      {
-        "id": "qwen/qwen3.5-9b",
-        "expiration_date": "2026-10-21"
-      },
-      {
-        "id": "xiaomi/mimo-v2.5",
-        "expiration_date": "2026-10-21"
-      },
-      {
-        "id": "xiaomi/mimo-v2.5-pro",
-        "expiration_date": "2026-10-21"
-      },
-      {
-        "id": "poolside/laguna-s-2.1",
-        "expiration_date": "2026-10-31"
-      },
-      {
-        "id": "poolside/laguna-s-2.1:free",
-        "expiration_date": "2026-10-31"
-      },
-      {
-        "id": "poolside/laguna-xs-2.1",
-        "expiration_date": "2026-10-31"
-      },
-      {
-        "id": "poolside/laguna-xs-2.1:free",
-        "expiration_date": "2026-10-31"
-      },
       {
         "id": "nousresearch/hermes-3-llama-3.1-405b",
         "expiration_date": "2026-11-02"
@@ -202,6 +154,14 @@
       {
         "id": "nousresearch/hermes-3-llama-3.1-70b",
         "expiration_date": "2026-11-02"
+      },
+      {
+        "id": "x-ai/grok-imagine-image-quality",
+        "expiration_date": "2026-11-02"
+      },
+      {
+        "id": "meta-llama/llama-3.1-70b-instruct",
+        "expiration_date": "2026-11-03"
       },
       {
         "id": "bytedance-seed/seed-1.6",
@@ -220,11 +180,39 @@
         "expiration_date": "2026-11-11"
       },
       {
+        "id": "liquid/d1",
+        "expiration_date": "2026-11-20"
+      },
+      {
+        "id": "heygen/heygen-voice-1-turbo:free",
+        "expiration_date": "2026-11-30"
+      },
+      {
+        "id": "microsoft/mai-transcribe-1.5",
+        "expiration_date": "2026-12-22"
+      },
+      {
         "id": "dots-studio/dots-3-note-preview:free",
         "expiration_date": "2026-12-31"
       },
       {
+        "id": "microsoft/mai-voice-2",
+        "expiration_date": "2026-12-31"
+      },
+      {
+        "id": "microsoft/mai-voice-2-flash",
+        "expiration_date": "2026-12-31"
+      },
+      {
         "id": "z-ai/glm-4.5",
+        "expiration_date": "2026-12-31"
+      },
+      {
+        "id": "z-ai/glm-4.5v",
+        "expiration_date": "2026-12-31"
+      },
+      {
+        "id": "z-ai/glm-4.7",
         "expiration_date": "2026-12-31"
       }
     ],
@@ -238,8 +226,8 @@
   "popular_snapshot": {
     "request": "GET /api/v1/models?output_modalities=all&sort=most-popular",
     "sort_semantics": "most tokens processed in the last week",
-    "response_sha256": "993a0f4fd91c9acf3500fdb83a784e99f5813e38e3dddf7838081ba4837bb673",
-    "model_count": 685
+    "response_sha256": "2f4a0dc99e6953c7f6c47cd53ee5fcd57d344077908cf24bdbd6dd0ad92f65e3",
+    "model_count": 687
   },
   "provider_features": {
     "api": {
@@ -301,7 +289,7 @@
   "model_samples": [
     {
       "id": "deepseek/deepseek-v4.1-flash",
-      "popular_rank": 1,
+      "popular_rank": 3,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
@@ -314,9 +302,9 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.0304,
-        "output": 0.08,
-        "cached_input": 0.0016
+        "input": 0.045,
+        "output": 0.5,
+        "cached_input": 0.006
       },
       "capabilities": {
         "tools": true,
@@ -343,9 +331,9 @@
       },
       "pricing": {
         "unit": "usd_per_million_tokens",
-        "input": 0.048,
-        "output": 0.16,
-        "cached_input": 0.006
+        "input": 0.0285,
+        "output": 0.0923,
+        "cached_input": 0.0285
       },
       "capabilities": {
         "tools": true,
@@ -405,7 +393,7 @@
     },
     {
       "id": "tencent/hy3",
-      "popular_rank": 13,
+      "popular_rank": 14,
       "context_window_tokens": 262144,
       "modalities": {
         "input": [
@@ -452,7 +440,7 @@
     },
     {
       "id": "google/gemini-3.8-flash",
-      "popular_rank": 21,
+      "popular_rank": 25,
       "context_window_tokens": 1048576,
       "modalities": {
         "input": [
@@ -483,7 +471,7 @@
     },
     {
       "id": "openai/gpt-5.6-luna",
-      "popular_rank": 22,
+      "popular_rank": 9,
       "context_window_tokens": 1050000,
       "modalities": {
         "input": [
@@ -535,5 +523,5 @@
     "selection": "Query the live API with capability filters, apply provider data-policy requirements, and benchmark the finalists on the actual workload.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
   },
-  "provenance_note": "Reverified 2026-10-19: anonymous https://openrouter.ai/api/v1/models?output_modalities=all and the most-popular query supplied counts, sample metadata, prices and expiration records; exact response hashes are recorded. https://openrouter.ai/docs/guides/overview/models defines pricing and sort semantics. https://openrouter.ai/docs/guides/routing/provider-selection and https://openrouter.ai/pricing verified routing/privacy/performance and current commercial/free-limit controls. All listed public sources were fetched; this does not establish account access or end-to-end inference acceptance."
+  "provenance_note": "Reverified 2026-11-01: anonymous https://openrouter.ai/api/v1/models?output_modalities=all and the most-popular query supplied counts, sample metadata, prices and expiration records; exact response hashes are recorded. https://openrouter.ai/docs/guides/overview/models defines pricing and sort semantics. https://openrouter.ai/docs/guides/routing/provider-selection and https://openrouter.ai/pricing verified routing/privacy/performance and current commercial/free-limit controls. All listed public sources were fetched; this does not establish account access or end-to-end inference acceptance."
 }

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "provider": "fireworks_ai",
   "display_name": "Fireworks AI",
-  "captured_at": "2026-10-19",
-  "review_after": "2026-11-02",
+  "captured_at": "2026-11-01",
+  "review_after": "2026-11-06",
   "source_quality": "T1_PRIMARY_SINGLE_VENDOR",
   "catalog_kind": "curated_serverless_snapshot",
   "coverage": {
@@ -26,6 +26,7 @@
     "models[].context_window_tokens",
     "models[].capabilities",
     "deprecations[]",
+    "scheduled_deprecations[]",
     "provider_features.serverless_rate_limits",
     "provider_features.serving_paths"
   ],
@@ -33,127 +34,133 @@
     {
       "id": "recommended_models",
       "url": "https://docs.fireworks.ai/guides/recommended-models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "serverless_pricing",
       "url": "https://docs.fireworks.ai/serverless/pricing",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "serverless_overview",
       "url": "https://docs.fireworks.ai/serverless/overview",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "serverless_rate_limits",
       "url": "https://docs.fireworks.ai/serverless/rate-limits",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "list_models_api",
       "url": "https://docs.fireworks.ai/faq-new/models-inference/how-to-check-if-a-model-is-available-on-serverless",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "tool_calling",
       "url": "https://docs.fireworks.ai/guides/function-calling",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "structured_outputs",
       "url": "https://docs.fireworks.ai/structured-responses/structured-response-formatting",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "reasoning",
       "url": "https://docs.fireworks.ai/guides/reasoning",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "vision",
       "url": "https://docs.fireworks.ai/guides/querying-vision-language-models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "video_audio_inputs",
       "url": "https://docs.fireworks.ai/guides/video-audio-inputs",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "changelog",
       "url": "https://docs.fireworks.ai/updates/changelog",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "deepseek-v4p1-flash-1017_model",
       "url": "https://app.fireworks.ai/models/fireworks/deepseek-v4p1-flash-1017",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "glm-5p3_model",
       "url": "https://app.fireworks.ai/models/fireworks/glm-5p3",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "kimi-k3_model",
       "url": "https://app.fireworks.ai/models/fireworks/kimi-k3",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "qwen3p7-plus_model",
       "url": "https://app.fireworks.ai/models/fireworks/qwen3p7-plus",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "minimax-m3_model",
       "url": "https://app.fireworks.ai/models/fireworks/minimax-m3",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "gpt-oss-120b_model",
       "url": "https://app.fireworks.ai/models/fireworks/gpt-oss-120b",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "step-3p7-flash-nvfp4_model",
       "url": "https://app.fireworks.ai/models/fireworks/step-3p7-flash-nvfp4",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "embedding_details",
       "url": "https://docs.fireworks.ai/guides/querying-embeddings-models",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "serverless_modes",
       "url": "https://docs.fireworks.ai/serverless/serverless-modes",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     },
     {
       "id": "anthropic_compatibility",
       "url": "https://docs.fireworks.ai/tools-sdks/anthropic-compatibility",
-      "captured_at": "2026-10-19",
+      "captured_at": "2026-11-01",
+      "tier": "T1"
+    },
+    {
+      "id": "rune_model",
+      "url": "https://app.fireworks.ai/models/fireworks/rune",
+      "captured_at": "2026-11-01",
       "tier": "T1"
     }
   ],
@@ -176,7 +183,7 @@
       "on_demand": "dedicated GPU capacity, broader model choice, predictable performance, no hard platform rate limit"
     },
     "serverless_rate_limits": {
-      "scope": "per account and per model; listed numeric ceilings apply at Spending Tier 3 and above; lower spending tiers have lower ceilings; reverified 2026-10-19",
+      "scope": "per account and per model; listed numeric ceilings apply at Spending Tier 3 and above; lower spending tiers have lower ceilings; reverified 2026-11-01",
       "tiers": {
         "small": {
           "parameter_count": "< 800B",
@@ -342,7 +349,7 @@
     {
       "id": "accounts/fireworks/models/gpt-oss-120b",
       "display_name": "GPT OSS 120B",
-      "lifecycle": "serverless",
+      "lifecycle": "serverless_deprecated",
       "context_window_tokens": null,
       "pricing": {
         "unit": "usd_per_million_tokens",
@@ -369,8 +376,10 @@
         "recommended_models",
         "serverless_pricing",
         "reasoning",
-        "gpt-oss-120b_model"
-      ]
+        "gpt-oss-120b_model",
+        "changelog"
+      ],
+      "availability_note": "Serverless retirement is scheduled for 2026-11-07; dedicated and reserved deployments are unaffected."
     },
     {
       "id": "accounts/fireworks/models/step-3p7-flash-nvfp4",
@@ -503,6 +512,72 @@
         "glm-5p3_model",
         "serverless_pricing"
       ]
+    },
+    {
+      "id": "accounts/fireworks/models/rune",
+      "display_name": "Rune 26B-A4B",
+      "lifecycle": "serverless",
+      "context_window_tokens": 262144,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 0.042,
+          "cached_input": 0.0084,
+          "output": 0.0
+        }
+      },
+      "best_fit": [
+        "classification",
+        "ranking",
+        "typed_questions"
+      ],
+      "capabilities": {
+        "tools": false,
+        "structured_outputs": false,
+        "reasoning": false,
+        "input_only": true,
+        "typed_question_count": 256
+      },
+      "sources": [
+        "changelog",
+        "serverless_pricing",
+        "rune_model"
+      ]
+    },
+    {
+      "id": "accounts/fireworks/models/muse-spark-open",
+      "display_name": "Muse Spark Open",
+      "lifecycle": "serverless_us",
+      "context_window_tokens": null,
+      "pricing": {
+        "unit": "usd_per_million_tokens",
+        "standard": {
+          "input": 1.25,
+          "cached_input": 0.15,
+          "output": 4.25
+        },
+        "priority": {
+          "input": 1.875,
+          "cached_input": 0.225,
+          "output": 6.375
+        }
+      },
+      "best_fit": [
+        "reasoning",
+        "vision",
+        "inkling_migration"
+      ],
+      "capabilities": {
+        "tools": true,
+        "structured_outputs": null,
+        "reasoning": true,
+        "vision": true
+      },
+      "availability_note": "US-only capacity with the normal 50% regional premium waived.",
+      "sources": [
+        "changelog",
+        "serverless_pricing"
+      ]
     }
   ],
   "deprecations": [
@@ -590,7 +665,50 @@
       "note": "Serverless including Fast/US variants; dedicated deployments unaffected."
     }
   ],
-  "scheduled_deprecations": [],
+  "scheduled_deprecations": [
+    {
+      "id": "accounts/fireworks/models/gpt-oss-120b",
+      "effective_at": "2026-11-07",
+      "surface": "serverless",
+      "replacement": "dedicated GPT OSS 120B deployment",
+      "note": "Dedicated and reserved deployments are unaffected."
+    },
+    {
+      "id": "accounts/fireworks/models/inkling",
+      "effective_at": "2026-11-07",
+      "surface": "serverless",
+      "replacement": "accounts/fireworks/models/muse-spark-open",
+      "note": "Dedicated and reserved deployments are unaffected."
+    },
+    {
+      "id": "accounts/fireworks/models/minimax-m3",
+      "effective_at": "2026-11-07",
+      "surface": "serverless_us_only",
+      "replacement": "accounts/fireworks/routers/deepseek-v4p1-flash-1017-us",
+      "note": "The global serverless route remains available."
+    },
+    {
+      "id": "accounts/fireworks/models/glm-5p3-flash",
+      "effective_at": "2026-11-07",
+      "surface": "serverless_us_only",
+      "replacement": "accounts/fireworks/routers/deepseek-v4p1-flash-1017-us",
+      "note": "The global serverless route remains available."
+    },
+    {
+      "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+      "effective_at": "2026-11-07",
+      "surface": "serverless",
+      "replacement": "dedicated Nemotron Super VL deployment",
+      "note": "Dedicated and reserved deployments are unaffected."
+    },
+    {
+      "id": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+      "effective_at": "2026-11-07",
+      "surface": "serverless",
+      "replacement": "dedicated Nemotron Super VL deployment",
+      "note": "Dedicated and reserved deployments are unaffected."
+    }
+  ],
   "uncertainties": [
     "Authenticated List Models and account access were not tested; exact context remains null where only rounded public-card values were obtained.",
     "Qwen3.7 Plus and Step3.7 cards say Serverless Not supported despite recommendation-page inclusion; both remain deployment candidates. Qwen3.7 prices are unknown.",
@@ -603,5 +721,5 @@
     "production": "Serverless is best effort. Use Priority to reduce load shedding or on-demand capacity for predictable throughput and version control.",
     "host_reachability": "This catalog does not make any model available as a Build Loop host agent."
   },
-  "provenance_note": "Reverified 2026-10-19: https://docs.fireworks.ai/updates/changelog confirms September 25 inference removals; https://docs.fireworks.ai/serverless/pricing and the listed public model cards verify current named prices and serving paths. https://docs.fireworks.ai/serverless/rate-limits verifies revised thresholds/ceilings. https://docs.fireworks.ai/serverless/overview verifies caching/batch; structured-output/reasoning/tool/input guides verify provider contracts. All original listed public sources were fetched, and additional model/card sources are recorded. Unknown exact contexts and unverified bindings stay null. No FIREWORKS_API_KEY or inference request was used."
+  "provenance_note": "Reverified 2026-11-01: https://docs.fireworks.ai/updates/changelog confirms the Rune launch and November 7 serverless deprecations; https://docs.fireworks.ai/serverless/pricing verifies current named prices. https://docs.fireworks.ai/serverless/rate-limits verifies current dynamic thresholds and ceilings. All listed public sources were fetched. Unknown exact contexts and unverified bindings stay null. No FIREWORKS_API_KEY or inference request was used."
 }
