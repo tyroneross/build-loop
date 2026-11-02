@@ -95,8 +95,9 @@ than silently reporting 0/0/fail.
 
 Scope selection:
   full     — whole scripts/ test suite, serial, -m "not live" to exclude live-
-             service tests, --timeout=120 --timeout-method=thread so any future
-             hang fails cleanly rather than blocking the gate.
+             service tests, with the shared profile's per-test hang protection.
+  Suite wall time is unlimited by default. --timeout SECONDS opts into an outer
+  deadline; --timeout 0 also means unlimited. Individual-test protection remains.
   changed  — only the mapped test files for --changed-files
   auto     — recommended default:
                1–3 source files    → changed  (mapped tests only)
@@ -1203,7 +1204,7 @@ def verify(
     scope: str,
     changed_files: list[str],
     auto_revert: bool,
-    timeout: int = 300,
+    timeout: int | None = None,
     baseline_path: str | None = None,
 ) -> tuple[dict, int]:
     """Public gate entry. Rejects an unsafe --auto-revert BEFORE anything runs.
@@ -1240,12 +1241,15 @@ def verify(
         }
         return result, EXIT_ERROR
 
+    if timeout is not None and timeout < 0:
+        raise ValueError("timeout must be non-negative or None")
+
     result, exit_code = _verify_inner(
         workdir=workdir,
         scope=scope,
         changed_files=changed_files,
         auto_revert=auto_revert,
-        timeout=timeout,
+        timeout=None if timeout == 0 else timeout,
         baseline_path=baseline_path,
     )
     result.setdefault("reverted_blobs", [])
@@ -1259,7 +1263,7 @@ def _verify_inner(
     scope: str,
     changed_files: list[str],
     auto_revert: bool,
-    timeout: int = 300,
+    timeout: int | None = None,
     baseline_path: str | None = None,
 ) -> tuple[dict, int]:
     """Run the verification gate. Return (result_dict, exit_code).
@@ -1389,8 +1393,8 @@ def _verify_inner(
 
     # Every scope uses the existing deterministic profile. Mapped/area selection
     # changes coverage, never permission to contact live/model services.
-    has_timeout = scope == "full" and _runner_has_pytest_timeout(runner_base, cwd=workdir)
-    if scope == "full" and not has_timeout:
+    has_timeout = _runner_has_pytest_timeout(runner_base, cwd=workdir)
+    if not has_timeout:
         print(
             "self_mod_verify: pytest-timeout not installed in the runner "
             "interpreter; proceeding WITHOUT per-test hang protection. "
@@ -1414,8 +1418,7 @@ def _verify_inner(
             timeout=timeout,
             cwd=str(workdir),
         )
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    except subprocess.TimeoutExpired as exc:
         errors.append(f"pytest process timed out after {timeout}s")
         result = {
             "scope": scope,
@@ -1428,6 +1431,8 @@ def _verify_inner(
             "verdict": "error",
             "timed_out": True,
             "error_reason": "Timeout",
+            "partial_stdout": exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or ""),
+            "partial_stderr": exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or ""),
             "errors": errors,
             "derived_from_git": derived_from_git,
         }
@@ -1527,7 +1532,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "auto (default) = smart scope based on blast radius; "
             "changed = only tests for --changed-files; "
             "full = whole scripts/ suite, serial, live tests excluded, "
-            "per-test timeout 120s"
+            "shared profile per-test hang protection"
         ),
     )
     p.add_argument(
@@ -1557,15 +1562,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--timeout",
         type=int,
-        default=300,
-        help="Subprocess timeout in seconds for the pytest process as a whole (default 300)",
+        default=None,
+        help="Optional suite wall-time deadline in seconds (default: unlimited; 0: unlimited)",
     )
     p.add_argument(
         "--json",
         action="store_true",
         help="Emit result JSON to stdout (always implied; kept for compatibility)",
     )
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.timeout is not None and args.timeout < 0:
+        p.error("--timeout must be non-negative; use 0 for unlimited")
+    return args
 
 
 def parse_snapshot_args(argv: list[str]) -> argparse.Namespace:

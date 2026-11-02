@@ -1404,6 +1404,62 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
         # exit_code is 2 (error — infrastructure failure, not a test failure)
         self.assertEqual(exit_code, 2)
 
+    def test_cli_has_no_implicit_suite_deadline(self) -> None:
+        args = self.mod.parse_args(["--workdir", str(self.workdir)])
+        self.assertIsNone(args.timeout)
+
+    def test_suite_deadline_is_opt_in_and_zero_disables_it(self) -> None:
+        from unittest import mock
+        for supplied, expected in [(None, None), (0, None), (10800, 10800)]:
+            with self.subTest(timeout=supplied):
+                with mock.patch.object(self.mod, "_find_runner", return_value=[sys.executable, "-m", "pytest"]), mock.patch.object(
+                    self.mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "1 passed", "")
+                ) as run:
+                    kwargs = {} if supplied is None else {"timeout": supplied}
+                    result, code = self.mod.verify(
+                        workdir=self.workdir, scope="changed",
+                        changed_files=["scripts/test_sample.py"], auto_revert=False, **kwargs,
+                    )
+                self.assertEqual(code, 0, result)
+                self.assertEqual(run.call_args.kwargs["timeout"], expected)
+
+    def test_negative_suite_deadline_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.mod.parse_args(["--workdir", str(self.workdir), "--timeout", "-1"])
+
+    def test_explicit_timeout_preserves_partial_output(self) -> None:
+        from unittest import mock
+        with mock.patch.object(self.mod, "_find_runner", return_value=[sys.executable, "-m", "pytest"]), mock.patch.object(
+            self.mod.subprocess, "run",
+            side_effect=subprocess.TimeoutExpired(["pytest"], 1, output=b"test_slow.py::test_wait", stderr=b"fixture started"),
+        ):
+            result, code = self.mod.verify(
+                workdir=self.workdir, scope="changed", changed_files=["scripts/test_sample.py"],
+                auto_revert=False, timeout=1,
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(result["verdict"], "error")
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["partial_stdout"], "test_slow.py::test_wait")
+        self.assertEqual(result["partial_stderr"], "fixture started")
+
+    def test_individual_test_guard_applies_to_every_scope(self) -> None:
+        from unittest import mock
+        for scope in ["auto", "changed", "full"]:
+            with self.subTest(scope=scope):
+                with mock.patch.object(self.mod, "_find_runner", return_value=[sys.executable, "-m", "pytest"]), mock.patch.object(
+                    self.mod, "_runner_has_pytest_timeout", return_value=True
+                ), mock.patch.object(
+                    self.mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "1 passed", "")
+                ) as run:
+                    result, code = self.mod.verify(
+                        workdir=self.workdir, scope=scope,
+                        changed_files=["scripts/test_sample.py"], auto_revert=False,
+                    )
+                self.assertEqual(code, 0, result)
+                self.assertIn("--timeout=60", run.call_args.args[0])
+                self.assertIsNone(run.call_args.kwargs["timeout"])
+
     def test_cli_timeout_argument_accepted(self) -> None:
         """--timeout flag is parsed without error."""
         r = _run([

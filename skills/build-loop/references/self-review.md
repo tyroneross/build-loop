@@ -170,6 +170,14 @@ python3 scripts/self_mod_verify.py \
   --json
 ```
 
+The suite has no implicit wall-time deadline: slow valid runs can finish, including
+multi-hour runs. `--timeout <seconds>` is an explicit caller deadline; `--timeout 0`
+also means unlimited. Do not copy a short deadline into normal gate invocations.
+The shared pytest profile retains individual-test hang protection. This suite
+limit is separate from the Build Loop run budget (long/custom modes). An explicit
+deadline returns an error and preserves partial stdout/stderr; it never proves
+test completion or downstream process cleanup.
+
 Three things the gate now refuses to do, each of which destroyed work on 2026-09-12
 (BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56):
 
