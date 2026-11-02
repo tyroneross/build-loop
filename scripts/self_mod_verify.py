@@ -1206,6 +1206,7 @@ def verify(
     auto_revert: bool,
     timeout: int | None = None,
     baseline_path: str | None = None,
+    progress_dir: Path | None = None,
 ) -> tuple[dict, int]:
     """Public gate entry. Rejects an unsafe --auto-revert BEFORE anything runs.
 
@@ -1251,6 +1252,7 @@ def verify(
         auto_revert=auto_revert,
         timeout=None if timeout == 0 else timeout,
         baseline_path=baseline_path,
+        progress_dir=progress_dir,
     )
     result.setdefault("reverted_blobs", [])
     result.setdefault("baseline_used", None)
@@ -1265,6 +1267,7 @@ def _verify_inner(
     auto_revert: bool,
     timeout: int | None = None,
     baseline_path: str | None = None,
+    progress_dir: Path | None = None,
 ) -> tuple[dict, int]:
     """Run the verification gate. Return (result_dict, exit_code).
 
@@ -1410,14 +1413,15 @@ def _verify_inner(
 
     # --- Run pytest ---
     timed_out = False
+    progress: dict = {}
     try:
-        r = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(workdir),
-        )
+        if progress_dir is not None:
+            from verification_progress import run_logged
+            r, progress = run_logged(cmd, cwd=workdir, timeout=timeout, directory=progress_dir)
+        else:
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout, cwd=str(workdir),
+            )
     except subprocess.TimeoutExpired as exc:
         errors.append(f"pytest process timed out after {timeout}s")
         result = {
@@ -1431,6 +1435,7 @@ def _verify_inner(
             "verdict": "error",
             "timed_out": True,
             "error_reason": "Timeout",
+            "progress": getattr(exc, "progress", progress),
             "partial_stdout": exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or ""),
             "partial_stderr": exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or ""),
             "errors": errors,
@@ -1447,13 +1452,14 @@ def _verify_inner(
             "failed": 0,
             "failed_tests": [],
             "reverted": False,
-            "verdict": "no_tests",
+            "verdict": "error" if progress_dir is not None else "no_tests",
             "timed_out": False,
-            "error_reason": None,
+            "error_reason": "ProgressRunner" if progress_dir is not None else None,
+            "progress": getattr(exc, "progress", progress),
             "errors": errors,
             "derived_from_git": derived_from_git,
         }
-        return result, EXIT_INCONCLUSIVE
+        return result, EXIT_ERROR if progress_dir is not None else EXIT_INCONCLUSIVE
 
     passed, failed, failed_tests, has_summary = _parse_pytest_output(r.stdout, r.stderr)
 
@@ -1465,6 +1471,12 @@ def _verify_inner(
         # pytest exit 5 = no tests collected. Inconclusive, not green (exit 3).
         verdict = "no_tests"
         exit_code = EXIT_INCONCLUSIVE
+    elif progress_dir is not None and r.returncode not in (0, 1, 5):
+        # Interrupted/internal/usage errors can include a partial test summary.
+        # They are not assertion failures and must not trigger source rollback.
+        errors.append(f"pytest runner stopped with exit {r.returncode}; see progress logs")
+        verdict = "error"
+        exit_code = EXIT_ERROR
     elif not has_summary and r.returncode != 0:
         # Non-zero exit with no parseable summary → infrastructure failure.
         # This is the "0 passed / 0 failed / verdict=fail" silent-failure case.
@@ -1501,6 +1513,7 @@ def _verify_inner(
         "reverted": reverted,
         "verdict": verdict,
         "timed_out": timed_out,
+        "progress": progress,
         "error_reason": error_reason,
         "errors": errors,
         "derived_from_git": derived_from_git,
@@ -1570,6 +1583,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Emit result JSON to stdout (always implied; kept for compatibility)",
     )
+    p.add_argument("--progress-dir", type=Path, default=None,
+                   help="Parent for unique live log directories (default: WORKDIR/.build-loop/progress)")
+    p.add_argument("--no-progress", action="store_true", help="Disable live progress logs (legacy capture)")
     args = p.parse_args(argv)
     if args.timeout is not None and args.timeout < 0:
         p.error("--timeout must be non-negative; use 0 for unlimited")
@@ -1622,6 +1638,7 @@ def main(argv: list[str] | None = None) -> int:
         auto_revert=args.auto_revert,
         timeout=args.timeout,
         baseline_path=args.baseline,
+        progress_dir=None if args.no_progress else (args.progress_dir or workdir / ".build-loop" / "progress"),
     )
 
     # Result JSON to stdout, then the recovery block (also stdout, so a human

@@ -178,6 +178,46 @@ limit is separate from the Build Loop run budget (long/custom modes). An explici
 deadline returns an error and preserves partial stdout/stderr; it never proves
 test completion or downstream process cleanup.
 
+### Live verification progress
+
+The CLI logs progress by default under `.build-loop/progress/verify-*/`, using a
+unique private directory per execution. The path is printed to stderr at start
+and returned in the JSON `progress` field. Read these files while the gate runs:
+
+- `stdout.log` and `stderr.log`: raw child output written directly to disk.
+- `pytest-status.json`: active test, setup/call/teardown phase, collection and
+  completion counts. Setup is recorded before fixtures execute.
+- `pytest-events.jsonl`: append-only lifecycle events for this run.
+- `runner-status.json` and `runner-events.jsonl`: explicit supervisor and child PIDs, heartbeat,
+  elapsed time, output byte counts and terminal exit state.
+
+A heartbeat proves the supervisor is alive, not that a test is advancing. After
+an abrupt supervisor death, a last `running` snapshot is historical; check its
+supervisor PID and timestamp instead of treating it as current. A test event is progress
+metadata, not proof that its application effects were correct.
+
+The native supervisor is dependency-free Rust. `rustc` compiles it once into a
+private cache keyed by source, compiler and architecture; concurrent builds use
+unique temporary files and atomic installation. The hot path does not rebuild an
+unchanged helper. The existing Python gate owns verdict and rollback policy; a
+small pytest adapter owns test lifecycle events. No daemon is installed.
+
+With no Rust compiler, portable mode still writes output and test lifecycle logs
+and explicitly reports that native heartbeats and process-group supervision are
+unavailable. A failed native build or launch is never retried as another test run.
+On POSIX, the native supervisor isolates its child process group and escalates
+cancellation/deadline cleanup from TERM to KILL after two seconds, and detects
+parent-wrapper death. Terminal snapshots follow the direct child exit and group
+cleanup request; they do not certify all descendant effects. Windows has
+only direct-child cleanup. Force-killing the supervisor cannot guarantee cleanup.
+The implementation uses Rust's [process group API](https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html#tymethod.process_group).
+
+`--progress-dir <parent>` changes the output location; `--no-progress` opts into
+legacy capture. Direct Python callers enable logging with `progress_dir=Path(...)`.
+Only a bounded output tail is read into memory for verdict parsing; raw logs stay
+complete and `output_tail_truncated` marks incomplete diagnostic tails. Preserve
+logs as evidence; this feature does not automatically delete other runs' logs.
+
 Three things the gate now refuses to do, each of which destroyed work on 2026-09-12
 (BUIL-TOOLING-m2b7cts2d0gqn1d1j6q56):
 
