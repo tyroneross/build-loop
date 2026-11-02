@@ -1268,9 +1268,6 @@ class CredentialHeredocBoundaryTests(unittest.TestCase):
                 self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class MixedSessionPushWarningTests(unittest.TestCase):
     """Warn-only: a push carrying commits from more than one agent session.
@@ -1341,3 +1338,7 @@ class MixedSessionPushWarningTests(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
         self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
