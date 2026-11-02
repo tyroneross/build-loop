@@ -325,6 +325,13 @@ Core rule: build decisions should create user value and a delightful, trustworth
 
 ## UI Input/Output Contract
 
+For GPUI applications, embedding layers, or component upgrades, load
+[the GPUI build and code-audit reference](references/gpui-build-audit.md)
+during Assess and apply its relevant checks during Review. Detect GPUI from
+the affected Cargo manifests or existing architecture evidence. Retrieve the
+project's GPUI lessons from Build Loop Memory, then open the returned evidence
+IDs to read the complete guidance before choosing an approach.
+
 Every UI build uses `references/ui-io-contract.md`. Before component choices are locked, build-loop must name every affected user input and system output, classify its data shape, map the operation and domain verb, choose the matching input/output component, document states and modality fallbacks, and trace validation/security to the right layer.
 
 Every renderable UI change also names the actual parent container, limiting

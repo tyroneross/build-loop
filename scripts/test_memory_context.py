@@ -193,6 +193,94 @@ class MemoryContextTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mc.validate_current({"schema_version": "1.0.0", "kind": "build-loop-memory-current"})
 
+    def test_open_query_result_after_it_leaves_recent_capsule(self) -> None:
+        import memory_context as mc
+
+        target = self.project_dir / "lessons" / "references" / "gpui-build-audit.md"
+        target.parent.mkdir()
+        target.write_text("# GPUI\nPreserve palette contrast and incomplete-save recovery.\n")
+        os.utime(target, (100, 100))
+        for n in range(6):
+            (self.project_dir / "lessons" / f"new-{n}.md").write_text("# Unrelated\n")
+        found = mc.build_current(self.workdir, query="palette contrast", project=self.project)
+        row = next(x for x in found["lessons"] if x["path"] == str(target))
+        result = mc.open_artifact(row["id"], workdir=self.workdir, project=self.project)
+        self.assertTrue(result["exists"], result)
+        self.assertIn("incomplete-save recovery", result["text"])
+
+    def test_open_old_declared_id_independent_of_filename(self) -> None:
+        import memory_context as mc
+
+        target = self.project_dir / "decisions" / "old.md"
+        target.write_text("---\ncanonical_id: durable-choice\n---\nKeep one source of truth.\n")
+        os.utime(target, (100, 100))
+        for n in range(6):
+            (self.project_dir / "decisions" / f"new-{n}.md").write_text("# New\n")
+        result = mc.open_artifact("durable-choice", workdir=self.workdir, project=self.project)
+        self.assertTrue(result["exists"], result)
+        self.assertEqual(Path(result["path"]).resolve(), target.resolve())
+
+    def test_open_global_id_when_project_fills_capsule(self) -> None:
+        import memory_context as mc
+
+        (self.memroot / "lessons" / "global.md").write_text("# Shared guidance\n")
+        for n in range(6):
+            (self.project_dir / "lessons" / f"project-{n}.md").write_text("# Project\n")
+        result = mc.open_artifact("lesson:global", workdir=self.workdir, project=self.project)
+        self.assertTrue(result["exists"], result)
+        self.assertIn("Shared guidance", result["text"])
+
+    def test_open_ambiguous_id_does_not_choose_by_recency(self) -> None:
+        import memory_context as mc
+
+        for folder in ("one", "two"):
+            path = self.project_dir / "lessons" / folder / "same.md"
+            path.parent.mkdir()
+            path.write_text(f"# {folder}\n")
+        result = mc.open_artifact("lesson:same", workdir=self.workdir, project=self.project)
+        self.assertFalse(result["exists"])
+        self.assertEqual(result["reason"], "ambiguous_id")
+
+    def test_open_id_preserves_project_and_path_boundaries(self) -> None:
+        import memory_context as mc
+
+        outside = self.root / "private.md"
+        outside.write_text("Private external text\n")
+        (self.project_dir / "lessons" / "external.md").symlink_to(outside)
+        other = self.memroot / "projects" / "other" / "lessons"
+        other.mkdir(parents=True)
+        (other / "other-project.md").write_text("# Other project\n")
+        current = mc.build_current(self.workdir, query="Private external text", project=self.project)
+        self.assertNotIn("Private external text", json.dumps(current["lessons"]))
+        self.assertFalse(any(x["path"].endswith("/external.md") for x in current["evidence"]))
+        for artifact_id in ("lesson:external", "lesson:other-project", str(outside), "../private.md"):
+            with self.subTest(artifact_id=artifact_id):
+                result = mc.open_artifact(artifact_id, workdir=self.workdir, project=self.project)
+                self.assertFalse(result["exists"], result)
+                self.assertNotIn("Private external text", result.get("text", ""))
+
+    def test_open_safe_path_keeps_truncation_contract(self) -> None:
+        import memory_context as mc
+
+        result = mc.open_artifact("projects/demo/lessons/lesson-demo.md",
+                                  workdir=self.workdir, project=self.project, max_chars=10)
+        self.assertTrue(result["exists"])
+        self.assertEqual(len(result["text"]), 10)
+        self.assertTrue(result["truncated"])
+
+    def test_open_id_prefers_project_and_excludes_archives(self) -> None:
+        import memory_context as mc
+
+        (self.project_dir / "lessons" / "shared.md").write_text("# Project guidance\n")
+        (self.memroot / "lessons" / "shared.md").write_text("# Global guidance\n")
+        archived = self.project_dir / "lessons" / "archive"
+        archived.mkdir()
+        (archived / "retired.md").write_text("# Retired guidance\n")
+        result = mc.open_artifact("lesson:shared", workdir=self.workdir, project=self.project)
+        self.assertIn("Project guidance", result["text"])
+        result = mc.open_artifact("lesson:retired", workdir=self.workdir, project=self.project)
+        self.assertFalse(result["exists"])
+
 
 if __name__ == "__main__":
     unittest.main()

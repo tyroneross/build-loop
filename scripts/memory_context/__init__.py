@@ -143,6 +143,29 @@ def _compact_body(body: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     return cleaned[: max_chars - 3].rstrip() + "..."
 
 
+def _markdown_paths(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    excluded_dirs = {"raw-originals", "archive", "indexes", "raw"}
+    root = memory_store_root().resolve()
+    paths: list[Path] = []
+    for path in directory.rglob("*.md"):
+        if path.name in {"INDEX.md", "README.md", "MEMORY.md"}:
+            continue
+        if any(part in excluded_dirs for part in path.relative_to(directory).parts[:-1]):
+            continue
+        try:
+            if path.resolve().is_relative_to(root):
+                paths.append(path)
+        except (OSError, RuntimeError):
+            continue
+    return paths
+
+
+def _memory_id(path: Path, fm: dict[str, Any], prefix: str) -> str:
+    return str(fm.get("canonical_id") or fm.get("id") or f"{prefix}:{path.stem}")
+
+
 def _recent_markdown(
     directory: Path,
     *,
@@ -151,14 +174,7 @@ def _recent_markdown(
     max_chars: int,
     query: str = "",
 ) -> list[dict[str, Any]]:
-    if not directory.is_dir():
-        return []
-    excluded_dirs = {"raw-originals", "archive", "indexes", "raw"}
-    candidates = [
-        p for p in directory.rglob("*.md")
-        if p.name not in {"INDEX.md", "README.md", "MEMORY.md"}
-        and not any(part in excluded_dirs for part in p.relative_to(directory).parts[:-1])
-    ]
+    candidates = _markdown_paths(directory)
     query_tokens = {token.lower() for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", query)}
 
     def rank(path: Path) -> tuple[int, float]:
@@ -181,7 +197,7 @@ def _recent_markdown(
         fm, body = _parse_frontmatter(text)
         rows.append(
             {
-                "id": str(fm.get("canonical_id") or fm.get("id") or f"{prefix}:{path.stem}"),
+                "id": _memory_id(path, fm, prefix),
                 "title": _first_heading_or_stem(path, text, fm),
                 "path": str(path),
                 "summary": _compact_body(body, max_chars=max_chars),
@@ -663,23 +679,57 @@ def open_artifact(
     max_chars: int = 8000,
 ) -> dict[str, Any]:
     """Resolve an evidence id or safe memory-store path and return text."""
-    current = build_current(workdir, project=project)
-    by_id = {item["id"]: item for item in current.get("evidence", [])}
+    project_tag = project or resolve_project(Path(workdir).resolve())
+    root = memory_store_root().resolve()
+    raw = Path(os.path.expanduser(artifact_id))
+    if not raw.is_absolute():
+        raw = root / raw
+    try:
+        resolved = raw.resolve()
+        if not resolved.is_relative_to(root):
+            return {"id": artifact_id, "exists": False, "reason": "unresolved"}
+    except (OSError, RuntimeError):
+        return {"id": artifact_id, "exists": False, "reason": "unresolved"}
+
     target: Path | None = None
-    if artifact_id in by_id:
-        target = Path(by_id[artifact_id]["path"])
+    proj_dir = project_root(project_tag)
+    if resolved.is_file():
+        target = resolved
+    elif artifact_id == "context:CONTEXT":
+        target = proj_dir / "context" / "CONTEXT.md"
     else:
-        raw = Path(os.path.expanduser(artifact_id))
-        if not raw.is_absolute():
-            raw = memory_store_root() / raw
-        try:
-            root = memory_store_root().resolve()
-            resolved = raw.resolve()
-            if str(resolved) == str(root) or str(resolved).startswith(str(root) + os.sep):
-                target = resolved
-        except (OSError, RuntimeError):
-            target = None
+        # Identity lookup must not depend on which documents a recent/query
+        # capsule selected. Keep project precedence over shared guidance.
+        scopes = [
+            [("decision", project_decisions_dir(project_tag)),
+             ("lesson", project_lessons_dir(project_tag)),
+             ("research", project_research_dir(project_tag)),
+             ("reference", proj_dir / "references")],
+            [("lesson", top_level_lessons_dir()),
+             ("research", root / "research"),
+             ("reference", root / "references")],
+        ]
+        for scope in scopes:
+            matches: set[Path] = set()
+            for prefix, directory in scope:
+                for path in _markdown_paths(directory):
+                    header, _ = _read_text(path)
+                    if header is not None:
+                        fm, _ = _parse_frontmatter(header)
+                        if _memory_id(path, fm, prefix) == artifact_id:
+                            matches.add(path.resolve())
+            if len(matches) > 1:
+                return {"id": artifact_id, "exists": False, "reason": "ambiguous_id"}
+            if matches:
+                target = matches.pop()
+                break
     if target is None:
+        target = resolved
+    try:
+        contained = target.resolve().is_relative_to(root)
+    except (OSError, RuntimeError):
+        contained = False
+    if not contained:
         return {"id": artifact_id, "exists": False, "reason": "unresolved"}
     text, reason = _read_text(target, max_chars=max_chars)
     return {
