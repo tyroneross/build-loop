@@ -38,28 +38,49 @@ except ImportError:  # pragma: no cover
 HOST_MODELS_FILENAME = "host-models.json"
 HOST_MODELS_ENV = "BUILD_LOOP_HOST_MODELS"
 
-# Longest-first so "thinking-high-fast" wins over "fast".
+# Longest-first so "thinking-high-fast" wins over "fast". The none/minimal/
+# extra-high/max-fast/high-thinking forms were measured in Cursor's
+# `cursor-agent --list-models` on 2026-11-01 (e.g. gpt-5.5-extra-high-fast,
+# claude-opus-5-5-max-fast, claude-4.6-opus-high-thinking).
 _EFFORT_SUFFIXES: tuple[str, ...] = (
     "thinking-high-fast",
     "thinking-xhigh-fast",
     "thinking-medium-fast",
     "thinking-low-fast",
+    "thinking-max-fast",
+    "extra-high-fast",
     "thinking-high",
     "thinking-xhigh",
     "thinking-medium",
     "thinking-low",
+    "thinking-max",
+    "medium-thinking",
+    "high-thinking",
+    "max-thinking",
+    "extra-high",
     "high-fast",
     "xhigh-fast",
     "medium-fast",
     "low-fast",
+    "max-fast",
+    "none-fast",
     "thinking",
+    "minimal",
     "xhigh",
     "high",
     "medium",
     "low",
+    "none",
     "max",
     "fast",
 )
+# Cursor spellings folded to the effort names the rest of build-loop uses.
+_EFFORT_ALIASES = {
+    "extra-high": "xhigh",
+    "medium-thinking": "medium",
+    "high-thinking": "high",
+    "max-thinking": "max",
+}
 _HOST_PREFIXES: tuple[str, ...] = ("cursor-",)
 
 
@@ -165,6 +186,7 @@ def split_host_slug(model_id: str) -> dict[str, Any]:
             else:
                 effort = suffix
             break
+    effort = _EFFORT_ALIASES.get(effort, effort)
     return {
         "raw": raw,
         "stem": stem,

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "cb40de5369ac5423a87bd821c705e28239c61bd2d6c203820e0ca3e777244420"
+    "content_sha256": "1250d72b06909acd32e9a0ef263a69bdf349c8ee8f69b168496519e8e902f53b"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1629,6 +1629,7 @@
       "scripts/surface_policy.py": "",
       "scripts/sync_agent_model_defaults.py": "Regenerate every agent's ``model:`` frontmatter from the model index.",
       "scripts/sync_db_from_files.py": "Rebuild Postgres state from canonical build-loop-memory markdown files.",
+      "scripts/sync_host_models.py": "Host model sync — compare what each CLI offers against the model taxonomy.",
       "scripts/sync_navgator_lessons.py": "One-way NavGator lessons -> local SQLite semantic-facts sync.",
       "scripts/sync_plugin_cache.py": "Sync a local plugin source repo into installed host caches.",
       "scripts/sync_skills.py": "",
