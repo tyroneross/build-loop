@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import sys
 from pathlib import Path
 
@@ -13,6 +14,64 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import drain_proposals as dp  # noqa: E402
+
+
+@pytest.mark.parametrize("first_writer", ["bulk", "migrate"])
+def test_state_writers_preserve_concurrent_decisions(fake_world, first_writer):
+    """Pause a real writer after its read; another decision must survive it."""
+    state = fake_world["state"]
+    _add_auto_findings(fake_world["repo_a"], 1)
+    item = _item_by_id(state, "A1")
+    ctx = multiprocessing.get_context("fork")
+    ready, release, second_read = ctx.Event(), ctx.Event(), ctx.Event()
+
+    def first():
+        write = dp._atomic_write
+        def paused(path, data):
+            if path.name == "drain-state.json":
+                ready.set()
+                assert release.wait(5)
+            write(path, data)
+        dp._atomic_write = paused
+        if first_writer == "bulk":
+            dp.main(["--state-dir", str(state), "bulk", "--generator",
+                     "auto-finding-sweep", "--status", "reject", "--apply"])
+        else:
+            dp.main(["--state-dir", str(state), "migrate", "--apply"])
+
+    def second():
+        load = dp._load_state
+        def observed(path):
+            value = load(path)
+            second_read.set()
+            return value
+        dp._load_state = observed
+        dp.main(["--state-dir", str(state), "set", "--key", item["key"],
+                 "--status", "review", "--note", "concurrent decision"])
+
+    a, b = ctx.Process(target=first), ctx.Process(target=second)
+    a.start()
+    try:
+        assert ready.wait(5)
+        b.start()
+        # Without a transaction b can finish while a still holds a stale copy.
+        # With one, b cannot read until a publishes and releases the lock.
+        if second_read.wait(.5):
+            b.join(2)
+        release.set()
+        a.join(5)
+        b.join(5)
+        assert a.exitcode == b.exitcode == 0
+        saved = json.loads((state / "drain-state.json").read_text())
+        assert saved[item["key"]]["note"] == "concurrent decision"
+    finally:
+        release.set()
+        for job in (a, b):
+            if job.pid is not None:
+                job.join(5)
+                if job.is_alive():
+                    job.terminate()
+                    job.join(5)
 
 
 @pytest.fixture()
