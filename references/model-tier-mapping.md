@@ -86,6 +86,25 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 
 Cursor dispatches Anthropic, OpenAI, xAI, Google, and Composer ids in one session. Resolve with `--host cursor` (or run inside Cursor so `detect_host` returns `cursor`); `scripts/host_model_map.py` expands that family to the provider set in `references/model-taxonomy.json` `hosts.cursor`. `resolve_agent_model.py` keeps the taxonomy id on `model` / `canonical_model` and puts the fused Task slug on `dispatch_model` (`opus` → `claude-opus-5-thinking-high`, `gpt-6.1-sol` + high → `gpt-6.1-sol-high`; `--plain` prints `dispatch_model`). Optional session allowlist: `BUILD_LOOP_HOST_MODELS` or `.build-loop/host-models.json` `{"slugs":[...]}` so dispatch picks a slug the current picker can actually send. New fused variants of a known family inherit; a new family still goes through `classify_model_tier.py lookup` / `detect`.
 
+### Where each CLI caches its model list (host sync)
+
+`scripts/sync_host_models.py` reads what each CLI already knows and reports the gap against this index. It never routes a model by itself.
+
+| Host | Source | Notes |
+|---|---|---|
+| Codex | `~/.codex/models_cache.json` | Codex refreshes it. Read: `models[].slug`, `display_name`, `supported_reasoning_levels`. `identity`/`etag` are never read. |
+| Claude Code | `~/.claude/cache/model-catalog/*.json` | Read: model `id`/`name`, `fetchedAt`/`staleAt` only. File names are reported as hashes. |
+| Cursor | `cursor-agent --list-models` | Network call, 15 s timeout; failure = source unavailable. Fused slugs (`grok-4.7-high-fast`) collapse to a base id. |
+| Gemini CLI, OpenCode | none found | Reported as unsupported. |
+
+```bash
+python3 scripts/sync_host_models.py collect      # snapshot -> ~/.build-loop/host-models/snapshot.json
+python3 scripts/sync_host_models.py diff         # unknown / newer_in_family / new_family / Claude informational
+python3 scripts/sync_host_models.py apply --in-family [--dry-run]   # explicit; edits this index
+```
+
+`apply --in-family` adds a `candidate-unverified` entry (copied segment/tier/tags from the routed predecessor, `released: null`) and leaves `preferred` untouched: the resolver does not filter on status, so routing waits for a release date and a verification run. `model_index.py resolve` starts a detached `refresh` at most once an hour when a cache is newer than the snapshot or the snapshot is over 7 days old, and prints one line when the last report has newer models (`BUILD_LOOP_HOST_SYNC=0` disables it).
+
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying. Treat model + thinking level/mode as the comparison identity: capture the exact source-reported or runtime-configured value and its evidence. If a document omits row-level effort, record `unknown` and mark the ranking effort-confounded rather than inferring a default. Build Loop bake-offs preserve this metadata in the existing `abc-comparison/v2` observation artifact. Prompt Model Benchmark Lab owns normalization and aggregation; structured retention there is pending, so preserve raw observations and do not aggregate across thinking settings.
 
 ## GPT-5.6 Codex routing and approved agents

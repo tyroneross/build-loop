@@ -348,6 +348,7 @@ def do_resolve(args: argparse.Namespace) -> int:
         "why": why,
     }
 
+    sync_notice = _host_sync_notice()
     if args.json:
         _emit(envelope("resolve", **payload))
     else:
@@ -369,7 +370,25 @@ def do_resolve(args: argparse.Namespace) -> int:
                 f"  {mark} {entry['model']:<24} {str(entry['provider'] or '-'):<10}"
                 f" {entry['via']}{suffix}"
             )
+        if sync_notice:
+            print(sync_notice)
     return EXIT_OK if payload["resolved"] else EXIT_NOT_FOUND
+
+
+def _host_sync_notice() -> str | None:
+    """Fire the detached host-model refresh when stale; return the notice line.
+
+    Non-mutating and never fatal: at most one detached spawn per hour, and any
+    error yields None so resolve's answer is unaffected. Disable with
+    BUILD_LOOP_HOST_SYNC=0. See scripts/sync_host_models.py.
+    """
+    try:
+        import sync_host_models  # noqa: PLC0415
+
+        sync_host_models.maybe_trigger_refresh()
+        return sync_host_models.pending_notice()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # --------------------------------------------------------------------------

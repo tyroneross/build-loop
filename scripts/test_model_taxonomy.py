@@ -489,6 +489,10 @@ class OpenAIRoutingFreshnessTests(unittest.TestCase):
         newest: dict[str, str] = {}
         for mid, meta in models.items():
             fam = family(mid)
+            # An unrouted candidate with no release date (sync_host_models
+            # apply writes released: null) cannot prove it is newer; skip it.
+            if not isinstance(meta, dict) or not meta.get("released"):
+                continue
             if fam and (fam not in newest or meta["released"] > models[newest[fam]]["released"]):
                 newest[fam] = mid
         routed = {x for cells in tax["preferred"].values() if isinstance(cells, dict)
