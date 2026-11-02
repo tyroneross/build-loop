@@ -348,3 +348,16 @@ class SecretTests(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_trigger_never_spawns_a_real_refresh_under_pytest(tmp_path, monkeypatch):
+    """resolve() is called throughout the test suites; without an injected spawn the
+    trigger must not read real caches or call Cursor."""
+    import sync_host_models as shm
+    monkeypatch.setenv("BUILD_LOOP_HOST_MODELS_DIR", str(tmp_path / "hm"))
+    monkeypatch.delenv("BUILD_LOOP_HOST_SYNC", raising=False)
+    called = []
+    monkeypatch.setattr(shm, "_spawn_refresh", lambda: called.append(1))
+    assert shm.maybe_trigger_refresh() is False
+    assert called == []
+    assert not (tmp_path / "hm").exists()

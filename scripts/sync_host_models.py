@@ -822,6 +822,10 @@ def maybe_trigger_refresh(now: float | None = None, spawn: Any = None) -> bool:
     try:
         if os.environ.get(TRIGGER_ENV, "1").strip().lower() in {"0", "off", "false", "no"}:
             return False
+        # Test runs call resolve constantly; never start a real refresh (reads the
+        # owner's caches, calls Cursor's servers) unless a test injects a spawn.
+        if spawn is None and os.environ.get("PYTEST_CURRENT_TEST"):
+            return False
         now = time.time() if now is None else now
         stamp = models_dir() / STAMP_NAME
         try:
