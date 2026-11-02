@@ -880,6 +880,24 @@ _TOOL_DISPATCH_RE = re.compile(
     + _REFLECTIVE_DISPATCH_RE.pattern,
     re.IGNORECASE,
 )
+_TOOL_BINDING_RE = re.compile(
+    r"(?:\blet\s+(?:Some\(\s*)?(\w+)\s*\)?\s*=|\b(\w+)\s*,\s*ok\s*:?=)\s*"
+    r"(?:TOOLS|TOOL_MAP|toolMap|tool_map|handlers|HANDLERS|registry|toolRegistry|tool_registry|TOOL_HANDLERS)"
+    r"\s*(?:\.\s*get\s*\([^()\n]*\)|\[[^\]\n]{1,60}\])",
+    re.IGNORECASE,
+)
+
+
+def _bound_tool_call(lines: list[str], idx: int) -> int | None:
+    """A Rust/Go registry binding counts only when invoked within ten lines."""
+    binding = _TOOL_BINDING_RE.search(lines[idx])
+    if not binding or _COMMENT_LINE_RE.match(lines[idx]):
+        return None
+    call = re.compile(rf"(?<![\w.]){re.escape(binding[1] or binding[2])}\s*\(")
+    for j in range(idx, min(len(lines), idx + 11)):
+        if not _COMMENT_LINE_RE.match(lines[j]) and call.search(lines[j]):
+            return j
+    return None
 
 # The tool-loop context: this file actually processes model-proposed calls.
 # Required alongside a dispatch match so a plain plugin registry does not trip.
@@ -998,7 +1016,11 @@ def _closed_dispatcher(body: list[str]) -> bool:
     """True when the body routes by literal names and never indexes by name."""
     code = [l for l in body if not _COMMENT_LINE_RE.match(l)]
     literal_cases = sum(1 for l in code if _CLOSED_CASE_RE.search(l))
-    open_calls = any(_OPEN_DISPATCH_RE.search(l) for l in code)
+    open_calls = any(
+        not _COMMENT_LINE_RE.match(l)
+        and (_OPEN_DISPATCH_RE.search(l) or _bound_tool_call(body, i) is not None)
+        for i, l in enumerate(body)
+    )
     return literal_cases >= 1 and not open_calls
 
 
@@ -1024,11 +1046,16 @@ def _check_tool_dispatch(path: Path, lines: list[str], text: str) -> list[dict[s
         return []
     is_mcp_server = bool(_MCP_TOOLS_CALL_RE.search(text))
     for i, raw in enumerate(lines):
-        if _COMMENT_LINE_RE.match(raw) or not _TOOL_DISPATCH_RE.search(raw):
+        bound_idx = _bound_tool_call(lines, i)
+        if _COMMENT_LINE_RE.match(raw) or not (
+            _TOOL_DISPATCH_RE.search(raw) or bound_idx is not None
+        ):
             continue
+        if bound_idx is not None:
+            i, raw = bound_idx, lines[bound_idx]
         lo, hi = max(0, i - _TOOL_CONTEXT_WINDOW), i + _TOOL_CONTEXT_WINDOW + 1
         window = [l for l in lines[lo:hi] if not _COMMENT_LINE_RE.match(l)]
-        closed = _site_is_closed(lines, i)
+        closed = False if bound_idx is not None else _site_is_closed(lines, i)
         agent_loop = any(_TOOL_LOOP_CONTEXT_RE.search(l) for l in window)
         if not agent_loop and _TOOL_LOOP_CONTEXT_RE.search(text):
             # Distant evidence still counts unless it is the bundle shape: a closed

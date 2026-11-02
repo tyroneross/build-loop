@@ -585,6 +585,60 @@ for call in response.tool_calls {
 }
 """, "src/agent.rs"), ["HIGH"])
 
+    def test_rust_if_let_bound_dispatch(self):
+        src = """
+for call in response.tool_calls {
+    if let Some(h) = registry.get(&call.name) {
+        h(call.arguments)
+    }
+}
+"""
+        self.assertEqual(self._llm08(src, "src/agent.rs"), ["HIGH"])
+        self.assertEqual(self._llm08(src.replace("h(call.arguments)", "log(call.arguments)"),
+                                     "src/agent.rs"), [])
+
+    def test_rust_question_mark_bound_dispatch(self):
+        src = """
+for call in response.tool_calls {
+    let h = handlers.get(&call.name)?;
+    h(call.arguments);
+}
+"""
+        self.assertEqual(self._llm08(src, "src/agent.rs"), ["HIGH"])
+        distant = src.replace("    h(call.arguments);", "\n" * 10 + "    h(call.arguments);")
+        self.assertEqual(self._llm08(distant, "src/agent.rs"), [])
+
+    def test_go_comma_ok_bound_dispatch_agent_high_mcp_clears(self):
+        src = """
+func run() {
+    for _, call := range response.tool_calls {
+        h, ok := handlers[call.Name]
+        if ok {
+            h(call.Arguments)
+        }
+    }
+}
+"""
+        self.assertEqual(self._llm08(src, "agent.go"), ["HIGH"])
+        self.assertEqual(self._llm08(src.replace("response.tool_calls", "mcp.CallToolRequest"),
+                                     "server.go"), [])
+
+    def test_rust_bound_fallback_keeps_named_dispatcher_open(self):
+        self.assertEqual(self._llm08("""
+for call in response.tool_calls {
+    execute_tool(&call.name, call.arguments);
+}
+fn execute_tool(name: &str, args: Value) -> Result<Value> {
+    match name {
+        "search" => search(args),
+        _ => {
+            let h = registry.get(name)?;
+            h(args)
+        }
+    }
+}
+""", "src/agent.rs"), ["HIGH"])
+
     def test_go_mcp_reflection_is_high(self):
         self.assertEqual(self._llm08("""
 func (s *Server) handle(req mcp.CallToolRequest) {
