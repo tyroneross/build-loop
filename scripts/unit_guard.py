@@ -137,7 +137,7 @@ def _is_ordinal(key: str | None) -> bool:
     """Positions, not quantities: `stage`, `index`, or a `<name>_index` style key."""
     k = (key or "").strip().lower()
     return k in ORDINAL_KEYS or any(k.endswith("_" + o) for o in ORDINAL_KEYS)
-_NUMERIC_STRING = re.compile(r"^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$")
+_NUMERIC_STRING = re.compile(r"^\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*$")
 
 # Dimensions where a 1000x spread among siblings signals a unit mix. Counts,
 # percentages, pixels and money legitimately span orders of magnitude.
@@ -434,9 +434,7 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
                     continue
                 child = f"{path}.{k}" if path else k
                 child_allowed = allowed or k in allow
-                if _is_label(k):
-                    walk(v, child, k, None, True)
-                elif declared is not None and k == "records" and isinstance(v, list):
+                if declared is not None and k == "records" and isinstance(v, list):
                     for i, rec in enumerate(v):
                         rpath = f"{child}[{i}]"
                         if not isinstance(rec, dict):
@@ -459,6 +457,9 @@ def check(doc: Any, allow: set[str] | frozenset[str] = frozenset()) -> dict:
                     walk_key(v, child, k, unit, child_allowed)
 
     def walk_key(v: Any, child: str, k: str, inherited: str | None, child_allowed: bool) -> None:
+        if _is_label(k):
+            walk(v, child, k, None, True)
+            return
         own, err = parse_key_unit(k)
         if _is_ordinal(k):
             own, err = "count", None
