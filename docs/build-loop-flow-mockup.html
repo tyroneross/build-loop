@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "3c9fce6b08661eb2cf02c0b725c8e30597dc7a6eed4407c24fac6a2389bd47dc"
+    "content_sha256": "a19414728092afe116ddaa8479ee0e69bc1804a6fda9d164c2dc0ee8182c1b16"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -345,10 +345,7 @@
           "name": "Read live state",
           "kind": "process",
           "desc": "The orchestrator reads the live repo, past build-loop memory, and any docs so the plan is grounded in the project's current state.",
-          "hooks": [
-            "session-start-retrieval.sh",
-            "session-start-memory.sh"
-          ],
+          "hooks": [],
           "agents": []
         },
         {
@@ -1019,14 +1016,6 @@
     "session-start-auditor.sh": [
       "Hook",
       "⊕ PROPOSED — launches the independent auditor peer process once per session."
-    ],
-    "session-start-retrieval.sh": [
-      "Hook",
-      "load memory + retrieval context at session start"
-    ],
-    "session-start-memory.sh": [
-      "Hook",
-      "bootstrap the build-loop memory root"
     ],
     "pre-edit-architecture.sh": [
       "PreToolUse",

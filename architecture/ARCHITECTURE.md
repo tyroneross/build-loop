@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 58 skills · 486 scripts · 16 hooks** (auto-discovered 3c9fce6b)
+**29 agents · 58 skills · 486 scripts · 16 hooks** (auto-discovered a1941472)
 
 <details><summary>agents</summary>
 
@@ -673,8 +673,6 @@ subagents:
 # hook purpose overrides (event is auto-derived from hooks.json; ⚠ purposes inferred from script names).
 hook_overrides:
   "session-start-auditor.sh": { proposed: true, purpose: "⊕ PROPOSED — launches the independent auditor peer process once per session." }
-  "session-start-retrieval.sh": { purpose: "load memory + retrieval context at session start" }
-  "session-start-memory.sh": { purpose: "bootstrap the build-loop memory root" }
   "pre-edit-architecture.sh": { purpose: "architecture impact pre-check before an edit" }
   "pre-edit-rally-point.sh": { purpose: "rally claim / deconflict before a write" }
   "pre_bash_dispatch.sh": { purpose: "guard / classify bash + dispatch actions" }
@@ -694,7 +692,7 @@ phases:
     out: ["intent.md", "goal.md", "probes", "triggers", "risk score"]
     agents: [["architecture-scout", "", "Orchestrator"], ["design-contract-specialist", "", "Orchestrator"]]
     steps:
-      - { id: "p1.read", name: "Read live state", kind: process, desc: "The orchestrator reads the live repo, past build-loop memory, and any docs so the plan is grounded in the project's current state.", hooks: ["session-start-retrieval.sh", "session-start-memory.sh"], agents: [] }
+      - { id: "p1.read", name: "Read live state", kind: process, desc: "The orchestrator reads the live repo, past build-loop memory, and any docs so the plan is grounded in the project's current state.", hooks: [], agents: [] }
       - { id: "p1.intent", name: "Write intent.md", kind: process, desc: "The orchestrator writes intent.md: the goal, what is explicitly out of scope, and which priorities to optimize for.", hooks: [], agents: [] }
       - { id: "p1.goal", name: "Write goal.md + acceptance probes", kind: process, desc: "The orchestrator writes goal.md with three to five pass-or-fail criteria, plus repeatable probes that will later prove each one.", hooks: [], agents: [] }
       - { id: "p1.risk", name: "Emit risk score per chunk", kind: new, desc: "The orchestrator scores each planned chunk for risk (how much it changes, how far its effects reach, its past defect rate) so the auditor can later inspect the riskier chunks more often.", hooks: [], agents: [] }
