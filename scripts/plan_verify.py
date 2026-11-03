@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1716,6 +1717,80 @@ def rule_ui_container_contract(
     return out
 
 
+# Task contract: plans that define tasks (`### Task N: <title>`, `### T-N`,
+# `### Chunk N`) are checked by Easy Terminal's native checker
+# (`et task contract check --json`): each task needs a purpose, a deliverable
+# (a result, not an activity), observable done-when checks, boundaries naming an
+# exclusion, and an owner; a multi-task plan needs `## Intent` with `End state:`.
+# Checker errors are BLOCKERs, its warnings WARN. Opt-in by shape: plans without
+# task headings are not checked. `override: task-contract-exempt — <reason>`
+# silences the rule. When no checker is installed the rule reports INFO and
+# passes, so plans still verify on hosts without Easy Terminal.
+_TASK_HEADING_RE = re.compile(r"^\s{0,3}#{2,4}\s+(?:Task\b|Chunk\s*\d|T-\d)", re.IGNORECASE)
+_TASK_CONTRACT_OVERRIDE_RE = re.compile(r"override:\s*task-contract-exempt\b", re.IGNORECASE)
+TASK_CONTRACT_BIN_ENV = "BUILD_LOOP_TASK_CONTRACT_BIN"
+_INSTALLED_EZ_PTYD = "/Applications/Easy Terminal.app/Contents/Resources/bin/ez-ptyd"
+
+
+def _task_contract_argv(plan_path: Path) -> list[str] | None:
+    """The checker command, or None when no checker is installed."""
+    override = os.environ.get(TASK_CONTRACT_BIN_ENV)
+    if override:
+        return [override, "task-contract", "check", "--json", str(plan_path)]
+    found = shutil.which("ez-ptyd")
+    if found:
+        return [found, "task-contract", "check", "--json", str(plan_path)]
+    if os.access(_INSTALLED_EZ_PTYD, os.X_OK):
+        return [_INSTALLED_EZ_PTYD, "task-contract", "check", "--json", str(plan_path)]
+    et = shutil.which("et")
+    if et:
+        return [et, "task", "contract", "check", "--json", str(plan_path)]
+    return None
+
+
+def rule_task_contract(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    headings = [lineno for lineno, line in lines if line and _TASK_HEADING_RE.match(line)]
+    if not headings:
+        return []
+    if any(line and _TASK_CONTRACT_OVERRIDE_RE.search(line) for _, line in lines):
+        return []
+
+    def info(text: str) -> list[dict[str, Any]]:
+        return [_finding(claim_text=text, claim_kind="task_contract_unchecked",
+                         subject={"path": None, "symbol": None, "noun": "task contract"},
+                         evidence={"file": str(plan_path), "line": headings[0], "snippet": ""},
+                         result="inconclusive", severity="INFO", confidence="high",
+                         rule_id="task-contract")]
+
+    argv = _task_contract_argv(plan_path)
+    if argv is None:
+        return info("Task contract not checked: no Easy Terminal checker (`ez-ptyd task-contract` / `et task contract`) is installed.")
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        report = json.loads(proc.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        return info(f"Task contract not checked: checker did not return a report ({type(exc).__name__}).")
+    if not isinstance(report, dict) or "findings" not in report:
+        return info("Task contract not checked: checker returned an unexpected report.")
+
+    out: list[dict[str, Any]] = []
+    for f in report.get("findings") or []:
+        n = f.get("task")
+        line = headings[n - 1] if isinstance(n, int) and 0 < n <= len(headings) else headings[0]
+        where = f"task {n}" if n else "plan"
+        out.append(_finding(
+            claim_text=f"{where} {f.get('field', '')}: {f.get('message', '')}",
+            claim_kind=f"task_contract_{f.get('code', 'finding')}",
+            subject={"path": None, "symbol": f"task {n}" if n else None, "noun": f.get("field")},
+            verification_command=" ".join(argv[:-1] + ["<plan>"]),
+            evidence={"file": str(plan_path), "line": line, "snippet": ""},
+            result="no_match", marker="❌" if f.get("level") == "error" else None,
+            severity="BLOCKER" if f.get("level") == "error" else "WARN",
+            confidence="high", rule_id="task-contract",
+        ))
+    return out
+
+
 def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None,
             run_id: str | None = None) -> list[dict[str, Any]]:
     text = plan_path.read_text(encoding="utf-8")
@@ -1746,6 +1821,7 @@ def run_all(plan_path: Path, repo: Path | None, ui_target: str | None = None,
     findings.extend(rule_decision_history_disposition(plan_path, lines, repo, run_id))
     findings.extend(rule_tier_sanity(plan_path, lines))
     findings.extend(rule_ui_container_contract(plan_path, lines, ui_target))
+    findings.extend(rule_task_contract(plan_path, lines))
     return findings
 
 

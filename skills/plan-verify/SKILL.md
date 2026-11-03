@@ -64,6 +64,7 @@ Args:
 | 11 | `parallel-decision-record` | A plan names multiple independent / parallel-safe chunks but omits `parallel_batch:` or `parallel_skipped_reason:` | **BLOCKER** |
 | 12 | `approach-lenses-missing` | A non-trivial architecture/workflow/dependency/interface plan omits `## Approach Lenses` or `Approach Lenses: n/a - <reason>` | WARN |
 | 13 | `ui-container-contract` | With `--ui-target`, UI plan omits real container, constrained case, text-fit behavior, or rendered probe | **BLOCKER** |
+| 14 | `task-contract` | Plan with `### Task N:` / `T-N` / `Chunk N` headings fails Easy Terminal's task contract (`et task contract check`): missing purpose, deliverable, done-when or boundaries (BLOCKER); vague done-when, activity deliverable, routine step, no exclusion, no owner, no `## Intent` end state (WARN). No checker installed → INFO. `override: task-contract-exempt — <reason>` silences it | **BLOCKER** / WARN |
 
 Rules 8–10 ship with the `security-methodology` skill (build-loop 0.7.x). They lint the security boundary at Phase 2 the same way rules 1–4 lint the factual / orphan / package boundary. When rule 10 fires, the orchestrator's Phase 1 trigger-detector should also be flipping `triggers.riskSurfaceChange: true` — if rule 10 fires but the trigger isn't set, that's a Phase 1 detection gap worth investigating.
 

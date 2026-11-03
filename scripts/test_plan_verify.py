@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -892,6 +893,65 @@ class TierSanityTests(unittest.TestCase):
             "dispatch_tier: frontier\n"
         )
         self.assertEqual(findings, [])
+
+
+class TaskContractTests(unittest.TestCase):
+    """rule_task_contract delegates to the Easy Terminal checker (a fake here)."""
+
+    FAKE = (
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "text = open(sys.argv[-1]).read()\n"
+        "findings = [] if 'Done when:' in text else [\n"
+        "  {'level': 'error', 'code': 'missing_field', 'task': 2, 'field': 'done_when', 'message': 'missing done_when'},\n"
+        "  {'level': 'warn', 'code': 'missing_owner', 'task': 1, 'field': 'owner', 'message': 'name one owner'}]\n"
+        "print(json.dumps({'ok': not findings, 'findings': findings}))\n"
+        "sys.exit(1 if findings else 0)\n"
+    )
+
+    def run_rule(self, body: str, fake: str | None = FAKE) -> list[dict]:
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = Path(tmp) / "plan.md"
+            plan.write_text(body)
+            env = dict(os.environ)
+            if fake is not None:
+                checker = Path(tmp) / "checker"
+                checker.write_text(fake)
+                checker.chmod(0o755)
+                os.environ[pv.TASK_CONTRACT_BIN_ENV] = str(checker)
+            try:
+                return pv.rule_task_contract(plan, pv.strip_fenced_blocks(plan.read_text()))
+            finally:
+                os.environ.clear()
+                os.environ.update(env)
+
+    def test_plans_without_task_headings_are_not_checked(self) -> None:
+        self.assertEqual(self.run_rule("# Plan\n## Goal\nShip it.\n"), [])
+
+    def test_checker_errors_block_and_warnings_warn_at_task_lines(self) -> None:
+        out = self.run_rule("# Plan\n### Task 1: A\nPurpose: x\n### Task 2: B\nPurpose: y\n")
+        self.assertEqual([f["severity"] for f in out], ["BLOCKER", "WARN"])
+        self.assertEqual(out[0]["evidence"]["line"], 4)  # task 2 heading
+        self.assertEqual(out[1]["evidence"]["line"], 2)
+        self.assertTrue(all(f["rule_id"] == "task-contract" for f in out))
+
+    def test_passing_plan_has_no_findings(self) -> None:
+        self.assertEqual(self.run_rule("### Task 1: A\nDone when: `x` exits 0\n"), [])
+
+    def test_override_silences_rule(self) -> None:
+        self.assertEqual(self.run_rule("### Chunk 1\noverride: task-contract-exempt — legacy plan\n"), [])
+
+    def test_broken_checker_degrades_to_info(self) -> None:
+        out = self.run_rule("### T-1 First\n", fake="#!/bin/sh\necho not-json\n")
+        self.assertEqual([f["severity"] for f in out], ["INFO"])
+
+    @unittest.skipUnless(os.environ.get("ET_TASK_CONTRACT_REAL_BIN"), "set ET_TASK_CONTRACT_REAL_BIN to run against ez-ptyd")
+    def test_real_checker_blocks_an_activity_plan(self) -> None:
+        real = os.environ["ET_TASK_CONTRACT_REAL_BIN"]
+        out = self.run_rule("### Task 1: Ack the inbox\n### Task 2: Run build-loop\n",
+                            fake=f"#!/bin/sh\nexec '{real}' \"$@\"\n")
+        self.assertIn("BLOCKER", {f["severity"] for f in out})
+        self.assertIn("task_contract_routine_step", {f["claim_kind"] for f in out})
 
 
 if __name__ == "__main__":

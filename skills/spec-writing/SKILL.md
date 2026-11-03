@@ -492,7 +492,10 @@ Item 21 — Single-shot build guardrails: <answer or "N/A: no implementation tas
 Item 22 — Read-before-edit map: <answer or "N/A: no implementation tasks">
 -->
 
-## Goal
+## Intent
+
+Purpose: <why this work matters to the person it is for>
+End state: <what is true when every task below is done>
 
 <One paragraph. What changes, why, what user value it delivers.>
 
@@ -515,6 +518,25 @@ Item 22 — Read-before-edit map: <answer or "N/A: no implementation tasks">
 | 1 | feat(...): ... | ... | — |
 | 2 | feat(...): ... | ... | C1 |
 ...
+
+## Tasks
+
+One block per commit-table row, in the task contract format (`et task contract template`).
+`plan_verify.py` checks these blocks with Easy Terminal's checker (rule `task-contract`):
+missing purpose, deliverable, done-when or boundaries is a BLOCKER. Routine steps
+(commit, push, ack) are not tasks; fold them into the task they serve.
+
+### Task 1: <outcome title>
+Purpose: <why this task matters; what to protect if the plan breaks>
+Deliverable: <the result produced, not an activity>
+Done when:
+- <observable check: command and result, number, visible state>
+Boundaries:
+- <files or areas this task owns>
+- Out of scope: <what this task must not touch>
+Owner: <one agent or person>
+Context: <paths and what to read first>
+Report: <what comes back, in what shape>
 
 ## Capability Gap Map
 
