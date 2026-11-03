@@ -144,6 +144,17 @@ class LessonsIndexTests(unittest.TestCase):
         import lessons_index as li  # noqa: PLC0415
         self.li = li
 
+    def test_public_callables_survive_normal_submodule_imports(self) -> None:
+        import importlib
+        for name in ("query", "ingest", "schema"):
+            importlib.import_module("lessons_index." + name)
+        importlib.reload(self.li)
+        self.assertTrue(callable(self.li.query))
+        self.assertTrue(callable(self.li.ingest))
+        self.li.ingest(project="test-project", db_path=self.db_path)
+        results = self.li.query("database pooling", project="test-project", db_path=self.db_path)
+        self.assertTrue(results)
+
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
         for key in ("BUILD_LOOP_MEMORY_STORE_ROOT", "EMBED_BACKEND_UNAVAILABLE",

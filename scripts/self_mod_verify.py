@@ -1471,10 +1471,10 @@ def _verify_inner(
         # pytest exit 5 = no tests collected. Inconclusive, not green (exit 3).
         verdict = "no_tests"
         exit_code = EXIT_INCONCLUSIVE
-    elif progress_dir is not None and r.returncode not in (0, 1, 5):
+    elif r.returncode not in (0, 1, 5):
         # Interrupted/internal/usage errors can include a partial test summary.
         # They are not assertion failures and must not trigger source rollback.
-        errors.append(f"pytest runner stopped with exit {r.returncode}; see progress logs")
+        errors.append(f"pytest runner stopped with exit {r.returncode}; inspect runner output")
         verdict = "error"
         exit_code = EXIT_ERROR
     elif not has_summary and r.returncode != 0:

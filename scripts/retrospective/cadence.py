@@ -10,6 +10,8 @@ from pathlib import Path
 from atomic_io import LockedFile, atomic_write_bytes
 from retrospective.sections import _run_identifier
 from retrospective.synthesize import run as synthesize
+from retrospective.file_findings import filing_status
+from rally_point.build_loop_id import is_safe_run_id
 
 SCHEMA = "build-loop.retrospective-cadence.v1"
 MAX_BYTES = 2 * 1024 * 1024
@@ -56,12 +58,15 @@ def automatic(workdir: Path, *, trigger: str = "build") -> dict:
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ValueError("run history must contain run objects")
             completed = {}
-            for row in rows:
+            quarantined = []
+            for index, row in enumerate(rows):
                 if row.get("review_scope") != "build" or row.get("outcome") not in {"pass", "fail"}:
                     continue
                 rid = _run_identifier(row)
-                if not isinstance(rid, str) or not rid.strip():
-                    raise ValueError("completed build has no unambiguous run identity")
+                if not is_safe_run_id(rid):
+                    quarantined.append({"row_index": index, "run_id": row.get("run_id"),
+                                        "reason": "unsafe or ambiguous completed-build identity"})
+                    continue
                 completed[rid] = row
             saved = _read(checkpoint, {"schema": SCHEMA, "covered_versions": {}})
             covered = saved.get("covered_versions")
@@ -85,7 +90,10 @@ def automatic(workdir: Path, *, trigger: str = "build") -> dict:
                 ).encode()).hexdigest()
             pending = [rid for rid in completed if covered.get(rid) != versions[rid]]
             if not pending or (trigger == "build" and len(pending) < threshold):
-                return {"status": "accruing", "pending_builds": len(pending), "every_builds": threshold}
+                if saved.get("quarantined", []) != quarantined:
+                    atomic_write_bytes(checkpoint, (json.dumps({**saved, "quarantined": quarantined}, indent=2) + "\n").encode())
+                return {"status": "accruing", "pending_builds": len(pending), "every_builds": threshold,
+                        "quarantined": quarantined}
             # Stable membership makes a retry target the same output, not a new batch.
             batch_id = "auto-" + hashlib.sha256(json.dumps({rid: versions[rid] for rid in sorted(pending)}).encode()).hexdigest()[:20]
             snapshot = dict(state, runs=list(completed.values()))
@@ -93,14 +101,16 @@ def automatic(workdir: Path, *, trigger: str = "build") -> dict:
             active = result.get("active_path")
             if result.get("status") != "ok" or not active or not Path(active).is_file():
                 return {"status": "degraded", "reason": result.get("reason") or "retrospective publication incomplete",
-                        "pending_builds": len(pending)}
+                        "pending_builds": len(pending), "quarantined": quarantined}
             receipt = {"schema": SCHEMA, "covered_versions": {**covered, **{rid: versions[rid] for rid in pending}},
+                       "quarantined": quarantined,
                        "last_batch": {"run_id": batch_id, "run_ids": pending, "trigger": trigger,
                                       "active_path": active, "coverage": "recorded-builds-only",
+                                      "filing": filing_status(active),
                                       "durable_path": result.get("durable_path"),
                                       "durable_status": result.get("durable_status")}}
             atomic_write_bytes(checkpoint, (json.dumps(receipt, indent=2) + "\n").encode())
-            return {"status": "captured", **receipt["last_batch"]}
+            return {"status": "captured", **receipt["last_batch"], "quarantined": quarantined}
     except Exception as exc:  # advisory boundary; evidence remains pending on any failure
         if isinstance(exc, TimeoutError) and not acquired:
             return {"status": "deferred", "reason": "another retrospective owns the repository lock"}

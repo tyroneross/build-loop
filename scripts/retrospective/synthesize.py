@@ -300,9 +300,11 @@ def run(
         state = state_snapshot if state_snapshot is not None else _load_state_json(workdir)
         intent_md = _load_md(workdir, "intent.md")
         plan_md = _load_md(workdir, "plan.md")
-        from rally_point.build_loop_id import resolve_run_identity
+        from rally_point.build_loop_id import resolve_run_identity, is_safe_run_id
         selection = resolve_run_identity(state, include_history=True)
         rid = run_id or selection.build_run_id or "unknown"
+        if not is_safe_run_id(rid):
+            raise ValueError("unsafe retrospective run identity")
         target_run = _find_run(state, rid)
         active = resolve_run_identity(state)
         if not target_run and active.state == "active" and active.build_run_id == rid:

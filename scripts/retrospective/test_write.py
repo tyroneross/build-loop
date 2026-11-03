@@ -26,6 +26,58 @@ def _make_sections() -> dict:
     return build(None, {"runs": [{"outcome": "pass"}]}, None, None, "test-run")
 
 
+class TestUnsafePublicationIdentity(unittest.TestCase):
+    def test_all_publication_sinks_refuse_unsafe_ids_before_writes_or_queueing(self):
+        from unittest.mock import patch
+        from retrospective.synthesize import run
+        for rid in ("../outside", "/absolute", "bad run", "x" * 129):
+            with self.subTest(run_id=rid), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                if rid == "/absolute":
+                    rid = str(root / "outside")
+                work = root / "project"
+                work.mkdir()
+                memory = root / "memory"
+                sections = _make_sections()
+                with patch("promotion_queue.store_busy", return_value=True), \
+                     patch("promotion_queue.enqueue") as enqueue:
+                    active = write_active(work, rid, sections)
+                    durable = promote_durable(work, rid, sections, memory_root=memory, repo="project")
+                    synthesized = run(work, run_id=rid, memory_root=memory)
+                    summary = stamp_durable_in_summary(work, rid, "durable.md")
+                self.assertEqual(active["status"], "degraded")
+                self.assertIsNone(active["active_path"])
+                self.assertIsNone(durable["durable_path"])
+                self.assertEqual(synthesized["status"], "degraded")
+                self.assertEqual(summary["status"], "degraded")
+                enqueue.assert_not_called()
+                self.assertEqual(list(work.iterdir()), [])
+                self.assertFalse(memory.exists())
+
+
+class TestConcurrentAtomicWrite(unittest.TestCase):
+    def test_manual_publications_do_not_share_temporary_files(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from unittest.mock import patch
+        import os
+        from retrospective.write import _atomic_write
+        original_replace = os.replace
+        ready = Barrier(2)
+        def replace(source, target):
+            ready.wait(timeout=5)
+            return original_replace(source, target)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "same-run.md"
+            bodies = ["first complete retrospective", "second complete retrospective"]
+            with patch("os.replace", side_effect=replace), ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(_atomic_write, target, text) for text in bodies]
+                for result in futures:
+                    result.result(timeout=10)
+            self.assertIn(target.read_text(), bodies)
+            self.assertEqual(list(Path(directory).iterdir()), [target])
+
+
 class RenderTests(unittest.TestCase):
     def test_full_markdown_contains_all_nine_titles(self) -> None:
         body = render_full_markdown(_make_sections(), run_id="test-run", repo="x")

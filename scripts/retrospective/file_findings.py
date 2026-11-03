@@ -710,6 +710,16 @@ def filed_locations(body: str, retro_name: str) -> list[str]:
     return out
 
 
+def filing_status(active_path: str | None) -> dict | None:
+    """Return the advisory filing receipt for any published retrospective."""
+    if not active_path:
+        return None
+    try:
+        return lint(Path(active_path))
+    except Exception as exc:
+        return {"ok": None, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def lint(retro_path: Path) -> dict[str, Any]:
     """A retro that NAMES an issue but files fewer than all of them FAILS.
 

@@ -13,26 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # scripts/ on path so `import retrospective.*` works
 
 from retrospective.synthesize import run as synth_run  # noqa: E402
-from retrospective import file_findings as _ff  # noqa: E402
-
-
-def _filing_status(active_path: str | None) -> dict | None:
-    """Lint the freshly-written retrospective for unfiled findings.
-
-    Wired HERE because this is the one entry point BOTH paths share — the
-    synthesizer agent and the headless SessionEnd sweep. Left to the agent's
-    prose instructions alone, the check ran only if an LLM chose to run it, so
-    a retrospective could name six findings, file none, and report success.
-
-    Non-gating, matching this CLI's existing "never fail the run" contract: the
-    verdict is surfaced, never enforced here.
-    """
-    if not active_path:
-        return None
-    try:
-        return _ff.lint(Path(active_path))
-    except Exception as exc:  # never let the lint break run-close
-        return {"ok": None, "error": f"{type(exc).__name__}: {exc}"}
+from retrospective.file_findings import filing_status as _filing_status  # noqa: E402
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

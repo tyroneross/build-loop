@@ -339,8 +339,12 @@ def test_unsafe_candidate_source_cannot_escape_publication_directory(tmp_path, s
     seed(tmp_path, [source_id, 'two', 'three'], judge_decisions=[{
         'judge_id': 'audit', 'verdict': 'nay', 'checkpoint_id': 'test-build',
         'variances': ['recorded defect']}])
-    assert cadence.automatic(tmp_path)['status'] == 'degraded'
-    assert not (tmp_path / '.build-loop/retrospectives/cadence.json').exists()
+    result = cadence.automatic(tmp_path)
+    assert result['status'] == 'accruing'
+    assert result['pending_builds'] == 2
+    assert result['quarantined'][0]['run_id'] == source_id
+    checkpoint = tmp_path / '.build-loop/retrospectives/cadence.json'
+    assert json.loads(checkpoint.read_text())['covered_versions'] == {}
     assert not (tmp_path / 'outside-01.md').exists()
 
 
@@ -369,3 +373,54 @@ def test_manual_and_automatic_publication_cannot_overwrite_each_other(tmp_path):
     assert cadence.automatic(tmp_path)['status'] == 'captured'
     assert scan(tmp_path)['patterns'][0]['count'] == 3
     assert 'manual candidate' in (tmp_path / '.build-loop/proposals/enforce-from-retro/one-01.md').read_text()
+
+
+@pytest.mark.parametrize("bad_identity", ["bad run", "../outside", "x" * 129, "conflicting"])
+def test_invalid_legacy_member_does_not_stall_later_builds(tmp_path, bad_identity):
+    rows = seed(tmp_path, [bad_identity], judge_decisions=[{
+        "judge_id": "audit", "verdict": "nay", "checkpoint_id": "build",
+        "variances": ["recorded defect"]}])
+    if bad_identity == "conflicting":
+        rows[0]["build_loop_id"] = "different-run"
+    state = tmp_path / ".build-loop/state.json"
+    for rid in ("one", "two", "three"):
+        rows.append(dict(run_id=rid, outcome="pass", review_scope="build"))
+        state.write_text(json.dumps({"runs": rows}))
+        result = cadence.automatic(tmp_path)
+    assert result["status"] == "captured"
+    assert result["run_ids"] == ["one", "two", "three"]
+    assert len(result["quarantined"]) == 1
+    assert json.loads(state.read_text())["runs"] == rows
+    with patch.object(cadence, "synthesize") as synth:
+        again = cadence.automatic(tmp_path)
+    synth.assert_not_called()
+    assert again["status"] == "accruing" and again["pending_builds"] == 0
+    assert len(again["quarantined"]) == 1
+
+
+def test_captured_batches_expose_the_real_advisory_filing_verdict(tmp_path):
+    seed(tmp_path, ["one", "two", "three"])
+    result = cadence.automatic(tmp_path)
+    assert result["status"] == "captured"
+    assert result["filing"]["ok"] is False
+    assert result["filing"]["finding_count"] > 0
+    saved = json.loads((tmp_path / ".build-loop/retrospectives/cadence.json").read_text())
+    assert saved["last_batch"]["filing"] == result["filing"]
+
+
+def test_filing_lint_failure_is_visible_without_losing_batch_coverage(tmp_path):
+    seed(tmp_path, ["one", "two", "three"])
+    with patch("retrospective.file_findings.lint", side_effect=OSError("unreadable")):
+        result = cadence.automatic(tmp_path)
+    assert result["status"] == "captured"
+    assert result["filing"] == {"ok": None, "error": "OSError: unreadable"}
+    assert cadence.automatic(tmp_path)["pending_builds"] == 0
+
+
+@pytest.mark.parametrize("run_id", ["bad run", "../outside", "x" * 129])
+def test_build_writer_rejects_unsafe_identity_before_recording(tmp_path, run_id):
+    from write_run_entry.__main__ import main
+    state = tmp_path / ".build-loop/state.json"
+    assert main(["--workdir", str(tmp_path), "--goal", "identity control", "--run-id", run_id,
+                 "--outcome", "fail", "--scope", "build"]) == 1
+    assert not state.exists()

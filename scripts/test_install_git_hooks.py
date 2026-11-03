@@ -52,6 +52,10 @@ def _run(*args: str, env_extra: dict[str, str] | None = None) -> tuple[int, str,
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
+    # This minimal fixture tests the hold stage, not every production gate.
+    # The suite runner exports its scripts/ on PYTHONPATH; leaking that into
+    # the synthetic repo imports real gates against an incomplete fixture.
+    env.pop("PYTHONPATH", None)
     proc = subprocess.run(args, capture_output=True, text=True, env=env, check=False)
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -73,7 +77,7 @@ def _make_work_repo(parent: Path, remote: Path) -> Path:
     subprocess.run(["git", "-C", str(workdir), "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", str(workdir), "config", "user.name", "T"], check=True)
 
-    # Copy the three files the hook depends on, plus the hook source itself.
+    # Copy the three files the hold stage depends on, plus the hook source.
     scripts_dir = workdir / "scripts"
     scripts_dir.mkdir()
     shutil.copy2(PUSH_HOLD_SCRIPT, scripts_dir / "push_hold.py")
@@ -204,6 +208,18 @@ class TestHookEndToEnd(unittest.TestCase):
         """The whole-point regression guard — no hold + push to main MUST work."""
         rc, out, err = self._push("main")
         self.assertEqual(rc, 0, f"out={out}\nerr={err}")
+
+    def test_fixture_runner_strips_parent_pythonpath(self):
+        """The fixture harness excludes ambient gates; the real hook is unchanged."""
+        ambient = self.parent / "ambient"
+        ambient.mkdir()
+        (ambient / "prepush_test_gate.py").write_text(
+            'def evaluate(*args, **kwargs): return {"action": "block", "exit_code": 1}\n'
+            'def format_block_message(verdict): return "foreign gate executed"\n'
+        )
+        rc, out, err = self._push("main", env_extra={"PYTHONPATH": str(ambient)})
+        self.assertEqual(rc, 0, f"out={out}\nerr={err}")
+        self.assertNotIn("foreign gate executed", err)
 
     def test_hold_blocks_push_to_main(self):
         # Set marker.

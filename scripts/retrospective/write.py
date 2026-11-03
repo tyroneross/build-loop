@@ -16,10 +16,11 @@ the function never raises so the non-gating dispatch never crashes the run.
 from __future__ import annotations
 
 import datetime as _dt
-import os
 import re
 from pathlib import Path
 from typing import Any
+from atomic_io import atomic_write_text
+from rally_point.build_loop_id import is_safe_run_id
 
 # mktemp / scratch directory names — never a real project slug. Covers both
 # shell `mktemp -d` (`tmp.XXXX`, with a dot) AND Python tempfile.mkdtemp
@@ -175,11 +176,8 @@ def render_summary(
 # ---------------------------------------------------------------------------
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Write text to path atomically (tmp → os.replace)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    """Use the shared writer's unique temporary file for each publication."""
+    atomic_write_text(path, text)
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +185,8 @@ def _atomic_write(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _publication_dir(root: Path, run_id: str) -> Path:
+    if not is_safe_run_id(run_id):
+        raise ValueError("unsafe retrospective run identity")
     # Automatic IDs identify immutable source versions. Reuse their existing
     # output on retry, including after midnight; manual captures retain dates.
     if re.fullmatch(r"auto-[0-9a-f]{20}", run_id):
@@ -231,12 +231,12 @@ def write_active(
             "summary_path": str(summary),
             "status": "ok",
         }
-    except OSError as e:
+    except (OSError, ValueError) as e:
         return {
             "active_path": None,
             "summary_path": None,
             "status": "degraded",
-            "reason": f"OSError: {e}",
+            "reason": f"{type(e).__name__}: {e}",
         }
 
 
@@ -261,6 +261,8 @@ def promote_durable(
     returns ``{"durable_path": None, "status": "skipped", "reason": <str>}``.
     """
     try:
+        if not is_safe_run_id(run_id):
+            raise ValueError("unsafe retrospective run identity")
         if memory_root is None:
             memory_root = build_loop_memory_root(workdir)
         slug = repo or workdir.name
@@ -311,9 +313,9 @@ def promote_durable(
             sections, run_id=run_id, repo=repo, intent_one_line=intent_one_line,
         ))
         return {"durable_path": str(durable), "status": "ok"}
-    except OSError as e:
+    except (OSError, ValueError) as e:
         return {"durable_path": None, "status": "degraded",
-                "reason": f"OSError: {e}"}
+                "reason": f"{type(e).__name__}: {e}"}
 
 
 def stamp_durable_in_summary(
@@ -346,6 +348,8 @@ def stamp_durable_in_summary(
     Returns ``{"status": "ok"|"skipped"|"degraded", "summary_path": str|None, ...}``.
     """
     try:
+        if not is_safe_run_id(run_id):
+            raise ValueError("unsafe retrospective run identity")
         if not durable_path:
             return {"status": "skipped", "summary_path": None, "reason": "no durable_path"}
         root = Path(workdir) / ".build-loop" / "retrospectives"
@@ -389,7 +393,7 @@ def write_enforce_candidates(
     """
     if not candidates:
         return {"paths": [], "status": "skipped"}
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", run_id):
+    if not is_safe_run_id(run_id):
         return {"paths": [], "status": "degraded", "reason": "unsafe candidate source run identity"}
     try:
         from enforce_retro_signals import _extract_candidate_text

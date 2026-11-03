@@ -22,23 +22,12 @@ for _p in (str(_PKG_DIR), str(_PKG_DIR.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import importlib.util as _iutil  # noqa: E402
-
-def _load_pkg_module(name: str):
-    spec = _iutil.spec_from_file_location(
-        f"lessons_index._{name}", _PKG_DIR / f"{name}.py"
-    )
-    mod = _iutil.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-_schema = _load_pkg_module("schema")
-_ingest = _load_pkg_module("ingest")
-_query = _load_pkg_module("query")
-
-open_db = _schema.open_db
-ingest = _ingest.ingest
-query = _query.query
+# Register the normal submodules once before exposing the callable API. A
+# later `from lessons_index.query import ...` must reuse that module rather
+# than replace the public `query` function with a newly imported module.
+from .schema import open_db  # noqa: E402
+from .ingest import ingest  # noqa: E402
+from .query import query  # noqa: E402
 
 
 def stats(db_path=None) -> dict:

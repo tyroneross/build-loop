@@ -60,6 +60,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 from dataclasses import dataclass
@@ -69,6 +70,11 @@ STATE_REL = Path(".build-loop") / "state.json"
 RUNS_REL = Path(".build-loop") / "runs"
 
 _MAX_COLLISION_ATTEMPTS = 5
+
+
+def is_safe_run_id(value: Any) -> bool:
+    """Whether a run identity can also name its publication artifacts."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is not None
 
 
 @dataclass(frozen=True)

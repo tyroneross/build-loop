@@ -410,6 +410,9 @@ def main(argv: list[str] | None = None) -> int:
 
     run_id = args.run_id or compute_run_id(args.goal)
     try:
+        from rally_point.build_loop_id import is_safe_run_id
+        if args.scope == "build" and not is_safe_run_id(run_id):
+            raise ValueError("build run_id must be 1-128 letters, digits, dots, underscores, colons or hyphens, starting with a letter or digit")
         args.diff_range = _run_diff_range(workdir, state_path, run_id, args.diff_range)
         payloads = _load_optional_payloads(args)
     except (json.JSONDecodeError, ValueError) as e:

@@ -1588,6 +1588,29 @@ class TestVerdictError(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_interrupted_partial_summary_never_reverts_without_progress(self) -> None:
+        from unittest.mock import patch
+        original_run = subprocess.run
+        source = self.workdir / "scripts/test_bad_syntax.py"
+        original = source.read_bytes()
+        for code in (2, 3, 4):
+            with self.subTest(code=code):
+                def interrupted(cmd, **kwargs):
+                    if "pytest" in cmd and "--version" not in cmd:
+                        return subprocess.CompletedProcess(cmd, code, "7 passed in 0.1s", "interrupted")
+                    return original_run(cmd, **kwargs)
+                with patch.object(self.mod, "_find_runner", return_value=["python3", "-m", "pytest"]), \
+                     patch("subprocess.run", side_effect=interrupted), \
+                     patch.object(self.mod, "_revert_files") as revert:
+                    result, exit_code = self.mod.verify(
+                        workdir=self.workdir, scope="full", changed_files=["scripts/test_bad_syntax.py"],
+                        auto_revert=True, progress_dir=None)
+                self.assertEqual(result["verdict"], "error")
+                self.assertEqual(exit_code, 2)
+                self.assertFalse(result["reverted"])
+                revert.assert_not_called()
+                self.assertEqual(source.read_bytes(), original)
+
     def test_collection_error_yields_verdict_error(self) -> None:
         """A file that fails to collect (SyntaxError) must produce
         verdict='error' with error_reason set, exit code 2."""
