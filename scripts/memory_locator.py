@@ -413,6 +413,42 @@ def _rank_fallback(
     return ranked[:limit]
 
 
+def _body_index_results(root: Path, query: str, terms: list[str], project: str | None,
+                        limit: int) -> list[dict[str, Any]]:
+    """Use FTS only to discover files; score current canonical bytes."""
+    from content_index import default_db_path, query as content_query
+    db = default_db_path(root)
+    if not db.is_file():
+        return []
+    # Apply locator scope after FTS: its '*' and global conventions differ.
+    rows = content_query(query, project=project if project not in GLOBAL_PROJECTS and project != ALL_PROJECTS else None,
+                         limit=MAX_FALLBACK_CANDIDATES, db_path=db)
+    paths = []
+    seen = set()
+    for row in rows:
+        path = Path(str(row.get('path') or ''))
+        if not path.is_absolute():
+            path = root / path
+        if path in seen or not _allowed_markdown(path, root):
+            continue
+        relative = str(path.relative_to(root))
+        safe = _safe_index_path(root, relative)
+        if safe != path or not path.is_file():
+            continue
+        parts = Path(relative).parts
+        lane_index = 2 if len(parts) >= 4 and parts[0] == 'projects' else 0
+        if len(parts) <= lane_index + 1 or parts[lane_index] not in CANONICAL_LANES:
+            continue
+        row_project = parts[1] if len(parts) >= 4 and parts[0] == 'projects' else '_global'
+        if not _project_allowed(row_project, project):
+            continue
+        seen.add(path)
+        paths.append(path)
+        if len(paths) >= limit * 3:
+            break
+    return _rank_fallback(paths, root=root, terms=terms, project=project, limit=limit)
+
+
 def store_relative_path(root: Path, path: Path) -> str:
     """Normalize root aliases without resolving symlinks inside the store."""
     if not path.is_absolute():
@@ -518,6 +554,17 @@ def locate(
         candidates, engine, fallback_reasons = _rg_candidates(root, project, terms)
         reasons.extend(fallback_reasons)
         results = _rank_fallback(candidates, root=root, terms=terms, project=project, limit=limit)
+
+    if terms:
+        body_results = _body_index_results(root, query, terms, project, limit)
+        if body_results:
+            combined = {row['path']: row for row in results}
+            for row in body_results:
+                previous = combined.get(row['path'])
+                if previous is None or row['score'] > previous['score']:
+                    combined[row['path']] = row
+            results = sorted(combined.values(), key=lambda row: (-row['score'], -row['coverage'], row['path']))[:limit]
+            reasons.append('body_index_candidates: scored from current source')
 
     results, evidence_reasons = verify_evidence(root, results)
     reasons.extend(evidence_reasons)

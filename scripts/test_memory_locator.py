@@ -442,3 +442,35 @@ def test_store_root_alias_preserves_internal_symlink_rejection(tmp_path):
     assert locator.store_relative_path(root,alias/'lessons/a.md')=='lessons/a.md'
     internal=root/'shortcut';internal.symlink_to(root,target_is_directory=True)
     assert locator.store_relative_path(root,internal/'a.md')=='shortcut/a.md'
+
+
+def test_body_index_finds_answer_missing_from_metadata(tmp_path):
+    from scripts import content_index
+    lessons=tmp_path/'projects/demo/lessons';lessons.mkdir(parents=True)
+    target=lessons/'integration.md'
+    target.write_text('# Integration notes\nThe zephyr receipt requires orchid admission and kestrel verification.\n')
+    distractor=lessons/'zephyr.md';distractor.write_text('# Zephyr\nGeneral overview.\n')
+    _write_index(tmp_path,[
+        _row(tmp_path,str(target.relative_to(tmp_path)),title='Integration notes',project='demo',tags=[]),
+        _row(tmp_path,str(distractor.relative_to(tmp_path)),title='Zephyr overview',project='demo',tags=[]),
+    ])
+    content_index.build(tmp_path,incremental=False)
+    receipt=locator.locate('zephyr orchid kestrel',project='demo',memory_root=tmp_path,emit_telemetry=False)
+    assert any(r['path']==str(target.relative_to(tmp_path)) for r in receipt['results'])
+    assert any(r.startswith('body_index_candidates') for r in receipt['reasons'])
+    # The old FTS match must not survive replacement of all query terms.
+    target.write_text('# Integration notes\nThe corrected policy uses unrelated terms.\n')
+    receipt=locator.locate('orchid kestrel',project='demo',memory_root=tmp_path,emit_telemetry=False)
+    assert not any(r['path']==str(target.relative_to(tmp_path)) for r in receipt['results'])
+
+
+def test_body_index_respects_scope_and_excluded_history(tmp_path):
+    from scripts import content_index
+    for relative in ('projects/demo/lessons/current.md','projects/other/lessons/foreign.md',
+                     'projects/demo/decisions/_activity/old.md','projects/demo/lessons/revoked.md',
+                     'tests/fixtures/incorrect.md','projects/demo/helpers/incorrect.md'):
+        path=tmp_path/relative;path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(('---\nstatus: archived\n---\n' if 'revoked' in relative else '')+'# Notes\nZephyr orchid kestrel implementation.\n')
+    content_index.build(tmp_path,incremental=False)
+    receipt=locator.locate('zephyr orchid kestrel',project='demo',memory_root=tmp_path,emit_telemetry=False)
+    assert [r['path'] for r in receipt['results']]==['projects/demo/lessons/current.md']
