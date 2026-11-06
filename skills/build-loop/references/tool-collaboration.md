@@ -1,5 +1,10 @@
 # Tool collaboration and workflow efficiency
 
+For Rust test relocation, crate splits or shared test infrastructure, load
+[Rust test migrations](rust-test-migrations.md). Separate source inventory,
+compiler discovery, semantic review and executed results; preserve visibility
+and equivalent behavioral coverage.
+
 Use primary responsibility to route work, not to prohibit useful overlap.
 
 | Tool | Primary responsibility | Useful overlap |

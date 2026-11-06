@@ -1,0 +1,15 @@
+# Rust test migrations
+
+Load only for Rust crate/test organization changes. Keep one plan and existing gates; this guide adds no service, blanket size limit or permission requirement.
+
+1. Pin revision and manifests: custom roots, workspace exclusions, separate workspaces, targets, doctests and supported feature/platform states. Classify unit, API, process, UI, performance and tooling tests. Separate lexical candidates, compiler discovery and semantic review.
+2. Code Audit reviews affected mechanisms/oracles; Architect maps source-backed ownership; RossLabs LSP checks private-symbol references in the applicable configuration. Record gaps. Rust indexing may execute build scripts/proc macros; it is not a no-execution static scan.
+3. Choose the smallest boundary: unit tests in their crate, optionally cfg(test) files; public API tests under tests/; local helpers remain local. A dev-only support crate requires actual cross-package duplication. Cross-process runners normally run on demand and own isolated resources. A permanent service needs a separately justified capability/lifecycle contract.
+4. Before moves, record test identities, target/features/platform and protected behaviors. Preserve regressions pending equivalent trigger/oracle evidence. Do not widen production APIs, compile copied production source, weaken assertions, add ignores or discard failures to make moves pass.
+5. Run affected targets and supported default/minimal/selected-feature states. All-features alone is insufficient. Inspect normal/build/dev dependencies and resolved shipping features for support leakage. Follow project resource/execution procedures; pending commands are not results.
+6. Use unique state/socket/port, exact binary identity, bounded readiness and owned-child normal shutdown. Declare the subprocess environment: inherited import paths can load real tool modules into an isolated fixture. Preserve evidence on incomplete cleanup. Inspect runner cleanup before invoking a broad profile; a native or fallback runner may force-terminate descendants. Distinguish sent, delivered, acknowledged and completed. Build passes do not establish installed behavior; dogfood through the authorized lifecycle.
+7. Compare identities and oracles before/after; record measured costs, rollback and next owner. Explain missing tests with replacement evidence or restore them. Moving cfg(test) code does not shrink already-excluded release test code.
+
+Review record: suite ID, owner, risk/oracle, revision, target, features/platform, disposition, replacement evidence, exact command/result, coverage gaps and rollback. Use existing plans/receipts rather than a second progress database.
+
+Primary sources: [Rust test organization](https://doc.rust-lang.org/book/ch11-03-test-organization.html), [Cargo targets](https://doc.rust-lang.org/cargo/reference/cargo-targets.html), [Cargo features](https://doc.rust-lang.org/cargo/reference/features.html), [rust-analyzer security](https://rust-analyzer.github.io/book/security.html).

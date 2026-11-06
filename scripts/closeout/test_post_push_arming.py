@@ -76,6 +76,10 @@ def _stage_pre_push_hook(workdir: Path) -> None:
 def _run_pre_push(workdir: Path) -> subprocess.CompletedProcess[str]:
     """Run the pre-push hook directly with synthetic stdin (mimics git's invocation)."""
     stdin_line = "refs/heads/main aaaaaaa refs/heads/main bbbbbbb\n"
+    # Only the hook staged into this disposable repository is under test.
+    # The progress runner adds the real scripts/ directory to PYTHONPATH;
+    # inheriting it silently imports gates from outside this fixture.
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     return subprocess.run(
         [sys.executable, str(workdir / ".git" / "hooks" / "pre-push"),
          "origin", "https://example.invalid/repo.git"],
@@ -83,9 +87,28 @@ def _run_pre_push(workdir: Path) -> subprocess.CompletedProcess[str]:
         cwd=str(workdir),
         text=True,
         capture_output=True,
+        env=env,
         check=False,
         timeout=15,
     )
+
+
+def test_fixture_does_not_import_unstaged_external_gate(tmp_path: Path, monkeypatch) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "imported"
+    (outside / "push_hold.py").write_text(
+        "from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n"
+        "raise RuntimeError('external fixture import')\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(outside))
+    workdir = tmp_path / "repo"
+    _init_git_repo(workdir)
+    _stage_pre_push_hook(workdir)
+    result = _run_pre_push(workdir)
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), "fixture imported code outside its staged repository"
+    assert (workdir / ".build-loop" / "closeout" / "armed.json").exists()
 
 
 def test_pre_push_arms_baton_when_push_allowed(tmp_path: Path) -> None:
