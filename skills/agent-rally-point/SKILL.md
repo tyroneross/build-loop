@@ -196,6 +196,59 @@ Top-level orchestrators should post `--spawned` reflecting their dispatched
 subagents; each dispatched subagent that can post should set `--parent` to the
 orchestrator's `session_id`.
 
+
+## Working outside Easy Terminal
+
+Use Rally Point as the alternate when an authorized operation requires an attested
+session and the current host is outside an Easy Terminal pane. First inspect the
+actual environment and the installed `rally run --help`; an existing, genuine
+Rally-managed session may already be sufficient. A `--tool` label, presence post,
+or session-registration receipt alone does not attest the calling process. Never
+export invented `RALLY_TOOL_ID` or `EASY_TERMINAL_PANE_ID` values, borrow another
+session's identity, or disable a guard to get past an unknown-caller refusal.
+
+Launch a bounded helper through native Rally, which supplies its child's identity.
+This is an alternate host, not additional authority: retain the original task's
+scope, repository ownership checks, approval boundaries and normal gates.
+
+```sh
+# Replace both placeholders with a unique name and a reviewed absolute script path.
+# Run from the intended repository; inspect the selected executable and cwd.
+rally run other --backend tmux --no-worktree --name <unique-helper> \
+  --command-json '["python3","/absolute/path/to/helper.py"]' --dry-run --json
+# After checking the plan, repeat the same command without --dry-run.
+```
+
+Use an already available supported backend. If `ptyd-strict` reports no live Rally
+daemon/binary, an installed `tmux` backend is an alternative; do not install or
+restart the owner's app or daemon just to obtain identity. `--command-json` uses
+the interactive lifecycle and cannot be combined with `--task`. With
+`--no-worktree`, the launcher can select the canonical repository root even when
+invoked from a worktree: set each helper subprocess's cwd explicitly. Do not use
+`tmux send-keys` to address existing Easy Terminal agent panes.
+
+For Easy Terminal merge operations, the helper must:
+
+1. Record the identity supplied by Rally and verify the intended repository,
+   candidate branch, exact candidate SHA and reviewed main SHA before mutation.
+   Stop on unexpected drift or tracked edits; preserve unrelated untracked files.
+2. Submit only that candidate with `et merge submit --branch <branch> --sha <sha>
+   --tests "<exact results>"`, then use `et merge next --branch <branch>` if landing
+   is authorized. Preserve the default full gate, ownership check and operation
+   lock. Missing host identity is not a reason to use `ET_MAIN_OVERRIDE`.
+3. Save command exit codes, logs and a final result outside disposable build
+   output. Wait for the running operation through an attached/event-driven waiter;
+   do not start a duplicate helper because the gate is slow. On a partial failure,
+   inspect queue/ref state before any retry.
+4. Let the helper exit and verify its completion. Independently check the landed
+   candidate's ancestry and queue removal from the parent. Submission readiness,
+   a launch receipt or a Rally handoff does not prove a merge. Push and installation
+   remain separate actions requiring their own scope and procedures.
+
+If no supported backend is available, record that concrete availability failure
+and retain the candidate and evidence. Do not fabricate attestation or require a
+host restart before checking this alternate.
+
 ## Validation
 
 ```bash
