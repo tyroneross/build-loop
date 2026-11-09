@@ -1683,6 +1683,17 @@ class TestRetrospectiveProvenance(_Base):
         self.assertIn("## Acceptance", body)
         self.assertEqual(bl.retro_segments(body)["Recommendation"], "REC-text-1109")
 
+    def test_non_retro_segments_survive_a_context_that_names_acceptance(self):
+        """The segments are a template field, not a text search: a context that
+        itself contains '## Acceptance' must not move or split them."""
+        ctx = "Earlier note quoted a heading:\n## Acceptance\nend-of-context-1109"
+        res = self._new(provenance_source="claude-session", provenance_ref="sess",
+                        context=ctx, recommendation="REC-after-context-1109")
+        _, body = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertIn(ctx, body)
+        self.assertGreater(body.index("## Recommendation\nREC-after-context-1109"),
+                           body.index("end-of-context-1109"))
+
     def test_non_retro_partial_segments_write_no_empty_headings(self):
         res = self._new(provenance_source="claude-session", provenance_ref="sess",
                         recommendation="REC-only-1109")

@@ -162,7 +162,7 @@ _ITEM_ID_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+-(?:[0-9a-z]{6,}|\d{3,})$")
 _BODY_TEMPLATE = """## Context
 {context}
 
-## Acceptance
+{segments}## Acceptance
 - <verifiable condition 1>
 
 ## Notes
@@ -879,14 +879,12 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             why=why,
         )
     else:
-        body = _BODY_TEMPLATE.format(
-            context=(args.context or "<why this matters / what's the situation>"),
-            notes=(args.notes or "<additional detail>"),
-        )
         # Never silently drop finding segments passed to a non-retro source:
-        # each supplied one gets its own heading right after Context; segments
-        # not supplied are absent (no empty heading, no placeholder).
-        extra = "".join(
+        # each supplied one gets its own heading between Context and
+        # Acceptance; segments not supplied are absent (no empty heading, no
+        # placeholder). `segments` is a template field, so a template edit
+        # that loses it fails loudly instead of dropping the text.
+        segments = "".join(
             f"## {heading}\n{text}\n\n"
             for heading, text in (
                 ("What happened", (getattr(args, "what_happened", "") or "").strip()),
@@ -894,8 +892,11 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
                 ("Why", (getattr(args, "why", "") or "").strip()),
             ) if text
         )
-        if extra:
-            body = body.replace("## Acceptance", extra + "## Acceptance", 1)
+        body = _BODY_TEMPLATE.format(
+            context=(args.context or "<why this matters / what's the situation>"),
+            segments=segments,
+            notes=(args.notes or "<additional detail>"),
+        )
 
     def _render(item_id: str) -> str:
         data: dict[str, Any] = {
@@ -1730,6 +1731,7 @@ def _import_one(repo: Path, src_path: Path, source_kind: str, today: str,
         body = _BODY_TEMPLATE.format(
             context=f"Imported from `{rel}` (build-loop {source_kind} queue). "
                     f"Source file is the inbox/provenance and stays in place.",
+            segments="",
             notes=f"Adopted by `backlog.py adopt`. See {rel} for the original detail.",
         )
         doc = render_frontmatter(data) + "\n\n" + body
