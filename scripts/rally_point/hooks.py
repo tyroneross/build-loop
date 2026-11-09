@@ -277,11 +277,7 @@ def resolve_operative_repo(
     candidates.append(workdir)
 
     for cand in candidates:
-        try:
-            cand_resolved = cand if cand.exists() else cand
-        except OSError:
-            continue
-        top = _git_toplevel(cand_resolved)
+        top = _git_toplevel(cand)
         if top is not None:
             return top
     return None
