@@ -46,18 +46,26 @@ fn plugin_root() -> Option<PathBuf> {
 }
 
 /// Replace this process with the shell hook, feeding it `stdin` bytes.
-fn exec_shell_hook(root: &std::path::Path, stdin: Option<Vec<u8>>) -> ! {
+///
+/// The shell hook gets only the time this run has left, so `bl` plus the
+/// hand-off stay inside one deadline. With less than the supervisor's 100 ms
+/// minimum left, or with no way to pass the event on, reply `{}` instead:
+/// the shell hook without its event could stamp the wrong repo or session.
+fn exec_shell_hook(root: &std::path::Path, stdin: Option<Vec<u8>>, remaining_ms: u64) -> ! {
+    if remaining_ms < bl_contract::DEADLINE_MIN_MS {
+        emit_fallback_reply_and_exit();
+    }
     let script = root.join("hooks/pre-edit-rally-point.sh");
     let mut cmd = Command::new("bash");
-    cmd.arg(&script).env("BUILD_LOOP_NATIVE_HOOKS", "off");
+    cmd.arg(&script)
+        .env("BUILD_LOOP_NATIVE_HOOKS", "off")
+        .env("BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS", remaining_ms.to_string());
     if let Some(bytes) = stdin {
         match stdin_file(&bytes) {
             Some(file) => {
                 cmd.stdin(Stdio::from(file));
             }
-            None => {
-                cmd.stdin(Stdio::null());
-            }
+            None => emit_fallback_reply_and_exit(),
         }
     }
     let _ = cmd.exec();
@@ -110,6 +118,7 @@ fn main() {
         let wait = deadline.saturating_duration_since(Instant::now());
         std::thread::sleep(wait);
         let _guard = EXIT.lock();
+        sys::kill_waited_children();
         emit_fallback_reply_and_exit();
     });
     let root_str = root.to_string_lossy().into_owned();
@@ -121,8 +130,12 @@ fn main() {
             if std::env::var_os("BL_TRACE_FALLBACK").is_some() {
                 eprintln!("bl: fallback: {reason}");
             }
-            exec_shell_hook(&root, stdin)
+            let spent = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            exec_shell_hook(&root, stdin, budget.saturating_sub(spent))
         }
-        Err(_) => emit_fallback_reply_and_exit(),
+        Err(_) => {
+            sys::kill_waited_children();
+            emit_fallback_reply_and_exit()
+        }
     }
 }

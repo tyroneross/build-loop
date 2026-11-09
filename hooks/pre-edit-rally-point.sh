@@ -31,7 +31,9 @@ if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] \
     && [ "${BUILD_LOOP_BOUNDED_HOOK_CHILD:-}" != "$0" ] \
     && [ -x "$SCRIPT_DIR/../bin/native/bl" ]; then
     "$SCRIPT_DIR/../bin/native/bl" hook pre-edit
-    [ $? -eq 75 ] || exit 0
+    # 126 and 127 mean the binary could not run at all (wrong architecture,
+    # missing loader); it read no stdin, so the shell hook below still can.
+    case $? in 75|126|127) ;; *) exit 0 ;; esac
 fi
 . "$SCRIPT_DIR/_bounded_hook.sh"
 bl_bound_hook "${BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS:-1500}" 1500 text "$BASH" "$0" "$@"

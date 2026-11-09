@@ -55,6 +55,31 @@ pub fn executable(path: &str) -> bool {
     unsafe { access(c.as_ptr(), X_OK) == 0 }
 }
 
+/// Children this process waits on (the rally probe, git). The whole-run
+/// deadline kills them before exiting, as the Perl supervisor's group kill
+/// did; without this a hung probe would outlive every hook call.
+static WAITED_CHILDREN: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+pub fn track_child(pid: u32) {
+    if let Ok(mut live) = WAITED_CHILDREN.lock() {
+        live.push(pid);
+    }
+}
+
+pub fn untrack_child(pid: u32) {
+    if let Ok(mut live) = WAITED_CHILDREN.lock() {
+        live.retain(|p| *p != pid);
+    }
+}
+
+pub fn kill_waited_children() {
+    if let Ok(live) = WAITED_CHILDREN.lock() {
+        for pid in live.iter() {
+            kill_hard(*pid);
+        }
+    }
+}
+
 pub fn kill_hard(pid: u32) {
     // SAFETY: sending a signal has no memory-safety preconditions.
     unsafe {

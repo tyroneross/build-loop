@@ -53,3 +53,46 @@ fn unknown_arguments_ask_for_the_shell_hook() {
     assert_eq!(out.status.code(), Some(75));
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn deadline_kills_a_hung_child_it_was_waiting_on() {
+    // A `rally` whose usage probe never returns must not outlive the hook: the
+    // Perl supervisor killed its whole group, and one leak per tool call adds up.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("bl-hung-probe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    let pid_file = dir.join("rally.pid");
+    let fake = dir.join("bin/rally");
+    std::fs::write(&fake, format!("#!/bin/sh\necho $$ > '{}'\nexec sleep 30\n", pid_file.display())).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = bl()
+        .env("PATH", format!("{}:/usr/bin:/bin", dir.join("bin").display()))
+        .env("HOME", &dir)
+        .env("CLAUDE_PROJECT_DIR", &dir)
+        .env("BUILD_LOOP_RALLY_DISCOVERY_CACHE_DIR", dir.join("cache"))
+        .env("BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS", "400")
+        .env_remove("BUILD_LOOP_RALLY_DEBUG")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run bl");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(out.stdout, b"{}", "the hung probe should run the hook into its deadline");
+
+    let pid = std::fs::read_to_string(&pid_file).expect("the fake rally ran").trim().to_string();
+    let mut alive = true;
+    for _ in 0..20 {
+        alive = Command::new("kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success();
+        if !alive {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if alive {
+        let _ = Command::new("kill").args(["-9", &pid]).status();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!alive, "rally child {pid} survived the hook's deadline");
+}

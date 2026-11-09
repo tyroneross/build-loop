@@ -262,6 +262,7 @@ fn probe_binary(binary: &str) -> R<bool> {
         return Ok(false);
     };
     let pid = child.id();
+    sys::track_child(pid);
     let mut out = child.stdout.take().expect("piped");
     let mut err = child.stderr.take().expect("piped");
     let err_reader = std::thread::spawn(move || {
@@ -274,6 +275,7 @@ fn probe_binary(binary: &str) -> R<bool> {
         let mut buf = Vec::new();
         let _ = out.read_to_end(&mut buf);
         let _ = child.wait();
+        sys::untrack_child(pid);
         let _ = tx.send(buf);
     });
     let Ok(stdout) = rx.recv_timeout(Duration::from_secs_f64(timeout)) else {
@@ -290,12 +292,20 @@ fn probe_binary(binary: &str) -> R<bool> {
 
 /// `hooks._git_toplevel`.
 fn git_toplevel(path: &str) -> R<Option<String>> {
-    let Ok(out) = Command::new("git")
+    let Ok(child) = Command::new("git")
         .args(["-C", path, "rev-parse", "--show-toplevel"])
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
     else {
+        return Ok(None);
+    };
+    let pid = child.id();
+    sys::track_child(pid);
+    let out = child.wait_with_output();
+    sys::untrack_child(pid);
+    let Ok(out) = out else {
         return Ok(None);
     };
     if !out.status.success() {
