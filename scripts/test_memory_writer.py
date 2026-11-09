@@ -441,6 +441,82 @@ class AutoCommitTests(unittest.TestCase):
         self.assertEqual(ondisk["status"], "completed")
 
 
+    # --- stale index.lock handling -------------------------------------
+
+    def _write_with_lock(self, *, age_min: float, holder: str | None,
+                         env_minutes: str | None = None):
+        import contextlib
+        import io
+        repo = self._init_repo()
+        lock = repo / ".git" / "index.lock"
+        lock.write_text("stale")
+        old = time.time() - age_min * 60
+        os.utime(lock, (old, old))
+        buf = io.StringIO()
+        env = {}
+        if env_minutes is not None:
+            env["BUILD_LOOP_MEMORY_STALE_LOCK_MINUTES"] = env_minutes
+        patches = [mock.patch.dict(os.environ, env)]
+        if holder is not None:
+            patches.append(mock.patch.object(mw, "_lock_holder", lambda _l: holder))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(contextlib.redirect_stderr(buf))
+            mw.write(
+                repo, "lesson.md", body="body.",
+                name="l", description="d", type_="gotcha",
+                run_id="r", workdir=str(repo), host="claude_code",
+            )
+        self.assertTrue((repo / "lesson.md").exists())
+        self.assertEqual(lock.read_text(), "stale", "lock must never be modified")
+        return repo, buf.getvalue()
+
+    def test_stale_lock_reported_and_not_committed(self):
+        repo, err = self._write_with_lock(age_min=30, holder="none")
+        self.assertIn("stale git lock", err)
+        self.assertTrue(err.startswith("ERROR: memory auto-commit blocked by stale git lock:"))
+        self.assertEqual(self._commit_count(repo), 0)
+        log = (repo / ".git" / "memory-autocommit.log").read_text().splitlines()
+        entry = json.loads(log[-1])
+        self.assertEqual(entry["event"], "stale_index_lock")
+        self.assertEqual(entry["holder"], "none")
+        self.assertTrue(entry["lock"].endswith("index.lock"))
+
+    def test_fresh_lock_not_reported_stale(self):
+        repo, err = self._write_with_lock(age_min=0, holder="none")
+        self.assertNotIn("stale git lock", err)
+        self.assertFalse((repo / ".git" / "memory-autocommit.log").exists())
+
+    def test_held_lock_not_reported_stale(self):
+        repo, err = self._write_with_lock(age_min=30, holder="held")
+        self.assertNotIn("stale git lock", err)
+
+    def test_env_threshold_raises_staleness_bar(self):
+        repo, err = self._write_with_lock(
+            age_min=30, holder="none", env_minutes="60")
+        self.assertNotIn("stale git lock", err)
+
+    def test_run_git_timeout_terminates_gracefully(self):
+        start = time.time()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            mw._run_git(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                timeout=0.5,
+            )
+        self.assertLess(time.time() - start, 6)
+
+    def test_run_git_nonzero_raises_called_process_error(self):
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            mw._run_git(
+                [sys.executable, "-c",
+                 "import sys; sys.stderr.write('boom'); sys.exit(3)"],
+                timeout=10,
+            )
+        self.assertEqual(cm.exception.returncode, 3)
+        self.assertIn("boom", cm.exception.stderr)
+
+
 class MarkAppliedTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

@@ -351,6 +351,119 @@ def _git_toplevel(path: Path) -> Path | None:
     return None
 
 
+_GIT_ADD_TIMEOUT = 10
+_GIT_COMMIT_TIMEOUT = 60  # pre-commit hook regenerates indexes; can be slow
+_GIT_TERM_GRACE = 5
+_STALE_LOCK_DEFAULT_MINUTES = 10
+
+
+def _run_git(args: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    """Run ``args`` (a full argv) with a graceful timeout.
+
+    On timeout, send SIGTERM first so git's lockfile handler removes
+    ``index.lock``; only SIGKILL after a grace period. Raises
+    ``subprocess.TimeoutExpired`` after a timeout and
+    ``subprocess.CalledProcessError`` (with stderr) on nonzero exit.
+    """
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.communicate(timeout=_GIT_TERM_GRACE)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        raise subprocess.TimeoutExpired(args, timeout)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, args, output=out, stderr=err,
+        )
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+
+
+def _lock_holder(lock: Path) -> str:
+    """Return ``held`` (a process has the lock open), ``none``, or ``unknown``."""
+    try:
+        r = subprocess.run(
+            ["lsof", "-t", str(lock)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if r.stdout.strip():
+        return "held"
+    if r.returncode in (0, 1):  # lsof exits 1 when nothing has the file open
+        return "none"
+    return "unknown"
+
+
+def _stale_lock_minutes() -> float:
+    raw = os.environ.get("BUILD_LOOP_MEMORY_STALE_LOCK_MINUTES")
+    try:
+        val = float(raw) if raw is not None else _STALE_LOCK_DEFAULT_MINUTES
+        return val if val >= 0 else _STALE_LOCK_DEFAULT_MINUTES
+    except ValueError:
+        return _STALE_LOCK_DEFAULT_MINUTES
+
+
+def _git_out(root: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _report_stale_lock(root: Path, path: Path) -> bool:
+    """Return True (after reporting) if index.lock is stale; never modifies it."""
+    rel = _git_out(root, "rev-parse", "--git-path", "index.lock")
+    if rel is None:
+        return False
+    lock = Path(rel)
+    if not lock.is_absolute():
+        lock = root / lock
+    try:
+        st = lock.stat()
+    except OSError:
+        return False
+    age_min = (datetime.now(timezone.utc).timestamp() - st.st_mtime) / 60.0
+    if age_min < _stale_lock_minutes():
+        return False
+    holder = _lock_holder(lock)
+    if holder == "held":
+        return False
+    print(
+        f"ERROR: memory auto-commit blocked by stale git lock: {lock} "
+        f"(age {age_min:.1f} min, size {st.st_size} bytes, holder {holder}); "
+        "confirm no git process is running, then remove it "
+        "(owner approval required for shared repos)",
+        file=sys.stderr,
+    )
+    try:
+        gd = _git_out(root, "rev-parse", "--git-dir")
+        if gd:
+            gdp = Path(gd)
+            if not gdp.is_absolute():
+                gdp = root / gdp
+            entry = {
+                "ts": iso_utc(), "event": "stale_index_lock", "lock": str(lock),
+                "age_minutes": round(age_min, 1), "size": st.st_size,
+                "holder": holder, "memory_file": str(path),
+            }
+            with open(gdp / "memory-autocommit.log", "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 — logging must never raise
+        pass
+    return True
+
+
 def _autocommit_memory_file(
     path: Path, *, type_: str, name: str, workdir: Path | str | None = None,
 ) -> None:
@@ -370,6 +483,13 @@ def _autocommit_memory_file(
     workdir, distinct from the process cwd) is passed through to
     ``memory_scope`` so this classification matches the one ``write()``
     actually used, not whatever the process cwd happens to be.
+
+    Timeouts are graceful (SIGTERM, then SIGKILL after 5s) so git can remove
+    its own ``index.lock``. Before ``git add``, a stale ``index.lock`` (older
+    than ``BUILD_LOOP_MEMORY_STALE_LOCK_MINUTES``, default 10, with no open
+    holder) is reported loudly on stderr and in
+    ``<git-dir>/memory-autocommit.log`` and the commit is skipped; the lock is
+    never deleted.
     """
     if not _autocommit_enabled():
         return
@@ -383,14 +503,16 @@ def _autocommit_memory_file(
                 file=sys.stderr,
             )
             return
-        subprocess.run(
+        if _report_stale_lock(root, path):
+            return
+        _run_git(
             ["git", "-C", str(root), "add", "--", str(path)],
-            capture_output=True, text=True, timeout=10, check=True,
+            timeout=_GIT_ADD_TIMEOUT,
         )
         msg = f"memory({type_}): {name}"
-        subprocess.run(
+        _run_git(
             ["git", "-C", str(root), "commit", "-m", msg, "--", str(path)],
-            capture_output=True, text=True, timeout=10, check=True,
+            timeout=_GIT_COMMIT_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
         print(f"WARN: memory auto-commit failed: {exc}", file=sys.stderr)
