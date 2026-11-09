@@ -67,11 +67,6 @@ SSH_REFUSAL = (
     "`GIT_SSH_COMMAND='ssh -o UseKeychain=no' git …`), or use HTTPS."
 )
 GIT_BODY_REFUSAL = "`git {sub}` runs a shell command ({where}): "
-CLAUDE_REFUSAL = (
-    "`claude {sub}` may load the Claude Code login, which Claude Code stores in the macOS Keychain "
-    "(code.claude.com/docs/en/authentication), and the owner rule forbids Keychain access. Only "
-    "`claude --help`, `claude --version` and `claude <subcommand> --help` are allowed."
-)
 API_REFUSAL = ("This code calls a macOS Keychain API (SecItem*, SecKeychain* or keyring.*). "
                + REFUSAL)
 _API = re.compile(r"SecItem(?:CopyMatching|Add|Update|Delete)|SecKeychain\w*|keyring\.(?:get_password|set_password|delete_password)")
@@ -1292,9 +1287,6 @@ def command_reason(command: str, *, cwd: str | None = None,
                 if (ssh_reason := _ssh_reason("rsync", words[1:])):
                     return ssh_reason
             continue
-        if exe == "claude":
-            first = next((a for a in argv[1:] if not a.startswith("-")), "")
-            return CLAUDE_REFUSAL.format(sub=" ".join(argv[1:3]) or first)
         if exe != "git":
             continue
         prefix = []

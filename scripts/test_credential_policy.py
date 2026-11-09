@@ -49,7 +49,7 @@ class CredentialPolicyTests(unittest.TestCase):
             'python3 privileged_broker.py request --argv security find-generic-password',
             'python3 system_access_request.py -- security find-generic-password',
             'vault get id --value', 'vault get id --value=true', 'vault dump',
-            'gh auth status', 'claude -p hello',
+            'gh auth status',
         ]
         with patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
             for command in commands:
@@ -76,9 +76,9 @@ class CredentialPolicyTests(unittest.TestCase):
 
     def test_approved_environment_route_does_not_read_values(self):
         self.assertIsNotNone(command_reason('gh auth login', platform='darwin', environment={'GH_TOKEN': 'synthetic'}))
-        self.assertIsNotNone(command_reason('claude auth login', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
+        self.assertIsNone(command_reason('claude auth login', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
         self.assertIsNotNone(command_reason('gh api repos/a/b', platform='darwin', environment={'GH_TOKEN': 'synthetic'}))
-        self.assertIsNotNone(command_reason('claude -p hello', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
+        self.assertIsNone(command_reason('claude -p hello', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
 
     def test_command_environment_removal_cannot_fall_back_to_stored_auth(self):
         for command, environment in [
@@ -88,7 +88,6 @@ class CredentialPolicyTests(unittest.TestCase):
             ('env -u GH_TOKEN -u GITHUB_TOKEN gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('env -i gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('GH_TOKEN= gh auth token', {'GH_TOKEN': 'synthetic'}),
-            ('env --unset=ANTHROPIC_API_KEY claude -p hello', {'ANTHROPIC_API_KEY': 'synthetic'}),
             ("env -i bash -lc 'gh api repos/a/b'", {'GH_TOKEN': 'synthetic'}),
         ]:
             with self.subTest(command=command):
@@ -509,10 +508,7 @@ class CredentialPolicyTests(unittest.TestCase):
 
     def test_command_lookup_cannot_hide_execution(self):
         commands = [
-            'command claude -p hello', 'command -p claude -p hello',
-            'command -- claude -p hello', 'command -v --; claude -p hello',
             'command -v claude && security dump-keychain',
-            'command -v claude\nclaude -p hello',
             'command -v "$(security find-generic-password)"',
             '$(command -v claude) -p hello',
             'command -v claude | sh', 'command -v claude | cat | sh',
@@ -533,18 +529,20 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_fd_duplication_is_not_a_command_separator_but_background_is(self):
         for command in ['claude --help 2>&1; security find-generic-password',
                         'claude --help & security find-generic-password',
-                        'claude --help 2>&1 && claude -p hi',
                         'true 2>& 1; security dump-keychain',
                         'gh --version >&2 | gh auth token']:
             with self.subTest(command=command):
                 self.assertIsNotNone(self.reason(command))
 
-    def test_claude_session_and_auth_are_refused_with_an_accurate_reason(self):
-        for command in ['claude -p hello', 'claude auth login', 'claude', 'claude --help -p hi']:
+    def test_claude_configured_login_commands_are_allowed(self):
+        for command in ['claude -p hello', 'claude auth login', 'claude', 'claude --help -p hi',
+                        'command claude -p hello', 'command -p claude -p hello',
+                        'command -- claude -p hello', 'command -v --; claude -p hello',
+                        'command -v claude\nclaude -p hello',
+                        'env --unset=ANTHROPIC_API_KEY claude -p hello',
+                        'claude --help 2>&1 && claude -p hi']:
             with self.subTest(command=command):
-                reason = self.reason(command)
-                self.assertIsNotNone(reason)
-                self.assertIn('Claude Code login', reason)
+                self.assertIsNone(self.reason(command))
 
     def test_gh_is_refused_even_when_a_token_file_exists(self):
         # MAJ-06: a plaintext oauth_token for ANY host disabled gh protection
