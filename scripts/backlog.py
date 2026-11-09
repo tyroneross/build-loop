@@ -883,6 +883,19 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             context=(args.context or "<why this matters / what's the situation>"),
             notes=(args.notes or "<additional detail>"),
         )
+        # Never silently drop finding segments passed to a non-retro source:
+        # each supplied one gets its own heading right after Context; segments
+        # not supplied are absent (no empty heading, no placeholder).
+        extra = "".join(
+            f"## {heading}\n{text}\n\n"
+            for heading, text in (
+                ("What happened", (getattr(args, "what_happened", "") or "").strip()),
+                ("Recommendation", (getattr(args, "recommendation", "") or "").strip()),
+                ("Why", (getattr(args, "why", "") or "").strip()),
+            ) if text
+        )
+        if extra:
+            body = body.replace("## Acceptance", extra + "## Acceptance", 1)
 
     def _render(item_id: str) -> str:
         data: dict[str, Any] = {
@@ -2276,11 +2289,17 @@ def build_parser() -> argparse.ArgumentParser:
     pn.add_argument("--observed", default="",
                     help="Date the finding was OBSERVED (YYYY-MM-DD) — may predate `created`.")
     pn.add_argument("--what-happened", default="", dest="what_happened",
-                    help="Retrospective segment 1: the observed event.")
+                    help="The observed event. Required for --provenance-source retrospective "
+                         "(segment 1); for other sources, written under a "
+                         "`## What happened` heading when given.")
     pn.add_argument("--recommendation", default="",
-                    help="Retrospective segment 4: the proposed action.")
+                    help="The proposed action. Required for --provenance-source retrospective "
+                         "(segment 4); for other sources, written under a "
+                         "`## Recommendation` heading when given.")
     pn.add_argument("--why", default="",
-                    help="Retrospective segment 5: the root cause / missing system control.")
+                    help="The root cause / missing system control. Required for "
+                         "--provenance-source retrospective (segment 5); for other "
+                         "sources, written under a `## Why` heading when given.")
     pn.add_argument("--owner", default="")
     pn.add_argument("--context", default="")
     pn.add_argument("--notes", default="")

@@ -1669,6 +1669,32 @@ class TestRetrospectiveProvenance(_Base):
         self.assertIsNone(fm["observed"])
         self.assertIn("## Context", body)
 
+    def test_non_retro_source_keeps_finding_flags_in_body(self):
+        """--what-happened/--recommendation/--why must never be silently dropped
+        for a non-retrospective source (backlog BUIL-BACKLOG-m6zvh7djdjcaa7cr5tzrn)."""
+        res = self._new(provenance_source="claude-session", provenance_ref="sess",
+                        what_happened="WH-text-1109", recommendation="REC-text-1109",
+                        why="WHY-text-1109")
+        text = Path(res["path"]).read_text(encoding="utf-8")
+        for needle in ("WH-text-1109", "REC-text-1109", "WHY-text-1109"):
+            self.assertIn(needle, text)
+        _, body = bl.parse_frontmatter(text)
+        self.assertIn("## Context", body)
+        self.assertIn("## Acceptance", body)
+        self.assertEqual(bl.retro_segments(body)["Recommendation"], "REC-text-1109")
+
+    def test_non_retro_partial_segments_write_no_empty_headings(self):
+        res = self._new(provenance_source="claude-session", provenance_ref="sess",
+                        recommendation="REC-only-1109")
+        _, body = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertIn("## Recommendation\nREC-only-1109", body)
+        self.assertNotIn("## What happened", body)
+        self.assertNotIn("## Why", body)
+        plain = self._new(title="plain", provenance_source="claude-session")
+        _, pbody = bl.parse_frontmatter(Path(plain["path"]).read_text(encoding="utf-8"))
+        for h in ("## What happened", "## Recommendation", "## Why"):
+            self.assertNotIn(h, pbody)
+
     def test_old_item_without_new_fields_still_reads_and_syncs(self):
         """Backward compat: an item written before this schema must not break."""
         res = self._new(area="legacy")
