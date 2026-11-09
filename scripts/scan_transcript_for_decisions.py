@@ -901,7 +901,10 @@ def write_lesson(workdir: Path, item: dict) -> tuple[bool, str]:
         return False, str(exc)
     finally:
         Path(body_file).unlink(missing_ok=True)
-    return (completed.returncode == 0), (completed.stdout or completed.stderr or "").strip()[:200]
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        return False, f"memory_writer exit {completed.returncode}: {detail}"[:200]
+    return True, (completed.stdout or completed.stderr or "").strip()[:200]
 
 
 def _write_capture_items(workdir: Path, items: list[dict], args: argparse.Namespace) -> int:
@@ -910,14 +913,23 @@ def _write_capture_items(workdir: Path, items: list[dict], args: argparse.Namesp
     for item in items:
         kind = item.get("capture_class")
         try:
+            label = str(item.get("title") or item.get("decision") or "")[:80]
             if kind == "lesson":
-                ok, _ = write_lesson(workdir, item)
+                ok, detail = write_lesson(workdir, item)
             elif kind == "activity":
-                ok, _ = write_activity(workdir, item)
+                ok, detail = write_activity(workdir, item)
             else:
-                ok, _ = write_trusted(workdir, item, db=args.db)
+                ok, detail = write_trusted(workdir, item, db=args.db)
                 if not ok:
-                    ok, _ = write_review(workdir, item)
+                    trusted_detail = detail
+                    ok, detail = write_review(workdir, item)
+                    if ok:
+                        log(f"scan: capture {kind} {label!r} trusted write failed, "
+                            f"fell back to review: {str(trusted_detail)[:300]}")
+                    else:
+                        detail = f"trusted: {str(trusted_detail)[:150]}; review: {detail}"
+            if not ok:
+                log(f"scan: capture write failed ({kind}) {label!r}: {str(detail)[:300]}")
         except Exception as exc:  # noqa: BLE001 - hook safety
             log(f"scan: capture write failed ({kind}): {exc}")
             ok = False

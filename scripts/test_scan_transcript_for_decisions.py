@@ -21,6 +21,7 @@ Covers:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -524,6 +525,49 @@ class ScanLockFileResolutionTests(unittest.TestCase):
         """An empty string would resolve to a path of "" and break flock."""
         os.environ[scan.LOCK_FILE_ENV] = ""
         self.assertEqual(scan.default_lock_file(), scan.DEFAULT_LOCK_FILE)
+
+
+class CaptureWriteFailureLoggingTests(unittest.TestCase):
+    """A failed capture write must leave its reason in the scan log."""
+
+    def _fail(self, stdout: str, stderr: str):
+        return mock.patch.object(
+            scan.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr),
+        )
+
+    def test_write_lesson_failure_reports_stderr_and_exit_code(self) -> None:
+        with self._fail("", "index.lock stale"):
+            ok, detail = scan.write_lesson(Path("."), {"decision": "a lesson"})
+        self.assertFalse(ok)
+        self.assertIn("index.lock stale", detail)
+        self.assertIn("exit 1", detail)
+
+    def test_write_lesson_stderr_wins_over_stdout(self) -> None:
+        with self._fail("some stdout noise", "real error"):
+            ok, detail = scan.write_lesson(Path("."), {"decision": "a lesson"})
+        self.assertFalse(ok)
+        self.assertIn("real error", detail)
+        self.assertNotIn("noise", detail)
+
+    def test_capture_items_logs_failure_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "scan.log"
+            saved = scan._LOG_FILE_PATH
+            scan._LOG_FILE_PATH = log_path
+            try:
+                with self._fail("", "index.lock stale"):
+                    scan._write_capture_items(
+                        Path(tmp),
+                        [{"capture_class": "lesson", "decision": "keep locks fresh"}],
+                        argparse.Namespace(db=None),
+                    )
+            finally:
+                scan._LOG_FILE_PATH = saved
+            text = log_path.read_text()
+        self.assertIn("index.lock stale", text)
+        self.assertIn("keep locks fresh", text)
+        self.assertIn("failed=1", text)
 
 
 if __name__ == "__main__":
