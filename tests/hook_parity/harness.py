@@ -270,12 +270,17 @@ def collect_spawns(world: World, wait: float = 10.0, settle: float = 0.2) -> lis
     return sorted(spawns)
 
 
-def run(impl: str, case: Case, root: Path) -> tuple[Snapshot, World]:
+def run(impl: str, case: Case, root: Path, script: Path = HOOK) -> tuple[Snapshot, World]:
+    """Run one implementation: ``shell`` (launcher disabled), ``bl``,
+    ``launcher`` (the script with ``bin/native/bl`` in place) or ``script``
+    (``script`` as-is, e.g. main's copy or the binary-absent launcher)."""
     world = build_world(root, case)
     env = dict(world.env)
     if impl == "shell":
         env["BUILD_LOOP_NATIVE_HOOKS"] = "off"
         argv = ["bash", str(HOOK)]
+    elif impl == "script":
+        argv = ["bash", str(script)]
     elif impl == "bl":
         argv = [str(BL), "hook", "pre-edit"]
     elif impl == "launcher":
@@ -284,7 +289,7 @@ def run(impl: str, case: Case, root: Path) -> tuple[Snapshot, World]:
         raise ValueError(impl)
     if not case.supervised and impl != "launcher":
         # The supervisor's own re-entry marker: the hook body runs directly.
-        env["BUILD_LOOP_BOUNDED_HOOK_CHILD"] = str(HOOK)
+        env["BUILD_LOOP_BOUNDED_HOOK_CHILD"] = str(script)
         env["BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS"] = "0"
     started = time.time()
     proc = subprocess.run(

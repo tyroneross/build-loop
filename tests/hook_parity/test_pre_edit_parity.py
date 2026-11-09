@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -287,10 +288,39 @@ def test_bl_matches_shell(case, root):
     _compare("bl", case, root)
 
 
-@pytest.mark.skipif(
-    not (harness.REPO_ROOT / "bin" / "native" / "bl").exists(),
-    reason="bin/native/bl not installed",
+# bl hands these to the shell hook; through the launcher that re-enters the
+# Perl supervisor, whose 1.5 s deadline a loaded machine can exceed, so the
+# launcher comparison covers the natively handled cases.
+FALLBACK_CASES = {
+    "bash_cd_quoted", "bad_json", "invalid_utf8", "nan_json", "parent_pid_fallback",
+    "no_rally_binary_local_fallback", "debug_env", "internal_only",
+}
+NATIVE_BIN = harness.REPO_ROOT / "bin" / "native" / "bl"
+
+
+@pytest.mark.skipif(not NATIVE_BIN.exists(), reason="bin/native/bl not installed")
+@pytest.mark.parametrize(
+    "case", [c for c in CASES if c.name not in FALLBACK_CASES],
+    ids=[c.name for c in CASES if c.name not in FALLBACK_CASES],
 )
-@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
 def test_launcher_matches_shell(case, root):
     _compare("launcher", case, root)
+
+
+@pytest.mark.skipif(NATIVE_BIN.exists(), reason="needs bin/native/bl absent")
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_missing_binary_matches_main(case, root, tmp_path):
+    """With no binary, the launcher script behaves exactly like main's."""
+    main_copy = harness.HOOK.parent / f".pre-edit-main-{os.getpid()}.sh"
+    source = subprocess.run(
+        ["git", "-C", str(harness.REPO_ROOT), "show", "main:hooks/pre-edit-rally-point.sh"],
+        check=True, capture_output=True,
+    ).stdout
+    main_copy.write_bytes(source)
+    try:
+        case = _materialize(case, root)
+        old, _ = harness.run("script", case, root, script=main_copy)
+        new, _ = harness.run("script", case, root, script=harness.HOOK)
+    finally:
+        main_copy.unlink()
+    assert new.comparable() == old.comparable()
