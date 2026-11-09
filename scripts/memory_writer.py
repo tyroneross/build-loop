@@ -352,7 +352,7 @@ def _git_toplevel(path: Path) -> Path | None:
 
 
 _GIT_ADD_TIMEOUT = 10
-_GIT_COMMIT_TIMEOUT = 60  # pre-commit hook regenerates indexes; can be slow
+_GIT_COMMIT_TIMEOUT = 45  # pre-commit hook regenerates indexes; stays under the 60s budget scan_transcript_for_decisions.write_lesson gives the whole writer
 _GIT_TERM_GRACE = 5
 _STALE_LOCK_DEFAULT_MINUTES = 10
 
