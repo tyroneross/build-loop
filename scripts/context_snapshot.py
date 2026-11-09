@@ -121,7 +121,7 @@ def append_jsonl(path: Path, row: dict[str, Any]) -> None:
 def run_git(workdir: Path, args: list[str]) -> tuple[str | None, str | None]:
     try:
         proc = subprocess.run(
-            ["git", *args],
+            ["git", "--no-optional-locks", *args],
             cwd=str(workdir),
             check=False,
             text=True,

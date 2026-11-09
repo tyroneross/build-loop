@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -497,14 +499,177 @@ class AutoCommitTests(unittest.TestCase):
             age_min=30, holder="none", env_minutes="60")
         self.assertNotIn("stale git lock", err)
 
-    def test_run_git_timeout_terminates_gracefully(self):
-        start = time.time()
-        with self.assertRaises(subprocess.TimeoutExpired):
-            mw._run_git(
-                [sys.executable, "-c", "import time; time.sleep(30)"],
-                timeout=0.5,
-            )
-        self.assertLess(time.time() - start, 6)
+    def test_five_minute_unheld_lock_reports_age(self):
+        _, err = self._write_with_lock(age_min=341 / 60, holder="none")
+        self.assertIn("stale git lock", err)
+        self.assertIn("age 5.7 min", err)
+
+    def test_busy_lock_skips_git_and_reports_age(self):
+        with mock.patch.object(mw, "_run_git") as run:
+            _, err = self._write_with_lock(age_min=30, holder="held")
+        run.assert_not_called()
+        self.assertIn("busy git lock", err)
+        self.assertIn("age 30.0 min", err)
+
+    def test_unknown_holder_is_not_reported_stale(self):
+        with mock.patch.object(mw, "_run_git") as run:
+            _, err = self._write_with_lock(age_min=30, holder="unknown")
+        run.assert_not_called()
+        self.assertIn("ownership unknown", err)
+        self.assertNotIn("stale git lock", err)
+
+    def test_lock_created_after_preflight_is_reported(self):
+        import contextlib
+        import io
+        repo = self._init_repo()
+        path = repo / "lesson.md"
+        path.write_text("lesson")
+        lock = repo / ".git/index.lock"
+        real_run = mw._run_git
+
+        def raced_add(args, **kwargs):
+            lock.touch()
+            old = time.time() - 341
+            os.utime(lock, (old, old))
+            return real_run(args, **kwargs)
+
+        err = io.StringIO()
+        with mock.patch.object(mw, "_run_git", side_effect=raced_add), \
+                mock.patch.object(mw, "_lock_holder", return_value="none"), \
+                contextlib.redirect_stderr(err):
+            mw._autocommit_memory_file(path, type_="lesson", name="raced")
+        self.assertIn("stale git lock", err.getvalue())
+        self.assertIn("age 5.7 min", err.getvalue())
+        self.assertEqual(lock.read_bytes(), b"")
+
+    def test_timeout_does_not_orphan_real_git_index_lock(self):
+        """Fault injection: block TERM; substitute USR1 for legacy hard kill.
+
+        This exercises real Git holding an empty index.lock during a clean
+        filter. USR1 causes abrupt exit without Git cleanup, reproducing the
+        old forced-kill branch without sending SIGKILL. It does not establish
+        which process caused the historical incidents.
+        """
+        repo = self._init_repo()
+        marker = repo / "filter-started"
+        filter_script = repo / "slow_filter.py"
+        filter_script.write_text(
+            "import pathlib, sys, time\n"
+            f"pathlib.Path({str(marker)!r}).touch()\n"
+            "time.sleep(0.8)\n"
+            "sys.stdout.buffer.write(sys.stdin.buffer.read())\n"
+        )
+        self._git("config", "filter.slow.clean",
+                  f"{shlex.quote(sys.executable)} {shlex.quote(str(filter_script))}", cwd=repo)
+        (repo / ".gitattributes").write_text("*.md filter=slow\n")
+        path = repo / "lesson.md"
+        path.write_text("lesson\n")
+        lock = repo / ".git/index.lock"
+        real_popen = subprocess.Popen
+        children = []
+
+        def launch(*args, **kwargs):
+            # Model a Git child whose TERM cannot run the cleanup handler.
+            kwargs["preexec_fn"] = lambda: signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGTERM})
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            child.kill = lambda: child.send_signal(signal.SIGUSR1)
+            deadline = time.monotonic() + 5
+            while not marker.exists() and child.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(marker.exists(), "Git must reach the slow filter")
+            self.assertEqual(lock.stat().st_size, 0)
+            return child
+
+        try:
+            with mock.patch.object(mw.subprocess, "Popen", side_effect=launch), \
+                    mock.patch.object(mw, "_GIT_TERM_GRACE", 0.05, create=True):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    mw._run_git(["git", "-C", str(repo), "add", "--", str(path)], timeout=0.05)
+        finally:
+            for child in children:
+                child.wait(timeout=5)
+        self.assertFalse(lock.exists(), "deadline must not orphan Git's zero-byte index.lock")
+        self.assertEqual(children[0].returncode, 0)
+        self.assertIn("lesson.md", self._git("ls-files", cwd=repo).stdout)
+
+    def _assert_status_does_not_write_index(self, reader):
+        repo = self._init_repo()
+        path = repo / "lesson.md"
+        path.write_text("lesson\n")
+        self._git("add", "lesson.md", cwd=repo)
+        self._git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                  "commit", "-qm", "seed", cwd=repo)
+        before = (repo / ".git/index").read_bytes()
+        st = path.stat()
+        # Same bytes, different stat: ordinary status refreshes the index.
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+        reader(repo)
+        self.assertEqual((repo / ".git/index").read_bytes(), before)
+
+    def test_memory_context_status_keeps_index_read_only(self):
+        import memory_context
+        self._assert_status_does_not_write_index(memory_context._git_info)
+
+    def test_context_snapshot_status_keeps_index_read_only(self):
+        import context_snapshot
+        self._assert_status_does_not_write_index(context_snapshot.git_context)
+
+    def test_commit_state_status_keeps_index_read_only(self):
+        import commit_state_check
+        self._assert_status_does_not_write_index(
+            lambda repo: commit_state_check._git_status_porcelain(str(repo)))
+
+    def test_run_git_timeout_reports_pending_live_pid(self):
+        import contextlib
+        import io
+        children = []
+        real_popen = subprocess.Popen
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        err = io.StringIO()
+        try:
+            with mock.patch.object(mw.subprocess, "Popen", side_effect=launch), \
+                    contextlib.redirect_stderr(err):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    mw._run_git(
+                        [sys.executable, "-c", "import time; time.sleep(0.8)"], timeout=0.05)
+            self.assertIsNone(children[0].poll())
+            self.assertEqual(os.getsid(children[0].pid), children[0].pid)
+            self.assertIn(f"pid {children[0].pid} left running, outcome pending", err.getvalue())
+        finally:
+            for child in children:
+                child.wait(timeout=5)
+
+    def test_real_open_lock_is_busy_and_preserved(self):
+        import contextlib
+        import io
+        repo = self._init_repo()
+        path = repo / "lesson.md"
+        path.write_text("lesson")
+        lock = repo / ".git/index.lock"
+        err = io.StringIO()
+        with lock.open("wb") as held:
+            held.write(b"owned")
+            held.flush()
+            old = time.time() - 1800
+            os.utime(lock, (old, old))
+            with mock.patch.object(mw, "_run_git") as run, contextlib.redirect_stderr(err):
+                mw._autocommit_memory_file(path, type_="lesson", name="held")
+            self.assertEqual(mw._lock_holder(lock), "held")
+            run.assert_not_called()
+            self.assertEqual(lock.read_bytes(), b"owned")
+        self.assertIn("busy git lock", err.getvalue())
+
+    def test_lsof_warning_means_ownership_unknown(self):
+        partial = subprocess.CompletedProcess(["lsof"], 1, stdout="", stderr="permission denied")
+        with mock.patch.object(mw.subprocess, "run", return_value=partial):
+            self.assertEqual(mw._lock_holder(Path("/unused/index.lock")), "unknown")
 
     def test_run_git_nonzero_raises_called_process_error(self):
         with self.assertRaises(subprocess.CalledProcessError) as cm:

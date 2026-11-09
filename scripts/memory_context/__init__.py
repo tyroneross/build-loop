@@ -79,7 +79,7 @@ def _git_info(path: Path) -> dict[str, Any]:
     def run(args: list[str]) -> tuple[bool, str]:
         try:
             proc = subprocess.run(
-                ["git", *args],
+                ["git", "--no-optional-locks", *args],
                 cwd=str(path),
                 check=True,
                 capture_output=True,
