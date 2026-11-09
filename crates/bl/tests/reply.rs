@@ -12,6 +12,8 @@ fn bl() -> Command {
     cmd
 }
 
+// BL_FORCE_PANIC exists in debug builds only, so this test cannot run under --release.
+#[cfg(debug_assertions)]
 #[test]
 fn forced_panic_replies_with_empty_object() {
     let out = bl()
