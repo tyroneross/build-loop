@@ -125,3 +125,8 @@ archive/
 # combination: a `git add -A` sweeps it into a commit. Anchored with a leading
 # slash so it covers only this directory, never a tmp/ inside a skill or fixture.
 /tmp/
+
+# Rust build output (bl native hooks)
+/target/
+# Locally installed native hook binary; delivery is not decided yet
+/bin/native/

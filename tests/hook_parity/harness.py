@@ -234,26 +234,32 @@ def snapshot_files(world: World, started: float) -> dict[str, str]:
                 state = "touched" if st.st_mtime > world.preset[rel] + 1 else "kept"
             else:
                 state = "new"
-            if rel.startswith("home/"):
-                # Local-fallback presence records carry timestamps and pids.
+            if rel.startswith("home/") or (rel.startswith("cache/") and rel.endswith(".json")):
+                # Presence and cache records carry timestamps and pids.
                 out[_norm(rel)] = state
             else:
                 out[_norm(rel)] = f"{state}:{st.st_size}"
     return out
 
 
-def collect_spawns(world: World, wait: float = 3.0, settle: float = 0.4) -> list[tuple[str, ...]]:
+def _stubs_running(world: World) -> bool:
+    stub = str(world.root / "bin" / "python3")
+    out = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
+    return any(stub in line for line in out.splitlines())
+
+
+def collect_spawns(world: World, wait: float = 10.0, settle: float = 0.2) -> list[tuple[str, ...]]:
+    """Wait until no stub ``python3`` is still running, then read records.
+
+    Both implementations return from spawn only after exec succeeded, so
+    every child exists by the time the hook exits; a loaded machine can
+    still take a while to let it write its record.
+    """
     deadline = time.time() + wait
-    last: list[str] = []
-    stable_since = time.time()
-    while time.time() < deadline:
-        names = sorted(p.name for p in world.spawn_dir.glob("spawn.*") if not p.name.endswith(".tmp"))
-        if names != last:
-            last = names
-            stable_since = time.time()
-        elif time.time() - stable_since >= settle:
-            break
+    time.sleep(settle)
+    while time.time() < deadline and _stubs_running(world):
         time.sleep(0.05)
+    last = sorted(p.name for p in world.spawn_dir.glob("spawn.*") if not p.name.endswith(".tmp"))
     spawns = []
     stub = str(world.root / "bin" / "python3")
     for name in last:
