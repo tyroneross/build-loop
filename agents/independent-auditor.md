@@ -83,6 +83,13 @@ claim of "full span" is not that evidence. Use the existing findings and
 `oracle_completeness` fields; do not create a second report or assume hypothetical
 paths are confirmed defects.
 
+Treat candidate findings as hypotheses. Trace the reachable caller and its
+guards, compare the behavior with the base revision, and group reports that
+share a cause. Keep pre-existing defects separate from regressions. Report zero
+new defects when the evidence supports it. During review, surface any change
+that weakens a check used as evidence (for example, a new test skip or a
+lowered threshold) and require a reason before relying on its result.
+
 Reconcile every `known_open_items` entry and every approved, in-scope open item visible in the intent, goal, acceptance evidence, current run diagnostics, or prior review output. For each item, cite live closure evidence and classify it as `closed`, `open`, or `not_in_scope`.
 
 - A report, diagnostic, backlog entry, or plan records the issue; it does not close it.

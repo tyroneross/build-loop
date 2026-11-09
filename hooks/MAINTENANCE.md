@@ -13,3 +13,9 @@ The existing maintenance entry points remain available when their workflows need
 - Cache maintenance: `python3 scripts/prune_plugin_cache.py --help` describes preview/apply. No cache action runs automatically at launch. Host trust belongs to the native review flow; these scripts do not grant trust.
 
 The script names beginning `session-start-` remain callable for compatibility, but removed handlers are absent from both lifecycle manifests. Other models can call these deterministic commands directly. Automatic events are supported only where a host has a verified adapter; model choice does not change the JSON payload contract.
+
+Build Loop does not register its old prompt classifier or its Skill denial hook.
+The host's routing instructions choose the workflow. The old hooks shared one
+verdict file across sessions in a checkout and could deny explicitly requested
+brainstorming using a different session's prompt. No safety or commit gate
+depends on that verdict.

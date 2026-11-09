@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "69d5d5d3a313044bab743e80c074dfc75281716c314036db8cb9237b672b9dd4"
+    "content_sha256": "ce0aee157d9131a2e78d3f0475ea9419228bc418bda2e72f3878141e3e05c73e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1701,11 +1701,7 @@
         "closeout.sh",
         "session-start-codex-hook-trust.sh"
       ],
-      "UserPromptSubmit": [
-        "route-guard.sh"
-      ],
       "PreToolUse": [
-        "route-guard.sh",
         "pre-edit-architecture.sh",
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",

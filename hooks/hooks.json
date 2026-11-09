@@ -36,29 +36,7 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/route-guard.sh\" prompt-submit 2>/dev/null || printf '{}'",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
-      {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/route-guard.sh\" pre-skill 2>/dev/null || printf '{}'",
-            "timeout": 3
-          }
-        ]
-      },
       {
         "matcher": "Edit|Write",
         "hooks": [
