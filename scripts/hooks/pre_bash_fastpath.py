@@ -36,6 +36,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 
@@ -158,9 +159,100 @@ def _print_value(value: object) -> str | None:
     return _subst(text)
 
 
+# GIT_* variables that cannot move repository discovery or the work tree. Any
+# other GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR,
+# GIT_CONFIG_PARAMETERS, GIT_CEILING_DIRECTORIES, ...) sends us to git itself.
+# Global/system config is safe to redirect: git reads core.worktree from the
+# repository's own config only (checked: a global core.worktree is ignored).
+_GIT_ENV_INERT = frozenset({
+    "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS",
+    "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE", "GIT_MERGE_AUTOEDIT",
+    "GIT_OPTIONAL_LOCKS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+})
+_HEADREF = re.compile(rb"ref: refs/\S+\n?|[0-9a-f]{40}\n?|[0-9a-f]{64}\n?")
+
+
+def _read(path: str, limit: int = 4096) -> bytes:
+    with open(path, "rb") as fh:
+        return fh.read(limit + 1)
+
+
+def _is_own_toplevel(directory: str) -> bool:
+    """True only when `git -C directory rev-parse --show-toplevel` must print `directory`.
+
+    Every check is stricter than git's own, so a False here costs one git call
+    and a True never changes the answer. git prints the work tree's canonical
+    path, found by discovery from `directory`; it equals `directory` when:
+      - no GIT_* variable that moves discovery or the work tree is set;
+      - `directory` is already canonical: absolute, ASCII (git precomposes
+        Unicode on macOS), and byte-equal to the kernel's own path for it
+        (F_GETPATH, what getcwd uses; this rejects symlinks, `..`, a trailing
+        slash and wrong letter case). Other platforms always ask git;
+      - `directory/.git` is a repository git accepts (valid HEAD, objects and
+        refs, via an absolute `gitdir:` file for a linked worktree), so
+        discovery stops here instead of walking up to a parent;
+      - no core.worktree can apply: the repository config never mentions
+        `worktree` or `include`, and there is no per-worktree config.
+    When git would fail instead (ownership, bad format), today's code also
+    falls back to `directory`, so those cases agree either way.
+    """
+    try:
+        if any(k.startswith("GIT_") and k not in _GIT_ENV_INERT for k in os.environ):
+            return False
+        if not (os.path.isabs(directory) and directory.isascii()):
+            return False
+        import fcntl
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            kernel = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0]
+        finally:
+            os.close(fd)
+        if kernel != os.fsencode(directory):
+            return False
+        dotgit = os.path.join(directory, ".git")
+        if os.path.islink(dotgit):
+            return False
+        if os.path.isdir(dotgit):
+            gitdir = dotgit
+        elif os.path.isfile(dotgit):
+            pointer = re.fullmatch(rb"gitdir: (/[^\n\r]+)\n?", _read(dotgit))
+            if not pointer:
+                return False
+            gitdir = os.fsdecode(pointer.group(1))
+        else:
+            return False
+        common = gitdir
+        commondir = os.path.join(gitdir, "commondir")
+        if os.path.lexists(commondir):
+            target = re.fullmatch(rb"([^\n\r]+)\n?", _read(commondir))
+            if not target:
+                return False
+            common = os.path.join(gitdir, os.fsdecode(target.group(1)))
+        head = os.path.join(gitdir, "HEAD")
+        if os.path.islink(head) or not os.path.isfile(head) or not _HEADREF.fullmatch(_read(head, 256)):
+            return False
+        for sub in ("objects", "refs"):
+            path = os.path.join(common, sub)
+            if not (os.path.isdir(path) and os.access(path, os.X_OK)):
+                return False
+        if os.path.lexists(os.path.join(gitdir, "config.worktree")):
+            return False
+        for config in {os.path.join(common, "config"), os.path.join(gitdir, "config")}:
+            if os.path.lexists(config):
+                text = _read(config, 1 << 20).lower()
+                if len(text) > 1 << 20 or b"worktree" in text or b"include" in text:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
 def _repo_root(directory: str) -> str:
     if not directory or not os.path.isdir(directory):
         return directory
+    if _is_own_toplevel(directory):
+        return directory  # what git would print: see _is_own_toplevel
     try:
         proc = subprocess.run(["git", "-C", directory, "rev-parse", "--show-toplevel"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)

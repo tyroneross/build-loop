@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -303,6 +304,32 @@ class Differential(unittest.TestCase):
             self.skipTest("this checkout still starts a second python3 for the gates")
         self.assertEqual((a.returncode, a.stdout), (2, b"{}"))
         self.assertEqual((b.returncode, b.stdout), (0, b"{}\n"))
+
+
+class ToplevelProofAgreesWithGit(unittest.TestCase):
+    """pre_bash_fastpath._is_own_toplevel may skip git only when git agrees."""
+
+    def test_skip_only_where_git_prints_the_same_path(self) -> None:
+        import pre_bash_fastpath as fp
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = make_scratch(Path(tmp).resolve() / "s")
+            dirs = [str(v) for v in scratch.values()] + [str(PLUGIN_ROOT), str(PLUGIN_ROOT) + "/scripts", "/", "/tmp"]
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in fp._GIT_ENV_INERT}
+            skipped = set()
+            with unittest.mock.patch.dict(os.environ, env, clear=True):
+                for d in dirs:
+                    git = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+                                         capture_output=True).stdout.decode().rstrip("\n")
+                    if fp._is_own_toplevel(d):
+                        skipped.add(d)
+                        self.assertEqual(git, d, d)
+                with unittest.mock.patch.dict(os.environ, {"GIT_DIR": "/nonexistent"}):
+                    self.assertFalse(fp._is_own_toplevel(str(scratch["opted"])))
+        # The proof must actually fire where it pays: a repo root and a linked worktree.
+        for name in ("opted", "policy", "linked", "linkedpol"):
+            self.assertIn(str(scratch[name]), skipped, name)
+        for name in ("symlink", "slash", "mixedcase", "corewt", "invdot", "optsub", "nested"):
+            self.assertNotIn(str(scratch[name]), skipped, name)
 
 
 if __name__ == "__main__":
