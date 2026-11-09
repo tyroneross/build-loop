@@ -159,15 +159,17 @@ DEFAULT_REVIEW_DAYS = 30
 _ITEM_ID_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+-(?:[0-9a-z]{6,}|\d{3,})$")
 
 # Body section scaffold for a fresh item.
-_BODY_TEMPLATE = """## Context
-{context}
-
-{segments}## Acceptance
-- <verifiable condition 1>
-
-## Notes
-{notes}
-"""
+def _render_body(context: str, segments: str, notes: str) -> str:
+    """Body of a non-retrospective item. `segments` is the already-rendered
+    finding headings (may be empty) and sits between Context and Acceptance.
+    All three are required arguments: a caller that forgets one gets a
+    TypeError instead of an item that silently lacks the text."""
+    return (
+        f"## Context\n{context}\n\n"
+        f"{segments}"
+        "## Acceptance\n- <verifiable condition 1>\n\n"
+        f"## Notes\n{notes}\n"
+    )
 
 # Retrospective-sourced items carry a DIFFERENT body: the five segments the
 # owner directive (2026-08-29) named, in fixed order. The order is the contract
@@ -882,8 +884,7 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
         # Never silently drop finding segments passed to a non-retro source:
         # each supplied one gets its own heading between Context and
         # Acceptance; segments not supplied are absent (no empty heading, no
-        # placeholder). `segments` is a template field, so a template edit
-        # that loses it fails loudly instead of dropping the text.
+        # placeholder).
         segments = "".join(
             f"## {heading}\n{text}\n\n"
             for heading, text in (
@@ -892,7 +893,7 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
                 ("Why", (getattr(args, "why", "") or "").strip()),
             ) if text
         )
-        body = _BODY_TEMPLATE.format(
+        body = _render_body(
             context=(args.context or "<why this matters / what's the situation>"),
             segments=segments,
             notes=(args.notes or "<additional detail>"),
@@ -1728,7 +1729,7 @@ def _import_one(repo: Path, src_path: Path, source_kind: str, today: str,
             # Idempotency anchor: a re-run skips any source already recorded here.
             "imported_from": rel,
         }
-        body = _BODY_TEMPLATE.format(
+        body = _render_body(
             context=f"Imported from `{rel}` (build-loop {source_kind} queue). "
                     f"Source file is the inbox/provenance and stays in place.",
             segments="",
