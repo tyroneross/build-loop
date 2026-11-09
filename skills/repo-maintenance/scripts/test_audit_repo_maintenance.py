@@ -45,6 +45,21 @@ class AuditRepoMaintenanceTests(unittest.TestCase):
         git(self.repo, "add", "tracked.txt")
         git(self.repo, "commit", "-m", "base")
 
+    def test_audit_does_not_restamp_linked_worktree_git_dir(self) -> None:
+        git(self.repo, "branch", "feature")
+        worktree = Path(self.tempdir.name) / "feature-worktree"
+        git(self.repo, "worktree", "add", str(worktree), "feature")
+        # Touch a tracked file without changing content so a plain `git status`
+        # must refresh the index (take and release index.lock).
+        time.sleep(0.05)
+        os.utime(worktree / "tracked.txt", None)
+        admin_dir = Path(git(worktree, "rev-parse", "--absolute-git-dir"))
+        before = admin_dir.stat().st_mtime_ns
+
+        MODULE.audit(self.repo)
+
+        self.assertEqual(admin_dir.stat().st_mtime_ns, before)
+
     def test_inventory_finds_unique_branch_worktree_and_stash(self) -> None:
         git(self.repo, "checkout", "-b", "feature")
         (self.repo / "feature.txt").write_text("feature\n", encoding="utf-8")

@@ -92,6 +92,9 @@ def run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedP
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        # Read-only scan: a plain `git status` otherwise takes and rolls back
+        # index.lock, re-stamping each linked worktree's git directory.
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,6 +77,37 @@ def _head_sha(repo: Path) -> str:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
+class TestReadOnlyGitEnv(unittest.TestCase):
+    """Every git call merge_risk makes must run with GIT_OPTIONAL_LOCKS=0."""
+
+    def test_every_git_subprocess_disables_optional_locks(self) -> None:
+        real_run = subprocess.run
+        seen: list[dict | None] = []
+
+        def spy(argv, *a, **kw):
+            if argv and argv[0] == "git":
+                seen.append(kw.get("env"))
+            return real_run(argv, *a, **kw)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            _commit_file(repo, "a.txt", "1\n", "init")
+            _git(repo, "checkout", "-b", "feat")
+            _commit_file(repo, "b.txt", "2\n", "feat")
+            _git(repo, "checkout", "main")
+            base = _head_sha(repo)
+            with unittest.mock.patch.object(merge_risk.subprocess, "run", spy):
+                merge_risk._merge_base(repo, "feat", "main")
+                merge_risk._diff_files(repo, base, "feat")
+                merge_risk.probe_conflicts(repo, "main", "feat", base)
+
+        self.assertGreaterEqual(len(seen), 3)
+        for env in seen:
+            self.assertIsNotNone(env)
+            self.assertEqual(env.get("GIT_OPTIONAL_LOCKS"), "0")
+
 
 @unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
 class TestStaleBaseEvidence(unittest.TestCase):

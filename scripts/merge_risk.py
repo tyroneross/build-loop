@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -30,11 +31,14 @@ from typing import Iterable
 # ---------------------------------------------------------------------------
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    # Single git runner for this module. GIT_OPTIONAL_LOCKS=0 keeps scans
+    # read-only: no opportunistic index.lock in the repos being inspected.
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
         check=check,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
 
 
@@ -128,11 +132,7 @@ def probe_conflicts(repo: Path, target: str, branch: str, merge_base_sha: str) -
     (None, "unavailable") if neither form can be used -- never guesses.
     """
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "merge-tree", "--write-tree", target, branch],
-            capture_output=True,
-            text=True,
-        )
+        proc = _git(repo, "merge-tree", "--write-tree", target, branch, check=False)
     except OSError:
         proc = None
 
@@ -145,11 +145,7 @@ def probe_conflicts(repo: Path, target: str, branch: str, merge_base_sha: str) -
     # Fallback: legacy 3-arg form. Also read-only -- prints a diff3-style
     # merge result to stdout without touching the working tree or refs.
     try:
-        legacy = subprocess.run(
-            ["git", "-C", str(repo), "merge-tree", merge_base_sha, branch, target],
-            capture_output=True,
-            text=True,
-        )
+        legacy = _git(repo, "merge-tree", merge_base_sha, branch, target, check=False)
     except OSError:
         return None, "unavailable"
 
