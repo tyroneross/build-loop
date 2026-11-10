@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 <!-- Weekly cross-repo proposal-drain scan. Writes the digest + posts a notification.
-     Never auto-applies. Install: chmod +x scripts/drain_proposals.py;
-     mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/build-loop-drain";
-     cp to ~/Library/LaunchAgents then
+     Never auto-applies. This file is a template: launchd does not expand $HOME, so
+     __BUILD_LOOP_DIR__ and __HOME__ are filled in at install time.
+     Install from the repo root: chmod +x scripts/drain_proposals.py;
+     mkdir -p "$HOME/.local/state/build-loop-drain";
+     sed -e "s|__BUILD_LOOP_DIR__|$PWD|g" -e "s|__HOME__|$HOME|g" launchd/ai.rosslabs.proposal-drain.plist
+       > ~/Library/LaunchAgents/ai.rosslabs.proposal-drain.plist; then
      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.rosslabs.proposal-drain.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -12,11 +15,11 @@
   <string>ai.rosslabs.proposal-drain</string>
 
   <key>Program</key>
-  <string>/Users/tyroneross/dev/git-folder/build-loop/scripts/drain_proposals.py</string>
+  <string>__BUILD_LOOP_DIR__/scripts/drain_proposals.py</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/tyroneross/dev/git-folder/build-loop/scripts/drain_proposals.py</string>
+    <string>__BUILD_LOOP_DIR__/scripts/drain_proposals.py</string>
     <string>scan</string>
     <string>--notify</string>
   </array>
@@ -46,8 +49,8 @@
   <string>Background</string>
 
   <key>StandardOutPath</key>
-  <string>/Users/tyroneross/.local/state/build-loop-drain/launchd.log</string>
+  <string>__HOME__/.local/state/build-loop-drain/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/tyroneross/.local/state/build-loop-drain/launchd.log</string>
+  <string>__HOME__/.local/state/build-loop-drain/launchd.log</string>
 </dict>
 </plist>
