@@ -727,3 +727,43 @@ def test_fresh_cache_with_malformed_entry_fields_is_rebuilt(fake, tmp_path):
     workdir.mkdir()
     hits = cs.load_installed("root cause code audit", workdir, fake["out"], host="claude")
     assert any(h["name"] == "code-audit" for h in hits)
+
+
+# ---- follow-ups from review round 4 (2026-11-09) ----------------------------
+
+def test_two_installs_at_same_scope_are_each_tracked_for_freshness(fake, tmp_path):
+    """Round 4 #1: two user-scope records of one plugin share a scope, so the
+    freshness key must also carry the install path or the first goes unwatched."""
+    reg = fake["home"] / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(reg.read_text())
+    second = _plugin(tmp_path / "second-install", "research", "Second install.", {"research": "Second."})
+    first_rec = data["plugins"]["research@mkt"][0]
+    data["plugins"]["research@mkt"] = [first_rec, dict(first_rec, installPath=str(second))]
+    reg.write_text(json.dumps(data))
+    _build(fake)
+    assert pi.staleness(fake["out"], fake["tools"]) == []
+    skill = fake["research"] / "skills" / "research" / "SKILL.md"
+    skill.write_text(skill.read_text() + "\nmore words in the description line\n", encoding="utf-8")
+    os.utime(skill, (time.time() + 9, time.time() + 9))
+    assert pi.staleness(fake["out"], fake["tools"]) != []
+
+
+def test_first_applicable_install_wins_before_scoring(fake, tmp_path):
+    """Round 4 #2: a later applicable project install must not beat an earlier
+    user install just because it scores higher for the query."""
+    reg = fake["home"] / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(reg.read_text())
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    later = _plugin(tmp_path / "project-install", "research", "Deep sources research tooling.",
+                    {"research": "Research.", "deep-sources": "Deep sources."})
+    user_rec = dict(data["plugins"]["research@mkt"][0], scope="user")
+    proj_rec = dict(user_rec, scope="project", projectPath=str(proj), installPath=str(later))
+    data["plugins"]["research@mkt"] = [user_rec, proj_rec]
+    reg.write_text(json.dumps(data))
+    index = _build(fake)
+    hit = pi.query(index, "research deep sources", host="claude", workdir=proj)
+    assert [h["name"] for h in hit].count("research") == 1
+    assert hit[0]["summary"] == "Run sourced research and keep the sources."  # the user install
+    assert "deep-sources" not in json.dumps(pi.query(index, "research deep sources", host="claude",
+                                                     workdir=proj, include_surfaces=True))

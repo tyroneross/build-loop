@@ -541,7 +541,7 @@ def compute_fingerprint(tools_file: Path | None = None) -> tuple[dict[str, str],
         for f in found:
             # Scope identity is part of the key, so each installation record
             # of one plugin is tracked separately.
-            key = f"plugin:{host}:{f['name']}@{f['marketplace']}#{f.get('scope', 'user')}:{f.get('project_path', '')}"
+            key = f"plugin:{host}:{f['name']}@{f['marketplace']}#{f.get('scope', 'user')}:{f.get('project_path', '')}:{f.get('install_path')}"
             # Version and install path are inputs too: a version swap that keeps
             # every file's size and mtime must still rebuild the cache.
             ident = f"{f.get('version')}|{f.get('install_path')}|{f.get('project_path', '')}"
@@ -802,16 +802,31 @@ def query(index: dict[str, Any], words: str, host: str | None = None, cap: int =
     qtok = _tokens(words)
     wd = workdir or Path.cwd()
     scored = []
+    chosen: set[tuple[str, str]] = set()  # (host, name) already settled on an install
+    gone_installs: dict[tuple[str, str], dict[str, Any]] = {}  # applicable but missing on disk
     for e in index.get("entries") or []:
         if host and e["kind"] == "plugin" and e.get("host") != host:
             continue
-        if e["kind"] == "plugin" and not _in_scope(e, wd):
-            continue
+        if e["kind"] == "plugin":
+            # One install per plugin, chosen BEFORE scoring: the first record
+            # that applies here and still exists, in installed_plugins.json order.
+            if not _in_scope(e, wd) or (e["host"], e["name"]) in chosen:
+                continue
+            ip = e.get("install_path")
+            if not ip or not Path(ip).exists():
+                if score(e, qtok) > 0:  # only a plugin the caller asked about is worth a note
+                    gone_installs.setdefault((e["host"], e["name"]), e)
+                continue
+            chosen.add((e["host"], e["name"]))
         if e["kind"] == "tool" and not e.get("present"):
             continue
         s = score(e, qtok)
         if s > 0:
             scored.append((s, e))
+    for key, e in gone_installs.items():
+        if key not in chosen:
+            print(f"plugin_index: dropped plugin {e['name']} ({e.get('host')}): {e.get('install_path')} no longer exists",
+                  file=sys.stderr)
     scored.sort(key=lambda t: (-t[0], t[1]["kind"] != "plugin", t[1].get("host", ""), t[1]["name"]))
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
