@@ -19,8 +19,11 @@ phrases (quoted phrases in skill/agent/command frontmatter descriptions, then
 short clauses of skill descriptions; manifest keywords are not copied), and the NAMES of its skills, agents, commands and MCP servers.
 Bodies, MCP args/env and every other manifest field are never copied.
 
-Hosts (missing files mean "not found", never an error):
-  claude  $CLAUDE_CONFIG_DIR or ~/.claude -> plugins/installed_plugins.json
+Hosts (missing files mean "not found", never an error; one failing host never
+stops the others):
+  claude  $CLAUDE_CONFIG_DIR or ~/.claude -> plugins/installed_plugins.json, minus
+          plugins settings.json ``enabledPlugins`` sets to false; project-scope
+          installs are offered only inside their project
   codex   $CODEX_HOME or ~/.codex -> config.toml (tomllib; only [plugins."name@marketplace"]
           ids and ``enabled`` are kept); files under plugins/cache/<marketplace>/<name>/<version>/
 
@@ -31,9 +34,10 @@ are size-bounded, and one plugin that fails to scan is recorded under its host's
 ``skipped`` instead of aborting the build.
 
 Freshness without maintenance: the index stores a fingerprint of each host's
-installed-plugin file (size+mtime), every file extraction reads per plugin
-(manifest, SKILL.md, agent/command files, MCP files), the tool declaration
-file, and each declared tool's ``shutil.which`` result.
+installed-plugin file and Claude settings.json (size+mtime), each plugin's
+version and install path, every file extraction reads per plugin (manifest,
+SKILL.md, agent/command files, MCP files), the tool declaration file, and each
+declared tool's ``shutil.which`` result. A malformed cached index is rebuilt.
 ``check`` recomputes it; ``query`` rebuilds first when stale. Every result is
 verify-on-use: ``query`` drops an entry whose install path or binary is gone
 and says so on stderr.
@@ -58,6 +62,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -110,7 +115,28 @@ MAX_META_BYTES = 256 * 1024
 MAX_HOST_BYTES = 4 * 1024 * 1024
 FRONTMATTER_READ = 8192  # SKILL.md / agent / command files: frontmatter only
 
-_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+# Stored surface names (skill dirs, agent/command stems, MCP keys) are what an
+# agent will type to invoke something, so they must be short identifiers:
+# no spaces, no control characters, at most 64 chars. Others are not stored.
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+SKIPPED_KEEP = 20  # per-host diagnostics kept; the total is still counted
+
+
+def _clean_text(s: Any, limit: int) -> str:
+    return _CONTROL_RE.sub("", str(s))[:limit]
+
+
+def _err(exc: BaseException) -> str:
+    return _clean_text(f"{type(exc).__name__}: {exc}", 200)
+
+
+def _skip(status: dict[str, Any], name: str, reason: str) -> None:
+    status["skipped_total"] = status.get("skipped_total", 0) + 1
+    lst = status.setdefault("skipped", [])
+    if len(lst) < SKIPPED_KEEP:
+        lst.append({"name": _clean_text(name, 80), "reason": _clean_text(reason, 200)})
 SURFACE_KINDS = ("skills", "agents", "commands")
 
 
@@ -123,14 +149,25 @@ def _stat_sig(p: Path) -> str:
 
 
 def _read_bounded(p: Path, limit: int) -> bytes | None:
-    """Read at most ``limit`` bytes; None when missing, unreadable or larger."""
+    """Read at most ``limit`` bytes of a REGULAR file; None otherwise.
+
+    Opened non-blocking and checked with fstat, so a FIFO or device at a
+    metadata path is rejected instead of blocking the shortlist forever.
+    """
     try:
-        with p.open("rb") as fh:
-            if os.fstat(fh.fileno()).st_size > limit:
-                return None
+        fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+    except (OSError, ValueError):
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as fh:
             data = fh.read(limit + 1)
     except OSError:
         return None
+    finally:
+        os.close(fd)
     return data if len(data) <= limit else None
 
 
@@ -157,24 +194,51 @@ def _inside(p: Path, root: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def discover_claude() -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    src = claude_root() / "plugins" / "installed_plugins.json"
+    """installed_plugins.json, minus plugins the user settings disable.
+
+    ``enabledPlugins`` in ``settings.json`` (user scope) maps "name@market" to
+    a bool; ``false`` means installed but not callable, so it is skipped. A
+    plugin absent from that map counts as enabled (TAG:ASSUMED: installs add it
+    as true). Project-scope installs keep ``scope``/``project_path`` so query
+    offers them only inside that project. Project-level settings files are not
+    consulted (the index is machine-wide).
+    """
+    root = claude_root()
+    src = root / "plugins" / "installed_plugins.json"
+    settings_path = root / "settings.json"
     data = _read_json(src, MAX_HOST_BYTES)
     if not isinstance(data, dict):
-        return {"status": "not found", "source": str(src)}, []
+        return {"status": "not found", "source": str(src), "settings": str(settings_path)}, []
+    settings = _read_json(settings_path, MAX_HOST_BYTES)
+    enabled = settings.get("enabledPlugins") if isinstance(settings, dict) else None
+    enabled = enabled if isinstance(enabled, dict) else {}
+    del settings  # only the enabled flags leave this function
+    status: dict[str, Any] = {"status": "found", "source": str(src), "settings": str(settings_path), "disabled": 0}
     found: list[dict[str, Any]] = []
     plugins = data.get("plugins") if isinstance(data.get("plugins"), dict) else data
     for key, installs in sorted(plugins.items()):
         if not isinstance(installs, list) or not installs or "@" not in key:
             continue
-        rec = installs[-1] if isinstance(installs[-1], dict) else {}
         name, _, market = key.partition("@")
+        if not (_SAFE_ID_RE.match(name) and _SAFE_ID_RE.match(market)):
+            _skip(status, key, "invalid plugin id")
+            continue
+        if enabled.get(key) is False:
+            status["disabled"] += 1
+            continue
+        rec = installs[-1] if isinstance(installs[-1], dict) else {}
         path = rec.get("installPath")
-        found.append({
+        f = {
             "host": "claude", "name": name, "marketplace": market,
-            "version": str(rec.get("version") or ""),
+            "version": _clean_text(rec.get("version") or "", 40),
             "install_path": str(path) if isinstance(path, str) and path else None,
-        })
-    return {"status": "found", "source": str(src)}, found
+        }
+        if rec.get("scope") == "project":
+            pp = rec.get("projectPath")
+            f["scope"] = "project"
+            f["project_path"] = str(pp) if isinstance(pp, str) else ""
+        found.append(f)
+    return status, found
 
 
 def discover_codex() -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -191,9 +255,12 @@ def discover_codex() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
     del config  # only plugin ids and flags leave this function
     cache = root / "plugins" / "cache"
-    cache_real = cache.resolve()
     status: dict[str, Any] = {"status": "found", "source": str(src), "enabled_without_local_files": 0}
-    skipped: list[dict[str, str]] = []
+    try:
+        cache_real = cache.resolve()
+    except (OSError, RuntimeError) as exc:  # symlink loop raises RuntimeError on 3.11
+        status.update(status="unreadable", reason=_err(exc))
+        return status, []
     found: list[dict[str, Any]] = []
     for key, val in sorted(plugins.items()):
         enabled = val.get("enabled", True) if isinstance(val, dict) else True
@@ -201,32 +268,30 @@ def discover_codex() -> tuple[dict[str, Any], list[dict[str, Any]]]:
             continue
         name, _, market = str(key).partition("@")
         if not (_SAFE_ID_RE.match(name) and _SAFE_ID_RE.match(market)):
-            skipped.append({"name": str(key), "reason": "invalid plugin id (must be name@marketplace, single path components)"})
+            _skip(status, str(key), "invalid plugin id (must be name@marketplace, single path components)")
             continue
         base = cache / market / name
-        if not base.is_dir():
-            status["enabled_without_local_files"] += 1  # remote/app connector
-            continue
-        # The marketplace/name dirs must stay in the cache. A version dir may be
-        # a symlink (local installs point at a checkout); the host follows it too.
-        if not base.resolve().is_relative_to(cache_real):
-            skipped.append({"name": str(key), "reason": "plugin directory resolves outside the Codex cache"})
-            continue
         try:
+            if not base.is_dir():
+                status["enabled_without_local_files"] += 1  # remote/app connector
+                continue
+            # The marketplace/name dirs must stay in the cache. A version dir may be
+            # a symlink (local installs point at a checkout); the host follows it too.
+            if not base.resolve().is_relative_to(cache_real):
+                _skip(status, str(key), "plugin directory resolves outside the Codex cache")
+                continue
             versions = [d for d in base.iterdir() if d.is_dir()]
             newest = max(versions, key=lambda d: d.stat().st_mtime) if versions else None
-        except OSError as exc:
-            skipped.append({"name": str(key), "reason": f"{type(exc).__name__}: {exc}"[:200]})
+        except (OSError, RuntimeError) as exc:
+            _skip(status, str(key), _err(exc))
             continue
         if newest is None:
             status["enabled_without_local_files"] += 1
             continue
         found.append({
             "host": "codex", "name": name, "marketplace": market,
-            "version": newest.name, "install_path": str(newest),
+            "version": _clean_text(newest.name, 40), "install_path": str(newest),
         })
-    if skipped:
-        status["skipped"] = skipped
     return status, found
 
 
@@ -286,18 +351,18 @@ def _describe_surfaces(install: Path, manifest: dict[str, Any], host: str) -> di
         if loc.is_dir():
             for d in sorted(loc.iterdir()):
                 md = d / "SKILL.md"
-                if md.is_file() and _inside(md, root):
+                if _SAFE_NAME_RE.match(d.name) and md.is_file() and _inside(md, root):
                     surfaces["skills"].setdefault(d.name, md)
     for kind in ("agents", "commands"):
         for loc in _locations(install, root, manifest, kind):
             mds = [loc] if loc.is_file() and loc.suffix == ".md" else sorted(loc.glob("*.md")) if loc.is_dir() else []
             for md in mds:
-                if md.is_file() and _inside(md, root):
+                if _SAFE_NAME_RE.match(md.stem) and md.is_file() and _inside(md, root):
                     surfaces[kind].setdefault(md.stem, md)
     inline = manifest.get("mcpServers")
     if isinstance(inline, dict):
         for k, v in inline.items():
-            if isinstance(v, dict):
+            if isinstance(v, dict) and _SAFE_NAME_RE.match(str(k)):
                 surfaces["mcp_servers"][str(k)] = None
     mcp_files = [".mcp.json", "mcp.json"] + ([inline] if isinstance(inline, str) else [])
     for rel in mcp_files:
@@ -309,7 +374,7 @@ def _describe_surfaces(install: Path, manifest: dict[str, Any], host: str) -> di
         servers = data.get("mcpServers", data) if isinstance(data, dict) else None
         if isinstance(servers, dict):
             for k, v in servers.items():
-                if isinstance(v, dict):
+                if isinstance(v, dict) and _SAFE_NAME_RE.match(str(k)):
                     surfaces["mcp_servers"].setdefault(str(k), p)
     for kind in SURFACE_KINDS:
         files.extend(surfaces[kind].values())
@@ -392,11 +457,11 @@ def describe_plugin(found: dict[str, Any], scanned: dict[str, Any]) -> dict[str,
     interface = manifest.get("interface") if isinstance(manifest.get("interface"), dict) else {}
     desc = _str(manifest.get("description")) or _str(interface.get("shortDescription"))
     entry = {
-        "kind": "plugin", **found, "summary": " ".join(desc.split())[:SUMMARY_MAX],
+        "kind": "plugin", **found, "summary": _clean_text(" ".join(desc.split()), SUMMARY_MAX),
         "use_when": [], **{k: sorted(surfaces[k]) for k in (*SURFACE_KINDS, "mcp_servers")},
     }
     if not entry["version"] and isinstance(manifest.get("version"), (str, int, float)):
-        entry["version"] = str(manifest["version"])
+        entry["version"] = _clean_text(manifest["version"], 40)
     # Triggers come only from frontmatter descriptions (allowlisted): quoted
     # phrases first, then short clauses of skill descriptions. Manifest
     # keywords are deliberately NOT copied (outside the field allowlist).
@@ -432,8 +497,8 @@ def describe_tools(decls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         uw = t.get("use_when") if isinstance(t.get("use_when"), list) else []
         out.append({
             "kind": "tool", "name": t["name"], "host": "path",
-            "summary": _str(t.get("purpose"))[:SUMMARY_MAX],
-            "use_when": [str(x) for x in uw][:USE_WHEN_MAX],
+            "summary": _clean_text(_str(t.get("purpose")), SUMMARY_MAX),
+            "use_when": [_clean_text(x, 80) for x in uw][:USE_WHEN_MAX],
             "present": resolved is not None, "path": resolved,
         })
     return out
@@ -443,7 +508,7 @@ def describe_tools(decls: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # Fingerprint
 # ---------------------------------------------------------------------------
 
-def compute_fingerprint(tools_file: Path = TOOLS_FILE) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any]]:
+def compute_fingerprint(tools_file: Path | None = None) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any]]:
     """Return (parts, scanned plugins, host status).
 
     Each plugin part covers EVERY file extraction reads (manifest, SKILL.md,
@@ -451,25 +516,35 @@ def compute_fingerprint(tools_file: Path = TOOLS_FILE) -> tuple[dict[str, str], 
     deleting any of them marks the index stale. A plugin that fails to scan
     gets an ``error:`` part and is listed under its host's ``skipped``.
     """
+    tools_file = tools_file or TOOLS_FILE
     # The indexer itself is an input: a changed extractor must rebuild the cache.
     parts: dict[str, str] = {"tools-file": _stat_sig(tools_file), "indexer": _stat_sig(Path(__file__))}
     scanned: list[dict[str, Any]] = []
     hosts: dict[str, Any] = {}
     for fn in HOSTS:
-        status, found = fn()
         host = fn.__name__.replace("discover_", "")
+        try:
+            status, found = fn()
+        except Exception as exc:  # noqa: BLE001 — one host never aborts the others
+            hosts[host] = {"status": "unreadable", "reason": _err(exc)}
+            parts[f"host:{host}"] = f"error:{type(exc).__name__}"
+            continue
         hosts[host] = status
         parts[f"host:{host}"] = _stat_sig(Path(status["source"]))
+        if status.get("settings"):
+            parts[f"settings:{host}"] = _stat_sig(Path(status["settings"]))
         for f in found:
             key = f"plugin:{host}:{f['name']}@{f['marketplace']}"
+            # Version and install path are inputs too: a version swap that keeps
+            # every file's size and mtime must still rebuild the cache.
+            ident = f"{f.get('version')}|{f.get('install_path')}|{f.get('project_path', '')}"
             try:
                 s = scan_plugin(f)
-                parts[key] = s["sig"]
+                parts[key] = f"{ident}|{s['sig']}"
                 scanned.append({"found": f, **s})
             except Exception as exc:  # noqa: BLE001 — isolate one bad plugin
-                reason = f"{type(exc).__name__}: {exc}"[:200]
-                parts[key] = f"error:{type(exc).__name__}"
-                status.setdefault("skipped", []).append({"name": f["name"], "reason": reason})
+                parts[key] = f"{ident}|error:{type(exc).__name__}"
+                _skip(status, f["name"], _err(exc))
     for t in load_tool_decls(tools_file):
         parts[f"tool:{t['name']}"] = shutil.which(t["name"]) or "absent"
     return parts, scanned, hosts
@@ -507,6 +582,7 @@ def _trim(index: dict[str, Any], max_bytes: int) -> dict[str, Any]:
     for n in (60, 0):
         steps.append(lambda n=n: [e.__setitem__("summary", e["summary"][:n]) for e in index["entries"]])
     steps.append(lambda: index.__setitem__("fingerprint_parts", {}))
+    steps.append(lambda: [h.pop("skipped", None) for h in index["hosts"].values()])
     for step in steps:
         if fits():
             return index
@@ -516,10 +592,14 @@ def _trim(index: dict[str, Any], max_bytes: int) -> dict[str, Any]:
         index["trimmed"] = True
         index["entries"].pop()
         index["dropped_entries"] = index.get("dropped_entries", 0) + 1
+    if not fits():  # last resort: host status reduced to its counters
+        index["hosts"] = {h: {k: v for k, v in s.items() if isinstance(v, (int, float))} | {"status": _clean_text(s.get("status", ""), 20)}
+                          for h, s in index["hosts"].items()}
     return index
 
 
-def build(tools_file: Path = TOOLS_FILE, max_bytes: int = MAX_BYTES) -> dict[str, Any]:
+def build(tools_file: Path | None = None, max_bytes: int = MAX_BYTES) -> dict[str, Any]:
+    tools_file = tools_file or TOOLS_FILE
     t0 = time.monotonic()
     parts, scanned, hosts = compute_fingerprint(tools_file)
     entries = []
@@ -527,8 +607,7 @@ def build(tools_file: Path = TOOLS_FILE, max_bytes: int = MAX_BYTES) -> dict[str
         try:
             entries.append(describe_plugin(s["found"], s))
         except Exception as exc:  # noqa: BLE001 — isolate one bad plugin
-            hosts[s["found"]["host"]].setdefault("skipped", []).append(
-                {"name": s["found"]["name"], "reason": f"{type(exc).__name__}: {exc}"[:200]})
+            _skip(hosts[s["found"]["host"]], s["found"]["name"], _err(exc))
     for host, status in hosts.items():
         status["plugins"] = sum(1 for e in entries if e["host"] == host)
     entries.extend(describe_tools(load_tool_decls(tools_file)))
@@ -545,9 +624,14 @@ def build(tools_file: Path = TOOLS_FILE, max_bytes: int = MAX_BYTES) -> dict[str
     return _trim(index, max_bytes)
 
 
-def write_atomic(index: dict[str, Any], out: Path) -> int:
+def write_atomic(index: dict[str, Any], out: Path, max_bytes: int = MAX_BYTES) -> int:
+    """Write atomically; the final size check is on the exact bytes written."""
     out.parent.mkdir(parents=True, exist_ok=True)
     data = serialize(index)
+    if len(data) > max_bytes:
+        data = serialize(_trim(index, max_bytes))
+    if len(data) > max_bytes:
+        raise ValueError(f"plugin index is {len(data)} bytes after trimming; cap {max_bytes}")
     fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".plugin-index.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -563,15 +647,25 @@ def write_atomic(index: dict[str, Any], out: Path) -> int:
 
 
 def load_index(out: Path) -> dict[str, Any] | None:
+    """The cached index, or None when missing OR malformed (so callers rebuild)."""
     data = _read_json(out, 2 * MAX_BYTES)
-    return data if isinstance(data, dict) and isinstance(data.get("entries"), list) else None
+    if not (isinstance(data, dict) and isinstance(data.get("entries"), list)
+            and isinstance(data.get("fingerprint"), str)
+            and isinstance(data.get("fingerprint_parts", {}), dict)
+            and isinstance(data.get("hosts", {}), dict)):
+        return None
+    for e in data["entries"]:
+        if not (isinstance(e, dict) and e.get("kind") in ("plugin", "tool") and isinstance(e.get("name"), str)):
+            return None
+    return data
 
 
-def staleness(out: Path, tools_file: Path = TOOLS_FILE) -> list[str]:
+def staleness(out: Path, tools_file: Path | None = None) -> list[str]:
     """Return reasons the cached index is stale; empty list means fresh."""
+    tools_file = tools_file or TOOLS_FILE
     index = load_index(out)
     if index is None:
-        return [f"index missing or unreadable: {out}"]
+        return [f"index missing, unreadable or malformed: {out}"]
     if index.get("schema_version") != SCHEMA_VERSION:
         return [f"schema {index.get('schema_version')} != {SCHEMA_VERSION}"]
     parts, _, _ = compute_fingerprint(tools_file)
@@ -582,7 +676,8 @@ def staleness(out: Path, tools_file: Path = TOOLS_FILE) -> list[str]:
     return reasons or ["fingerprint mismatch"]
 
 
-def ensure_fresh(out: Path, tools_file: Path = TOOLS_FILE) -> dict[str, Any]:
+def ensure_fresh(out: Path, tools_file: Path | None = None) -> dict[str, Any]:
+    tools_file = tools_file or TOOLS_FILE
     if staleness(out, tools_file):
         index = build(tools_file)
         write_atomic(index, out)
@@ -650,17 +745,33 @@ def score(entry: dict[str, Any], qtok: set[str]) -> int:
     return sum(max((w for w, ft in toks if _match(t, ft)), default=0) for t in qtok)
 
 
+def _in_scope(e: dict[str, Any], workdir: Path) -> bool:
+    """A project-scope install is callable only inside its own project."""
+    if e.get("scope") != "project":
+        return True
+    try:
+        return bool(e.get("project_path")) and workdir.resolve() == Path(e["project_path"]).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def query(index: dict[str, Any], words: str, host: str | None = None, cap: int = QUERY_CAP,
-          include_surfaces: bool = False) -> list[dict[str, Any]]:
+          include_surfaces: bool = False, workdir: Path | None = None) -> list[dict[str, Any]]:
     """Best-first matches; drops entries whose files are gone (stderr note).
 
+    ``host`` keeps only that host's plugins (tools are host-neutral) and is
+    applied BEFORE cross-host de-duplication, so the consuming host's own
+    install wins. ``workdir`` (default cwd) decides project-scope installs.
     ``include_surfaces`` adds the plugin's skill/agent/command/MCP names so a
     caller can rescore with its own rule (capability_shortlist does).
     """
     qtok = _tokens(words)
+    wd = workdir or Path.cwd()
     scored = []
     for e in index.get("entries") or []:
         if host and e["kind"] == "plugin" and e.get("host") != host:
+            continue
+        if e["kind"] == "plugin" and not _in_scope(e, wd):
             continue
         if e["kind"] == "tool" and not e.get("present"):
             continue

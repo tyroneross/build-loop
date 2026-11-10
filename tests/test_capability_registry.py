@@ -279,7 +279,7 @@ def test_shortlist_cli_smoke() -> None:
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / "capability_shortlist.py"),
          "--phase", "1", "--intent", "scan architecture",
-         "--workdir", str(REPO), "--no-cache", "--json"],
+         "--workdir", str(REPO), "--no-cache", "--json", "--no-installed"],
         capture_output=True, text=True, timeout=15,
     )
     assert proc.returncode == 0, proc.stderr

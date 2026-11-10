@@ -52,17 +52,19 @@ When `phase` is outside 1–6, fall back to scoring purely on intent keyword mat
    - **+1** if the entry's `category` is in the phase's secondary list.
    - **+1** if the entry's `tier` is `sonnet` or `opus` (preferred over `n/a` for substantive work).
 4. Apply optional `kind` filter.
-5. Sort by score descending, then by `name` ascending for stable tie-breaks.
-6. Return the top 8 with reason tokens (which intent words and which categories matched).
+5. Sort by score descending; on equal score an in-repo entry ranks above an installed one, then `name` ascending.
+6. Return the top `SHORTLIST_CAP` entries (`scripts/capability_shortlist.py`) with reason tokens (which intent words and which categories matched).
 
 ## Installed plugins and tools (on by default)
 
-The registry only sees this repo. `scripts/capability_shortlist.py` also merges matches from `scripts/plugin_index.py`, a machine-wide index (`~/.build-loop/plugin-index.json`, override with `$BUILD_LOOP_PLUGIN_INDEX`) of every plugin installed for Claude Code and Codex plus the command-line tools declared in `references/external-tools.json` (rosslabs-lsp, architect, et, ibr, rally, navgator, codex, claude).
+The registry only sees this repo. `scripts/capability_shortlist.py` also merges matches from `scripts/plugin_index.py`, a machine-wide index (`~/.build-loop/plugin-index.json`, override with `$BUILD_LOOP_PLUGIN_INDEX`) of the enabled plugins installed for Claude Code and Codex plus the command-line tools declared in `references/external-tools.json`.
 
 - Each installed plugin or tool becomes ONE entry, kind `plugin` or `tool`, category `installed`, carrying an `invoke` field (the skill, agent, command or MCP server to call, or the binary).
-- They are scored by the same intent rule, get no phase-category bonus, and lose ties to in-repo surfaces. The 8-entry cap still covers everything.
+- Only plugins callable on the consuming host are offered: the host comes from `scripts/host_capabilities.py` (`--host` overrides), is applied before cross-host de-duplication, and an undetected host gets tools only. Claude plugins disabled in `settings.json` `enabledPlugins`, and project-scope installs outside their project, are excluded.
+- They are scored by the same intent rule, get no phase-category bonus, and lose ties to in-repo surfaces. The shortlist cap covers both.
 - The plugin this repo is (build-loop itself) is skipped; its surfaces are already in the registry.
-- Staleness: the index stores a fingerprint of each host's installed-plugin file, each plugin manifest and each tool's `which` result, and rebuilds itself when any of them change. Every result is re-checked on disk before it is returned.
+- Staleness: the fingerprint covers each host's installed-plugin file and Claude `settings.json`, each plugin's version, install path and every file extraction reads (manifest, SKILL.md, agent/command files, MCP files), the tool declaration file, each tool's `which` result, and `plugin_index.py` itself. Any change rebuilds the index; a malformed cached index is rebuilt too. Each result's surfaces are re-checked on disk before it is returned.
+- How agents use the entries: `agents/implementer.md` §"Available capabilities".
 - `--no-installed` turns the merge off. Standalone lookup: `python3 scripts/plugin_index.py query <words>`.
 
 ## Output shape

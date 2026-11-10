@@ -19,6 +19,11 @@ If the orchestrator's brief includes an `architecture_context:` block (sourced f
 
 If the orchestrator's brief includes an `available_capabilities:` block (sourced from `state.json.activeCapabilities["3"][-1].results[:8]` or the Phase 2 fallback), prefer those entries over scanning the full plugin surface for tools, skills, or scripts to use. The shortlist is already scored against this build's intent and capped at 8 entries to stay inside Anthropic's Tool Search guidance — it represents the orchestrator's best routing call for the current task.
 
+Entries of kind `plugin` and `tool` are installed outside this repo (category `installed`). Use them through their `invoke` field, never through `source_path` (values like `plugin:research` are identifiers, not files):
+- `invoke.skill` → load that skill; `invoke.agent` → dispatch that subagent type; `invoke.command` → that slash command; `invoke.mcp_server` → that server's MCP tools as your host names them; `invoke.binary` → run it with Bash, starting with `--help`.
+- Skip an entry whose `invoke.host` is not the host you run on.
+- If the named surface is not available to you (tool absent, not loaded, permission denied), skip it, use the next entry or an in-repo surface, and record the name and reason in `notes`. Never fake its result.
+
 Only escalate beyond the shortlist when the task requires a capability that isn't listed (e.g. a unique CLI flag or an MCP tool the matcher missed). When you do escalate, mention the surface name in your return envelope's `notes` so the orchestrator can refine the registry's keyword map for future builds.
 
 ## Input contract

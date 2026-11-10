@@ -39,7 +39,9 @@ SHORTLIST_CLI = SCRIPTS / "capability_shortlist.py"
 
 def _run_shortlist(args: list[str], workdir: Path) -> subprocess.CompletedProcess[str]:
     """Run capability_shortlist.py with the given args and a synthetic workdir."""
-    cmd = [sys.executable, str(SHORTLIST_CLI), *args, "--workdir", str(workdir)]
+    # --no-installed: these tests cover caching, not the machine's real
+    # ~/.claude, ~/.codex and PATH (scripts/test_plugin_index.py covers those).
+    cmd = [sys.executable, str(SHORTLIST_CLI), *args, "--workdir", str(workdir), "--no-installed"]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
 

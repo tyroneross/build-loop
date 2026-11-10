@@ -398,20 +398,43 @@ def _self_plugin_name(workdir: Path) -> str:
     return "build-loop"
 
 
-def load_installed(intent: str, workdir: Path, index_path: Path | None = None) -> list[dict[str, Any]]:
+# Index host ids used by plugin_index, keyed by host_capabilities host ids.
+_INDEX_HOST = {"claude_code": "claude", "codex": "codex"}
+
+
+def consuming_host(env: dict[str, str] | None = None) -> str | None:
+    """The host running this shortlist, as a plugin_index host id.
+
+    Reuses host_capabilities.detect_host (the repo's single host detector).
+    None means a host with no indexed plugin layout (Cursor, Gemini, unknown):
+    only host-neutral command-line tools are then offered.
+    """
+    from host_capabilities import detect_host
+    return _INDEX_HOST.get(detect_host(env=env))
+
+
+def load_installed(intent: str, workdir: Path, index_path: Path | None = None,
+                   host: str | None = "auto") -> list[dict[str, Any]]:
     """Installed plugins + PATH tools matching `intent`, as registry-shaped entries.
 
     One collapsed entry per plugin (kind "plugin") or tool (kind "tool").
     Reads the machine-wide index from scripts/plugin_index.py, rebuilding it
-    when stale; plugin_index.query drops entries whose files are gone. The
-    plugin this repo IS is skipped: its surfaces are already in the registry.
-    Fail-soft: any error yields [] so the shortlist never breaks on it.
+    when stale; plugin_index.query drops entries whose files are gone. Only
+    plugins callable on the consuming `host` are returned (selected before
+    cross-host de-duplication); `host="auto"` detects it, None means tools
+    only. The plugin this repo IS is skipped: its surfaces are already in the
+    registry. Fail-soft: any error yields [] so the shortlist never breaks.
     """
     try:
         import plugin_index as pi
+        if host == "auto":
+            host = consuming_host()
         out_path = index_path or pi.default_index_path()
         index = pi.ensure_fresh(out_path)
-        hits = pi.query(index, intent, cap=40, include_surfaces=True)
+        # Wide candidate pool: this function rescores and the shortlist caps.
+        # host "none" matches no plugin, leaving only host-neutral tools.
+        hits = pi.query(index, intent, host=host or "none", cap=10 * SHORTLIST_CAP,
+                        include_surfaces=True, workdir=workdir)
     except Exception as exc:  # noqa: BLE001 — hint surface, never fatal
         print(f"capability_shortlist: installed-plugin index unavailable: {exc}", file=sys.stderr)
         return []
@@ -621,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--intent", required=True)
     parser.add_argument("--kind", nargs="*", default=None,
                         choices=["agent", "skill", "command", "hook", "mcp_tool", "script", "plugin", "tool"])
+    parser.add_argument("--host", choices=["auto", "claude", "codex"], default="auto",
+                        help="Host whose installed plugins are callable here (default: detect).")
     parser.add_argument("--installed", action=argparse.BooleanOptionalAction, default=True,
                         help="Include matching installed plugins and PATH tools from "
                              "scripts/plugin_index.py (default on; --no-installed to skip).")
@@ -647,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
-    installed = load_installed(args.intent, workdir) if args.installed else None
+    installed = load_installed(args.intent, workdir, host=args.host) if args.installed else None
     result = shortlist(registry, args.phase, args.intent, args.kind, workdir=workdir,
                        installed=installed)
     # Default behavior is cache-on. --cache-into-state is an explicit reaffirmation
