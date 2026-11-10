@@ -38,14 +38,14 @@ fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn var(name: &str) -> R<Option<String>> {
+pub(crate) fn var(name: &str) -> R<Option<String>> {
     match std::env::var_os(name) {
         None => Ok(None),
         Some(v) => v.into_string().map(Some).map_err(|_| Fallback("non-utf8 env")),
     }
 }
 
-fn nonempty(name: &str) -> R<Option<String>> {
+pub(crate) fn nonempty(name: &str) -> R<Option<String>> {
     Ok(var(name)?.filter(|v| !v.is_empty()))
 }
 
@@ -54,7 +54,7 @@ fn mtime(meta: &fs::Metadata) -> f64 {
 }
 
 /// `shutil.which(name)` (also bash's lookup for a plain command name).
-fn which(name: &str) -> R<Option<String>> {
+pub(crate) fn which(name: &str) -> R<Option<String>> {
     let path = var("PATH")?.ok_or(Fallback("PATH unset"))?;
     let mut seen: Vec<&str> = Vec::new();
     for dir in path.split(':') {

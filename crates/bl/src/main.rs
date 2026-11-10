@@ -25,6 +25,7 @@
 //! (`bin/native/bl` or `target/<profile>/bl`).
 
 mod pre_edit;
+mod session_start;
 mod sys;
 mod trace;
 
@@ -117,6 +118,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() >= 2 && args[0] == "hook" && args[1] == "trace" {
         trace_main(started, &args[2..]);
+    }
+    if args.len() >= 2 && args[0] == "hook" && args[1] == "session-start" {
+        session_start::main(started, &args[2..]);
     }
     if args != ["hook", "pre-edit"] {
         std::process::exit(bl_contract::FALLBACK_EXIT);
