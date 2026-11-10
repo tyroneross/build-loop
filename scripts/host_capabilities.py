@@ -59,15 +59,23 @@ def normalize_tool(tool_id: str | None) -> str | None:
     return alias.get(base, base)
 
 
+# Variables that only say where a host keeps its configuration. Users export
+# them in shell profiles, so they leak into every other host's sessions and
+# are NOT evidence of which runtime is executing (2026-11-09: CODEX_HOME set
+# in a Claude Code session made this return "codex").
+_CONFIG_LOCATION_VARS = frozenset({"CODEX_HOME"})
+
+
 def detect_host(tool_id: str | None = None, env: dict[str, str] | None = None) -> str:
-    """Resolve the current host. Order: explicit tool_id → env markers → unknown.
+    """Resolve the current host. Order: explicit tool_id → runtime env markers →
+    configuration-location hints → unknown.
     Caller-supplied tool_id is authoritative (rally already threads it everywhere)."""
     env = os.environ if env is None else env
     norm = normalize_tool(tool_id)
     if norm in _CAPS:
         return norm
     # Env heuristics — only used when no explicit tool id resolves.
-    if any(k.startswith("CODEX") for k in env):
+    if any(k.startswith("CODEX") and k not in _CONFIG_LOCATION_VARS for k in env):
         return "codex"
     if env.get("CLAUDE_CODE") or env.get("CLAUDECODE") or "CLAUDE_PLUGIN_ROOT" in env:
         return "claude_code"
@@ -75,6 +83,9 @@ def detect_host(tool_id: str | None = None, env: dict[str, str] | None = None) -
         return "cursor"
     if any(k.startswith("GEMINI") for k in env):
         return "gemini"
+    # Weakest signal last: only a configuration location, no runtime marker.
+    if "CODEX_HOME" in env:
+        return "codex"
     return "unknown"
 
 

@@ -633,3 +633,97 @@ def test_agents_document_how_to_dispatch_installed_entries():
     skill = (repo / "skills" / "capabilities" / "SKILL.md").read_text(encoding="utf-8")
     assert "in-repo entry ranks above an installed one" in skill
     assert "every file extraction reads" in skill and "settings.json" in skill
+
+
+# ---- review round 3 (2026-11-09) --------------------------------------------
+
+def test_detect_host_runtime_marker_beats_codex_config_location():
+    """Round 3 #1: CLAUDECODE=1 with CODEX_HOME set is a Claude session, not Codex."""
+    import host_capabilities as hc
+    import capability_shortlist as cs
+    env = {"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"}
+    assert hc.detect_host(None, env=env) == "claude_code"
+    assert cs.consuming_host(env) == "claude"
+    assert hc.detect_host(None, env={"CODEX_HOME": "/x"}) == "codex"  # alone it is still a hint
+    assert hc.detect_host(None, env={"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/x"}) == "codex"
+
+
+def test_shortlist_auto_host_keeps_claude_plugins_when_codex_home_set(fake, tmp_path, monkeypatch):
+    import capability_shortlist as cs
+    _build(fake)
+    for k in [k for k in os.environ if k.startswith(("CODEX", "CLAUDE", "CURSOR", "GEMINI"))]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CODEX_HOME", str(fake["home"] / ".codex"))
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    hits = cs.load_installed("root cause code audit", workdir, fake["out"])  # host="auto"
+    assert any(h["name"] == "code-audit" and h["invoke"]["host"] == "claude" for h in hits)
+
+
+def test_user_scope_install_survives_later_foreign_project_record(fake, tmp_path):
+    """Round 3 #2: a later project-scope record must not hide a usable user-scope install."""
+    reg = fake["home"] / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(reg.read_text())
+    other_proj = tmp_path / "foreign"
+    other_proj.mkdir()
+    user_rec = dict(data["plugins"]["research@mkt"][0], scope="user")
+    proj_rec = dict(user_rec, scope="project", projectPath=str(other_proj))
+    data["plugins"]["research@mkt"] = [user_rec, proj_rec]
+    reg.write_text(json.dumps(data))
+    index = _build(fake)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    res = pi.query(index, "research", host="claude", workdir=elsewhere)
+    assert [r["name"] for r in res].count("research") == 1
+    assert pi.query(index, "research", host="claude", workdir=other_proj)[0]["name"] == "research"
+    # scope identity is part of freshness: dropping the project record marks stale
+    data["plugins"]["research@mkt"] = [proj_rec]
+    reg.write_text(json.dumps(data))
+    os.utime(reg, (time.time() + 5, time.time() + 5))
+    assert any("research" in r for r in pi.staleness(fake["out"], fake["tools"]))
+
+
+def test_project_scope_matches_case_symlink_and_trailing_slash_aliases(fake, tmp_path):
+    """Round 3 #3: compare directory identity, not resolved strings."""
+    proj = tmp_path / "MixedProject"
+    proj.mkdir()
+    reg = fake["home"] / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(reg.read_text())
+    data["plugins"]["research@mkt"][0].update({"scope": "project", "projectPath": str(proj) + "/"})
+    reg.write_text(json.dumps(data))
+    index = _build(fake)
+    link = tmp_path / "link-to-project"
+    link.symlink_to(proj)
+    aliases = [proj, link]
+    lower = tmp_path / "mixedproject"
+    if lower.exists():  # case-insensitive filesystem (macOS default)
+        aliases.append(lower)
+    for wd in aliases:
+        assert pi.query(index, "research", host="claude", workdir=wd), wd
+    gone = dict(data["plugins"]["research@mkt"][0], projectPath=str(tmp_path / "missing"))
+    assert pi._in_scope(gone | {"project_path": gone["projectPath"]}, proj) is False
+
+
+def test_trailing_newline_name_is_not_stored(fake):
+    """Round 3 #4 (claim G): `$` accepted "bad\\n"; names must fully match."""
+    _write(fake["research"] / "skills" / "bad\n" / "SKILL.md", "---\nname: x\ndescription: x\n---\n")
+    _write(fake["research"] / ".mcp.json", json.dumps({"mcpServers": {"srv\n": {}, "ok": {}}}))
+    index = _build(fake)
+    research = next(e for e in index["entries"] if e["name"] == "research" and e["host"] == "claude")
+    assert research["skills"] == ["research"] and research["mcp_servers"] == ["ok"]
+
+
+def test_fresh_cache_with_malformed_entry_fields_is_rebuilt(fake, tmp_path):
+    """Round 3 #5 (claim F): matching fingerprint but skills=7 made the shortlist return []."""
+    import capability_shortlist as cs
+    index = _build(fake)
+    for e in index["entries"]:
+        if e["name"] == "code-audit":
+            e["skills"] = 7
+    fake["out"].write_text(json.dumps(index))
+    assert pi.staleness(fake["out"], fake["tools"])
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    hits = cs.load_installed("root cause code audit", workdir, fake["out"], host="claude")
+    assert any(h["name"] == "code-audit" for h in hits)

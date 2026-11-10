@@ -220,24 +220,29 @@ def discover_claude() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if not isinstance(installs, list) or not installs or "@" not in key:
             continue
         name, _, market = key.partition("@")
-        if not (_SAFE_ID_RE.match(name) and _SAFE_ID_RE.match(market)):
+        if not (_SAFE_ID_RE.fullmatch(name) and _SAFE_ID_RE.fullmatch(market)):
             _skip(status, key, "invalid plugin id")
             continue
         if enabled.get(key) is False:
             status["disabled"] += 1
             continue
-        rec = installs[-1] if isinstance(installs[-1], dict) else {}
-        path = rec.get("installPath")
-        f = {
-            "host": "claude", "name": name, "marketplace": market,
-            "version": _clean_text(rec.get("version") or "", 40),
-            "install_path": str(path) if isinstance(path, str) and path else None,
-        }
-        if rec.get("scope") == "project":
-            pp = rec.get("projectPath")
-            f["scope"] = "project"
-            f["project_path"] = str(pp) if isinstance(pp, str) else ""
-        found.append(f)
+        # Keep EVERY installation record: a user-scope install stays usable
+        # even when a later record is a project install for another project.
+        # query() picks the first record applicable to the caller's workdir.
+        for rec in installs:
+            if not isinstance(rec, dict):
+                continue
+            path = rec.get("installPath")
+            f = {
+                "host": "claude", "name": name, "marketplace": market,
+                "version": _clean_text(rec.get("version") or "", 40),
+                "install_path": str(path) if isinstance(path, str) and path else None,
+            }
+            if rec.get("scope") == "project":
+                pp = rec.get("projectPath")
+                f["scope"] = "project"
+                f["project_path"] = str(pp) if isinstance(pp, str) else ""
+            found.append(f)
     return status, found
 
 
@@ -267,7 +272,7 @@ def discover_codex() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if enabled is False:
             continue
         name, _, market = str(key).partition("@")
-        if not (_SAFE_ID_RE.match(name) and _SAFE_ID_RE.match(market)):
+        if not (_SAFE_ID_RE.fullmatch(name) and _SAFE_ID_RE.fullmatch(market)):
             _skip(status, str(key), "invalid plugin id (must be name@marketplace, single path components)")
             continue
         base = cache / market / name
@@ -351,18 +356,18 @@ def _describe_surfaces(install: Path, manifest: dict[str, Any], host: str) -> di
         if loc.is_dir():
             for d in sorted(loc.iterdir()):
                 md = d / "SKILL.md"
-                if _SAFE_NAME_RE.match(d.name) and md.is_file() and _inside(md, root):
+                if _SAFE_NAME_RE.fullmatch(d.name) and md.is_file() and _inside(md, root):
                     surfaces["skills"].setdefault(d.name, md)
     for kind in ("agents", "commands"):
         for loc in _locations(install, root, manifest, kind):
             mds = [loc] if loc.is_file() and loc.suffix == ".md" else sorted(loc.glob("*.md")) if loc.is_dir() else []
             for md in mds:
-                if _SAFE_NAME_RE.match(md.stem) and md.is_file() and _inside(md, root):
+                if _SAFE_NAME_RE.fullmatch(md.stem) and md.is_file() and _inside(md, root):
                     surfaces[kind].setdefault(md.stem, md)
     inline = manifest.get("mcpServers")
     if isinstance(inline, dict):
         for k, v in inline.items():
-            if isinstance(v, dict) and _SAFE_NAME_RE.match(str(k)):
+            if isinstance(v, dict) and _SAFE_NAME_RE.fullmatch(str(k)):
                 surfaces["mcp_servers"][str(k)] = None
     mcp_files = [".mcp.json", "mcp.json"] + ([inline] if isinstance(inline, str) else [])
     for rel in mcp_files:
@@ -374,7 +379,7 @@ def _describe_surfaces(install: Path, manifest: dict[str, Any], host: str) -> di
         servers = data.get("mcpServers", data) if isinstance(data, dict) else None
         if isinstance(servers, dict):
             for k, v in servers.items():
-                if isinstance(v, dict) and _SAFE_NAME_RE.match(str(k)):
+                if isinstance(v, dict) and _SAFE_NAME_RE.fullmatch(str(k)):
                     surfaces["mcp_servers"].setdefault(str(k), p)
     for kind in SURFACE_KINDS:
         files.extend(surfaces[kind].values())
@@ -402,7 +407,7 @@ def scan_plugin(found: dict[str, Any]) -> dict[str, Any]:
 
 def _clean(p: str) -> str | None:
     p = " ".join(p.lower().split()).strip(" .,;:!")
-    if _CLEAN_PHRASE_RE.match(p) and 1 <= len(p.split()) <= 6:
+    if _CLEAN_PHRASE_RE.fullmatch(p) and 1 <= len(p.split()) <= 6:
         return p
     return None
 
@@ -534,7 +539,9 @@ def compute_fingerprint(tools_file: Path | None = None) -> tuple[dict[str, str],
         if status.get("settings"):
             parts[f"settings:{host}"] = _stat_sig(Path(status["settings"]))
         for f in found:
-            key = f"plugin:{host}:{f['name']}@{f['marketplace']}"
+            # Scope identity is part of the key, so each installation record
+            # of one plugin is tracked separately.
+            key = f"plugin:{host}:{f['name']}@{f['marketplace']}#{f.get('scope', 'user')}:{f.get('project_path', '')}"
             # Version and install path are inputs too: a version swap that keeps
             # every file's size and mtime must still rebuild the cache.
             ident = f"{f.get('version')}|{f.get('install_path')}|{f.get('project_path', '')}"
@@ -609,7 +616,7 @@ def build(tools_file: Path | None = None, max_bytes: int = MAX_BYTES) -> dict[st
         except Exception as exc:  # noqa: BLE001 — isolate one bad plugin
             _skip(hosts[s["found"]["host"]], s["found"]["name"], _err(exc))
     for host, status in hosts.items():
-        status["plugins"] = sum(1 for e in entries if e["host"] == host)
+        status["plugins"] = len({e["name"] for e in entries if e["host"] == host})
     entries.extend(describe_tools(load_tool_decls(tools_file)))
     index = {
         "schema_version": SCHEMA_VERSION,
@@ -654,10 +661,32 @@ def load_index(out: Path) -> dict[str, Any] | None:
             and isinstance(data.get("fingerprint_parts", {}), dict)
             and isinstance(data.get("hosts", {}), dict)):
         return None
-    for e in data["entries"]:
-        if not (isinstance(e, dict) and e.get("kind") in ("plugin", "tool") and isinstance(e.get("name"), str)):
-            return None
+    if not all(_valid_entry(e) for e in data["entries"]):
+        return None
     return data
+
+
+def _strs(v: Any) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def _valid_entry(e: Any) -> bool:
+    """Every field query/shortlist touch has the type build() writes.
+
+    A cache whose fingerprint still matches but whose entries were damaged
+    (e.g. ``skills: 7``) is treated as malformed, so it is rebuilt instead of
+    raising TypeError on every shortlist call.
+    """
+    if not (isinstance(e, dict) and isinstance(e.get("name"), str) and isinstance(e.get("host"), str)
+            and isinstance(e.get("summary", ""), str) and _strs(e.get("use_when", []))):
+        return False
+    if e.get("kind") == "tool":
+        return isinstance(e.get("present"), bool) and isinstance(e.get("path"), (str, type(None)))
+    if e.get("kind") == "plugin":
+        return (isinstance(e.get("install_path"), (str, type(None)))
+                and isinstance(e.get("scope", "user"), str) and isinstance(e.get("project_path", ""), str)
+                and all(_strs(e.get(k)) for k in (*SURFACE_KINDS, "mcp_servers")))
+    return False
 
 
 def staleness(out: Path, tools_file: Path | None = None) -> list[str]:
@@ -749,9 +778,14 @@ def _in_scope(e: dict[str, Any], workdir: Path) -> bool:
     """A project-scope install is callable only inside its own project."""
     if e.get("scope") != "project":
         return True
+    # Directory identity, not strings: case aliases on a case-insensitive
+    # filesystem, symlinks and trailing slashes all name the same directory.
+    pp = e.get("project_path")
+    if not isinstance(pp, str) or not pp:
+        return False
     try:
-        return bool(e.get("project_path")) and workdir.resolve() == Path(e["project_path"]).resolve()
-    except (OSError, RuntimeError):
+        return os.path.samefile(workdir, pp)
+    except (OSError, ValueError):
         return False
 
 
