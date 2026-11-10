@@ -14,7 +14,7 @@ extern "C" {
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn utimensat(fd: c_int, path: *const c_char, times: *const Timespec, flag: c_int) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
-    fn signal(sig: c_int, handler: extern "C" fn(c_int)) -> usize;
+    fn signal(sig: c_int, handler: usize) -> usize;
     fn _exit(code: c_int) -> !;
 }
 
@@ -190,7 +190,7 @@ pub fn kill_group_on_signals() {
     for sig in [1, 2, 3, 15] {
         // SAFETY: `on_signal` only makes async-signal-safe calls.
         unsafe {
-            signal(sig, on_signal);
+            signal(sig, on_signal as *const () as usize);
         }
     }
 }

@@ -6,22 +6,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-tool-state.sh\" 2>/dev/null; exit 0",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then \"$r/bin/native/bl\" hook session-start --root \"$r\" 2>/dev/null; fi; exit 0",
+            "timeout": 8
+          },
+          {
+            "type": "command",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then exit 0; fi; bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-tool-state.sh\" 2>/dev/null; exit 0",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-architecture.sh\" </dev/null >/dev/null 2>&1; exit 0",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then exit 0; fi; bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-architecture.sh\" </dev/null >/dev/null 2>&1; exit 0",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-rally-point.sh\" 2>/dev/null; exit 0",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then exit 0; fi; bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-rally-point.sh\" 2>/dev/null; exit 0",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" session-start </dev/null 2>/dev/null; exit 0",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then exit 0; fi; bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" session-start </dev/null 2>/dev/null; exit 0",
             "timeout": 3
           }
         ]
@@ -30,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-codex-hook-trust.sh\" </dev/null 2>/dev/null || printf '{}'",
+            "command": "r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then exit 0; fi; bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-codex-hook-trust.sh\" </dev/null 2>/dev/null || printf '{}'",
             "timeout": 5
           }
         ]

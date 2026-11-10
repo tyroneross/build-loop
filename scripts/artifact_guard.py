@@ -100,7 +100,13 @@ ARTIFACTS: tuple[Artifact, ...] = (
                "scripts/atomic_io.py",
                "scripts/rally_point/build_loop_id.py",
                "scripts/temporal_membership.py", "scripts/tool_trace.py",
-               "scripts/transcript_adapter.py"),
+               "scripts/transcript_adapter.py",
+               "hooks/_resolve_python.sh", "hooks/_session_start_lib.sh",
+               "hooks/closeout.sh", "hooks/session-start-architecture.sh",
+               "hooks/session-start-codex-hook-trust.sh",
+               "hooks/session-start-rally-point.sh",
+               "hooks/session-start-tool-state.sh",
+               "scripts/session_start_hook_command.py"),
         check_argv=("scripts/build_native.py", "--check-digest"),
         # Judge the commit on index blobs and the staged digest: a build may
         # have rewritten the working-tree digest without it being staged.

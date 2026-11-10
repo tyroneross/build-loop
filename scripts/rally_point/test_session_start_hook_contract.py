@@ -62,6 +62,7 @@ def startup(tmp_path: Path):
     python.write_text("#!/bin/sh\n" + 'if [ -n "${HOOK_TEST_SLOW_PYTHON:-}" ]; then /bin/sleep 1.1; fi\n' + "exec " + shlex.quote(sys.executable) + ' "$@"\n')
     python.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CODEX_", "CLAUDE_", "RALLY_", "BUILD_LOOP_"))}
+    env.pop("TERM_SESSION_ID", None)  # A terminal identity would mask the parent-PID fallback.
     env.update({
         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "CLAUDE_PLUGIN_ROOT": str(plugin),
@@ -140,7 +141,9 @@ def test_host_tool_precedence(startup, overrides, actor):
 def test_supervisor_preserves_parent_for_identity_and_watch(startup):
     command, _, env = startup
     # Exec avoids introducing the registration shell as another parent.
-    proc = subprocess.run(["/bin/bash", "-c", "exec " + command.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
+    # The registered entry is "<native guard> exit 0; fi; <hook command>".
+    hook = command.split("exit 0; fi; ", 1)[-1]
+    proc = subprocess.run(["/bin/bash", "-c", "exec " + hook.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
     assert proc.returncode == 0
     assert Path(env["HOOK_TEST_ACTOR_LOG"]).read_text() == f"claude_code:claude_code-proc-{os.getpid()}"
     probe = Path(env["HOOK_TEST_PROBE_LOG"])
@@ -195,17 +198,30 @@ def test_completed_child_output_is_drained_after_scheduler_pause(startup):
     _, _, env = startup
     plugin = Path(env["CLAUDE_PLUGIN_ROOT"])
     hook = plugin / "hooks/_bounded_hook.sh"
-    # Model preemption after a select timeout while the child writes and exits.
+    # One scheduler pause after select, while a minimal child writes and exits.
+    # Repeated pauses plus real module imports can legitimately consume the
+    # deadline; that tests timeout behavior rather than draining completed output.
     select_call = "my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);"
     source = hook.read_text()
     assert select_call in source
-    hook.write_text(source.replace(select_call, select_call + " Time::HiRes::sleep(0.35) if $n == 0;"))
-    helper = plugin / "scripts/rally_point/hooks.py"
-    helper.write_text(helper.read_text().replace("from rally_point import hooks", "time.sleep(0.10)\nfrom rally_point import hooks"))
-    proc, elapsed = run_startup(startup)
+    source = source.replace('my ($buf, $eof, $reaped, $status)',
+                            'my $scheduler_paused = 0; my ($buf, $eof, $reaped, $status)')
+    hook.write_text(source.replace(select_call, select_call +
+        " if ($n == 0 && !$scheduler_paused++) { Time::HiRes::sleep(0.35); }"))
+    expected = {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                "additionalContext": "completed child context"}}
+    child = plugin / "minimal-hook.sh"
+    child.write_text(
+        "#!/bin/bash\nsource " + shlex.quote(str(hook)) + "\n"
+        'bl_bound_hook 1500 1500 json /bin/bash "$0"\n'
+        "/bin/sleep 0.1\nprintf '%s' " + shlex.quote(json.dumps(expected)) + "\n")
+    started = time.monotonic()
+    proc = subprocess.run(["/bin/bash", str(child)], capture_output=True,
+                          text=True, env=env, timeout=3)
+    elapsed = time.monotonic() - started
     assert proc.returncode == 0
     assert elapsed < 2
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"] == "Rally Point: fixture - 1 live peer(s)"
+    assert json.loads(proc.stdout) == expected
 
 
 def test_stdin_without_eof_is_inside_deadline(startup):
