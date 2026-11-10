@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "69d5d5d3a313044bab743e80c074dfc75281716c314036db8cb9237b672b9dd4"
+    "content_sha256": "21fc3431b2d873707551f872e962ea9065545d90898e5848480927c41f9ab7db"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1269,6 +1269,7 @@
       "scripts/build_capability_index.py": "Capability index builder (WP-B item 1) — scripts as tools + consumer ring-2.",
       "scripts/build_capability_registry.py": "Capability registry builder.",
       "scripts/build_loop_progress.py": "Pytest lifecycle adapter; Rust owns process status and raw output logs.\"\"\"",
+      "scripts/build_native.py": "Build, test and install build-loop's native hook binary (``bin/native/bl``).",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
       "scripts/bump_version.py": "Synchronize Build Loop's plugin and npm versions under the configured release owner.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",

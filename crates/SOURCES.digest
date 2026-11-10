@@ -1,0 +1,8 @@
+a2909c4aeeae2e15c62663cf6b41002d392ba3139f639d12cdc6cec6b9282f68
+# Digest of the sources bin/native/bl is built from: crates/**, Cargo.toml,
+# Cargo.lock and the mirrored files listed in scripts/build_native.py.
+# Line 1 is read by hooks/pre-edit-rally-point.sh. Regenerate with
+#   python3 scripts/build_native.py --write-digest
+# (the pre-commit artifact guard does this when a watched file is staged).
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0

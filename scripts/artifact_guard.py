@@ -80,6 +80,26 @@ ARTIFACTS: tuple[Artifact, ...] = (
                  "docs/build-loop-flow-mockup.html"),
         why="auto-discovered components + authored flow → model.json + mockup",
     ),
+    Artifact(
+        name="native-sources-digest",
+        # Must equal scripts/build_native.py WATCHED (asserted by
+        # tests/test_native_sources_digest.py); kept literal so this guard
+        # runs without build_native.py beside it.
+        watch=("Cargo.toml", "Cargo.lock", "crates/",
+               "hooks/_bounded_hook.sh", "hooks/pre-edit-rally-point.sh",
+               "scripts/hook_payload.py",
+               "scripts/rally_point/actor_identity.py",
+               "scripts/rally_point/backend_adapter.py",
+               "scripts/rally_point/channel_paths.py",
+               "scripts/rally_point/discovery_bridge.py",
+               "scripts/rally_point/hook_budget.py",
+               "scripts/rally_point/hooks.py"),
+        check_argv=("scripts/build_native.py", "--check-digest"),
+        regen_argv=("scripts/build_native.py", "--write-digest"),
+        outputs=("crates/SOURCES.digest",),
+        why="digest of what bin/native/bl mirrors; the pre-edit launcher "
+            "refuses a binary built from other sources",
+    ),
 )
 
 

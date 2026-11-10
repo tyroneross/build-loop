@@ -105,7 +105,7 @@ def test_matches_dir_prefix_and_exact():
 
 def test_registry_has_the_real_artifacts():
     names = {a.name for a in ag.ARTIFACTS}
-    assert {"architecture-diagram"} == names
+    assert {"architecture-diagram", "native-sources-digest"} == names
 
 
 # --- staged regen + restage ----------------------------------------------
