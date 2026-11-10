@@ -6,7 +6,9 @@ version = 4
 name = "bl"
 version = "0.1.0"
 dependencies = [
+ "bl-acp",
  "bl-contract",
+ "bl-gate",
  "bl-route",
  "serde_json",
 ]
@@ -24,6 +26,13 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "bl-gate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

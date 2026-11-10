@@ -14,6 +14,8 @@ extern "C" {
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn utimensat(fd: c_int, path: *const c_char, times: *const Timespec, flag: c_int) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
+    fn signal(sig: c_int, handler: extern "C" fn(c_int)) -> usize;
+    fn _exit(code: c_int) -> !;
 }
 
 #[repr(C)]
@@ -122,4 +124,42 @@ pub fn set_times(path: &str, t: Option<f64>) -> bool {
     let ptr = spec.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null());
     // SAFETY: `c` and `spec` outlive the call; a null `times` means "now".
     unsafe { utimensat(AT_FDCWD, c.as_ptr(), ptr, 0) == 0 }
+}
+
+/// The process group `bl run` must not leave behind (0: none). The agent is
+/// started in its own session, so a terminal Ctrl-C never reaches it.
+static AGENT_GROUP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Register (or with 0, clear) the agent's process group.
+pub fn kill_group_on_exit(pid: u32) {
+    AGENT_GROUP.store(pid, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// SIGKILL the registered agent group, if any.
+pub fn kill_registered_group() {
+    let pid = AGENT_GROUP.load(std::sync::atomic::Ordering::SeqCst);
+    if pid > 1 {
+        // SAFETY: sending a signal has no memory-safety preconditions; a
+        // negative pid addresses the process group.
+        unsafe {
+            kill(-(pid as c_int), SIGKILL);
+        }
+    }
+}
+
+extern "C" fn on_signal(sig: c_int) {
+    // Only async-signal-safe calls: an atomic load, kill, _exit.
+    kill_registered_group();
+    // SAFETY: _exit is async-signal-safe and does not return.
+    unsafe { _exit(128 + sig) }
+}
+
+/// On SIGHUP, SIGINT or SIGTERM: kill the agent group, exit 128 + signal.
+pub fn kill_group_on_signals() {
+    for sig in [1, 2, 15] {
+        // SAFETY: `on_signal` only makes async-signal-safe calls.
+        unsafe {
+            signal(sig, on_signal);
+        }
+    }
 }

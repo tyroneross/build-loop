@@ -136,7 +136,7 @@ fn alive(pid: &str) -> bool {
 fn killing_the_agent_kills_what_it_started() {
     // A shell agent that starts a grandchild, reports its pid, then idles.
     let script = "sleep 300 & printf '{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"pid\":%d}}\\n' $!; echo oops >&2; wait";
-    let mut agent = Agent::spawn(&Launch { command: "sh".into(), args: vec!["-c".into(), script.into()], env: vec![] }).unwrap();
+    let mut agent = Agent::spawn(&Launch { command: "sh".into(), args: vec!["-c".into(), script.into()], ..Default::default() }).unwrap();
     let result = agent.conn.call("x", Value::Null, &mut Recorder::default()).unwrap();
     let grandchild = result["pid"].as_u64().unwrap().to_string();
     assert!(alive(&grandchild));

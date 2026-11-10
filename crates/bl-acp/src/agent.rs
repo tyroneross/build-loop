@@ -32,6 +32,8 @@ pub struct Launch {
     pub args: Vec<String>,
     /// Added to the inherited environment.
     pub env: Vec<(String, String)>,
+    /// Removed from the inherited environment (names only; values are never read).
+    pub env_remove: Vec<String>,
 }
 
 /// SIGKILL every process in the group led by `pid`. Async-signal-safe.
@@ -54,6 +56,9 @@ pub struct Agent {
 impl Agent {
     pub fn spawn(launch: &Launch) -> std::io::Result<Agent> {
         let mut cmd = Command::new(&launch.command);
+        for name in &launch.env_remove {
+            cmd.env_remove(name);
+        }
         cmd.args(&launch.args)
             .envs(launch.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())

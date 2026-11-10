@@ -472,7 +472,7 @@ fn state_json_risky(workdir: &str) -> bool {
 
 /// `append_span`: mkdir, lock, rotate, append. Errors end the run silently,
 /// as Python's `main` does.
-fn append(workdir: &Path, line: &[u8]) -> std::io::Result<()> {
+pub(crate) fn append(workdir: &Path, line: &[u8]) -> std::io::Result<()> {
     let dir = workdir.join(".build-loop/telemetry");
     fs::create_dir_all(&dir)?;
     let path = dir.join("tool-traces.jsonl");
