@@ -30,19 +30,27 @@ def repo(tmp_path):
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     bn.write_digest(repo)
-    built = repo / "target" / "release" / "bl"
-    built.parent.mkdir(parents=True)
-    built.write_text("#!/bin/sh\nexit 0\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e",
+                    "commit", "-q", "-m", "base"], check=True)
     return repo
 
 
-def _runner(fail_on: str | None = None):
+def _runner(fail_on: str | None = None, produce: bool = True):
+    """Stand-in for run_step; ``cargo build`` writes the binary unless told not to."""
     calls: list[str] = []
+    argvs: list[list[str]] = []
 
     def run(label, argv, repo, env=None):
         calls.append(label)
+        argvs.append(argv)
         if label == fail_on:
             raise bn.BuildError(f"{label} failed (exit 1)")
+        if label == "cargo build" and produce:
+            built = Path(argv[argv.index("--target-dir") + 1]) / "release" / "bl"
+            built.parent.mkdir(parents=True, exist_ok=True)
+            built.write_text("#!/bin/sh\nexit 0\n")
+    run.argvs = argvs
     return run, calls
 
 
@@ -79,8 +87,56 @@ def test_stale_tracked_digest_is_rewritten_by_the_build(repo, tmp_path):
     target = repo / "scripts/rally_point/hooks.py"
     target.write_bytes(target.read_bytes() + b"#")
     run, _ = _runner()
-    digest = bn.build_and_install(repo, tmp_path / "dest", run)
+    digest = bn.build_and_install(repo, tmp_path / "dest", run, allow_dirty=True)
     assert bn.tracked_digest(repo) == digest == bn.compute_digest(repo)
+
+
+def test_dirty_watched_file_refuses_install(repo, tmp_path):
+    dest = tmp_path / "dest"
+    target = repo / "crates/bl/src/main.rs"
+    target.write_bytes(target.read_bytes() + b"//")
+    run, calls = _runner()
+    with pytest.raises(bn.BuildError, match="uncommitted changes in crates/bl/src/main.rs"):
+        bn.build_and_install(repo, dest, run)
+    assert calls == [] and not dest.exists()
+    # Staged but uncommitted is dirty too; the digest file alone is not.
+    subprocess.run(["git", "-C", str(repo), "add", "crates/bl/src/main.rs"], check=True)
+    assert bn.dirty_sources(repo) == ["crates/bl/src/main.rs"]
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD", "--", "crates/bl/src/main.rs"],
+                   check=True)
+    (repo / bn.DIGEST_FILE).write_text("0" * 64 + "\n")
+    assert bn.dirty_sources(repo) == []
+
+
+def test_cli_dirty_tree_is_a_one_line_error(repo, tmp_path):
+    # A copy of the script inside the mini repo builds that repo, not this one.
+    (repo / "scripts" / "build_native.py").write_text(_SCRIPT.read_text())
+    (repo / "Cargo.lock").write_text("changed\n")
+    cp = subprocess.run([sys.executable, str(repo / "scripts" / "build_native.py"),
+                         "--dest", str(tmp_path / "d")], cwd=str(repo), capture_output=True,
+                        text=True, timeout=30)
+    assert cp.returncode == 1
+    assert cp.stderr.count("\n") == 1 and "uncommitted changes in Cargo.lock" in cp.stderr
+    assert not (tmp_path / "d").exists()
+
+
+def test_every_cargo_step_pins_the_target_dir(repo, tmp_path):
+    run, _ = _runner()
+    bn.build_and_install(repo, tmp_path / "dest", run)
+    cargo = [a for a in run.argvs if a[0] == "cargo"]
+    assert len(cargo) == 2
+    for argv in cargo:
+        assert argv[argv.index("--target-dir") + 1] == str(repo / "target")
+
+
+def test_missing_built_binary_is_an_error(repo, tmp_path):
+    stale = repo / "target" / "release" / "bl"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("old binary")
+    run, calls = _runner(produce=False)
+    with pytest.raises(bn.BuildError, match="left no binary"):
+        bn.build_and_install(repo, tmp_path / "dest", run)
+    assert "parity harness" not in calls and not (tmp_path / "dest").exists()
 
 
 def test_check_turns_stale_when_a_mirrored_file_changes(repo, tmp_path):

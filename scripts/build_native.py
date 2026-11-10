@@ -187,15 +187,37 @@ def install(built: Path, dest: Path, digest: str) -> None:
     os.replace(tmp_sidecar, sidecar)
 
 
-def build_and_install(repo: Path = REPO, dest: Path = DEFAULT_DEST, run=run_step) -> str:
+def dirty_sources(repo: Path = REPO) -> list[str]:
+    """Watched tracked files (other than the digest) that differ from HEAD or the index."""
+    cp = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "-z",
+                         "--untracked-files=no", "--", *WATCHED], capture_output=True)
+    if cp.returncode != 0:
+        raise BuildError("git status failed")
+    paths = [e[3:] for e in cp.stdout.decode().split("\0") if len(e) > 3]
+    return sorted(p for p in paths if p != DIGEST_FILE)
+
+
+def build_and_install(repo: Path = REPO, dest: Path = DEFAULT_DEST, run=run_step,
+                      allow_dirty: bool = False) -> str:
+    if not allow_dirty:
+        dirty = dirty_sources(repo)
+        if dirty:
+            raise BuildError(f"uncommitted changes in {', '.join(dirty)}; commit them "
+                             "or pass --allow-dirty (a revert would leave the binary in use)")
     digest = compute_digest(repo)
     if tracked_digest(repo) != digest:
         write_digest(repo)
         print(f"build_native: updated {DIGEST_FILE}; commit it with the source change",
               file=sys.stderr)
-    built = repo / "target" / "release" / "bl"
-    run("cargo build", ["cargo", "build", "--release", "--locked"], repo)
-    run("cargo test", ["cargo", "test", "--locked"], repo)
+    # An explicit target dir: CARGO_TARGET_DIR or a cargo config could
+    # otherwise build elsewhere and leave an older binary at this path.
+    target = repo / "target"
+    built = target / "release" / "bl"
+    built.unlink(missing_ok=True)
+    run("cargo build", ["cargo", "build", "--release", "--locked", "--target-dir", str(target)], repo)
+    run("cargo test", ["cargo", "test", "--locked", "--target-dir", str(target)], repo)
+    if not built.is_file():
+        raise BuildError(f"cargo build left no binary at {built}")
     run("parity harness", [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                            "tests/hook_parity"], repo, {"BL_BIN": str(built)})
     if compute_digest(repo) != digest:
@@ -237,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="report whether the installed binary is fresh; no build")
     ap.add_argument("--staged", action="store_true",
                     help="with --check-digest: compare the index, not the working tree")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="install even when watched files have uncommitted changes")
     ap.add_argument("--dest", type=Path, default=DEFAULT_DEST,
                     help="install directory (default: bin/native in this repo)")
     args = ap.parse_args(argv)
@@ -257,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
             fresh, reason = installed_status(dest=args.dest)
             print(f"build_native: {reason}", file=sys.stdout if fresh else sys.stderr)
             return 0 if fresh else 1
-        digest = build_and_install(dest=args.dest)
+        digest = build_and_install(dest=args.dest, allow_dirty=args.allow_dirty)
     except BuildError as exc:
         print(f"build_native: {exc}", file=sys.stderr)
         return 1
