@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "044c74117ff7f6f0e4ec4465dec6c4275ae5ce81a45fdf92c997bf51e65f55f9"
+    "content_sha256": "2ec1c48b4b1077e6ba72901e1bcc1b63b758fc2cad1d8c120725b131e6632441"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1606,6 +1606,7 @@
       "scripts/semantic_index/_bench_hybrid.py": "Quick latency bench for the SQLite hybrid recall path.",
       "scripts/semantic_index/backfill.py": "Backfill missing embeddings and refresh unknown or mismatched model provenance.",
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
+      "scripts/session_start_hook_command.py": "The SessionStart hook commands in hooks/hooks.json, from one template.",
       "scripts/share_presentation_check.py": "Check Build Loop's scoped share-presentation record; never claim render proof.\"\"\"",
       "scripts/skill_index.py": "",
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
