@@ -33,7 +33,9 @@ PLUGIN_ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 from test_pre_bash_fastpath import CORPUS, POLICY, event_bytes  # noqa: E402
 
-BASE_REF = os.environ.get("BL_DIFF_BASE_REF", "main")
+# Pinned to the last commit before the one-interpreter change. A moving ref such
+# as "main" would compare this code with itself once the branch merges.
+BASE_REF = os.environ.get("BL_DIFF_BASE_REF", "04d4cf2f")
 OWNED = ("scripts/hooks/pre_bash_dispatch.sh", "scripts/hooks/pre_bash_fastpath.py")
 HOOK = 'root="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}"; hook="$root/scripts/hooks/pre_bash_dispatch.sh"; ' \
        'if [ -x "$hook" ]; then "$hook"; else printf \'{}\'; fi'
