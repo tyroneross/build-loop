@@ -129,15 +129,41 @@ pub fn set_times(path: &str, t: Option<f64>) -> bool {
 /// The process group `bl run` must not leave behind (0: none). The agent is
 /// started in its own session, so a terminal Ctrl-C never reaches it.
 static AGENT_GROUP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Set while the agent is being started and its group is not yet known.
+static SPAWNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A signal that arrived while [`SPAWNING`]; acted on once the group is known.
+static PENDING_SIGNAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Register (or with 0, clear) the agent's process group.
-pub fn kill_group_on_exit(pid: u32) {
-    AGENT_GROUP.store(pid, std::sync::atomic::Ordering::SeqCst);
+use std::sync::atomic::Ordering::SeqCst;
+
+/// The agent is about to be started. Until [`agent_started`] a signal is
+/// remembered instead of ending the process, so the child is never orphaned.
+pub fn agent_starting() {
+    SPAWNING.store(true, SeqCst);
+}
+
+/// The agent's process group is known (0: the start failed). A signal that
+/// arrived meanwhile kills the group now and exits 128 + signal.
+pub fn agent_started(pid: u32) {
+    AGENT_GROUP.store(pid, SeqCst);
+    SPAWNING.store(false, SeqCst);
+    let sig = PENDING_SIGNAL.load(SeqCst);
+    if sig != 0 {
+        kill_registered_group();
+        // SAFETY: _exit does not return and has no preconditions.
+        unsafe { _exit(128 + sig) }
+    }
+}
+
+/// Forget the agent's group. Call after killing it and before reaping it:
+/// a reaped group id may be reused by an unrelated process.
+pub fn agent_gone() {
+    AGENT_GROUP.store(0, SeqCst);
 }
 
 /// SIGKILL the registered agent group, if any.
 pub fn kill_registered_group() {
-    let pid = AGENT_GROUP.load(std::sync::atomic::Ordering::SeqCst);
+    let pid = AGENT_GROUP.load(SeqCst);
     if pid > 1 {
         // SAFETY: sending a signal has no memory-safety preconditions; a
         // negative pid addresses the process group.
@@ -148,15 +174,20 @@ pub fn kill_registered_group() {
 }
 
 extern "C" fn on_signal(sig: c_int) {
-    // Only async-signal-safe calls: an atomic load, kill, _exit.
+    // Only async-signal-safe calls: atomic loads and stores, kill, _exit.
+    if SPAWNING.load(SeqCst) {
+        PENDING_SIGNAL.store(sig, SeqCst);
+        return;
+    }
     kill_registered_group();
     // SAFETY: _exit is async-signal-safe and does not return.
     unsafe { _exit(128 + sig) }
 }
 
-/// On SIGHUP, SIGINT or SIGTERM: kill the agent group, exit 128 + signal.
+/// On SIGHUP, SIGINT, SIGQUIT or SIGTERM: kill the agent group, exit
+/// 128 + signal.
 pub fn kill_group_on_signals() {
-    for sig in [1, 2, 15] {
+    for sig in [1, 2, 3, 15] {
         // SAFETY: `on_signal` only makes async-signal-safe calls.
         unsafe {
             signal(sig, on_signal);

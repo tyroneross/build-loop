@@ -1,7 +1,7 @@
 {
   "schema": "build-loop.profile.v1",
   "name": "quick",
-  "description": "Lean Claude session for small, bounded edits. Loads no user, project or local settings, so no plugins, hooks, MCP servers or CLAUDE.md: start-up is fastest and nothing but bl's policy answers permission requests.",
+  "description": "Lean Claude session for small, bounded edits. Loads no user, project or local settings, so no plugins, hooks, MCP servers or CLAUDE.md: start-up is fastest. The policy of this profile is a placeholder and not a safety gate.",
   "agent": {
     "host": "claude_code",
     "command": "claude-agent-acp",

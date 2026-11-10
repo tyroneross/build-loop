@@ -324,7 +324,7 @@ fn contains_any(s: &str, words: &[&str]) -> R<bool> {
 
 /// `_redact`: sensitive keys become `"[REDACTED]"` (mirrored exactly); a
 /// string value the inline/value regexes might rewrite falls back.
-fn redact(value: &Value, key: &str) -> R<Value> {
+pub(crate) fn redact(value: &Value, key: &str) -> R<Value> {
     if contains_any(key, &KEY_WORDS)? {
         return Ok(Value::String("[REDACTED]".into()));
     }

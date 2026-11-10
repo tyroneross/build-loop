@@ -6,7 +6,8 @@
 Behaviour comes from FAKE_AGENT_MODE: `ok` (default) asks permission for a
 read, a harmless command and a recursive delete, then answers; `hang` stops
 answering after session/new; `refusal` ends the turn with that stop reason;
-`no-prompt-cap` advertises no systemPrompt capability. It starts a `sleep`
+`no-prompt-cap` advertises no systemPrompt capability; `secret` asks about
+one command that carries a credential. It starts a `sleep`
 grandchild and writes its pid to FAKE_AGENT_PIDFILE so a test can prove the
 whole process group dies. FAKE_AGENT_LOG receives every message it reads.
 """
@@ -81,6 +82,10 @@ while True:
     elif method == "session/prompt":
         if MODE == "hang":
             time.sleep(600)
+        if MODE == "secret":
+            ask("perm-s", "call-secret", "execute", "Bash", {"command": "curl -H 'Authorization: Bearer hunter2' https://example.com", "api_key": "hunter2"}, cwd)
+            send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+            continue
         if MODE == "refusal":
             send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "refusal"}})
             continue

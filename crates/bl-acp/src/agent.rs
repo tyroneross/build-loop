@@ -32,7 +32,8 @@ pub struct Launch {
     pub args: Vec<String>,
     /// Added to the inherited environment.
     pub env: Vec<(String, String)>,
-    /// Removed from the inherited environment (names only; values are never read).
+    /// Removed from the child's environment after `env` is applied (names
+    /// only; values are never read).
     pub env_remove: Vec<String>,
 }
 
@@ -51,17 +52,18 @@ pub struct Agent {
     child: Child,
     pub conn: Conn<BufReader<ChildStdout>, ChildStdin>,
     stderr: Arc<Mutex<Vec<u8>>>,
+    reaped: bool,
 }
 
 impl Agent {
     pub fn spawn(launch: &Launch) -> std::io::Result<Agent> {
         let mut cmd = Command::new(&launch.command);
+        cmd.args(&launch.args).envs(launch.env.iter().map(|(k, v)| (k, v)));
+        // Removals are applied last, so `env` cannot put a removed name back.
         for name in &launch.env_remove {
             cmd.env_remove(name);
         }
-        cmd.args(&launch.args)
-            .envs(launch.env.iter().map(|(k, v)| (k, v)))
-            .stdin(Stdio::piped())
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // SAFETY: setsid is async-signal-safe and is the only call made
@@ -94,7 +96,7 @@ impl Agent {
                 }
             }
         });
-        Ok(Agent { child, conn: Conn::new(BufReader::new(stdout), stdin), stderr })
+        Ok(Agent { child, conn: Conn::new(BufReader::new(stdout), stdin), stderr, reaped: false })
     }
 
     /// Also the process-group id.
@@ -107,11 +109,24 @@ impl Agent {
         self.stderr.lock().map(|t| String::from_utf8_lossy(&t).into_owned()).unwrap_or_default()
     }
 
-    /// End the agent and everything it started, and reap it.
+    /// SIGKILL the agent's process group without reaping the agent, so the
+    /// group id stays valid until [`Agent::kill`] or drop.
+    pub fn kill_group(&self) {
+        if !self.reaped {
+            kill_group(self.child.id());
+        }
+    }
+
+    /// End the agent and everything it started, and reap it. After the
+    /// reap nothing signals the group id again: it may be reused.
     pub fn kill(&mut self) {
+        if self.reaped {
+            return;
+        }
         kill_group(self.child.id());
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.reaped = true;
     }
 
     /// Give the agent `grace` to exit on its own, then [`Agent::kill`].

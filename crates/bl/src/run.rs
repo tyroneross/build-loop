@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 // SPDX-License-Identifier: Apache-2.0
 //! `bl run --profile <name-or-path> [--model <id>] [--work <kind>]
-//! [--cwd <dir>] [--dry-run] [--json] [--summary <file>] "<task>"` —
-//! EXPERIMENTAL.
+//! [--cwd <dir>] [--dry-run] [--json] [--summary <file>] [--allow-unasked]
+//! "<task>"` — EXPERIMENTAL.
 //!
 //! Drives one agent session over the Agent Client Protocol: load a use-case
 //! profile, resolve the model natively (`bl-route`), start the profile's
@@ -25,7 +25,13 @@
 //! The policy sees only the tool calls the agent asks about. Whether an
 //! agent asks before every action is a property of that agent's
 //! configuration (for the Claude adapter: `ask` rules passed in the
-//! profile's `session_meta`), not something this client can enforce.
+//! profile's `session_meta`), not something this client can enforce. So:
+//! a profile without `ask` rules, or with a mode that does not ask, is
+//! refused unless `--allow-unasked` is given; every tool call that starts
+//! without a preceding permission request is reported on stderr as it
+//! happens; and the run notice names the profile file and the exact
+//! command started. Tool input is passed through the trace redaction
+//! before it is printed or stored.
 
 use crate::profile::Profile;
 use crate::{cli, sys, trace};
@@ -66,9 +72,15 @@ struct Plan {
     task: String,
     json: bool,
     summary: Option<PathBuf>,
+    allow_unasked: bool,
 }
 
 impl Plan {
+    /// The exact command and arguments that are started.
+    fn command_line(&self) -> String {
+        std::iter::once(&self.profile.command).chain(self.profile.args.iter()).map(|a| format!("{a:?}")).collect::<Vec<_>>().join(" ")
+    }
+
     fn describe(&self) -> Value {
         json!({
             "experimental": true,
@@ -85,17 +97,19 @@ impl Plan {
             "skills": self.profile.skills.len(),
             "project": self.project,
             "deadline_seconds": self.profile.deadline_seconds,
+            "unset_env": self.profile.unset_env,
+            "unasked_risk": self.profile.unasked_risk(),
         })
     }
 }
 
 fn plan(args: &[String]) -> Result<(Plan, bool), String> {
-    let p = cli::parse(args, &["--profile", "--model", "--work", "--cwd", "--taxonomy", "--summary"], &["--dry-run", "--json"])?;
+    let p = cli::parse(args, &["--profile", "--model", "--work", "--cwd", "--taxonomy", "--summary"], &["--dry-run", "--json", "--allow-unasked"])?;
     let dry_run = p.switch("--dry-run");
     let task = match p.positional.as_slice() {
         [task] if !task.trim().is_empty() => task.clone(),
         [] if dry_run => String::new(),
-        _ => return Err("usage: bl run --profile <name-or-path> [--model <id>] [--work <kind>] [--cwd <dir>] [--dry-run] [--json] \"<task>\"".into()),
+        _ => return Err("usage: bl run --profile <name-or-path> [--model <id>] [--work <kind>] [--cwd <dir>] [--dry-run] [--json] [--summary <file>] [--allow-unasked] \"<task>\"".into()),
     };
     let project = match p.value("--cwd") {
         Some(dir) => PathBuf::from(dir),
@@ -103,7 +117,7 @@ fn plan(args: &[String]) -> Result<(Plan, bool), String> {
     };
     let project = project.canonicalize().map_err(|e| format!("project directory {}: {e}", project.display()))?;
     let root = cli::root();
-    let profile = Profile::load(p.value("--profile").ok_or("--profile is required")?, &project, root.as_deref())?;
+    let profile = Profile::load(p.value("--profile").ok_or("--profile is required")?, root.as_deref())?;
     if bl_gate::by_name(&profile.policy).is_none() {
         return Err(format!("profile {:?} names policy {:?}, which this build does not have", profile.name, profile.policy));
     }
@@ -130,7 +144,7 @@ fn plan(args: &[String]) -> Result<(Plan, bool), String> {
     }
     parts.extend(profile.append.iter().map(String::as_str));
     let instructions = parts.join("\n\n");
-    Ok((Plan { profile, project, model, model_source, model_aliases, instructions, task, json: p.switch("--json"), summary: p.value("--summary").map(PathBuf::from) }, dry_run))
+    Ok((Plan { profile, project, model, model_source, model_aliases, instructions, task, json: p.switch("--json"), summary: p.value("--summary").map(PathBuf::from), allow_unasked: p.switch("--allow-unasked") }, dry_run))
 }
 
 #[derive(Default)]
@@ -199,8 +213,10 @@ impl Driver<'_> {
             tool.input = input.clone();
         }
         if let Some(status) = text("status") {
-            if status != "pending" && !tool.requested {
+            if status != "pending" && !tool.requested && !tool.ran_unasked {
                 tool.ran_unasked = true;
+                let name = if tool.name.is_empty() { tool.kind.clone() } else { tool.name.clone() };
+                eprintln!("\nbl run: UNASKED tool call {name} {:?} started without a permission request; the policy did not see it", shown(&Value::String(tool.title.clone())));
             }
             tool.status = status.to_string();
         }
@@ -293,11 +309,46 @@ impl Handler for Driver<'_> {
         tool.allowed = Some(decision.allow);
         tool.rule = decision.rule;
         tool.gate_us = Some(gate_us);
-        let what = request.raw_input.get("command").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| request.title.clone());
+        let what = shown(request.raw_input.get("command").filter(|c| c.is_string()).unwrap_or(&Value::String(request.title.clone())));
         let verdict = if decision.allow { "allow" } else { "refuse" };
         eprintln!("\nbl run: permission [{kind}] {name} {what:?} -> {verdict} ({})", decision.rule);
         self.trace_progress(&id);
         Ok(reply)
+    }
+}
+
+/// What may be printed or stored of tool input: the value after the
+/// redaction `bl hook trace` applies. Sensitive keys are replaced; a string
+/// the trace path would hand to Python for inline redaction (it may hold a
+/// credential) is withheld whole, since that regex is not ported.
+fn redacted(input: &Value) -> Value {
+    match input {
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), trace::redact(&Value::Null, k).ok().filter(Value::is_string).unwrap_or_else(|| redacted(v)))).collect()),
+        Value::Array(items) => Value::Array(items.iter().map(redacted).collect()),
+        other => trace::redact(other, "").unwrap_or_else(|_| Value::String(WITHHELD.into())),
+    }
+}
+
+const WITHHELD: &str = "[withheld: may contain a credential]";
+
+/// A redacted value as one printable string.
+fn shown(value: &Value) -> String {
+    match redacted(value) {
+        Value::String(s) => s,
+        other => other.to_string(),
+    }
+}
+
+/// Owns the running agent: on every way out its process group is killed,
+/// then forgotten, then reaped, in that order, so no signal is ever sent to
+/// a group id that has been reaped and may have been reused.
+struct Running(Agent);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.kill_group();
+        sys::agent_gone();
+        self.0.kill();
     }
 }
 
@@ -328,9 +379,16 @@ fn drive(plan: &Plan, started: Instant) -> Result<i32, String> {
         stage.insert(name.to_string(), json!(started.elapsed().as_micros() as f64 / 1000.0));
     };
     mark(&mut stage, "ready_ms");
-    let mut agent = Agent::spawn(&Launch { command: profile.command.clone(), args: profile.args.clone(), env, env_remove: profile.unset_env.clone() })
-        .map_err(|e| format!("cannot start agent {:?}: {e}", profile.command))?;
-    sys::kill_group_on_exit(agent.pid());
+    // Start and register under the exit lock and the spawning flag: the
+    // deadline thread waits, and a signal is held until the group is known.
+    let mut running = {
+        let _guard = crate::EXIT.lock();
+        sys::agent_starting();
+        let spawned = Agent::spawn(&Launch { command: profile.command.clone(), args: profile.args.clone(), env, env_remove: profile.unset_env.clone() });
+        sys::agent_started(spawned.as_ref().map(Agent::pid).unwrap_or(0));
+        Running(spawned.map_err(|e| format!("cannot start agent {:?}: {e}", profile.command))?)
+    };
+    let agent = &mut running.0;
     mark(&mut stage, "spawned_ms");
 
     let mut driver = Driver {
@@ -344,14 +402,14 @@ fn drive(plan: &Plan, started: Instant) -> Result<i32, String> {
         ignored_requests: Vec::new(),
     };
 
-    let init = session::initialize(&mut agent.conn, &mut driver, CLIENT_VERSION).map_err(|e| fail("initialize", e, &agent))?;
+    let init = session::initialize(&mut agent.conn, &mut driver, CLIENT_VERSION).map_err(|e| fail("initialize", e, agent))?;
     mark(&mut stage, "initialized_ms");
     if !plan.instructions.is_empty() && !init.system_prompt {
         return Err(format!("agent {} {} does not accept appended instructions (no systemPrompt capability)", init.agent_name, init.agent_version));
     }
     let cwd = plan.project.to_string_lossy();
     let request = NewSession { cwd: &cwd, mcp_servers: &profile.mcp_servers, append_instructions: Some(&plan.instructions), meta: Some(&profile.session_meta) };
-    let mut sess = session::new_session(&mut agent.conn, &mut driver, &request).map_err(|e| fail("session/new", e, &agent))?;
+    let mut sess = session::new_session(&mut agent.conn, &mut driver, &request).map_err(|e| fail("session/new", e, agent))?;
     driver.session_id = sess.id.clone();
     mark(&mut stage, "session_ms");
 
@@ -361,13 +419,13 @@ fn drive(plan: &Plan, started: Instant) -> Result<i32, String> {
             if !option.values.contains(mode) {
                 return Err(format!("agent does not offer mode {mode:?} (offers: {})", option.values.join(", ")));
             }
-            session::set_config_option(&mut agent.conn, &mut driver, &mut sess, &option.id, mode).map_err(|e| fail("set mode", e, &agent))?;
+            session::set_config_option(&mut agent.conn, &mut driver, &mut sess, &option.id, mode).map_err(|e| fail("set mode", e, agent))?;
         }
     }
     let option = sess.option("model").cloned().ok_or("the agent offers no model option")?;
     let value = agent_model_value(&plan.model, &option.values, &plan.model_aliases).ok_or_else(|| format!("agent does not offer model {:?} (offers: {})", plan.model, option.values.join(", ")))?;
     if option.current != value {
-        session::set_config_option(&mut agent.conn, &mut driver, &mut sess, &option.id, &value).map_err(|e| fail("set model", e, &agent))?;
+        session::set_config_option(&mut agent.conn, &mut driver, &mut sess, &option.id, &value).map_err(|e| fail("set model", e, agent))?;
     }
     let model_in_use = sess.option("model").map(|o| o.current.clone()).unwrap_or_default();
     let mode_in_use = sess.option("mode").map(|o| o.current.clone()).unwrap_or_default();
@@ -381,11 +439,10 @@ fn drive(plan: &Plan, started: Instant) -> Result<i32, String> {
     let outcome = match &turn {
         Ok(stop) if stop == "end_turn" => Ok(()),
         Ok(stop) => Err(format!("turn stopped: {}", if stop.is_empty() { "no stopReason" } else { stop })),
-        Err(e) => Err(fail("session/prompt", e, &agent)),
+        Err(e) => Err(fail("session/prompt", e, agent)),
     };
     let dropped = agent.conn.dropped_lines;
-    agent.close(Duration::from_millis(0));
-    sys::kill_group_on_exit(0);
+    drop(running);
 
     if !plan.json {
         println!();
@@ -395,7 +452,7 @@ fn drive(plan: &Plan, started: Instant) -> Result<i32, String> {
         .iter()
         .map(|t| {
             json!({
-                "id": t.id, "tool": t.name, "kind": t.kind, "title": t.title, "input": t.input, "parent": t.parent,
+                "id": t.id, "tool": t.name, "kind": t.kind, "title": shown(&Value::String(t.title.clone())), "input": redacted(&t.input), "parent": t.parent,
                 "requested": t.requested, "ran_unasked": t.ran_unasked,
                 "decision": t.allowed.map(|a| if a { "allow" } else { "refuse" }), "rule": t.rule,
                 "status": t.status, "gate_us": t.gate_us,
@@ -434,7 +491,8 @@ pub fn main(started: Instant, args: &[String]) -> i32 {
             println!("{d}");
         } else {
             println!("bl run (experimental) dry run; nothing started");
-            for key in ["profile", "profile_path", "agent_command", "sign_in", "model", "model_source", "policy", "mode", "instruction_chars", "mcp_servers", "skills", "project", "deadline_seconds"] {
+            println!("  starts: {}", plan.command_line());
+            for key in ["profile", "profile_path", "sign_in", "unset_env", "model", "model_source", "policy", "mode", "unasked_risk", "instruction_chars", "mcp_servers", "skills", "project", "deadline_seconds"] {
                 let shown = match &d[key] {
                     Value::String(s) => s.clone(),
                     Value::Array(a) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "),
@@ -445,9 +503,21 @@ pub fn main(started: Instant, args: &[String]) -> i32 {
         }
         return 0;
     }
+    match (plan.profile.unasked_risk(), plan.allow_unasked) {
+        (Some(risk), false) => {
+            eprintln!("bl run: refusing to start: {risk}. Pass --allow-unasked to run anyway.");
+            return 2;
+        }
+        (Some(risk), true) => eprintln!("bl run: WARNING (--allow-unasked): {risk}."),
+        (None, _) => {}
+    }
     eprintln!(
-        "bl run: EXPERIMENTAL slice. Policy {} is a placeholder, not a safety gate; it sees only what the agent asks about. profile={} model={}",
-        plan.profile.policy, plan.profile.name, plan.model
+        "bl run: EXPERIMENTAL slice. Policy {} is a placeholder, not a safety gate; it sees only what the agent asks about. profile={} ({}) model={} starts: {}",
+        plan.profile.policy,
+        plan.profile.name,
+        plan.profile.path.display(),
+        plan.model,
+        plan.command_line()
     );
     let deadline = started + Duration::from_secs(plan.profile.deadline_seconds);
     let seconds = plan.profile.deadline_seconds;
@@ -485,6 +555,21 @@ mod tests {
         assert_eq!(agent_model_value("sonnet", &offered, &["claude-sonnet-5".into()]).as_deref(), Some("sonnet"));
         assert_eq!(agent_model_value("opus", &offered, &["claude-opus-5".into()]).as_deref(), Some("claude-opus-5"));
         assert_eq!(agent_model_value("gpt-6.1-sol", &offered, &[]), None);
+    }
+
+    /// Finding 7: tool input goes through the trace redaction.
+    #[test]
+    fn tool_input_is_redacted_before_it_is_shown_or_stored() {
+        let input = json!({"command": "curl -H 'Authorization: Bearer abc123' https://x", "api_key": "sk-live-1", "nested": {"password": "p", "path": "a.txt"}, "list": ["ok", "token=abc"]});
+        let out = redacted(&input);
+        assert_eq!(out["command"], WITHHELD);
+        assert_eq!(out["api_key"], "[REDACTED]");
+        assert_eq!(out["nested"], json!({"password": "[REDACTED]", "path": "a.txt"}));
+        assert_eq!(out["list"], json!(["ok", WITHHELD]));
+        let text = out.to_string();
+        assert!(!text.contains("abc123") && !text.contains("sk-live-1"));
+        assert_eq!(shown(&json!("git status --short")), "git status --short");
+        assert_eq!(shown(&json!("echo secret=1")), WITHHELD);
     }
 
     #[test]
