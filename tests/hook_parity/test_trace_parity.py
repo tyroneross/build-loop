@@ -139,6 +139,8 @@ def _telemetry_is_file(world):
 
 NON_ASCII = {"command": "echo 'héllo 😀 日本' \u007f\u0001\t\"q\" \\ end", "ключ": "значение"}
 BIG = "x" * 120_000
+RAW = json.dumps({"tool_name": "Edit", "session_id": SESSION, "tool_input": NON_ASCII},
+                 ensure_ascii=False).encode()
 
 CASES = [
     # --- host payload shapes, each phase ---------------------------------
@@ -249,6 +251,40 @@ CASES = [
          native=False, expect=span(tool="Bash")),
     Case("deep_payload", payload(tool_name="Grep", session_id=SESSION, tool_input=deep(150)),
          native=False, expect=span(tool="Grep")),
+    # --- numbers serde cannot hold inside a Codex JSON string (F2) ---------
+    Case("codex_returncode_overflow", codex('{"returncode": 1e999}'), native=False,
+         expect=span(tool="shell", call="call_1", event="error")),
+    Case("codex_error_overflow", codex('{"error": 1e999}'), native=False,
+         expect=span(tool="shell", call="call_1", event="error")),
+    Case("codex_status_code_400_digits", codex('{"status_code": 1' + "0" * 400 + "}"), native=False,
+         expect=span(tool="shell", call="call_1", event="error")),
+    # --- hand-off with an unwritable TMPDIR (F3) ---------------------------
+    Case("handoff_with_unwritable_tmpdir", payload(tool_name="Bash", session_id=SESSION,
+                                                   tool_input={"command": "echo token=abc"}),
+         native=False, env={"TMPDIR": "/nonexistent-dir"}, expect=span(tool="Bash")),
+    # --- stdin encoding Python would use (F4); RAW is non-ASCII on stdin ----
+    Case("latin1_locale_non_ascii", RAW,
+         native=False, env={"LC_ALL": "en_US.ISO8859-1"}),
+    Case("latin1_locale_ascii", claude("PostToolUse"), env={"LC_ALL": "en_US.ISO8859-1"},
+         expect=span(tool="Bash", call="toolu_01")),
+    Case("lc_ctype_latin1_non_ascii", RAW,
+         native=False, env={"LC_CTYPE": "en_US.ISO8859-1"}),
+    Case("lc_all_utf8_over_latin1_lang", RAW,
+         env={"LC_ALL": "en_US.UTF-8", "LANG": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
+    Case("ioencoding_latin1_non_ascii", RAW,
+         native=False, env={"PYTHONIOENCODING": "latin-1"}),
+    Case("ioencoding_utf16_ascii", claude("PostToolUse"), native=False, env={"PYTHONIOENCODING": "utf-16"}),
+    Case("ioencoding_utf8_non_ascii", RAW,
+         env={"PYTHONIOENCODING": "UTF-8:strict", "LC_ALL": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
+    Case("c_locale_non_ascii", RAW,
+         env={"LANG": "C"}, expect=span(tool="Edit")),
+    Case("utf8_mode_off_c_locale_non_ascii", RAW,
+         native=False, env={"LANG": "C", "PYTHONUTF8": "0"}, expect=span(tool="Edit")),  # C.UTF-8 coercion; bl hands off conservatively
+    Case("unknown_locale_non_ascii", RAW, native=False, env={"LANG": "xx_XX.ISO8859-1"},
+         expect=span(tool="Edit")),  # Python falls back to C (UTF-8); bl hands off conservatively
+    Case("utf8_mode_on_latin1_locale", RAW,
+         env={"PYTHONUTF8": "1", "LC_ALL": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
+    Case("utf8_mode_invalid_value", claude("PostToolUse"), native=False, env={"PYTHONUTF8": "2"}),
     # --- malformed stdin --------------------------------------------------
     Case("empty_stdin", b"", expect=nothing),
     Case("whitespace_stdin", b" \n\t\r ", expect=nothing),
@@ -468,6 +504,8 @@ STANDINS = {
     "stub0": (_stub(0), 0o755),
     "stub75": (_stub(75), 0o755),
     "stub127": (_stub(127), 0o755),
+    "stub1": (_stub(1), 0o755),
+    "stub_killed": (b'#!/bin/sh\n: > "$BL_STUB_MARK"\nkill -9 $$\n', 0o755),
     "garbage": (b"\x00not a program", 0o755),          # sh: exit 126
     "bad_interpreter": (b"#!/nonexistent/interp\n", 0o755),  # sh: exit 126
     "not_executable": (_stub(0), 0o644),
@@ -488,6 +526,8 @@ FALLBACK_CONDITIONS = {
     "unrunnable_126_directory": ("directory", DIGEST, {}, False),
     "bl_exit_75": ("stub75", DIGEST, {}, True),
     "bl_exit_127": ("stub127", DIGEST, {}, True),
+    "bl_exit_1": ("stub1", DIGEST, {}, True),
+    "bl_killed_sigkill": ("stub_killed", DIGEST, {}, True),
 }
 
 
@@ -528,3 +568,20 @@ def test_launcher_runs_fresh_binary_natively(case, root, tmp_path):
     plugin = _plugin(tmp_path, "real")
     snap = _hook(_registered(case.phase), case, root, plugin, PATH="/bin")
     case.expect(snap)
+
+
+def test_launcher_late_fallback_never_duplicates(root, tmp_path):
+    """A binary that read stdin to EOF, appended its line and then died
+    (here SIGKILL) leaves exactly that one line: the Python fallback the
+    command then runs reads an empty stdin and writes nothing. Real bl reads
+    stdin to EOF before its only append, so this is the worst case."""
+    plugin = _plugin(tmp_path, "absent")
+    bl = plugin / "bin" / "native" / "bl"
+    bl.write_text('#!/bin/sh\ncat >/dev/null\nd="$CLAUDE_PROJECT_DIR/.build-loop/telemetry"\nmkdir -p "$d"\n'
+                  'printf \'{"stub":1}\\n\' >> "$d/tool-traces.jsonl"\nkill -9 $$\n')
+    bl.chmod(0o755)
+    case = next(c for c in CASES if c.name == "claude_post_end")
+    snap = _hook(_registered(case.phase), case, root, plugin)
+    assert (snap.rc, snap.stdout, snap.stderr) == (0, b"", b"")
+    body = snap.files["proj/.build-loop/telemetry/tool-traces.jsonl"]
+    assert body.endswith(':{"stub":1}\n'), body

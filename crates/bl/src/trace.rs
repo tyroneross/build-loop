@@ -128,6 +128,9 @@ pub fn run(args: &Args) -> Outcome {
     if std::io::stdin().lock().read_to_end(&mut bytes).is_err() {
         return fallback("stdin read error", Some(bytes));
     }
+    if let Err(Fallback(reason)) = stdin_decodes_as_utf8(bytes.is_ascii()) {
+        return fallback(reason, Some(bytes));
+    }
     match plan(&workdir, &args.phase, &bytes, now_ns()) {
         Ok(Some(line)) => {
             let _ = append(Path::new(&workdir), line.as_bytes());
@@ -135,6 +138,56 @@ pub fn run(args: &Args) -> Outcome {
         }
         Ok(None) => Outcome::Done,
         Err(Fallback(reason)) => fallback(reason, Some(bytes)),
+    }
+}
+
+/// Whether Python 3's `sys.stdin` decodes these bytes exactly as UTF-8
+/// (`plan` assumes it). Precedence, per the `PYTHONIOENCODING`, `PYTHONUTF8`
+/// and UTF-8 Mode docs: a non-empty encoding in `PYTHONIOENCODING` wins;
+/// then `PYTHONUTF8=1` forces UTF-8 and `=0` forbids the automatic switch;
+/// otherwise the LC_CTYPE locale (first non-empty of `LC_ALL`, `LC_CTYPE`,
+/// `LANG`, default `C`) decides, with `C`/`POSIX` turning on UTF-8 mode.
+/// Locale charsets are ASCII supersets, so pure-ASCII input only needs the
+/// `PYTHONIOENCODING` and validity checks.
+fn stdin_decodes_as_utf8(ascii: bool) -> R<()> {
+    let var = |name: &str| -> R<Option<String>> {
+        match std::env::var_os(name) {
+            None => Ok(None),
+            Some(v) if v.is_empty() => Ok(None),
+            Some(v) => v.into_string().map(Some).map_err(|_| Fallback("non-utf8 env")),
+        }
+    };
+    let utf8_name = |n: &str| n.to_ascii_lowercase().replace(['-', '_'], "").contains("utf8");
+    let utf8_mode = match var("PYTHONUTF8")?.as_deref() {
+        None => None,
+        Some("1") => Some(true),
+        Some("0") => Some(false),
+        Some(_) => return Err(Fallback("PYTHONUTF8 value")), // Python refuses to start
+    };
+    if let Some(io) = var("PYTHONIOENCODING")? {
+        let encoding = io.split(':').next().unwrap_or("");
+        if !encoding.is_empty() {
+            return if encoding.to_ascii_lowercase().replace(['-', '_'], "") == "utf8" {
+                Ok(())
+            } else {
+                Err(Fallback("PYTHONIOENCODING"))
+            };
+        }
+    }
+    if ascii || utf8_mode == Some(true) {
+        return Ok(());
+    }
+    let mut locale = "C".to_string();
+    for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
+        if let Some(v) = var(name)? {
+            locale = v;
+            break;
+        }
+    }
+    if utf8_name(&locale) || (utf8_mode.is_none() && (locale == "C" || locale == "POSIX")) {
+        Ok(())
+    } else {
+        Err(Fallback("non-utf-8 stdin locale"))
     }
 }
 
@@ -345,9 +398,19 @@ fn codex_response_failed(response: Option<&Value>) -> R<bool> {
 }
 
 /// Whether `json.loads` might accept a string serde rejected: Python also
-/// takes `NaN`/`Infinity`, lone surrogate escapes and deeper nesting.
+/// takes `NaN`/`Infinity`, lone surrogate escapes, deeper nesting and numbers
+/// serde cannot hold (`1e999`, a 400-digit integer). A number can only occur
+/// in a document whose first character is `{`, `[`, `-` or a digit (a
+/// string, `true`, `false` or `null` start cannot contain one), so for those
+/// any digit counts.
 fn python_may_decode(s: &str) -> bool {
-    s.contains("NaN") || s.contains("Infinity") || s.contains("\\u") || s.matches(['[', '{']).count() >= 100
+    let first = s.trim_start_matches([' ', '\t', '\n', '\r']).bytes().next();
+    let may_hold_number = matches!(first, Some(b'{' | b'[' | b'-' | b'0'..=b'9'));
+    s.contains("NaN")
+        || s.contains("Infinity")
+        || s.contains("\\u")
+        || (may_hold_number && s.bytes().any(|b| b.is_ascii_digit()))
+        || s.matches(['[', '{']).count() >= 100
 }
 
 /// `FAILED_PROCESS.search(s)`. Every match contains "exited", "failed" or
@@ -563,6 +626,11 @@ mod tests {
         assert_eq!(p(r#"{"turn_id":1,"tool_response":{"returncode":true}}"#).unwrap(), "end");
         assert_eq!(p(r#"{"tool_response":{"exit_code":3}}"#).unwrap(), "end");
         assert!(p(r#"{"turn_id":1,"tool_response":{"output":"command failed: 2"}}"#).is_err());
+        for big in [r#"{\"returncode\": 1e999}"#, r#"{\"error\": 1e999}"#, r#"[1e999]"#] {
+            let payload = format!(r#"{{"turn_id":1,"tool_response":"{big}"}}"#);
+            assert!(p(&payload).is_err(), "{payload}");
+        }
+        assert_eq!(p(r#"{"turn_id":1,"tool_response":"total 0\nREADME.md"}"#).unwrap(), "end");
     }
 
     #[test]

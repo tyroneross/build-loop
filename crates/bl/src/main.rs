@@ -4,9 +4,10 @@
 //!
 //! `bl hook trace --workdir W --phase P` replaces
 //! `python3 scripts/tool_trace.py --workdir W hook --phase P` (see
-//! `trace.rs`). It exits 0 and prints nothing; cases it cannot mirror exec
-//! that Python command with the stdin bytes already read; exit 75 means
-//! unknown arguments or no plugin checkout, nothing read.
+//! `trace.rs`). It exits 0 and prints nothing; cases it cannot mirror run
+//! that Python command with the stdin bytes already read (through a pipe)
+//! and exit with its status; exit 75 means unknown arguments or no plugin
+//! checkout, nothing read.
 //!
 //! `bl hook pre-edit` replaces the shell + Perl + Python chain behind
 //! `hooks/pre-edit-rally-point.sh` for native Rally contexts. Contract:
@@ -176,16 +177,23 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
             let mut cmd = Command::new("python3");
             cmd.arg(root.join("scripts/tool_trace.py"))
                 .args(["--workdir", &parsed.workdir, "hook", "--phase", &parsed.phase]);
-            if let Some(bytes) = stdin {
-                match stdin_file(&bytes) {
-                    Some(file) => {
-                        cmd.stdin(Stdio::from(file));
-                    }
-                    None => std::process::exit(0),
-                }
+            let Some(bytes) = stdin else {
+                let _ = cmd.exec(); // stdin unread: Python inherits it
+                std::process::exit(0)
+            };
+            // The bytes already read go to Python through a pipe (no temp
+            // file, so an unwritable TMPDIR cannot lose the line). Python
+            // reads stdin to EOF before anything else, so writing all of it
+            // first cannot deadlock. The deadline thread waits on EXIT, held
+            // here, so it never cuts Python short.
+            let Ok(mut child) = cmd.stdin(Stdio::piped()).spawn() else {
+                std::process::exit(0)
+            };
+            if let Some(mut pipe) = child.stdin.take() {
+                let _ = pipe.write_all(&bytes);
             }
-            let _ = cmd.exec();
-            std::process::exit(0)
+            let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+            std::process::exit(code)
         }
         // Done, or a panic: Python's main swallows every exception and exits 0.
         _ => std::process::exit(0),
