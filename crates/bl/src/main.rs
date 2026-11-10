@@ -35,6 +35,7 @@ mod run;
 mod session_start;
 mod sys;
 mod trace;
+mod tool_state;
 
 use std::io::{Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;

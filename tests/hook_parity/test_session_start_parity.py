@@ -10,10 +10,19 @@ same case and requires the identical result.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import os
 import time
 
 import pytest
+
+# A legacy-contract case performs two run_stable calls, each allowing four
+# bounded attempts. Each attempt has five host timeouts (14 s total) plus
+# up to 15 s to observe detached workers, before fixture setup. The shared
+# 60 s unit-test limit can expire during healthy bounded retries under load.
+# Keep every behavioral assertion and retry; bound this integration module
+# to the composed budget instead of treating a single attempt as the case.
+pytestmark = pytest.mark.timeout(360)
 
 from tests.hook_parity import session_start_harness as h
 from tests.hook_parity.session_start_harness import Case, event
@@ -183,6 +192,12 @@ def test_legacy_contract(case, legacy, tmp_path):
 def test_bl_matches_legacy(case, legacy, tmp_path):
     if not h.BL.exists():
         pytest.skip(f"{h.BL} not built")
+    # Python-only fault injection no longer reaches a native snapshot.
+    # Keep the legacy failure tests above, and compare native behavior with
+    # the same case without the obsolete worker fault.
+    if case.env.get("HARNESS_SLOW") == "tool_state_paths.py" or case.env.get("HARNESS_FAIL") == "tool_state_paths.py":
+        case = replace(case, name=case.name + "_native", timing=False,
+                       env={k: v for k, v in case.env.items() if not k.startswith("HARNESS_")})
     want = legacy(case)
     got = h.run_stable("bl", case, tmp_path / "bl")
     skip_if_loaded(case, want, got)
@@ -202,7 +217,7 @@ def test_swapped_outputs_change_the_expected_stdout(legacy):
 
 
 LAUNCHER_CASES = [c for c in CASES if c.name in (
-    "project_claude", "closeout_owed_sits_between_tool_state_and_trust", "not_opted_in", "tool_state_fails")]
+    "project_claude", "closeout_owed_sits_between_tool_state_and_trust", "not_opted_in", "trust_check_fails")]
 
 
 @pytest.mark.parametrize("state", ["absent", "stale", "off", "fresh"])

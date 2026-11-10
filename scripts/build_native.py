@@ -86,6 +86,7 @@ MIRRORED = (
     "hooks/session-start-rally-point.sh",
     "hooks/session-start-tool-state.sh",
     "scripts/session_start_hook_command.py",
+    "scripts/tool_state_paths.py",
 )
 # Every path whose change changes the digest; also the artifact guard's watch list.
 WATCHED = ("Cargo.toml", "Cargo.lock", "crates/") + MIRRORED

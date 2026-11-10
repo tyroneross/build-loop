@@ -7,8 +7,8 @@
 //! five SessionStart hooks (`hooks/session-start-tool-state.sh`,
 //! `session-start-architecture.sh`, `session-start-rally-point.sh`,
 //! `closeout.sh session-start`, `session-start-codex-hook-trust.sh`). The
-//! four Python workers that hold the real logic still run, as children:
-//! `tool_state_paths.py`, `rally_point/hooks.py session-start-safe`,
+//! tool-state snapshot is native. Three Python workers still run:
+//! `rally_point/hooks.py session-start-safe`,
 //! `stop_closeout.py` and `codex_hook_trust_check.py`.
 //!
 //! Contract:
@@ -471,11 +471,28 @@ fn tool_state(p: &Plan) -> Vec<u8> {
     if !Path::new(&script).is_file() {
         return Vec::new();
     }
-    let mut cmd = python(&script);
-    cmd.args(["snapshot", "--workdir", &p.workdir, "--no-exclude", "--emit-context"]);
-    match run_bounded(cmd, Some(p.stdin.clone()), Instant::now() + p.budgets.tool_state) {
-        Ran::Done { out, .. } => out,
-        Ran::Cut => EMPTY.to_vec(),
+    let until = Instant::now() + p.budgets.tool_state;
+    let native = crate::tool_state::snapshot(&p.workdir, &p.stdin, until, |cwd, args| {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(cwd).args(args);
+        match run_bounded(cmd, None, until) {
+            Ran::Done { out, ok: true } => Some(out),
+            _ => None,
+        }
+    });
+    match native {
+        Some(out) if out.len() <= MAX_OUT => out,
+        Some(_) => EMPTY.to_vec(),
+        None => {
+            // Non-UTF-8 filenames need Python's surrogateescape JSON.
+            // The decision precedes state writes; retain the original budget.
+            let mut cmd = python(&script);
+            cmd.args(["snapshot", "--workdir", &p.workdir, "--no-exclude", "--emit-context"]);
+            match run_bounded(cmd, Some(p.stdin.clone()), until) {
+                Ran::Done { out, .. } => out,
+                Ran::Cut => EMPTY.to_vec(),
+            }
+        }
     }
 }
 

@@ -69,7 +69,7 @@ fn run_deadline_prints_an_empty_object_when_stdin_never_closes() {
 }
 
 /// A plugin root whose trust check prints at once and whose tool-state
-/// worker hangs: the run deadline must still deliver the finished step and
+/// Git lookup hangs: the run deadline must still deliver the finished step and
 /// kill the hung worker.
 #[test]
 fn run_deadline_keeps_finished_steps_and_kills_the_rest() {
@@ -85,7 +85,7 @@ fn run_deadline_keeps_finished_steps_and_kills_the_rest() {
          *) echo $$ > '{}'; exec /bin/sleep 30;; esac\n",
         pidfile.display()
     );
-    for name in ["python3", "perl"] {
+    for name in ["python3", "perl", "git"] {
         std::fs::write(bin.join(name), &stub).unwrap();
         std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -142,7 +142,7 @@ fn cancellation_kills_foreground_workers() {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(root.join("scripts/tool_state_paths.py"), "").unwrap();
         let pidfile = root.join("worker.pid");
-        let python = bin.join("python3");
+        let python = bin.join("git");
         std::fs::write(&python, format!("#!/bin/sh\necho $$ > '{}'\nexec /bin/sleep 30\n", pidfile.display())).unwrap();
         std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut child = bl(&root).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
@@ -164,4 +164,36 @@ fn cancellation_kills_foreground_workers() {
         if alive { unsafe { kill(-worker, 9); } }
         assert!(!alive, "worker survived signal {sig}");
     }
+}
+
+/// The native snapshot's Git calls obey the sub-step limit, independently
+/// of the whole-run timer; completed trust context must still be delivered.
+#[test]
+fn tool_state_deadline_stops_git_and_preserves_other_context() {
+    let root = scratch("tool-state-deadline");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["tool_state_paths.py", "codex_hook_trust_check.py"] {
+        std::fs::write(root.join("scripts").join(name), "").unwrap();
+    }
+    let pidfile = root.join("git.pid");
+    std::fs::write(bin.join("git"), format!("#!/bin/sh\necho $$ > '{}'\nexec /bin/sleep 30\n", pidfile.display())).unwrap();
+    std::fs::write(bin.join("python3"), "#!/bin/sh\necho 'independent trust context'\n").unwrap();
+    for name in ["git", "python3"] {
+        std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let started = Instant::now();
+    let out = bl(&root).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("CLAUDE_PROJECT_DIR", &root)
+        .env("BUILD_LOOP_TOOL_STATE_DEADLINE_MS", "200")
+        .env("BUILD_LOOP_SESSION_START_DEADLINE_MS", "5000")
+        .stdin(Stdio::null()).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["additionalContext"], "independent trust context");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    let pid = std::fs::read_to_string(pidfile).unwrap().trim().to_string();
+    let alive = Command::new("/bin/kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success();
+    assert!(!alive, "native Git worker survived its sub-step deadline");
 }

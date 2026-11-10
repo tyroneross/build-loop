@@ -120,7 +120,8 @@ class Snapshot:
 
 
 def _git(*args: str, cwd: Path) -> None:
-    subprocess.run(["git", "-c", "user.email=h@example.invalid", "-c", "user.name=harness", *args],
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
+                    "-c", "user.email=h@example.invalid", "-c", "user.name=harness", *args],
                    cwd=cwd, check=True, capture_output=True)
 
 
@@ -267,7 +268,10 @@ def snapshot_files(world: World) -> dict[str, str]:
             if presence_only or path.is_symlink():
                 out[rel] = "present"
             else:
-                out[rel] = _norm(path.read_bytes().decode("utf-8", "replace"), world.root)
+                text = path.read_bytes().decode("utf-8", "replace")
+                if "tool-state" in rel_dir.parts and name.endswith(".json"):
+                    text = json.dumps(json.loads(text), sort_keys=True)
+                out[rel] = _norm(text, world.root)
     return out
 
 
@@ -294,7 +298,7 @@ def collect_spawns(world: World, wait: float = 15.0) -> tuple[list[tuple], list[
     for line in (log.read_text() if log.exists() else "").split("\x1d")[:-1]:
         argv_field, workdir, deadline_env, stdin = line.split("\x1e")
         base, *argv = argv_field.split("\x1f")
-        if base in HELPERS or (argv and argv[0] in HELPERS):
+        if base == "tool_state_paths.py" or base in HELPERS or (argv and argv[0] in HELPERS):
             continue
         argv = [_norm(a, world.root) for a in argv]
         for i, a in enumerate(argv[:-1]):
