@@ -130,3 +130,6 @@ archive/
 /target/
 # Locally installed native hook binary; delivery is not decided yet
 /bin/native/
+
+# Vendored-module install receipt (records the installer's local source path)
+vendor/color_engine/INSTALLED.json
