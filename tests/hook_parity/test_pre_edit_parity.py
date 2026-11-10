@@ -298,7 +298,20 @@ FALLBACK_CASES = {
 NATIVE_BIN = harness.REPO_ROOT / "bin" / "native" / "bl"
 
 
-@pytest.mark.skipif(not NATIVE_BIN.exists(), reason="bin/native/bl not installed")
+def _first_line(path: Path) -> str:
+    try:
+        return path.read_text().split("\n", 1)[0].strip()
+    except OSError:
+        return ""
+
+
+# The launcher runs bin/native/bl only when its sidecar digest matches the
+# tracked one; against a stale binary these comparisons would pass vacuously.
+NATIVE_FRESH = NATIVE_BIN.exists() and _first_line(NATIVE_BIN.parent / "bl.sources") == _first_line(
+    harness.REPO_ROOT / "crates" / "SOURCES.digest") != ""
+
+
+@pytest.mark.skipif(not NATIVE_FRESH, reason="bin/native/bl not installed or stale")
 @pytest.mark.parametrize(
     "case", [c for c in CASES if c.name not in FALLBACK_CASES],
     ids=[c.name for c in CASES if c.name not in FALLBACK_CASES],
@@ -324,3 +337,59 @@ def test_missing_binary_matches_main(case, root, tmp_path):
     finally:
         main_copy.unlink()
     assert new.comparable() == old.comparable()
+
+
+# --- launcher freshness guard -------------------------------------------
+# A throwaway plugin root: the real launcher and supervisor, a stub bl that
+# records that it ran, and no scripts/ (so the shell path exits 0 silently).
+DIGEST = "a" * 64
+
+
+def _guard_root(tmp_path: Path, *, built: str | None, tree: str | None) -> Path:
+    root = tmp_path / "plugin"
+    (root / "hooks").mkdir(parents=True)
+    for name in ("pre-edit-rally-point.sh", "_bounded_hook.sh"):
+        (root / "hooks" / name).write_bytes((harness.HOOK.parent / name).read_bytes())
+    native = root / "bin" / "native"
+    native.mkdir(parents=True)
+    stub = native / "bl"
+    stub.write_text('#!/bin/sh\n: > "$BL_STUB_MARK"\nexit 0\n')
+    stub.chmod(0o755)
+    if built is not None:
+        (native / "bl.sources").write_text(built)
+    if tree is not None:
+        (root / "crates").mkdir()
+        (root / "crates" / "SOURCES.digest").write_text(tree)
+    return root
+
+
+def _launch(root: Path, tmp_path: Path, **env: str) -> bool:
+    """Run the launcher; return True when the native binary ran."""
+    mark = tmp_path / "native-ran"
+    proc = subprocess.run(
+        ["bash", str(root / "hooks" / "pre-edit-rally-point.sh")],
+        input=_edit(str(tmp_path / "x.py")),
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "BL_STUB_MARK": str(mark),
+             "CLAUDE_PROJECT_DIR": str(tmp_path), **env},
+        capture_output=True, timeout=30,
+    )
+    assert (proc.returncode, proc.stdout, proc.stderr) == (0, b"", b"")
+    return mark.exists()
+
+
+GUARD_CASES = {
+    "fresh_uses_binary": (f"{DIGEST}\n", f"{DIGEST}\n# comment\n", {}, True),
+    "one_byte_mismatch": (f"{DIGEST}\n", f"{DIGEST[:-1]}b\n", {}, False),
+    "sidecar_missing": (None, f"{DIGEST}\n", {}, False),
+    "tracked_missing": (f"{DIGEST}\n", None, {}, False),
+    "both_empty": ("\n", "\n", {}, False),
+    "sidecar_no_newline": (DIGEST, f"{DIGEST}\n", {}, False),
+    "off_switch": (f"{DIGEST}\n", f"{DIGEST}\n", {"BUILD_LOOP_NATIVE_HOOKS": "off"}, False),
+}
+
+
+@pytest.mark.parametrize("name", GUARD_CASES)
+def test_launcher_freshness_guard(name, tmp_path):
+    built, tree, env, native = GUARD_CASES[name]
+    root = _guard_root(tmp_path, built=built, tree=tree)
+    assert _launch(root, tmp_path, **env) is native
