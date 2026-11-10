@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [workspace]
 resolver = "2"
-members = ["crates/bl-contract", "crates/bl-acp", "crates/bl"]
+members = ["crates/bl-contract", "crates/bl-route", "crates/bl-acp", "crates/bl"]
 
 [workspace.package]
 edition = "2021"
