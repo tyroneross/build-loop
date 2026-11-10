@@ -30,11 +30,20 @@ Usage
 ``python3 scripts/build_native.py --check``    is the installed binary fresh?
 ``python3 scripts/build_native.py --check-digest``  is crates/SOURCES.digest current?
 ``python3 scripts/build_native.py --write-digest``  rewrite crates/SOURCES.digest
+``--dest DIR`` installs (or checks) ``DIR/bl`` instead of ``bin/native/bl``.
+
+The build runs ``cargo build --release --locked``, ``cargo test --locked`` and
+the parity harness (``tests/hook_parity``) against ``target/release/bl``, then
+installs. Installing into the repo's own ``bin/native`` also reruns the
+launcher parity cases through the real hook script; if they fail the sidecar
+is removed, so the launcher goes back to the shell hook.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +51,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DIGEST_FILE = "crates/SOURCES.digest"
 SIDECAR_NAME = "bl.sources"
+DEFAULT_DEST = REPO / "bin" / "native"
 
 # Python and shell whose behaviour crates/bl and crates/bl-contract reproduce
 # (their doc comments cite these modules), plus the modules hooks.py loads on
@@ -121,6 +131,71 @@ def write_digest(repo: Path = REPO) -> str:
     return digest
 
 
+def run_step(label: str, argv: list[str], repo: Path, env: dict[str, str] | None = None) -> None:
+    """Run one build step in ``repo``; raise BuildError naming it on failure."""
+    print(f"build_native: {label}", file=sys.stderr, flush=True)
+    cp = subprocess.run(argv, cwd=str(repo), env={**os.environ, **(env or {})})
+    if cp.returncode != 0:
+        raise BuildError(f"{label} failed (exit {cp.returncode})")
+
+
+def install(built: Path, dest: Path, digest: str) -> None:
+    """Replace ``dest/bl`` and then write its sidecar, each atomically.
+
+    The old sidecar goes first, so no moment pairs a new binary with a digest
+    it was not built from; an interrupted install leaves the shell hook in use.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    sidecar = dest / SIDECAR_NAME
+    sidecar.unlink(missing_ok=True)
+    tmp = dest / "bl.tmp"
+    shutil.copy2(built, tmp)
+    tmp.chmod(0o755)
+    os.replace(tmp, dest / "bl")
+    tmp_sidecar = dest / (SIDECAR_NAME + ".tmp")
+    tmp_sidecar.write_text(digest + "\n", encoding="utf-8")
+    os.replace(tmp_sidecar, sidecar)
+
+
+def build_and_install(repo: Path = REPO, dest: Path = DEFAULT_DEST, run=run_step) -> str:
+    digest = compute_digest(repo)
+    if tracked_digest(repo) != digest:
+        write_digest(repo)
+        print(f"build_native: updated {DIGEST_FILE}; commit it with the source change",
+              file=sys.stderr)
+    built = repo / "target" / "release" / "bl"
+    run("cargo build", ["cargo", "build", "--release", "--locked"], repo)
+    run("cargo test", ["cargo", "test", "--locked"], repo)
+    run("parity harness", [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                           "tests/hook_parity"], repo, {"BL_BIN": str(built)})
+    if compute_digest(repo) != digest:
+        raise BuildError("sources changed during the build; run it again")
+    install(built, dest, digest)
+    if dest.resolve() == (repo / "bin" / "native").resolve():
+        try:
+            run("launcher parity", [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                                    "tests/hook_parity", "-k", "launcher"], repo)
+        except BuildError:
+            (dest / SIDECAR_NAME).unlink(missing_ok=True)
+            raise
+    return digest
+
+
+def installed_status(repo: Path = REPO, dest: Path = DEFAULT_DEST) -> tuple[bool, str]:
+    """(fresh, one-line reason) for the binary installed in ``dest``."""
+    if not os.access(dest / "bl", os.X_OK):
+        return False, f"no executable {dest / 'bl'}"
+    built = read_first_line(dest / SIDECAR_NAME)
+    if not built:
+        return False, f"{dest / SIDECAR_NAME} missing or empty; the shell hook runs"
+    tracked = tracked_digest(repo)
+    if built != tracked:
+        return False, f"built from other sources than {DIGEST_FILE}; the shell hook runs"
+    if tracked != compute_digest(repo):
+        return False, f"{DIGEST_FILE} is out of date with the tree"
+    return True, f"fresh ({built[:12]})"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     mode = ap.add_mutually_exclusive_group()
@@ -128,6 +203,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="exit 1 when crates/SOURCES.digest is out of date")
     mode.add_argument("--write-digest", action="store_true",
                       help="rewrite crates/SOURCES.digest from the tree")
+    mode.add_argument("--check", action="store_true",
+                      help="report whether the installed binary is fresh; no build")
+    ap.add_argument("--dest", type=Path, default=DEFAULT_DEST,
+                    help="install directory (default: bin/native in this repo)")
     args = ap.parse_args(argv)
     try:
         if args.write_digest:
@@ -141,11 +220,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{DIGEST_FILE} is out of date; run: "
                   "python3 scripts/build_native.py --write-digest", file=sys.stderr)
             return 1
+        if args.check:
+            fresh, reason = installed_status(dest=args.dest)
+            print(f"build_native: {reason}", file=sys.stdout if fresh else sys.stderr)
+            return 0 if fresh else 1
+        digest = build_and_install(dest=args.dest)
     except BuildError as exc:
         print(f"build_native: {exc}", file=sys.stderr)
         return 1
-    ap.print_usage(sys.stderr)
-    return 2
+    print(f"build_native: installed {args.dest / 'bl'} ({digest[:12]})")
+    return 0
 
 
 if __name__ == "__main__":
