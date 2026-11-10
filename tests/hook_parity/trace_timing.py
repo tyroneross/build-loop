@@ -4,8 +4,8 @@
 the command the host runs.
 
 ``python``: the former inline hooks.json command (state.json test, then
-``python3 scripts/tool_trace.py``). ``launcher_bl``: the registered command
-(``hooks/tool-trace.sh`` with a fresh ``bl``). ``bl_direct``: the binary
+``python3 scripts/tool_trace.py``). ``hooks_json_bl``: the registered command
+(the guarded hooks.json command with a fresh ``bl``). ``bl_direct``: the binary
 alone. Runs are interleaved so load drifts hit every variant alike; each run
 appends one line to the same project, and the script asserts that each run
 wrote exactly one line.
@@ -41,8 +41,8 @@ def main() -> int:
     env = {**world.env, "CLAUDE_PLUGIN_ROOT": str(plugin)}
     stdin = claude("PostToolUse", tool_response={"stdout": "ok\n", "stderr": ""})
     variants = {
-        "python": ["sh", "-c", INLINE.replace("{phase}", "end")],
-        "launcher_bl": ["sh", "-c", _registered("end")],
+        "python": ["/bin/sh", "-c", INLINE.replace("{phase}", "end")],
+        "hooks_json_bl": ["/bin/sh", "-c", _registered("end")],
         "bl_direct": [str(plugin / "bin" / "native" / "bl"), "hook", "trace",
                       "--workdir", world.workdir_arg, "--phase", "end"],
     }
@@ -64,7 +64,7 @@ def main() -> int:
         for name, v in samples.items()
     }
     py = statistics.median(samples["python"])
-    for name in ("launcher_bl", "bl_direct"):
+    for name in ("hooks_json_bl", "bl_direct"):
         results["variants"][name]["speedup_vs_python"] = round(py / statistics.median(samples[name]), 1)
     text = json.dumps(results, indent=2)
     if args.json:

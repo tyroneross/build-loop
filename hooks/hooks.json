@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/tool-trace.sh\" start >/dev/null 2>&1 || true; fi",
+            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; s=75; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then \"$r/bin/native/bl\" hook trace --workdir \"$CLAUDE_PROJECT_DIR\" --phase start >/dev/null 2>&1; s=$?; fi; case $s in 75|126|127) python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase start >/dev/null 2>&1 || true;; esac; fi",
             "async": true,
             "timeout": 1
           }
@@ -117,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/tool-trace.sh\" end >/dev/null 2>&1 || true; fi",
+            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; s=75; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then \"$r/bin/native/bl\" hook trace --workdir \"$CLAUDE_PROJECT_DIR\" --phase end >/dev/null 2>&1; s=$?; fi; case $s in 75|126|127) python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase end >/dev/null 2>&1 || true;; esac; fi",
             "async": true,
             "timeout": 1
           }
@@ -178,7 +178,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/tool-trace.sh\" error >/dev/null 2>&1 || true; fi",
+            "command": "if [ -f \"${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json\" ]; then r=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; s=75; if [ \"${BUILD_LOOP_NATIVE_HOOKS:-}\" != off ] && [ -x \"$r/bin/native/bl\" ] && { read -r a < \"$r/bin/native/bl.sources\"; } 2>/dev/null && { read -r b < \"$r/crates/SOURCES.digest\"; } 2>/dev/null && [ -n \"$b\" ] && [ \"$a\" = \"$b\" ]; then \"$r/bin/native/bl\" hook trace --workdir \"$CLAUDE_PROJECT_DIR\" --phase error >/dev/null 2>&1; s=$?; fi; case $s in 75|126|127) python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase error >/dev/null 2>&1 || true;; esac; fi",
             "async": true,
             "timeout": 1
           }

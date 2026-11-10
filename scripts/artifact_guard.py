@@ -97,7 +97,7 @@ ARTIFACTS: tuple[Artifact, ...] = (
                "scripts/rally_point/discovery_bridge.py",
                "scripts/rally_point/hook_budget.py",
                "scripts/rally_point/hooks.py",
-               "hooks/tool-trace.sh", "scripts/atomic_io.py",
+               "scripts/atomic_io.py",
                "scripts/rally_point/build_loop_id.py",
                "scripts/temporal_membership.py", "scripts/tool_trace.py",
                "scripts/transcript_adapter.py"),

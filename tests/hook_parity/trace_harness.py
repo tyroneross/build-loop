@@ -28,7 +28,6 @@ from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOL_TRACE = REPO_ROOT / "scripts" / "tool_trace.py"
-LAUNCHER = REPO_ROOT / "hooks" / "tool-trace.sh"
 BL = Path(os.environ.get("BL_BIN") or REPO_ROOT / "target" / "release" / "bl")
 REAL_PYTHON = os.path.realpath(sys.executable)
 MAX_FILE_BYTES = 10 * 1024 * 1024

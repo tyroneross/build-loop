@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 
@@ -405,49 +406,52 @@ def test_summarize_reads_mixed_files_like_all_python(tmp_path):
     assert json.loads(out["python"])["coverage"]["invalid_trace_records"] == 0
 
 
-# --- launcher -------------------------------------------------------------
-# The command hooks/hooks.json registered before hooks/tool-trace.sh existed;
-# the launcher must behave exactly like it whenever the binary cannot run.
+# --- hooks.json commands ---------------------------------------------------
+# The command hooks/hooks.json registered before the native path existed; the
+# registered command must behave exactly like it whenever bl cannot run.
 INLINE = ('if [ -f "${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json" ]; then python3 '
           '"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py" --workdir "$CLAUDE_PROJECT_DIR" '
           'hook --phase {phase} >/dev/null 2>&1 || true; fi')
 DIGEST = "a" * 64
+sys.path.insert(0, str(h.REPO_ROOT / "scripts"))
+import trace_hook_command  # noqa: E402
+
+sys.path.pop(0)
 
 
 def _registered(phase: str) -> str:
-    """The trace command hooks/hooks.json registers for ``phase``."""
-    data = json.loads((h.REPO_ROOT / "hooks" / "hooks.json").read_text())
-    event = {"start": "PreToolUse", "end": "PostToolUse", "error": "PostToolUseFailure"}[phase]
-    found = [hk for group in data["hooks"][event] for hk in group["hooks"] if "tool-trace.sh" in hk["command"]]
-    assert len(found) == 1 and found[0]["async"] is True and found[0]["timeout"] == 1, found
-    return found[0]["command"]
+    """The trace command hooks/hooks.json registers for ``phase``, read from the file."""
+    entry = trace_hook_command.trace_hooks(json.loads((h.REPO_ROOT / "hooks" / "hooks.json").read_text()))[phase]
+    assert entry["async"] is True and entry["timeout"] == 1, entry
+    return entry["command"]
 
 
-def test_launcher_registrations_keep_guard_and_phase():
-    for phase in ("start", "end", "error"):
-        assert _registered(phase) == INLINE.replace("{phase}", phase).replace(
-            'python3 "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py" --workdir "$CLAUDE_PROJECT_DIR" hook --phase',
-            'bash "${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/tool-trace.sh"')
+def test_launcher_hooks_json_matches_template():
+    proc = subprocess.run([sys.executable, str(h.REPO_ROOT / "scripts" / "trace_hook_command.py"), "--check"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    commands = {p: _registered(p) for p in ("start", "end", "error")}
+    assert len({c.replace(f"--phase {p} ", "--phase P ") for p, c in commands.items()}) == 1
+    for p, c in commands.items():
+        assert c.startswith('if [ -f "${CLAUDE_PROJECT_DIR:-$PWD}/.build-loop/state.json" ]; then')
+        assert INLINE.replace("{phase}", p).split("then ", 1)[1].removesuffix(" fi") in c
 
 
 def _plugin(tmp_path: Path, binary: str, *, built: str | None = DIGEST, tree: str | None = DIGEST) -> Path:
-    """A throwaway plugin root: the real launcher, the real scripts/ (linked)
-    and ``binary``: "real" (this build's bl), "stub" (records that it ran),
-    "noexec" (not runnable) or "absent"."""
+    """A throwaway plugin root: the real scripts/ (linked) and ``binary``:
+    "real" (this build's bl), "absent", or a stand-in from ``STANDINS``."""
     root = tmp_path / "plugin"
-    (root / "hooks").mkdir(parents=True)
-    shutil.copy2(h.LAUNCHER, root / "hooks" / "tool-trace.sh")
-    (root / "scripts").symlink_to(h.REPO_ROOT / "scripts")
     native = root / "bin" / "native"
     native.mkdir(parents=True)
+    (root / "scripts").symlink_to(h.REPO_ROOT / "scripts")
+    bl = native / "bl"
     if binary == "real":
-        shutil.copy2(h.BL, native / "bl")
-    elif binary == "stub":
-        (native / "bl").write_text('#!/bin/sh\n: > "$BL_STUB_MARK"\nexit 0\n')
-        (native / "bl").chmod(0o755)
-    elif binary == "noexec":
-        (native / "bl").write_bytes(b"\x00not a program")
-        (native / "bl").chmod(0o755)
+        shutil.copy2(h.BL, bl)
+    elif binary == "directory":
+        bl.mkdir()
+    elif binary != "absent":
+        bl.write_bytes(STANDINS[binary][0])
+        bl.chmod(STANDINS[binary][1])
     if built is not None:
         (native / "bl.sources").write_text(built + "\n")
     if tree is not None:
@@ -456,33 +460,54 @@ def _plugin(tmp_path: Path, binary: str, *, built: str | None = DIGEST, tree: st
     return root
 
 
+def _stub(code: int) -> bytes:
+    return f'#!/bin/sh\n: > "$BL_STUB_MARK"\nexit {code}\n'.encode()
+
+
+STANDINS = {
+    "stub0": (_stub(0), 0o755),
+    "stub75": (_stub(75), 0o755),
+    "stub127": (_stub(127), 0o755),
+    "garbage": (b"\x00not a program", 0o755),          # sh: exit 126
+    "bad_interpreter": (b"#!/nonexistent/interp\n", 0o755),  # sh: exit 126
+    "not_executable": (_stub(0), 0o644),
+}
 LAUNCHER_CASES = [c for c in CASES if c.name in {
     "claude_pre_start", "claude_failure_error", "codex_post_exit_code", "sensitive_value",
     "malformed_stdin", "empty_stdin", "project_without_build_loop", "state_missing",
     "workdir_empty_uses_cwd", "non_ascii_input"}]
+# binary, sidecar digest, env, whether the stand-in should have been started
 FALLBACK_CONDITIONS = {
-    "binary_absent": ("absent", DIGEST, {}),
-    "sidecar_stale": ("stub", "b" * 64, {}),
-    "sidecar_missing": ("stub", None, {}),
-    "native_off": ("stub", DIGEST, {"BUILD_LOOP_NATIVE_HOOKS": "off"}),
-    "binary_cannot_run": ("noexec", DIGEST, {}),
+    "binary_absent": ("absent", DIGEST, {}, False),
+    "sidecar_stale": ("stub0", "b" * 64, {}, False),
+    "sidecar_missing": ("stub0", None, {}, False),
+    "native_off": ("stub0", DIGEST, {"BUILD_LOOP_NATIVE_HOOKS": "off"}, False),
+    "not_executable": ("not_executable", DIGEST, {}, False),
+    "unrunnable_126_garbage": ("garbage", DIGEST, {}, False),
+    "unrunnable_126_bad_interpreter": ("bad_interpreter", DIGEST, {}, False),
+    "unrunnable_126_directory": ("directory", DIGEST, {}, False),
+    "bl_exit_75": ("stub75", DIGEST, {}, True),
+    "bl_exit_127": ("stub127", DIGEST, {}, True),
 }
 
 
 def _hook(command: str, case: Case, root: Path, plugin: Path, **env) -> h.Snapshot:
-    return h.run("hook", case, root, argv=["sh", "-c", command.replace("{phase}", case.phase)],
+    """Run ``command`` the way the host does: ``/bin/sh -c`` with the hook env."""
+    return h.run("hook", case, root, argv=["/bin/sh", "-c", command.replace("{phase}", case.phase)],
                  extra_env={"CLAUDE_PLUGIN_ROOT": str(plugin), **env})
 
 
 @pytest.mark.parametrize("cond", list(FALLBACK_CONDITIONS))
 @pytest.mark.parametrize("case", LAUNCHER_CASES, ids=[c.name for c in LAUNCHER_CASES])
 def test_launcher_without_usable_binary_matches_inline(case, cond, root, tmp_path):
-    binary, built, env = FALLBACK_CONDITIONS[cond]
+    binary, built, env, started = FALLBACK_CONDITIONS[cond]
     plugin = _plugin(tmp_path, binary, built=built)
     mark = tmp_path / "stub-ran"
     old = _hook(INLINE, case, root, plugin, BL_STUB_MARK=str(mark), **env)
+    assert not mark.exists()
     new = _hook(_registered(case.phase), case, root, plugin, BL_STUB_MARK=str(mark), **env)
-    assert not mark.exists(), "the guard ran a binary it should have refused"
+    state_exists = case.workdir in ("proj", "empty") and case.state is not None
+    assert mark.exists() == (started and state_exists), "guard started a binary it should have refused, or vice versa"
     assert new.comparable() == old.comparable()
 
 
