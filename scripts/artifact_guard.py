@@ -96,15 +96,19 @@ ARTIFACTS: tuple[Artifact, ...] = (
                "scripts/rally_point/channel_paths.py",
                "scripts/rally_point/discovery_bridge.py",
                "scripts/rally_point/hook_budget.py",
-               "scripts/rally_point/hooks.py"),
+               "scripts/rally_point/hooks.py",
+               "hooks/tool-trace.sh", "scripts/atomic_io.py",
+               "scripts/rally_point/build_loop_id.py",
+               "scripts/temporal_membership.py", "scripts/tool_trace.py",
+               "scripts/transcript_adapter.py"),
         check_argv=("scripts/build_native.py", "--check-digest"),
         # Judge the commit on index blobs and the staged digest: a build may
         # have rewritten the working-tree digest without it being staged.
         staged_check_argv=("scripts/build_native.py", "--check-digest", "--staged"),
         regen_argv=("scripts/build_native.py", "--write-digest"),
         outputs=("crates/SOURCES.digest",),
-        why="digest of what bin/native/bl mirrors; the pre-edit launcher "
-            "refuses a binary built from other sources",
+        why="digest of what bin/native/bl mirrors; the pre-edit and tool-trace "
+            "launchers refuse a binary built from other sources",
     ),
 )
 

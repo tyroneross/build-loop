@@ -14,9 +14,9 @@ file whose change can change what ``bl`` should do: ``crates/**``,
   staged, and ``tests/test_native_sources_digest.py`` fails when it is stale.
 - ``bin/native/bl.sources`` (ignored) holds the digest the installed binary was
   built from. It is written last, only after every test passed.
-- ``hooks/pre-edit-rally-point.sh`` runs the binary only when the first lines
-  of the two files are equal, read with shell builtins. Anything else runs the
-  shell hook.
+- ``hooks/pre-edit-rally-point.sh`` and ``hooks/tool-trace.sh`` run the binary
+  only when the first lines of the two files are equal, read with shell
+  builtins. Anything else runs the shell or Python hook.
 
 The digest hashes working-tree bytes of the files ``git ls-files`` lists under
 those paths (the build compiles working-tree bytes). This repo applies no
@@ -33,7 +33,8 @@ Usage
 ``--dest DIR`` installs (or checks) ``DIR/bl`` instead of ``bin/native/bl``.
 
 The build runs ``cargo build --release --locked``, ``cargo test --locked`` and
-the parity harness (``tests/hook_parity``) against ``target/release/bl``, then
+the parity harness (``tests/hook_parity``: pre-edit and tool-trace cases)
+against ``target/release/bl``, then
 installs. Installing into the repo's own ``bin/native`` also reruns the
 launcher parity cases through the real hook script; if they fail the sidecar
 is removed, so the launcher goes back to the shell hook.
@@ -66,6 +67,14 @@ MIRRORED = (
     "scripts/rally_point/discovery_bridge.py",
     "scripts/rally_point/hook_budget.py",
     "scripts/rally_point/hooks.py",
+    # bl hook trace: the launcher, tool_trace.py and the modules its hook
+    # path imports (lock primitive, bounded state.json reader, run identity).
+    "hooks/tool-trace.sh",
+    "scripts/atomic_io.py",
+    "scripts/rally_point/build_loop_id.py",
+    "scripts/temporal_membership.py",
+    "scripts/tool_trace.py",
+    "scripts/transcript_adapter.py",
 )
 # Every path whose change changes the digest; also the artifact guard's watch list.
 WATCHED = ("Cargo.toml", "Cargo.lock", "crates/") + MIRRORED
@@ -73,7 +82,8 @@ WATCHED = ("Cargo.toml", "Cargo.lock", "crates/") + MIRRORED
 _HEADER = (
     "# Digest of the sources bin/native/bl is built from: crates/**, Cargo.toml,\n"
     "# Cargo.lock and the mirrored files listed in scripts/build_native.py.\n"
-    "# Line 1 is read by hooks/pre-edit-rally-point.sh. Regenerate with\n"
+    "# Line 1 is read by hooks/pre-edit-rally-point.sh and hooks/tool-trace.sh.\n"
+    "# Regenerate with\n"
     "#   python3 scripts/build_native.py --write-digest\n"
     "# (the pre-commit artifact guard does this when a watched file is staged).\n"
     "# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>\n"

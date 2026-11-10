@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "21fc3431b2d873707551f872e962ea9065545d90898e5848480927c41f9ab7db"
+    "content_sha256": "fc7cb409d41173eb34176d159fd0ab86a9d315ebf6ab365e9185b88d57d996ba"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1939,10 +1939,12 @@
         "pre-edit-architecture.sh",
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",
-        "pre-edit-rally-point.sh"
+        "pre-edit-rally-point.sh",
+        "tool-trace.sh"
       ],
       "PostToolUse": [
-        "post-push-closeout.sh"
+        "post-push-closeout.sh",
+        "tool-trace.sh"
       ],
       "Stop": [
         "stop_finalize.sh",
@@ -1951,6 +1953,9 @@
       ],
       "SessionEnd": [
         "session_end_retro_sweep.py"
+      ],
+      "PostToolUseFailure": [
+        "tool-trace.sh"
       ]
     }
   }
