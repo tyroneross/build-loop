@@ -102,12 +102,39 @@ def source_paths(repo: Path = REPO) -> list[str]:
     return paths
 
 
-def compute_digest(repo: Path = REPO) -> str:
+def _index_bytes(repo: Path, paths: list[str]) -> dict[str, bytes]:
+    """Staged (index) content of ``paths``; absent entries are omitted."""
+    ls = subprocess.run(["git", "-C", str(repo), "ls-files", "-s", "-z", "--", *paths],
+                        capture_output=True)
+    if ls.returncode != 0:
+        raise BuildError("git ls-files -s failed")
+    shas: list[tuple[str, str]] = []
+    for entry in ls.stdout.decode().split("\0"):
+        if entry:
+            meta, path = entry.split("\t", 1)
+            shas.append((path, meta.split()[1]))
+    cat = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"],
+                         input="".join(f"{sha}\n" for _, sha in shas).encode(), capture_output=True)
+    if cat.returncode != 0:
+        raise BuildError("git cat-file failed")
+    out, buf = {}, cat.stdout
+    for path, _ in shas:
+        header, buf = buf.split(b"\n", 1)
+        size = int(header.split()[2])
+        out[path], buf = buf[:size], buf[size + 1:]
+    return out
+
+
+def compute_digest(repo: Path = REPO, staged: bool = False) -> str:
+    """Digest of the watched sources: working-tree bytes, or index blobs when
+    ``staged`` (what a commit will record)."""
+    paths = source_paths(repo)
+    blobs = _index_bytes(repo, paths) if staged else {}
     h = hashlib.sha256(b"build-loop native sources v1\n")
-    for rel in source_paths(repo):
+    for rel in paths:
         try:
-            data = (repo / rel).read_bytes()
-        except OSError:
+            data = blobs[rel] if staged else (repo / rel).read_bytes()
+        except (OSError, KeyError):
             raise BuildError(f"cannot read {rel}") from None
         h.update(rel.encode() + b"\0" + hashlib.sha256(data).hexdigest().encode() + b"\n")
     return h.hexdigest()
@@ -121,7 +148,10 @@ def read_first_line(path: Path) -> str:
         return ""
 
 
-def tracked_digest(repo: Path = REPO) -> str:
+def tracked_digest(repo: Path = REPO, staged: bool = False) -> str:
+    if staged:
+        data = _index_bytes(repo, [DIGEST_FILE]).get(DIGEST_FILE, b"")
+        return data.decode("utf-8", "replace").split("\n", 1)[0].strip()
     return read_first_line(repo / DIGEST_FILE)
 
 
@@ -205,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="rewrite crates/SOURCES.digest from the tree")
     mode.add_argument("--check", action="store_true",
                       help="report whether the installed binary is fresh; no build")
+    ap.add_argument("--staged", action="store_true",
+                    help="with --check-digest: compare the index, not the working tree")
     ap.add_argument("--dest", type=Path, default=DEFAULT_DEST,
                     help="install directory (default: bin/native in this repo)")
     args = ap.parse_args(argv)
@@ -213,7 +245,8 @@ def main(argv: list[str] | None = None) -> int:
             print(write_digest())
             return 0
         if args.check_digest:
-            want, have = compute_digest(), tracked_digest()
+            want = compute_digest(staged=args.staged)
+            have = tracked_digest(staged=args.staged)
             if want == have:
                 print(f"{DIGEST_FILE} current")
                 return 0

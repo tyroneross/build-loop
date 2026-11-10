@@ -422,3 +422,48 @@ def test_regen_mode_names_the_frame_and_the_unstaged_edits_it_ignored(synth, cap
     assert "1 output file(s) changed" in out
     assert "UNSTAGED" not in err
     assert (repo / "out.txt").read_text() == hashlib.sha256(b"c").hexdigest()
+
+
+# --- native-sources-digest: what is COMMITTED must be consistent ---------
+
+
+def test_hook_regenerates_digest_from_index_when_working_tree_digest_is_ahead(tmp_path):
+    """A build rewrites crates/SOURCES.digest in the working tree; the commit
+    stages only the Rust change. The hook must still commit the digest of the
+    staged sources, never HEAD's old one."""
+    _git_init(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    for s in ("artifact_guard.py", "atomic_io.py", "build_native.py"):
+        (tmp_path / "scripts" / s).write_text((_REPO / "scripts" / s).read_text())
+    sys.path.insert(0, str(_REPO / "scripts"))
+    try:
+        import build_native as bn
+    finally:
+        sys.path.pop(0)
+    for rel in bn.MIRRORED + ("Cargo.toml", "Cargo.lock", "crates/bl/src/x.rs"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(rel + "\n")
+    _install_source(tmp_path)
+    ag.install_hook(tmp_path)
+    run = lambda *a: subprocess.run([sys.executable, str(tmp_path / "scripts/build_native.py"), *a],
+                                    cwd=str(tmp_path), check=True, capture_output=True)
+    _git(tmp_path, "add", "-A")
+    run("--write-digest")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "base")
+    old = (tmp_path / "crates/SOURCES.digest").read_text().split("\n", 1)[0]
+
+    (tmp_path / "crates/bl/src/x.rs").write_text("changed\n")
+    run("--write-digest")  # what scripts/build_native.py does before building
+    _git(tmp_path, "add", "crates/bl/src/x.rs")
+    _git(tmp_path, "commit", "-m", "rust change only")
+
+    committed = subprocess.run(["git", "-C", str(tmp_path), "show", "HEAD:crates/SOURCES.digest"],
+                               capture_output=True, text=True, check=True).stdout.split("\n", 1)[0]
+    assert committed != old
+    assert committed == bn.compute_digest(tmp_path)
+    clean = subprocess.run([sys.executable, str(tmp_path / "scripts/build_native.py"), "--check-digest",
+                            "--staged"], cwd=str(tmp_path), capture_output=True)
+    assert clean.returncode == 0

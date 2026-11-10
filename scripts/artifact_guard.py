@@ -66,6 +66,9 @@ class Artifact:
     # Repo-relative output paths to ``git add`` after a regen (files or dirs).
     outputs: tuple[str, ...]
     why: str = ""
+    # Optional check used by --staged (pre-commit) instead of check_argv, for
+    # artifacts whose freshness must be judged on the index being committed.
+    staged_check_argv: tuple[str, ...] | None = None
 
 
 ARTIFACTS: tuple[Artifact, ...] = (
@@ -95,6 +98,9 @@ ARTIFACTS: tuple[Artifact, ...] = (
                "scripts/rally_point/hook_budget.py",
                "scripts/rally_point/hooks.py"),
         check_argv=("scripts/build_native.py", "--check-digest"),
+        # Judge the commit on index blobs and the staged digest: a build may
+        # have rewritten the working-tree digest without it being staged.
+        staged_check_argv=("scripts/build_native.py", "--check-digest", "--staged"),
         regen_argv=("scripts/build_native.py", "--write-digest"),
         outputs=("crates/SOURCES.digest",),
         why="digest of what bin/native/bl mirrors; the pre-edit launcher "
@@ -215,9 +221,11 @@ def _script_present(repo: Path, artifact: Artifact) -> bool:
     return (repo / artifact.check_argv[0]).exists()
 
 
-def _run_check(repo: Path, artifact: Artifact) -> tuple[bool, str]:
+def _run_check(repo: Path, artifact: Artifact, staged: bool = False) -> tuple[bool, str]:
     """Return (fresh, detail). fresh=True when the artifact is up to date."""
-    cp = subprocess.run([sys.executable, *artifact.check_argv],
+    argv = (artifact.staged_check_argv if staged and artifact.staged_check_argv
+            else artifact.check_argv)
+    cp = subprocess.run([sys.executable, *argv],
                         cwd=str(repo), capture_output=True, text=True)
     detail = (cp.stdout + cp.stderr).strip()
     return cp.returncode == 0, detail
@@ -360,7 +368,7 @@ def mode_staged(repo: Path) -> int:
             continue
         if not _script_present(repo, artifact):
             continue
-        fresh, _ = _run_check(repo, artifact)
+        fresh, _ = _run_check(repo, artifact, staged=True)
         if fresh:
             continue
         if advisory:
