@@ -13,6 +13,7 @@ extern "C" {
     fn access(path: *const c_char, mode: c_int) -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;
     fn utimensat(fd: c_int, path: *const c_char, times: *const Timespec, flag: c_int) -> c_int;
+    fn flock(fd: c_int, operation: c_int) -> c_int;
 }
 
 #[repr(C)]
@@ -27,6 +28,17 @@ const AT_FDCWD: c_int = -2;
 const AT_FDCWD: c_int = -100;
 
 const X_OK: c_int = 1;
+const LOCK_EX: c_int = 2;
+const LOCK_NB: c_int = 4;
+
+#[cfg(target_os = "macos")]
+pub const O_NONBLOCK: i32 = 0x4;
+#[cfg(not(target_os = "macos"))]
+pub const O_NONBLOCK: i32 = 0o4000;
+#[cfg(target_os = "macos")]
+pub const EWOULDBLOCK: i32 = 35;
+#[cfg(not(target_os = "macos"))]
+pub const EWOULDBLOCK: i32 = 11;
 const SIGKILL: c_int = 9;
 
 pub fn uid() -> u32 {
@@ -41,6 +53,17 @@ pub fn new_session() -> std::io::Result<()> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// `fcntl.flock(fd, LOCK_EX | LOCK_NB)`, the primitive `atomic_io.LockedFile`
+/// uses, so a Python writer and this process exclude each other.
+pub fn flock_exclusive_nb(fd: c_int) -> std::io::Result<()> {
+    // SAFETY: flock only operates on the descriptor, which the caller owns.
+    if unsafe { flock(fd, LOCK_EX | LOCK_NB) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 pub fn stdin_is_tty() -> bool {

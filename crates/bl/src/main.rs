@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `bl`: build-loop's native commands.
 //!
+//! `bl hook trace --workdir W --phase P` replaces
+//! `python3 scripts/tool_trace.py --workdir W hook --phase P` (see
+//! `trace.rs`). It exits 0 and prints nothing; cases it cannot mirror run
+//! that Python command with the stdin bytes already read (through a pipe)
+//! and exit with its status; exit 75 means unknown arguments or no plugin
+//! checkout, nothing read.
+//!
 //! `bl hook pre-edit` replaces the shell + Perl + Python chain behind
 //! `hooks/pre-edit-rally-point.sh` for native Rally contexts. Contract:
 //! - exit 0 for every outcome; stdout empty, except exactly `{}` when the
@@ -19,6 +26,7 @@
 
 mod pre_edit;
 mod sys;
+mod trace;
 
 use std::io::{Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -30,7 +38,12 @@ use std::time::{Duration, Instant};
 
 /// Held by whoever ends the process, so the deadline `{}` and a normal exit
 /// never interleave.
-static EXIT: Mutex<()> = Mutex::new(());
+pub(crate) static EXIT: Mutex<()> = Mutex::new(());
+
+/// `bl hook trace` gives up silently after this long. The host kills the
+/// Python hook at 1 s; this only bounds a native run that somehow outlives
+/// the 1 s lock wait, and never fires inside the append (see `trace::append`).
+const TRACE_DEADLINE: Duration = Duration::from_millis(3000);
 
 fn emit_fallback_reply_and_exit() -> ! {
     let mut out = std::io::stdout().lock();
@@ -39,10 +52,10 @@ fn emit_fallback_reply_and_exit() -> ! {
     std::process::exit(0)
 }
 
-fn plugin_root() -> Option<PathBuf> {
+fn plugin_root(marker: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let root = exe.parent()?.parent()?.parent()?.to_path_buf();
-    root.join("hooks/pre-edit-rally-point.sh").is_file().then_some(root)
+    root.join(marker).is_file().then_some(root)
 }
 
 /// Replace this process with the shell hook, feeding it `stdin` bytes.
@@ -102,10 +115,13 @@ fn main() {
     let started = Instant::now();
     std::panic::set_hook(Box::new(|_| {}));
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() >= 2 && args[0] == "hook" && args[1] == "trace" {
+        trace_main(started, &args[2..]);
+    }
     if args != ["hook", "pre-edit"] {
         std::process::exit(bl_contract::FALLBACK_EXIT);
     }
-    let Some(root) = plugin_root() else {
+    let Some(root) = plugin_root("hooks/pre-edit-rally-point.sh") else {
         std::process::exit(bl_contract::FALLBACK_EXIT);
     };
     let budget = bl_contract::deadline_ms(
@@ -137,5 +153,49 @@ fn main() {
             sys::kill_waited_children();
             emit_fallback_reply_and_exit()
         }
+    }
+}
+
+fn trace_main(started: Instant, args: &[String]) -> ! {
+    let Some(parsed) = trace::parse_args(args) else {
+        std::process::exit(bl_contract::FALLBACK_EXIT);
+    };
+    let Some(root) = plugin_root("scripts/tool_trace.py") else {
+        std::process::exit(bl_contract::FALLBACK_EXIT);
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep((started + TRACE_DEADLINE).saturating_duration_since(Instant::now()));
+        let _guard = EXIT.lock();
+        std::process::exit(0);
+    });
+    match std::panic::catch_unwind(|| trace::run(&parsed)) {
+        Ok(trace::Outcome::Fallback { reason, stdin }) => {
+            let _guard = EXIT.lock();
+            if std::env::var_os("BL_TRACE_FALLBACK").is_some() {
+                eprintln!("bl: fallback: {reason}");
+            }
+            let mut cmd = Command::new("python3");
+            cmd.arg(root.join("scripts/tool_trace.py"))
+                .args(["--workdir", &parsed.workdir, "hook", "--phase", &parsed.phase]);
+            let Some(bytes) = stdin else {
+                let _ = cmd.exec(); // stdin unread: Python inherits it
+                std::process::exit(0)
+            };
+            // The bytes already read go to Python through a pipe (no temp
+            // file, so an unwritable TMPDIR cannot lose the line). Python
+            // reads stdin to EOF before anything else, so writing all of it
+            // first cannot deadlock. The deadline thread waits on EXIT, held
+            // here, so it never cuts Python short.
+            let Ok(mut child) = cmd.stdin(Stdio::piped()).spawn() else {
+                std::process::exit(0)
+            };
+            if let Some(mut pipe) = child.stdin.take() {
+                let _ = pipe.write_all(&bytes);
+            }
+            let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+            std::process::exit(code)
+        }
+        // Done, or a panic: Python's main swallows every exception and exits 0.
+        _ => std::process::exit(0),
     }
 }
