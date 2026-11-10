@@ -12,8 +12,10 @@ only when the binary is executable, ``BUILD_LOOP_NATIVE_HOOKS`` is not
 75 / 126 / 127 from the binary (it did nothing and read no stdin), runs the
 Python hook exactly as the command did before the native path existed.
 
-``python3 scripts/trace_hook_command.py --write`` rewrites hooks.json;
-``--check`` exits 1 when hooks.json differs (also asserted by
+``python3 scripts/trace_hook_command.py --write`` rewrites hooks.json and the
+Codex copy hooks/codex.json (which must equal hooks.json minus
+PostToolUseFailure; scripts/test_hook_repair_deadlines.py asserts it);
+``--check`` exits 1 when either differs (also asserted by
 tests/hook_parity/test_trace_parity.py).
 """
 from __future__ import annotations
@@ -22,7 +24,9 @@ import json
 import sys
 from pathlib import Path
 
-HOOKS_JSON = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+HOOKS_JSON = HOOKS_DIR / "hooks.json"
+FILES = (HOOKS_JSON, HOOKS_DIR / "codex.json")
 EVENTS = {"start": "PreToolUse", "end": "PostToolUse", "error": "PostToolUseFailure"}
 MARKER = "/scripts/tool_trace.py"
 
@@ -48,9 +52,12 @@ def command(phase: str) -> str:
 
 
 def trace_hooks(data: dict) -> dict[str, dict]:
-    """phase -> the one hooks.json entry that runs tool_trace.py for it."""
+    """phase -> the one entry that runs tool_trace.py for it (events the
+    file does not register, such as Codex's PostToolUseFailure, are skipped)."""
     found: dict[str, dict] = {}
     for phase, event in EVENTS.items():
+        if event not in data["hooks"]:
+            continue
         entries = [hk for group in data["hooks"][event] for hk in group["hooks"] if MARKER in hk.get("command", "")]
         if len(entries) != 1:
             raise SystemExit(f"trace_hook_command: expected one trace hook under {event}, found {len(entries)}")
@@ -66,19 +73,22 @@ def render(text: str) -> str:
 
 
 def main(argv: list[str]) -> int:
-    text = HOOKS_JSON.read_text(encoding="utf-8")
-    want = render(text)
-    if argv == ["--write"]:
-        HOOKS_JSON.write_text(want, encoding="utf-8")
-        return 0
-    if argv == ["--check"]:
-        if want == text:
-            return 0
-        print("hooks/hooks.json trace commands differ; run: python3 scripts/trace_hook_command.py --write",
+    if argv not in (["--write"], ["--check"]):
+        print(__doc__.split("\n\n")[0], file=sys.stderr)
+        return 2
+    stale = []
+    for path in FILES:
+        text = path.read_text(encoding="utf-8")
+        want = render(text)
+        if want != text:
+            stale.append(path.name)
+            if argv == ["--write"]:
+                path.write_text(want, encoding="utf-8")
+    if stale and argv == ["--check"]:
+        print(f"trace commands differ in {', '.join(stale)}; run: python3 scripts/trace_hook_command.py --write",
               file=sys.stderr)
         return 1
-    print(__doc__.split("\n\n")[0], file=sys.stderr)
-    return 2
+    return 0
 
 
 if __name__ == "__main__":
