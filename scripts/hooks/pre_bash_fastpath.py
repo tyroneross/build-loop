@@ -23,7 +23,9 @@ process used to run it:
   - any exception or SystemExit becomes the non-zero exit the shell tested.
 
 Modes (stdin = the raw PreToolUse event):
-  head      credential policy + command/cwd extraction (always runs)
+  head      credential policy + command/cwd extraction (always runs); also the
+            `gates` stage when the dispatcher must reach it with nothing
+            observable in between (see _gates_in_head), sparing a second start
   gates     load gate, wait gate, git classifier, autonomy gate, deploy target
             (opted-in repos only); reads BL_PLUGIN_ROOT, BL_CMD
   autonomy  pre_bash_autonomy.sh's envelope alone (drift test hook)
@@ -36,6 +38,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 
@@ -140,11 +143,84 @@ def _extract(data: bytes) -> str:
     return _subst(_drain(out))
 
 
+# Substrings of the dispatcher's pre-filters that start a sub-gate between
+# `head` and `gates` (worktree-removal guard on the quote-stripped command;
+# privileged gate and sfltool advisory on the raw one). Each dispatcher pattern
+# requires one of these substrings, so absence proves no sub-gate runs.
+_WT_WORDS = ("worktree", "rm", "trash", "safe-del", "-delete", "xargs")
+_PRIV_WORDS = ("sfltool", "sudo", "csrutil", "spctl", "systemsetup", "authopen", "nvram", "bputil",
+               "kmutil", "softwareupdate", "pmset", "dscl", "launchctl", "installer", "security",
+               "dsenableroot", "tmutil", "fdesetup", "diskutil")
+_DENY = ('"permissionDecision": "deny"', '"permissionDecision":"deny"')
+
+
+def _gates_in_head(data: bytes, plugin_root: str, cred: _Result, cred_out: str, parsed: str) -> str | None:
+    """`gates` output computed here, or None to leave it to the dispatcher's own call.
+
+    Computed only when the dispatcher, given this exact head output, must reach
+    its `gates` call with no observable step in between: credential policy
+    passed, kill switch off, HOME set (unset aborts the dispatcher under set -u),
+    a command, no sub-gate pre-filter can match, and the session directory itself
+    carries the opt-in marker (so the scope check runs no git). Those steps read
+    no files the gates write and the gates write none, so running the gates a
+    few milliseconds earlier is the same run. The result is handed over only
+    when it is a clean `ok` with nothing on stderr or stdout; a rejection, any
+    stderr, or any error returns None and the dispatcher runs `gates` itself,
+    so every rejection message is still printed by that call at its usual point.
+    """
+    env = os.environ
+    if cred.rc != 0 or any(d in cred_out for d in _DENY):
+        return None
+    if env.get("BUILD_LOOP_HOOKS", "") == "off" or "HOME" not in env:
+        return None
+    cwd, _, cmd = parsed.partition("\n")  # the dispatcher's CWD / CMD split
+    if not cmd:
+        return None
+    stripped = cmd.replace('"', "").replace("'", "").replace("\\", "")
+    if any(w in stripped for w in _WT_WORDS) or any(w in cmd for w in _PRIV_WORDS):
+        return None
+    if not cwd or cwd in ("/", env["HOME"]):
+        return None
+    if not (os.path.isfile(cwd + "/.build-loop/state.json") or os.path.isfile(cwd + "/.build-loop/config.json")):
+        return None
+    saved = sys.stdout, sys.stderr, env.get("BL_CMD")
+    out, err = _new_stdout(), io.TextIOWrapper(io.BytesIO(), encoding=sys.__stderr__.encoding,
+                                               errors=sys.__stderr__.errors)
+    try:
+        env["BL_CMD"] = cmd  # the dispatcher's `gates` call sets exactly this
+        sys.stdout, sys.stderr = out, err
+        text = _subst(gates(data, plugin_root, cmd))  # what `_GATES=$(...)` would hold
+        out.flush()
+        err.flush()
+        if out.buffer.getvalue() or err.buffer.getvalue():  # type: ignore[attr-defined]
+            return None
+    except BaseException:
+        return None
+    finally:
+        sys.stdout, sys.stderr = saved[0], saved[1]
+        if saved[2] is None:
+            env.pop("BL_CMD", None)
+        else:
+            env["BL_CMD"] = saved[2]
+    lines = text.split("\n")
+    if len(lines) != 5 or lines[0] != "ok" or not lines[4] or not text.isascii() or "\x1f" in text:
+        return None
+    return "\x1f".join(lines)  # one line; the dispatcher turns U+001F back into newlines
+
+
 def head(data: bytes, plugin_root: str) -> str:
+    """Lines: credential status, credential output, early gates, then the extraction.
+
+    The early-gates line is empty, or the five lines `gates` would have printed
+    joined by U+001F (see _gates_in_head). The extraction stays last so the
+    dispatcher's trailing-newline stripping applies to it exactly as before.
+    """
     cred = _run_script(os.path.join(plugin_root, "scripts", "credential_policy.py"), data,
                        stderr_through=False)
     cred_out = cred.out.replace("\n", " ")  # json.dumps never emits one; keep framing safe
-    return "%d\n%s\n%s" % (0 if cred.rc == 0 else 1, cred_out, _extract(data))
+    parsed = _extract(data)
+    early = _gates_in_head(data, plugin_root, cred, cred_out, parsed)
+    return "%d\n%s\n%s\n%s" % (0 if cred.rc == 0 else 1, cred_out, early or "", parsed)
 
 
 # ── autonomy (mirror of pre_bash_autonomy.sh) ───────────────────────────────
@@ -158,9 +234,100 @@ def _print_value(value: object) -> str | None:
     return _subst(text)
 
 
+# GIT_* variables that cannot move repository discovery or the work tree. Any
+# other GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR,
+# GIT_CONFIG_PARAMETERS, GIT_CEILING_DIRECTORIES, ...) sends us to git itself.
+# Global/system config is safe to redirect: git reads core.worktree from the
+# repository's own config only (checked: a global core.worktree is ignored).
+_GIT_ENV_INERT = frozenset({
+    "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS",
+    "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE", "GIT_MERGE_AUTOEDIT",
+    "GIT_OPTIONAL_LOCKS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+})
+_HEADREF = re.compile(rb"ref: refs/\S+\n?|[0-9a-f]{40}\n?|[0-9a-f]{64}\n?")
+
+
+def _read(path: str, limit: int = 4096) -> bytes:
+    with open(path, "rb") as fh:
+        return fh.read(limit + 1)
+
+
+def _is_own_toplevel(directory: str) -> bool:
+    """True only when `git -C directory rev-parse --show-toplevel` must print `directory`.
+
+    Every check is stricter than git's own, so a False here costs one git call
+    and a True never changes the answer. git prints the work tree's canonical
+    path, found by discovery from `directory`; it equals `directory` when:
+      - no GIT_* variable that moves discovery or the work tree is set;
+      - `directory` is already canonical: absolute, ASCII (git precomposes
+        Unicode on macOS), and byte-equal to the kernel's own path for it
+        (F_GETPATH, what getcwd uses; this rejects symlinks, `..`, a trailing
+        slash and wrong letter case). Other platforms always ask git;
+      - `directory/.git` is a repository git accepts (valid HEAD, objects and
+        refs, via an absolute `gitdir:` file for a linked worktree), so
+        discovery stops here instead of walking up to a parent;
+      - no core.worktree can apply: the repository config never mentions
+        `worktree` or `include`, and there is no per-worktree config.
+    When git would fail instead (ownership, bad format), today's code also
+    falls back to `directory`, so those cases agree either way.
+    """
+    try:
+        if any(k.startswith("GIT_") and k not in _GIT_ENV_INERT for k in os.environ):
+            return False
+        if not (os.path.isabs(directory) and directory.isascii()):
+            return False
+        import fcntl
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            kernel = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0]
+        finally:
+            os.close(fd)
+        if kernel != os.fsencode(directory):
+            return False
+        dotgit = os.path.join(directory, ".git")
+        if os.path.islink(dotgit):
+            return False
+        if os.path.isdir(dotgit):
+            gitdir = dotgit
+        elif os.path.isfile(dotgit):
+            pointer = re.fullmatch(rb"gitdir: (/[^\n\r]+)\n?", _read(dotgit))
+            if not pointer:
+                return False
+            gitdir = os.fsdecode(pointer.group(1))
+        else:
+            return False
+        common = gitdir
+        commondir = os.path.join(gitdir, "commondir")
+        if os.path.lexists(commondir):
+            target = re.fullmatch(rb"([^\n\r]+)\n?", _read(commondir))
+            if not target:
+                return False
+            common = os.path.join(gitdir, os.fsdecode(target.group(1)))
+        head = os.path.join(gitdir, "HEAD")
+        if os.path.islink(head) or not os.path.isfile(head) or not _HEADREF.fullmatch(_read(head, 256)):
+            return False
+        for sub in ("objects", "refs"):
+            path = os.path.join(common, sub)
+            if not (os.path.isdir(path) and os.access(path, os.X_OK)):
+                return False
+        if os.path.lexists(os.path.join(gitdir, "config.worktree")):
+            return False
+        for config in {os.path.join(common, "config"), os.path.join(gitdir, "config")}:
+            if os.path.lexists(config):
+                text = _read(config, 1 << 20).lower()
+                if len(text) > 1 << 20 or b"worktree" in text or b"include" in text:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
 def _repo_root(directory: str) -> str:
     if not directory or not os.path.isdir(directory):
         return directory
+    if _is_own_toplevel(directory):
+        return directory  # what git would print: see _is_own_toplevel
     try:
         proc = subprocess.run(["git", "-C", directory, "rev-parse", "--show-toplevel"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
