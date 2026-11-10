@@ -14,6 +14,14 @@ from pathlib import Path
 
 import pytest
 
+# Keep the cross-file freshness contract in the build_native.py mapped gate.
+# The canonical assertion lives with the digest suite; importing it preserves
+# one oracle while making source-only port changes exercise it before commit.
+from tests.test_native_sources_digest import (  # noqa: F401
+    test_every_mirrored_file_is_watched_by_the_commit_guard,
+)
+
+
 _SCRIPT = Path(__file__).resolve().parent / "build_native.py"
 _spec = importlib.util.spec_from_file_location("build_native", _SCRIPT)
 bn = importlib.util.module_from_spec(_spec)
