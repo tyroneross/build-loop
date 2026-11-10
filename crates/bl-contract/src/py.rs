@@ -188,6 +188,86 @@ pub fn json_string(s: &str) -> String {
     out
 }
 
+/// `json.dumps(s, ensure_ascii=False)`: escapes `"`, `\` and C0 controls
+/// only; every other character (DEL, non-ASCII) is written as-is.
+pub fn json_string_unicode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\u{0}'..='\u{1f}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=...)`
+/// of a value decoded by `json.loads`. Floats fall back: Python keeps the
+/// literal's `repr`, serde keeps an `f64`, and integers beyond 64 bits
+/// arrive as floats, so neither can be reproduced from the decoded value.
+pub fn dumps_sorted(v: &Value, ensure_ascii: bool) -> R<String> {
+    let mut out = String::new();
+    write_sorted(v, ensure_ascii, &mut out)?;
+    Ok(out)
+}
+
+fn write_sorted(v: &Value, ensure_ascii: bool, out: &mut String) -> R<()> {
+    let string = |s: &str| if ensure_ascii { json_string(s) } else { json_string_unicode(s) };
+    match v {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) => match (n.as_i64(), n.as_u64()) {
+            (Some(i), _) => out.push_str(&i.to_string()),
+            (None, Some(u)) => out.push_str(&u.to_string()),
+            _ => return Err(Fallback("float in json")),
+        },
+        Value::String(s) => out.push_str(&string(s)),
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_sorted(item, ensure_ascii, out)?;
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            // Sorted explicitly: serde_json's map order depends on a feature
+            // flag another crate could switch on. Byte order of UTF-8 equals
+            // Python's code-point order.
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&string(k));
+                out.push(':');
+                write_sorted(&map[k], ensure_ascii, out)?;
+            }
+            out.push('}');
+        }
+    }
+    Ok(())
+}
+
+/// `hashlib.sha256(s.encode("utf-8")).hexdigest()`.
+pub fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    crate::identity::hex(&Sha256::digest(s.as_bytes()))
+}
+
 /// Python truthiness of a decoded JSON value.
 pub fn truthy(v: &Value) -> bool {
     match v {
@@ -262,6 +342,21 @@ mod tests {
     fn json_escapes_like_python() {
         assert_eq!(json_string("a\"b\\c\n\u{7f}é😀"), "\"a\\\"b\\\\c\\n\\u007f\\u00e9\\ud83d\\ude00\"");
         assert_eq!(json_string("\u{1}"), "\"\\u0001\"");
+    }
+
+    #[test]
+    fn unicode_escapes_like_python() {
+        assert_eq!(json_string_unicode("a\"\\\n\u{7f}é😀\u{1}\u{8}"), "\"a\\\"\\\\\\n\u{7f}é😀\\u0001\\b\"");
+    }
+
+    #[test]
+    fn dumps_sorted_like_python() {
+        let v: Value = serde_json::from_str(r#"{"b":[1,-2,true,null],"a":{"é":"x","Z":"😀"},"u":18446744073709551615}"#).unwrap();
+        assert_eq!(dumps_sorted(&v, false).unwrap(), r#"{"a":{"Z":"😀","é":"x"},"b":[1,-2,true,null],"u":18446744073709551615}"#);
+        assert_eq!(dumps_sorted(&v, true).unwrap(), r#"{"a":{"Z":"\ud83d\ude00","\u00e9":"x"},"b":[1,-2,true,null],"u":18446744073709551615}"#);
+        assert!(dumps_sorted(&serde_json::from_str::<Value>("[1.5]").unwrap(), false).is_err());
+        assert!(dumps_sorted(&serde_json::from_str::<Value>("[123456789012345678901234567890]").unwrap(), false).is_err());
+        assert_eq!(sha256_hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 
     #[test]
