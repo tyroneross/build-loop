@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -331,3 +332,73 @@ def test_bl_handles_or_hands_off(case, root):
     snap = h.run("bl", case, root, extra_env={"BL_TRACE_FALLBACK": "1"})
     handed_off = snap.stderr.startswith(b"bl: fallback:")
     assert handed_off == (not case.native), snap.stderr
+
+
+# --- concurrency and readers ---------------------------------------------
+def _event(i: int) -> bytes:
+    return claude("PostToolUse", tool_use_id=f"call-{i:03d}", tool_response={"stdout": f"line {i}"})
+
+
+@needs_bl
+def test_concurrent_mixed_appends_lose_and_interleave_nothing(root):
+    """200 hooks at once, alternating Python and bl, across a rotation: every
+    event lands exactly once as one whole line, and the rotation moved the
+    pre-existing file intact (both writers rotate under the same flock)."""
+    case = Case("concurrency")
+    world = h.build_world(root, case)
+    trace = world.proj / h.TRACE
+    h.prefill(trace, h.MAX_FILE_BYTES - 60_000)
+    procs = []
+    for i in range(200):
+        impl = "python" if i % 2 else "bl"
+        procs.append(subprocess.Popen(h.argv_for(impl, Case("c", phase="end"), world), stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=world.env,
+                                      cwd=str(world.cwd)))
+    for i, p in enumerate(procs):
+        p.stdin.write(_event(i))
+        p.stdin.close()
+    for p in procs:
+        assert p.wait(timeout=60) == 0
+        assert (p.stdout.read(), p.stderr.read()) == (b"", b"")
+    seen: list[str] = []
+    prefill_lines = 0
+    for path in (trace, Path(f"{trace}.1"), Path(f"{trace}.2")):
+        if not path.exists():
+            continue
+        data = path.read_bytes()
+        assert data.endswith(b"\n")
+        for line in data.splitlines():
+            if b'"event":"prefill"' in line or not line.startswith(b"{"):
+                prefill_lines += 1
+                continue
+            seen.append(json.loads(line)["attributes"]["build_loop.tool.call_id_sha256"])
+    assert Path(f"{trace}.1").exists(), "the run never crossed the rotation boundary"
+    assert sorted(seen) == sorted(sha(f"call-{i:03d}") for i in range(200))
+    assert prefill_lines > 0
+
+
+@needs_bl
+def test_summarize_reads_mixed_files_like_all_python(tmp_path):
+    """tool_trace.py summarize gives the same answer for a file written by
+    Python alone and one written alternately by Python and bl."""
+    events = [("start", claude("PreToolUse", tool_use_id=f"u{i}")) for i in range(3)]
+    events += [("end", claude("PostToolUse", tool_use_id="u0", tool_response={"stdout": "ok"})),
+               ("error", claude("PostToolUseFailure", tool_use_id="u1", error="exit 1")),
+               ("end", codex({"exit_code": 4}))]
+    out = {}
+    files = {}
+    for label in ("python", "mixed"):
+        world = h.build_world(tmp_path / label, Case(label))
+        for i, (phase, stdin) in enumerate(events):
+            impl = "bl" if label == "mixed" and i % 2 else "python"
+            proc = subprocess.run(h.argv_for(impl, Case("e", phase=phase), world), input=stdin, env=world.env,
+                                  cwd=str(world.cwd), capture_output=True, timeout=30)
+            assert (proc.returncode, proc.stdout, proc.stderr) == (0, b"", b"")
+        summary = subprocess.run(["python3", str(h.TOOL_TRACE), "--workdir", str(world.proj), "summarize"],
+                                 env=world.env, capture_output=True, timeout=30)
+        assert summary.returncode == 0, summary.stderr
+        out[label] = summary.stdout
+        files[label] = h.TIME_FIELD.sub(b"T", (world.proj / h.TRACE).read_bytes())
+    assert files["mixed"] == files["python"]
+    assert out["mixed"] == out["python"]
+    assert json.loads(out["python"])["coverage"]["invalid_trace_records"] == 0
