@@ -1,7 +1,8 @@
-1d167e2e0507855626c82e21cd4e47789b01a88857014d90f0e2414101eff209
+960d9a125761c64c42d60a380ea619bad6ac5b9818502286b59ee8af810b76de
 # Digest of the sources bin/native/bl is built from: crates/**, Cargo.toml,
 # Cargo.lock and the mirrored files listed in scripts/build_native.py.
-# Line 1 is read by hooks/pre-edit-rally-point.sh and hooks/tool-trace.sh.
+# Line 1 is read by hooks/pre-edit-rally-point.sh and the tool-trace
+# commands in hooks/hooks.json.
 # Regenerate with
 #   python3 scripts/build_native.py --write-digest
 # (the pre-commit artifact guard does this when a watched file is staged).
