@@ -12,7 +12,7 @@ import unittest
 
 from daydream_benchmark import evidence_rows, export_report, import_export
 
-LAB = Path(os.environ.get('DAYDREAM_BENCHMARK_LAB', '/Users/tyroneross/dev/git-folder/prompt-model-benchmark-lab'))
+LAB = Path(os.environ.get('DAYDREAM_BENCHMARK_LAB', str(Path(__file__).resolve().parents[2] / 'prompt-model-benchmark-lab')))
 
 
 def fixture():
