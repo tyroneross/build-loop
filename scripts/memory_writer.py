@@ -351,6 +351,134 @@ def _git_toplevel(path: Path) -> Path | None:
     return None
 
 
+_GIT_ADD_TIMEOUT = 10  # Bound caller waiting, never the Git child's lifetime.
+_GIT_COMMIT_TIMEOUT = 45  # Leave headroom under the transcript caller's 60s budget.
+_STALE_LOCK_DEFAULT_MINUTES = 1  # The reported 341s orphan escaped the old 10min threshold.
+
+
+def _run_git(args: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    """Bound the caller's wait without terminating an index-writing child.
+
+    Git owns lock cleanup. A detached session and file-backed output let it
+    finish even when a hook caller times out or exits; pipes could break or
+    fill after that caller disappears. Timeout means outcome pending, not
+    failure or permission to retry. Never signal Git or unlink its locks.
+    """
+    with tempfile.TemporaryFile(mode="w+t") as stdout, tempfile.TemporaryFile(mode="w+t") as stderr:
+        proc = subprocess.Popen(
+            args, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+            text=True, start_new_session=True,
+        )
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(
+                f"WARN: memory git wait expired after {timeout}s; pid {proc.pid} "
+                f"left running, outcome pending; do not retry: {args!r}",
+                file=sys.stderr,
+            )
+            raise
+        stdout.seek(0)
+        stderr.seek(0)
+        out, err = stdout.read(), stderr.read()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, args, output=out, stderr=err,
+        )
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+
+
+def _lock_holder(lock: Path) -> str:
+    """Return ``held`` (a process has the lock open), ``none``, or ``unknown``."""
+    try:
+        r = subprocess.run(
+            ["lsof", "-t", str(lock)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if r.stdout.strip():
+        return "held"
+    if r.returncode in (0, 1) and not r.stderr.strip():
+        # lsof exits 1 for no matches; diagnostics can mean incomplete visibility.
+        return "none"
+    return "unknown"
+
+
+def _stale_lock_minutes() -> float:
+    raw = os.environ.get("BUILD_LOOP_MEMORY_STALE_LOCK_MINUTES")
+    try:
+        val = float(raw) if raw is not None else _STALE_LOCK_DEFAULT_MINUTES
+        return val if val >= 0 else _STALE_LOCK_DEFAULT_MINUTES
+    except ValueError:
+        return _STALE_LOCK_DEFAULT_MINUTES
+
+
+def _git_out(root: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _report_index_lock(root: Path, path: Path) -> bool:
+    """Report an existing index.lock and skip writing; never modify it.
+
+    Open-file absence is a snapshot: Git may close a lock while retaining
+    ownership. Even an old unheld lock is never safe for automatic deletion.
+    """
+    rel = _git_out(root, "rev-parse", "--git-path", "index.lock")
+    if rel is None:
+        return False
+    lock = Path(rel)
+    if not lock.is_absolute():
+        lock = root / lock
+    try:
+        st = lock.stat()
+    except OSError:
+        return False
+    age_min = max(0, datetime.now(timezone.utc).timestamp() - st.st_mtime) / 60.0
+    holder = _lock_holder(lock)
+    stale = holder == "none" and age_min >= _stale_lock_minutes()
+    if holder == "held":
+        state = "busy git lock"
+    elif holder == "unknown":
+        state = "git lock (ownership unknown)"
+    elif stale:
+        state = "stale git lock"
+    else:
+        state = "busy or recent git lock"
+    print(
+        f"{'ERROR' if stale else 'WARN'}: memory auto-commit blocked by {state}: {lock} "
+        f"(age {age_min:.1f} min, size {st.st_size} bytes, holder {holder}); "
+        "left untouched; an unheld lock may still belong to live Git; "
+        "inspect running writers before any manual recovery",
+        file=sys.stderr,
+    )
+    if not stale:
+        return True
+    try:
+        gd = _git_out(root, "rev-parse", "--git-dir")
+        if gd:
+            gdp = Path(gd)
+            if not gdp.is_absolute():
+                gdp = root / gdp
+            entry = {
+                "ts": iso_utc(), "event": "stale_index_lock", "lock": str(lock),
+                "age_minutes": round(age_min, 1), "size": st.st_size,
+                "holder": holder, "memory_file": str(path),
+            }
+            with open(gdp / "memory-autocommit.log", "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 — logging must never raise
+        pass
+    return True
+
+
 def _autocommit_memory_file(
     path: Path, *, type_: str, name: str, workdir: Path | str | None = None,
 ) -> None:
@@ -370,6 +498,12 @@ def _autocommit_memory_file(
     workdir, distinct from the process cwd) is passed through to
     ``memory_scope`` so this classification matches the one ``write()``
     actually used, not whatever the process cwd happens to be.
+
+    A wait timeout leaves detached Git running and reports its PID/outcome
+    pending. A pending add skips commit for this invocation. Existing locks
+    skip Git with busy/stale/unknown diagnostics and age. Old unheld locks
+    (``BUILD_LOOP_MEMORY_STALE_LOCK_MINUTES``, default 1) are also recorded in
+    ``<git-dir>/memory-autocommit.log``. Locks are never deleted.
     """
     if not _autocommit_enabled():
         return
@@ -383,15 +517,23 @@ def _autocommit_memory_file(
                 file=sys.stderr,
             )
             return
-        subprocess.run(
+        if _report_index_lock(root, path):
+            return
+        _run_git(
             ["git", "-C", str(root), "add", "--", str(path)],
-            capture_output=True, text=True, timeout=10, check=True,
+            timeout=_GIT_ADD_TIMEOUT,
         )
         msg = f"memory({type_}): {name}"
-        subprocess.run(
+        _run_git(
             ["git", "-C", str(root), "commit", "-m", msg, "--", str(path)],
-            capture_output=True, text=True, timeout=10, check=True,
+            timeout=_GIT_COMMIT_TIMEOUT,
         )
+    except subprocess.TimeoutExpired:
+        return  # _run_git reported the still-running PID; never retry it here.
+    except subprocess.CalledProcessError as exc:
+        # Another writer can acquire a lock after the preflight snapshot.
+        if not _report_index_lock(root, path):
+            print(f"WARN: memory auto-commit failed: {exc}; {exc.stderr or ''}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
         print(f"WARN: memory auto-commit failed: {exc}", file=sys.stderr)
 

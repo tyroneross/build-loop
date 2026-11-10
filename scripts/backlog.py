@@ -159,15 +159,17 @@ DEFAULT_REVIEW_DAYS = 30
 _ITEM_ID_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+-(?:[0-9a-z]{6,}|\d{3,})$")
 
 # Body section scaffold for a fresh item.
-_BODY_TEMPLATE = """## Context
-{context}
-
-## Acceptance
-- <verifiable condition 1>
-
-## Notes
-{notes}
-"""
+def _render_body(context: str, segments: str, notes: str) -> str:
+    """Body of a non-retrospective item. `segments` is the already-rendered
+    finding headings (may be empty) and sits between Context and Acceptance.
+    All three are required arguments: a caller that forgets one gets a
+    TypeError instead of an item that silently lacks the text."""
+    return (
+        f"## Context\n{context}\n\n"
+        f"{segments}"
+        "## Acceptance\n- <verifiable condition 1>\n\n"
+        f"## Notes\n{notes}\n"
+    )
 
 # Retrospective-sourced items carry a DIFFERENT body: the five segments the
 # owner directive (2026-08-29) named, in fixed order. The order is the contract
@@ -879,8 +881,21 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             why=why,
         )
     else:
-        body = _BODY_TEMPLATE.format(
+        # Never silently drop finding segments passed to a non-retro source:
+        # each supplied one gets its own heading between Context and
+        # Acceptance; segments not supplied are absent (no empty heading, no
+        # placeholder).
+        segments = "".join(
+            f"## {heading}\n{text}\n\n"
+            for heading, text in (
+                ("What happened", (getattr(args, "what_happened", "") or "").strip()),
+                ("Recommendation", (getattr(args, "recommendation", "") or "").strip()),
+                ("Why", (getattr(args, "why", "") or "").strip()),
+            ) if text
+        )
+        body = _render_body(
             context=(args.context or "<why this matters / what's the situation>"),
+            segments=segments,
             notes=(args.notes or "<additional detail>"),
         )
 
@@ -1714,9 +1729,10 @@ def _import_one(repo: Path, src_path: Path, source_kind: str, today: str,
             # Idempotency anchor: a re-run skips any source already recorded here.
             "imported_from": rel,
         }
-        body = _BODY_TEMPLATE.format(
+        body = _render_body(
             context=f"Imported from `{rel}` (build-loop {source_kind} queue). "
                     f"Source file is the inbox/provenance and stays in place.",
+            segments="",
             notes=f"Adopted by `backlog.py adopt`. See {rel} for the original detail.",
         )
         doc = render_frontmatter(data) + "\n\n" + body
@@ -2276,11 +2292,17 @@ def build_parser() -> argparse.ArgumentParser:
     pn.add_argument("--observed", default="",
                     help="Date the finding was OBSERVED (YYYY-MM-DD) — may predate `created`.")
     pn.add_argument("--what-happened", default="", dest="what_happened",
-                    help="Retrospective segment 1: the observed event.")
+                    help="The observed event. Required for --provenance-source retrospective "
+                         "(segment 1); for other sources, written under a "
+                         "`## What happened` heading when given.")
     pn.add_argument("--recommendation", default="",
-                    help="Retrospective segment 4: the proposed action.")
+                    help="The proposed action. Required for --provenance-source retrospective "
+                         "(segment 4); for other sources, written under a "
+                         "`## Recommendation` heading when given.")
     pn.add_argument("--why", default="",
-                    help="Retrospective segment 5: the root cause / missing system control.")
+                    help="The root cause / missing system control. Required for "
+                         "--provenance-source retrospective (segment 5); for other "
+                         "sources, written under a `## Why` heading when given.")
     pn.add_argument("--owner", default="")
     pn.add_argument("--context", default="")
     pn.add_argument("--notes", default="")

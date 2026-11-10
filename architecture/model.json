@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ce0aee157d9131a2e78d3f0475ea9419228bc418bda2e72f3878141e3e05c73e"
+    "content_sha256": "044c74117ff7f6f0e4ec4465dec6c4275ae5ce81a45fdf92c997bf51e65f55f9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1269,6 +1269,7 @@
       "scripts/build_capability_index.py": "Capability index builder (WP-B item 1) — scripts as tools + consumer ring-2.",
       "scripts/build_capability_registry.py": "Capability registry builder.",
       "scripts/build_loop_progress.py": "Pytest lifecycle adapter; Rust owns process status and raw output logs.\"\"\"",
+      "scripts/build_native.py": "Build, test and install build-loop's native hook binary (``bin/native/bl``).",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
       "scripts/bump_version.py": "Synchronize Build Loop's plugin and npm versions under the configured release owner.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
@@ -1633,6 +1634,7 @@
       "scripts/token_efficiency_benchmark.py": "Compare exact-repeat Build Loop runs using measured tokens and quality outcomes.\"\"\"",
       "scripts/tool_state_paths.py": "tool_state_paths.py — attribute `.build-loop/`/`.rally/` to the session",
       "scripts/tool_trace.py": "OTel-shaped, redacted tool-call traces for supervision and learning.",
+      "scripts/trace_hook_command.py": "The three tool-trace hook commands in hooks/hooks.json, from one template.",
       "scripts/transcript-pattern-miner.py": "transcript-pattern-miner.py — thin shim; implementation lives in transcript_pattern_miner/.",
       "scripts/transcript_adapter.py": "transcript_adapter.py — one transcript shape for every host.",
       "scripts/transcript_capture.py": "Segment-first capture of decisions, lessons and open questions from a session transcript.",

@@ -30,7 +30,7 @@ def _git_status_porcelain(workdir: str) -> list[str] | None:
     """Run `git status --porcelain` and return lines, or None on error."""
     try:
         result = subprocess.run(
-            ["git", "-C", workdir, "status", "--porcelain"],
+            ["git", "--no-optional-locks", "-C", workdir, "status", "--porcelain"],
             capture_output=True,
             text=True,
             # Must finish before the Stop-hook budget (5000ms). `git status

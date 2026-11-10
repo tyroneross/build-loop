@@ -1558,6 +1558,55 @@ class CoordinationStatusTests(unittest.TestCase):
             "fail-open: malformed ts kept, not archived",
         )
 
+    def test_room_reply_too_large_degrades_to_partial_status_with_warning(self):
+        """A room reply over the Rally protocol maximum must not crash status."""
+        envelope = DiscoveryEnvelope(
+            channel_dir=str(self.workdir / ".rally"),
+            app_slug="repo-native",
+            repo_id="repo-native",
+            channel_layout="repo-local-rally",
+            policy="repo-local",
+            protocol_version="1.0",
+            last_resolved_at="2026-08-14T00:00:00Z",
+            resolved_via="repo-local-rally-cli",
+            raw={"rally_binary": "/fake/rally"},
+        )
+        context = BackendContext(
+            workdir=self.workdir,
+            envelope=envelope,
+            local_channel_dir=self.apps / "repo-native",
+        )
+        too_large = NativeResult(
+            "failed",
+            reason=(
+                "reply-too-large: snapshot_with_readers_archived reply is "
+                "8546207 bytes, exceeding protocol maximum 8388608"
+            ),
+        )
+        status_result = NativeResult(
+            "ok",
+            payload={"ok": True, "data": {"status_read": {"states": []}}},
+        )
+        recent_result = NativeResult(
+            "ok",
+            payload={"ok": True, "data": {"recent": {"rows": []}}},
+        )
+        args = cs.parse_args(
+            ["--workdir", str(self.workdir), "--session-id", "me", "--tool", "codex"]
+        )
+        with mock.patch.object(cs, "resolve_context", return_value=context), \
+                mock.patch.object(cs, "room_snapshot", return_value=too_large), \
+                mock.patch.object(cs, "status_read", return_value=status_result), \
+                mock.patch.object(cs, "_native_recent", return_value=recent_result):
+            status = cs.build_status(args)
+
+        self.assertEqual(status["status"], "warn")
+        self.assertTrue(
+            any("reply-too-large" in w for w in status["warnings"]),
+            status.get("warnings"),
+        )
+        self.assertEqual(status["active_peers"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

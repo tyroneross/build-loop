@@ -50,11 +50,11 @@ fi
 # Owner credential policy is independent of repository opt-in and convenience
 # kill switches. It never reads secret values or invokes a credential helper.
 #
-# pre_bash_fastpath.py `head` runs credential_policy.py's main() and the
-# command/cwd extraction in ONE interpreter (was two). Output framing:
-#   line 1 = credential exit status (0 ok, 1 failed), line 2 = its stdout,
-#   lines 3.. = the former extraction output (cwd, then the normalized command).
-# The helper ships beside this file; gate modules load from $PLUGIN_ROOT.
+# pre_bash_fastpath.py `head` runs credential_policy.py's main() and the command/cwd
+# extraction in ONE interpreter. Framing: line 1 = credential exit status (0 ok,
+# 1 failed); line 2 = its stdout; line 3 = empty, or the `gates` output below with
+# its lines joined by U+001F (head ran that stage too; see _gates_in_head); the
+# rest = the extraction (cwd, then the command). Gate modules load from $PLUGIN_ROOT.
 _FASTPATH="$_DISPATCH_DIR/pre_bash_fastpath.py"
 _HEAD=$(printf '%s' "$INPUT" | BL_PLUGIN_ROOT="$PLUGIN_ROOT" python3 "$_FASTPATH" head 2>/dev/null) || _HEAD=""
 _CRED_RC=${_HEAD%%$'\n'*}
@@ -67,6 +67,8 @@ fi
 _CREDENTIAL_OUT=${_HEAD_REST%%$'\n'*}
 _PARSED=""
 case "$_HEAD_REST" in *$'\n'*) _PARSED=${_HEAD_REST#*$'\n'} ;; esac
+_EARLY_GATES=${_PARSED%%$'\n'*}
+case "$_PARSED" in *$'\n'*) _PARSED=${_PARSED#*$'\n'} ;; *) _PARSED="" ;; esac
 case "$_CREDENTIAL_OUT" in
     *'"permissionDecision": "deny"'*|*'"permissionDecision":"deny"'*)
         printf '%s' "$_CREDENTIAL_OUT"
@@ -98,11 +100,7 @@ if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
     exit 0
 fi
 
-# Command + cwd were extracted by the `head` call above (f3 semantics kept:
-# cwd is line 1, the command is everything after it with embedded newlines
-# already normalized to `;` inside Python). Pure parameter expansion replaces
-# the former two `sed` forks; it splits on the first newline exactly as
-# `sed -n 1p` / `sed -n '2,$p'` did on the same text.
+# From `head`'s extraction: cwd is line 1, the command (newlines already `;`) the rest.
 CWD=${_PARSED%%$'\n'*}
 CMD=""
 case "$_PARSED" in *$'\n'*) CMD=${_PARSED#*$'\n'} ;; esac
@@ -134,6 +132,7 @@ _WT_N="${_WT_N//$_WT_Q/}"
 _WT_N="${_WT_N//\\/}"
 case "$_WT_N" in
     *worktree*|*rm|*rm[[:space:]\;\|\&\)]*|*trash*|*safe-del*|*-delete*|*xargs*)
+        _EARLY_GATES=""  # a sub-gate runs first: compute the gates after it
         _WT_GUARD="$PLUGIN_ROOT/scripts/hooks/worktree_removal_guard.py"
         if [ -f "$_WT_GUARD" ]; then
             _WT_OUT=$(printf '%s' "$INPUT" | python3 "$_WT_GUARD" 2>/dev/null) || _WT_OUT='{}'
@@ -187,6 +186,7 @@ case " $CMD" in
     *[\ \;\|\&\(/]launchctl*|*[\ \;\|\&\(/]installer*|*[\ \;\|\&\(/]security*|\
     *[\ \;\|\&\(/]dsenableroot*|*[\ \;\|\&\(/]tmutil*|*[\ \;\|\&\(/]fdesetup*|\
     *[\ \;\|\&\(/]diskutil*)
+        _EARLY_GATES=""  # a sub-gate runs first: compute the gates after it
         _PRIV_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
         if [ -z "$_PRIV_ROOT" ]; then
             _PRIV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -320,6 +320,7 @@ fi
 # first, so an in-root session (the common case) still costs no subprocess.
 BL_SCOPE_ROOT="$CWD"
 if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.json" ]; then
+    _EARLY_GATES=""  # git runs first: compute the gates after it
     BL_SCOPE_ROOT=$(_bl_repo_root "$CWD")
 fi
 if [ "$BL_SCOPE_ROOT" = "/" ] || [ "$BL_SCOPE_ROOT" = "$HOME" ]; then
@@ -336,6 +337,7 @@ fi
 # recording dispatch before the command can ask macOS for access.
 case "$CMD" in
     *"sfltool dumpbtm"*)
+        _EARLY_GATES=""  # stderr goes out first: compute the gates after it
         case "$CMD" in
             *"system_access_request.py"*) : ;;
             *) printf '[build-loop] This background-item inspection can ask macOS for system access. Use scripts/system_access_request.py so one request is explained and duplicate callers wait for its result.\n' >&2 ;;
@@ -379,7 +381,16 @@ _WAIT_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_wait_gate.py"
 # Helper could not run at all (spawn failure under load): the old load/wait
 # gate invocations failed CLOSED in that case (`if ! python3 gate` → exit 2),
 # so this does too whenever either gate file exists.
-_GATES=$(printf '%s' "$INPUT" | BL_PLUGIN_ROOT="$PLUGIN_ROOT" BL_CMD="$CMD" python3 "$_FASTPATH" gates) || _GATES=""
+#
+# `head` already ran this stage in its interpreter when nothing observable could
+# happen in between; its output (always a clean `ok`) then arrives in
+# _EARLY_GATES and the call below is skipped. Any step above that starts a
+# process or writes stderr clears it, so the stage runs after that step.
+if [ -n "$_EARLY_GATES" ]; then
+    _GATES=${_EARLY_GATES//$'\037'/$'\n'}
+else
+    _GATES=$(printf '%s' "$INPUT" | BL_PLUGIN_ROOT="$PLUGIN_ROOT" BL_CMD="$CMD" python3 "$_FASTPATH" gates) || _GATES=""
+fi
 _GATE_CLS_OK=fail
 _GATE_CLS_OUT=""
 _DTARGET_PRE=""

@@ -316,3 +316,25 @@ def test_lock_taken_after_classification_blocks_removal(repo: Path, env: dict[st
     out = sweep_mod.remove(wt, repo, "feat", expected_head=head, bases=["main"], idle_s=0)
     assert out["removed"] is False and "locked" in out["error"]
     assert wt.exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is macOS only")
+def test_libproc_reports_a_live_process_cwd(tmp_path: Path) -> None:
+    """The fast path must see a real process sitting inside a directory."""
+    held = tmp_path / "held"
+    held.mkdir()
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=held)
+    try:
+        cwds = sweep_mod.libproc_cwds()
+    finally:
+        proc.kill()
+        proc.wait()
+    assert cwds is not None
+    assert os.path.realpath(held) in cwds
+
+
+def test_lsof_override_bypasses_libproc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit BUILD_LOOP_SWEEP_LSOF stays authoritative, so stubs keep working."""
+    monkeypatch.setenv("BUILD_LOOP_SWEEP_LSOF", str(tmp_path / "does-not-exist"))
+    monkeypatch.setattr(sweep_mod, "libproc_cwds", lambda: ["/should/not/be/used"])
+    assert sweep_mod.lsof_cwds(5.0) == (None, "lsof unavailable")

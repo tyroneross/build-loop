@@ -653,6 +653,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     requesting_base_tool = identity.base_tool
     requesting_tool = identity.native_tool if context.native else requesting_base_tool
 
+    warnings: list[str] = []
+    room_degraded = False
     native_room_result: NativeResult | None = None
     native_recent_result: NativeResult | None = None
     if context.native:
@@ -666,6 +668,31 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         # then filter to this exact canonical repo root before applying the
         # caller's requested display limit.
         native_recent_result = _native_recent(context, limit=500)
+        if (
+            not native_room_result.ok
+            and "reply-too-large" in str(native_room_result.reason or "")
+        ):
+            # Rally refuses room replies over its protocol maximum. Retry
+            # without the reader receipts (the bulkiest section); if that is
+            # still too large, continue with an empty room and say so.
+            too_large = native_room_result.reason
+            native_room_result = room_snapshot(
+                context, actor=requesting_tool, readers=False
+            )
+            if native_room_result.ok:
+                warnings.append(
+                    f"room read exceeded the Rally reply limit ({too_large}); "
+                    "retried without reader receipts, so read cursors are missing"
+                )
+            else:
+                warnings.append(
+                    f"room read unavailable ({too_large}); peers, claims and "
+                    "inbox are not reflected in this status"
+                )
+                native_room_result = NativeResult(
+                    "ok", payload={"ok": True, "data": {"room": {}}}
+                )
+                room_degraded = True
         _require_native(native_room_result, "room read")
         _require_native(native_status_result, "status read")
         _require_native(native_recent_result, "recent read")
@@ -763,7 +790,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         inbox_latest_messages = native_inbox["latest"]
         inbox_coverage_incomplete = bool(
             native_inbox.get("coverage_incomplete")
-        )
+        ) or room_degraded
         inbox_coverage = dict(native_inbox.get("coverage") or {})
         task_heartbeat_status = task_heartbeat.summarize_task_health_records(
             _heartbeat_records_from_changes(native_changes),
@@ -995,6 +1022,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "dirty_files_unknown": dirty_unknown,
         "dirty_outside_owned": dirty_outside_owned,
         "new_changes": new_changes,
+        "warnings": warnings,
     }
 
 

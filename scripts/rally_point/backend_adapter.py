@@ -28,11 +28,36 @@ except ImportError:  # script import
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class BackendContext:
     workdir: Path
     envelope: DiscoveryEnvelope
-    local_channel_dir: Path
+    _local_channel_dir: Path | None
+
+    def __init__(
+        self,
+        workdir: Path,
+        envelope: DiscoveryEnvelope,
+        local_channel_dir: Path | None = None,
+    ) -> None:
+        object.__setattr__(self, "workdir", workdir)
+        object.__setattr__(self, "envelope", envelope)
+        object.__setattr__(self, "_local_channel_dir", local_channel_dir)
+
+    @property
+    def local_channel_dir(self) -> Path:
+        """Build Loop's private fallback channel, computed on first use.
+
+        Native contexts never touch it on the per-tool hook path, so
+        ``resolve_context`` skips the ``git`` spawns it costs for them.
+        """
+        if self._local_channel_dir is None:
+            object.__setattr__(
+                self,
+                "_local_channel_dir",
+                channel_paths.fallback_channel_dir(self.workdir, self.envelope.app_slug),
+            )
+        return self._local_channel_dir
 
     @property
     def native(self) -> bool:
@@ -77,11 +102,12 @@ class _NativeClaimPlan:
 def resolve_context(workdir: Path | str) -> BackendContext:
     wd = Path(workdir).expanduser().resolve()
     envelope = resolve(wd)
-    return BackendContext(
-        workdir=wd,
-        envelope=envelope,
-        local_channel_dir=channel_paths.fallback_channel_dir(wd, envelope.app_slug),
-    )
+    context = BackendContext(workdir=wd, envelope=envelope)
+    if not context.native:
+        # Non-native callers use the fallback channel; resolve it now so any
+        # error surfaces here, exactly as before.
+        context.local_channel_dir
+    return context
 
 
 def watcher_dir(context: BackendContext) -> Path:

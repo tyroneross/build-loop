@@ -234,9 +234,62 @@ def worked_since_creation(admin: Path | None) -> bool:
     return False
 
 
+_PROC_PIDVNODEPATHINFO = 9
+_VNODEPATHINFO_SIZE = 2352  # struct proc_vnodepathinfo: two vnode_info_path (152 + 1024 each)
+_CDIR_PATH_OFFSET = 152
+
+
+def libproc_cwds() -> list[str] | None:
+    """Real cwd of every process, read from macOS libproc. None = use lsof instead.
+
+    A system-wide `lsof -d cwd` took 167 s on a machine with 3,800 processes
+    (2026-11-09), past every budget this sweep has; libproc answers in under a
+    second. A process that exited mid-scan (ESRCH) or belongs to another user
+    (EPERM, which lsof cannot read either) is skipped. Any other failure
+    returns None, because a process that was not inspected could be the one
+    using a worktree.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes  # noqa: PLC0415 - only the macOS path needs it
+        import errno  # noqa: PLC0415
+
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        count = lib.proc_listallpids(None, 0)
+        if count <= 0:
+            return None
+        pids = (ctypes.c_int * (count + 256))()
+        count = lib.proc_listallpids(pids, ctypes.sizeof(pids))
+        if count <= 0:
+            return None
+        buf = ctypes.create_string_buffer(_VNODEPATHINFO_SIZE)
+        cwds: list[str] = []
+        for pid in pids[:count]:
+            if pid <= 0:
+                continue
+            ctypes.set_errno(0)
+            got = lib.proc_pidinfo(pid, _PROC_PIDVNODEPATHINFO, ctypes.c_uint64(0), buf, _VNODEPATHINFO_SIZE)
+            if got != _VNODEPATHINFO_SIZE:
+                if ctypes.get_errno() in (errno.ESRCH, errno.EPERM):
+                    continue
+                return None
+            raw = buf.raw[_CDIR_PATH_OFFSET:_CDIR_PATH_OFFSET + 1024].split(b"\0", 1)[0]
+            if raw.startswith(b"/"):
+                cwds.append(_real(os.fsdecode(raw)))
+        return cwds or None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def lsof_cwds(timeout: float) -> tuple[list[str] | None, str | None]:
     """Real cwd of every process, or (None, reason) when it cannot be known."""
-    exe = os.environ.get("BUILD_LOOP_SWEEP_LSOF") or shutil.which("lsof")
+    override = os.environ.get("BUILD_LOOP_SWEEP_LSOF")
+    if not override:
+        cwds = libproc_cwds()
+        if cwds is not None:
+            return cwds, None
+    exe = override or shutil.which("lsof")
     if not exe or not os.path.exists(exe):
         return None, "lsof unavailable"
     if timeout <= 0:
