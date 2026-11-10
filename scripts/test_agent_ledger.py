@@ -1391,5 +1391,19 @@ class CliTests(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
 
 
+class MixedHostEnvironmentTests(unittest.TestCase):
+    """Rally identity: a Claude session that also exports CODEX_HOME is not a Codex actor."""
+
+    def _identity(self, env: dict) -> tuple:
+        with mock.patch.dict(os.environ, env, clear=True):
+            return agent_ledger._projection_source_identity({})
+
+    def test_claude_session_with_codex_home_is_claude_actor(self) -> None:
+        self.assertEqual(self._identity({"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"}), ("claude_code", False))
+
+    def test_codex_session_with_codex_home_is_codex_actor(self) -> None:
+        self.assertEqual(self._identity({"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"}), ("codex", False))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

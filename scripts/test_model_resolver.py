@@ -907,5 +907,24 @@ class HostRamFitTests(unittest.TestCase):
         self.assertNotIn("opus", too_big)
 
 
+class MixedHostEnvironmentTests(unittest.TestCase):
+    """detect_host: a runtime marker beats CODEX_HOME (a config-location hint)."""
+
+    def _providers(self, env: dict) -> set | None:
+        with mock.patch.dict(os.environ, env, clear=True):
+            return model_resolver.detect_host_providers()
+
+    def test_claude_session_with_codex_home_gets_anthropic_providers(self) -> None:
+        import host_model_map
+        got = self._providers({"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"})
+        self.assertEqual(got, host_model_map.providers_for_host("claude_code"))
+        self.assertNotIn("openai", got)
+
+    def test_codex_session_with_codex_home_gets_codex_providers(self) -> None:
+        import host_model_map
+        got = self._providers({"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"})
+        self.assertEqual(got, host_model_map.providers_for_host("codex"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

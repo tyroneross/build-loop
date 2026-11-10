@@ -324,5 +324,23 @@ class CliTests(ConsentAskTestCase):
         self.assertEqual(before, after, msg="the real per-operator store must never change")
 
 
+class MixedHostEnvironmentTests(ConsentAskTestCase):
+    """The ask surface follows the running host, not a CODEX_HOME export."""
+
+    def test_claude_session_with_codex_home_asks_via_claude_surface(self) -> None:
+        plan = consent_ask.ask_plan(
+            "build-loop", "codex", "codex exec x", env={"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"}
+        )
+        self.assertEqual(plan["host"], "claude_code")
+        self.assertEqual(plan["surface"], "AskUserQuestion")
+
+    def test_codex_session_with_codex_home_asks_via_codex_surface(self) -> None:
+        plan = consent_ask.ask_plan(
+            "build-loop", "codex", "codex exec x", env={"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"}
+        )
+        self.assertEqual(plan["host"], "codex")
+        self.assertEqual(plan["surface"], "codex_approval")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

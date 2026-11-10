@@ -232,5 +232,39 @@ class TestFailOpen(unittest.TestCase):
             self.assertEqual(cp.returncode, 0)
 
 
+class MixedHostEnvironmentTests(unittest.TestCase):
+    """Native heartbeat identity comes from the running host, not CODEX_HOME."""
+
+    def _beat_tool(self, env: dict) -> str:
+        import backend_adapter as adapter  # type: ignore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _project(tmp)
+            context = SimpleNamespace(
+                native=True,
+                workdir=root,
+                local_channel_dir=root / ".build-loop" / "local-rally",
+                envelope=SimpleNamespace(
+                    app_slug="mixed-env", channel_dir=str(root / ".rally"),
+                    backend="rally", transport="rally-cli",
+                ),
+            )
+            ok = SimpleNamespace(ok=True, reason=None, status="ok", backend="rally", transport="rally-cli")
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(adapter, "resolve_context", return_value=context):
+                    with mock.patch.object(adapter, "write_heartbeat_presence", return_value=ok):
+                        result = ohb._write_presence_beat(
+                            root, "execute", "chunk", [],
+                            execution={"run_id": "r", "current_session_id": "s"},
+                        )
+        return result["tool"]
+
+    def test_claude_session_with_codex_home_beats_as_claude(self) -> None:
+        self.assertEqual(self._beat_tool({"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"}), "claude_code")
+
+    def test_codex_session_with_codex_home_beats_as_codex(self) -> None:
+        self.assertEqual(self._beat_tool({"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"}), "codex")
+
+
 if __name__ == "__main__":
     unittest.main()

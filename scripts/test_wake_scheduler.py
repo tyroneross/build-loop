@@ -101,3 +101,25 @@ def test_global_ceiling_is_not_labelled_as_a_cache_check():
     result = ws.plan_wake("codex", ws.EXTERNAL, desired_seconds=5000)
     assert result['delay_seconds'] == 3600
     assert result['delay_reason'] == 'global wake ceiling'
+
+
+import os  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+def _ambient_plan(env):
+    with mock.patch.dict(os.environ, env, clear=True):
+        return ws.plan_wake(None, ws.EXTERNAL, action_class="auto")
+
+
+def test_claude_session_with_codex_home_uses_claude_wake_tier():
+    """Mixed env, no tool id: Claude's schedule_wakeup, never a Codex-only fallback."""
+    plan = _ambient_plan({"CLAUDECODE": "1", "CODEX_HOME": "/Users/x/.codex"})
+    assert plan["host"] == "claude_code"
+    assert plan["tier"] == "schedule_wakeup"
+
+
+def test_codex_session_with_codex_home_avoids_claude_only_wake_tier():
+    plan = _ambient_plan({"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"})
+    assert plan["host"] == "codex"
+    assert plan["tier"] != "schedule_wakeup"

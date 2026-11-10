@@ -767,3 +767,9 @@ def test_first_applicable_install_wins_before_scoring(fake, tmp_path):
     assert hit[0]["summary"] == "Run sourced research and keep the sources."  # the user install
     assert "deep-sources" not in json.dumps(pi.query(index, "research deep sources", host="claude",
                                                      workdir=proj, include_surfaces=True))
+
+
+def test_consuming_host_codex_runtime_marker_with_codex_home_is_codex():
+    """Reverse of round 3 #1: a Codex runtime marker plus CODEX_HOME stays Codex."""
+    import capability_shortlist as cs
+    assert cs.consuming_host({"CODEX_SANDBOX": "seatbelt", "CODEX_HOME": "/Users/x/.codex"}) == "codex"
