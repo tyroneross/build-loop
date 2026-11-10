@@ -150,11 +150,22 @@ def test_query_ranking_and_invoke(fake):
     assert len(pi.query(index, "audit research symbol debug code root", cap=8)) <= 8
 
 
-def test_size_cap_trims(fake):
+def test_size_cap_trims(fake, tmp_path):
     index = pi.build(fake["tools"], max_bytes=2500)
     assert index["trimmed"] is True
-    assert len(json.dumps(index).encode()) <= 2500 or all(
-        not e.get(k) for e in index["entries"] for k in ("skills", "agents", "commands", "mcp_servers"))
+    assert pi.write_atomic(index, tmp_path / "small.json") <= 2500  # bytes actually written
+
+
+def test_size_cap_holds_for_many_tools(fake, tmp_path):
+    """Review finding 8: 1,000 declared tools produced 304,098 bytes against 204,800."""
+    tools = _write(tmp_path / "many.json", json.dumps({"tools": [
+        {"name": f"tool-{i}", "purpose": "p" * 160, "use_when": ["phrase number %d" % i] * 6}
+        for i in range(1000)]}))
+    index = pi.build(tools)
+    written = pi.write_atomic(index, tmp_path / "many-index.json")
+    assert written <= pi.MAX_BYTES
+    assert written == (tmp_path / "many-index.json").stat().st_size
+    assert index["trimmed"] is True
 
 
 def test_check_goes_stale_after_manifest_change(fake):
@@ -165,7 +176,7 @@ def test_check_goes_stale_after_manifest_change(fake):
     data["description"] = "Changed description, longer than before."
     manifest.write_text(json.dumps(data))
     reasons = pi.staleness(fake["out"], fake["tools"])
-    assert any("manifest:claude:code-audit@mkt" in r for r in reasons)
+    assert any("plugin:claude:code-audit@mkt" in r for r in reasons)
     assert pi.main(["check", "--out", str(fake["out"]), "--tools-file", str(fake["tools"])]) == 3
 
 
@@ -248,3 +259,178 @@ def test_shortlist_skips_its_own_plugin(fake, tmp_path):
     _write(workdir / ".claude-plugin" / "plugin.json", json.dumps({"name": "research"}))
     installed = cs.load_installed("research sources", workdir, fake["out"])
     assert all(e["name"] != "research" for e in installed)
+
+
+# ---- review fixes (2026-11-09) ----------------------------------------------
+
+def test_deleted_skill_file_makes_index_stale_and_is_not_invoked(fake):
+    """Review finding 1: deleting a skill file left the cache fresh and still invokable."""
+    index = _build(fake)
+    (fake["audit"] / "skills" / "audit" / "SKILL.md").unlink()
+    assert any("code-audit" in r for r in pi.staleness(fake["out"], fake["tools"]))
+    for r in pi.query(index, "audit"):
+        assert r["invoke"].get("skill") != "code-audit:audit"
+
+
+def test_manifest_declared_skill_location_is_indexed(fake):
+    """Review finding 2: Codex agent-rally-point declares skills at ./.codex-plugin/skills."""
+    cx = fake["home"] / ".codex"
+    root = cx / "plugins" / "cache" / "loc" / "rally" / "local"
+    _write(root / ".codex-plugin" / "plugin.json", json.dumps(
+        {"name": "rally", "description": "Coordinate agents.", "skills": "./.codex-plugin/skills"}))
+    for s_ in ("agent-rally-point", "mini-loop", "rally-workflows"):
+        _write(root / ".codex-plugin" / "skills" / s_ / "SKILL.md", f"---\nname: {s_}\ndescription: x\n---\n")
+    cfg = cx / "config.toml"
+    cfg.write_text(cfg.read_text() + '\n[plugins."rally@loc"]\nenabled = true\n')
+    index = _build(fake)
+    rally = next(e for e in index["entries"] if e["name"] == "rally")
+    assert rally["skills"] == ["agent-rally-point", "mini-loop", "rally-workflows"]
+
+
+def test_declared_location_outside_install_root_is_ignored(fake, tmp_path):
+    outside = tmp_path / "outside-skills"
+    _write(outside / "stolen" / "SKILL.md", "---\nname: stolen\ndescription: x\n---\n")
+    m = fake["research"] / ".claude-plugin" / "plugin.json"
+    data = json.loads(m.read_text())
+    data["skills"] = str(outside)
+    data["agents"] = "../../../../../outside-skills"
+    m.write_text(json.dumps(data))
+    index = _build(fake)
+    research = next(e for e in index["entries"] if e["name"] == "research" and e["host"] == "claude")
+    assert "stolen" not in research["skills"] and research["skills"] == ["research"]
+
+
+def test_toml_inline_comment_keeps_plugin_disabled(fake):
+    """Review finding 3: `enabled = false # disabled` was read as enabled."""
+    cx = fake["home"] / ".codex"
+    _plugin(cx / "plugins" / "cache" / "loc" / "hidden" / "1.0.0", "hidden", "Hidden.", {"h": "x"})
+    cfg = cx / "config.toml"
+    cfg.write_text(cfg.read_text() + '\n[plugins."hidden@loc"]\nenabled = false # disabled\n')
+    index = _build(fake)
+    assert all(e["name"] != "hidden" for e in index["entries"])
+
+
+def test_malformed_manifest_does_not_abort_build(fake):
+    """Review finding 4: {"interface": "bad"} raised AttributeError and lost every entry."""
+    m = fake["research"] / ".claude-plugin" / "plugin.json"
+    m.write_text(json.dumps({"interface": "bad", "keywords": "not-a-list", "skills": 7}))
+    index = _build(fake)
+    names = {(e["host"], e["name"]) for e in index["entries"] if e["kind"] == "plugin"}
+    assert ("claude", "code-audit") in names and ("claude", "research") in names
+
+
+def test_unreadable_plugin_dir_is_skipped_not_fatal(fake, monkeypatch):
+    """A failure inside one plugin is recorded in host status; the rest still index."""
+    real = pi._describe_surfaces
+
+    def boom(install, manifest, host):
+        if install.name == "1.0.0" and install.parent.name == "code-audit":
+            raise PermissionError("denied")
+        return real(install, manifest, host)
+
+    monkeypatch.setattr(pi, "_describe_surfaces", boom)
+    index = _build(fake)
+    assert all(e["name"] != "code-audit" for e in index["entries"] if e["host"] == "claude")
+    skipped = index["hosts"]["claude"]["skipped"]
+    assert skipped and skipped[0]["name"] == "code-audit" and "denied" in skipped[0]["reason"]
+    assert any(e["name"] == "research" for e in index["entries"])
+
+
+def test_chmod_unreadable_plugin_dir_is_skipped(fake):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores permissions")
+    skills = fake["audit"] / "skills"
+    skills.chmod(0)
+    try:
+        index = _build(fake)
+    finally:
+        skills.chmod(0o755)
+    assert any(e["name"] == "research" for e in index["entries"])
+    assert any(s["name"] == "code-audit" for s in index["hosts"]["claude"].get("skipped", []))
+
+
+def test_codex_plugin_id_cannot_escape_cache(fake, tmp_path):
+    """Review finding 5: [plugins."demo@/tmp/..."] or '..' joined outside the cache root."""
+    evil_market = tmp_path / "evil"
+    _plugin(evil_market / "demo" / "1.0.0", "demo", "Escaped.", {"x": "x"})
+    _plugin(fake["home"] / ".codex" / "plugins" / "dotdot" / "1.0.0", "dotdot", "Escaped.", {"x": "x"})
+    cfg = fake["home"] / ".codex" / "config.toml"
+    cfg.write_text(cfg.read_text() + f'\n[plugins."demo@{evil_market}"]\nenabled = true\n'
+                   '[plugins."dotdot@.."]\nenabled = true\n')
+    index = _build(fake)
+    assert all(e["name"] not in ("demo", "dotdot") for e in index["entries"])
+    reasons = " ".join(s["reason"] for s in index["hosts"]["codex"].get("skipped", []))
+    assert "demo" in json.dumps(index["hosts"]["codex"]) and "invalid" in reasons
+
+
+def test_oversized_metadata_file_is_skipped_individually(fake, monkeypatch):
+    """Review finding 6: metadata was read whole with no size limit."""
+    monkeypatch.setattr(pi, "MAX_META_BYTES", 2048)
+    m = fake["research"] / ".claude-plugin" / "plugin.json"
+    m.write_text(json.dumps({"description": "x" * 5000}))
+    index = _build(fake)
+    research = next(e for e in index["entries"] if e["name"] == "research" and e["host"] == "claude")
+    assert research["summary"] == ""  # oversized manifest ignored, plugin still indexed
+    assert any(e["name"] == "code-audit" for e in index["entries"])
+
+
+def test_manifest_keywords_are_not_copied(fake):
+    """Review finding 7: keywords are outside the allowlist and may carry secret-looking text."""
+    m = fake["research"] / ".claude-plugin" / "plugin.json"
+    data = json.loads(m.read_text())
+    data["keywords"] = ["sk-secret-token-123456"]
+    m.write_text(json.dumps(data))
+    _build(fake)
+    assert "sk-secret-token-123456" not in fake["out"].read_text()
+
+
+def test_symlinked_metadata_outside_install_root_is_not_followed(fake, tmp_path):
+    outside = _write(tmp_path / "outside" / "SKILL.md",
+                     '---\nname: evil\ndescription: Use for "outside phrase leak".\n---\n')
+    mcp_out = _write(tmp_path / "outside" / "mcp.json", json.dumps({"mcpServers": {"leaked-server": {}}}))
+    (fake["research"] / "skills" / "evil").mkdir()
+    (fake["research"] / "skills" / "evil" / "SKILL.md").symlink_to(outside)
+    (fake["research"] / ".mcp.json").symlink_to(mcp_out)
+    _build(fake)
+    text = fake["out"].read_text()
+    assert "outside phrase leak" not in text and "leaked-server" not in text and '"evil"' not in text
+
+
+def test_shortlist_cap_holds_with_many_installed_and_in_repo(fake, tmp_path):
+    import capability_shortlist as cs
+    for i in range(12):
+        _plugin(fake["home"] / ".claude" / "plugins" / "cache" / "mkt" / f"research-{i}" / "1.0.0",
+                f"research-{i}", "Research helper.", {f"research-{i}": "Research things."})
+    reg_file = fake["home"] / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(reg_file.read_text())
+    for i in range(12):
+        data["plugins"][f"research-{i}@mkt"] = [{"installPath": str(
+            fake["home"] / ".claude" / "plugins" / "cache" / "mkt" / f"research-{i}" / "1.0.0")}]
+    reg_file.write_text(json.dumps(data))
+    _build(fake)
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    installed = cs.load_installed("research", workdir, fake["out"])
+    assert len(installed) > 8
+    local = [{"name": f"local-research-{i}", "kind": "skill", "category": "planning",
+              "description": "research helper", "triggers": []} for i in range(10)]
+    out = cs.shortlist(_registry(local), 2, "research", workdir=workdir, installed=installed)
+    assert out["shortlist_size"] == len(out["results"]) == cs.SHORTLIST_CAP
+
+
+def test_shortlist_cli_no_installed_excludes_installed_matches(fake, tmp_path, capsys):
+    import capability_shortlist as cs
+    _build(fake)
+    workdir = tmp_path / "repo"
+    _write(workdir / ".build-loop" / "capability-registry.json", json.dumps(_registry([
+        {"name": "local-research", "kind": "skill", "category": "planning",
+         "description": "research helper", "triggers": []}])))
+
+    def run(*extra):
+        assert cs.main(["--phase", "2", "--intent", "research sources", "--workdir", str(workdir),
+                        "--json", "--no-cache", *extra]) == 0
+        return [r["name"] for r in json.loads(capsys.readouterr().out)["results"]]
+
+    assert "research" in run()
+    names = run("--no-installed")
+    assert "research" not in names and "local-research" in names

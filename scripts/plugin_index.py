@@ -16,17 +16,24 @@ tool when a task needs one.
 Per plugin it records ONLY: name, marketplace, version, host, install_path, a
 <=160-char summary from the manifest description, <=6 ``use_when`` trigger
 phrases (quoted phrases in skill/agent/command frontmatter descriptions, then
-manifest keywords, then short clauses of skill descriptions), and the NAMES of its skills, agents, commands and MCP servers.
+short clauses of skill descriptions; manifest keywords are not copied), and the NAMES of its skills, agents, commands and MCP servers.
 Bodies, MCP args/env and every other manifest field are never copied.
 
 Hosts (missing files mean "not found", never an error):
   claude  $CLAUDE_CONFIG_DIR or ~/.claude -> plugins/installed_plugins.json
-  codex   $CODEX_HOME or ~/.codex -> config.toml [plugins."name@marketplace"]
-          headers + ``enabled``; files under plugins/cache/<marketplace>/<name>/<version>/
+  codex   $CODEX_HOME or ~/.codex -> config.toml (tomllib; only [plugins."name@marketplace"]
+          ids and ``enabled`` are kept); files under plugins/cache/<marketplace>/<name>/<version>/
+
+Surfaces are found in the conventional skills/, agents/, commands/ dirs plus
+any location the host's manifest declares; every file used must resolve inside
+the install root (symlinks pointing elsewhere are not followed), metadata reads
+are size-bounded, and one plugin that fails to scan is recorded under its host's
+``skipped`` instead of aborting the build.
 
 Freshness without maintenance: the index stores a fingerprint of each host's
-installed-plugin file (size+mtime), each plugin manifest (size+mtime), the
-tool declaration file, and each declared tool's ``shutil.which`` result.
+installed-plugin file (size+mtime), every file extraction reads per plugin
+(manifest, SKILL.md, agent/command files, MCP files), the tool declaration
+file, and each declared tool's ``shutil.which`` result.
 ``check`` recomputes it; ``query`` rebuilds first when stale. Every result is
 verify-on-use: ``query`` drops an entry whose install path or binary is gone
 and says so on stderr.
@@ -54,6 +61,7 @@ import shutil
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -73,8 +81,6 @@ _STOP = frozenset({
     "the", "and", "for", "with", "from", "this", "that", "into", "use", "when",
     "you", "your", "are", "any", "all", "can", "how", "what", "via", "not",
 })
-_CODEX_HEADER_RE = re.compile(r'^\[plugins\."([^"@]+)@([^"]+)"\]\s*$')
-_ENABLED_RE = re.compile(r"^enabled\s*=\s*(true|false)\s*$")
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +102,18 @@ def codex_root() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".codex"
 
 
+# Size limits. Metadata on this machine tops out near 12 KB (largest plugin.json,
+# 2026-11-09) and host lists near 64 KB (~/.codex/config.toml), so 256 KiB and
+# 4 MiB leave ~20x / ~60x headroom while keeping a hostile multi-GB file from
+# being allocated on the shortlist path. An oversized file is skipped alone.
+MAX_META_BYTES = 256 * 1024
+MAX_HOST_BYTES = 4 * 1024 * 1024
+FRONTMATTER_READ = 8192  # SKILL.md / agent / command files: frontmatter only
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+SURFACE_KINDS = ("skills", "agents", "commands")
+
+
 def _stat_sig(p: Path) -> str:
     try:
         st = p.stat()
@@ -104,11 +122,34 @@ def _stat_sig(p: Path) -> str:
         return "missing"
 
 
-def _read_json(p: Path) -> Any:
+def _read_bounded(p: Path, limit: int) -> bytes | None:
+    """Read at most ``limit`` bytes; None when missing, unreadable or larger."""
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        with p.open("rb") as fh:
+            if os.fstat(fh.fileno()).st_size > limit:
+                return None
+            data = fh.read(limit + 1)
+    except OSError:
         return None
+    return data if len(data) <= limit else None
+
+
+def _read_json(p: Path, limit: int | None = None) -> Any:
+    data = _read_bounded(p, MAX_META_BYTES if limit is None else limit)
+    if data is None:
+        return None
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _inside(p: Path, root: Path) -> bool:
+    """True when ``p`` exists and its real path lies inside ``root`` (already resolved)."""
+    try:
+        return p.resolve(strict=True).is_relative_to(root)
+    except (OSError, RuntimeError):  # missing, unreadable, or a symlink loop
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +158,7 @@ def _read_json(p: Path) -> Any:
 
 def discover_claude() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     src = claude_root() / "plugins" / "installed_plugins.json"
-    data = _read_json(src)
+    data = _read_json(src, MAX_HOST_BYTES)
     if not isinstance(data, dict):
         return {"status": "not found", "source": str(src)}, []
     found: list[dict[str, Any]] = []
@@ -131,51 +172,62 @@ def discover_claude() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         found.append({
             "host": "claude", "name": name, "marketplace": market,
             "version": str(rec.get("version") or ""),
-            "install_path": str(path) if path else None,
+            "install_path": str(path) if isinstance(path, str) and path else None,
         })
     return {"status": "found", "source": str(src)}, found
 
 
 def discover_codex() -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Read only plugin section headers and their ``enabled`` line — no other config."""
+    """Plugin ids + ``enabled`` from config.toml; nothing else is kept."""
     root = codex_root()
     src = root / "config.toml"
-    try:
-        lines = src.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+    raw = _read_bounded(src, MAX_HOST_BYTES)
+    if raw is None:
         return {"status": "not found", "source": str(src)}, []
-    declared: list[tuple[str, str, bool]] = []
-    current: list[Any] | None = None
-    for line in lines:
-        s = line.strip()
-        m = _CODEX_HEADER_RE.match(s)
-        if m:
-            current = [m.group(1), m.group(2), True]
-            declared.append(current)  # type: ignore[arg-type]
-            continue
-        if s.startswith("["):
-            current = None
-            continue
-        if current is not None:
-            e = _ENABLED_RE.match(s)
-            if e:
-                current[2] = e.group(1) == "true"
+    try:
+        config = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        return {"status": "unreadable", "source": str(src), "reason": f"{type(exc).__name__}"}, []
+    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+    del config  # only plugin ids and flags leave this function
+    cache = root / "plugins" / "cache"
+    cache_real = cache.resolve()
+    status: dict[str, Any] = {"status": "found", "source": str(src), "enabled_without_local_files": 0}
+    skipped: list[dict[str, str]] = []
     found: list[dict[str, Any]] = []
-    no_local = 0
-    for name, market, enabled in declared:
-        if not enabled:
+    for key, val in sorted(plugins.items()):
+        enabled = val.get("enabled", True) if isinstance(val, dict) else True
+        if enabled is False:
             continue
-        base = root / "plugins" / "cache" / market / name
-        versions = [d for d in base.iterdir() if d.is_dir()] if base.is_dir() else []
-        if not versions:
-            no_local += 1  # remote/app connector: nothing on disk to index
+        name, _, market = str(key).partition("@")
+        if not (_SAFE_ID_RE.match(name) and _SAFE_ID_RE.match(market)):
+            skipped.append({"name": str(key), "reason": "invalid plugin id (must be name@marketplace, single path components)"})
             continue
-        newest = max(versions, key=lambda d: d.stat().st_mtime)
+        base = cache / market / name
+        if not base.is_dir():
+            status["enabled_without_local_files"] += 1  # remote/app connector
+            continue
+        # The marketplace/name dirs must stay in the cache. A version dir may be
+        # a symlink (local installs point at a checkout); the host follows it too.
+        if not base.resolve().is_relative_to(cache_real):
+            skipped.append({"name": str(key), "reason": "plugin directory resolves outside the Codex cache"})
+            continue
+        try:
+            versions = [d for d in base.iterdir() if d.is_dir()]
+            newest = max(versions, key=lambda d: d.stat().st_mtime) if versions else None
+        except OSError as exc:
+            skipped.append({"name": str(key), "reason": f"{type(exc).__name__}: {exc}"[:200]})
+            continue
+        if newest is None:
+            status["enabled_without_local_files"] += 1
+            continue
         found.append({
             "host": "codex", "name": name, "marketplace": market,
             "version": newest.name, "install_path": str(newest),
         })
-    return {"status": "found", "source": str(src), "enabled_without_local_files": no_local}, found
+    if skipped:
+        status["skipped"] = skipped
+    return status, found
 
 
 HOSTS = (discover_claude, discover_codex)
@@ -185,24 +237,122 @@ HOSTS = (discover_claude, discover_codex)
 # Per-plugin extraction (names + short metadata only)
 # ---------------------------------------------------------------------------
 
-MANIFEST_CANDIDATES = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "plugin.json")
+MANIFEST_CANDIDATES = {
+    "claude": (".claude-plugin/plugin.json", "plugin.json", ".codex-plugin/plugin.json"),
+    "codex": (".codex-plugin/plugin.json", "plugin.json", ".claude-plugin/plugin.json"),
+}
 
 
-def manifest_path(install: Path) -> Path | None:
-    for rel in MANIFEST_CANDIDATES:
+def manifest_path(install: Path, host: str = "claude") -> Path | None:
+    """The host's own manifest first; only files inside the install root count."""
+    root = install.resolve()
+    for rel in MANIFEST_CANDIDATES.get(host, MANIFEST_CANDIDATES["claude"]):
         p = install / rel
-        if p.is_file():
+        if p.is_file() and _inside(p, root):
             return p
     return None
 
 
+def _declared(manifest: dict[str, Any], key: str) -> list[str]:
+    v = manifest.get(key)
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, str)]
+    return []
+
+
+def _locations(install: Path, root: Path, manifest: dict[str, Any], kind: str) -> list[Path]:
+    """Conventional ``<kind>/`` plus manifest-declared paths, each inside the root."""
+    out: list[Path] = []
+    for rel in [kind] + _declared(manifest, kind):
+        p = install / rel  # an absolute ``rel`` replaces install and fails _inside
+        if _inside(p, root) and p.resolve() not in [q.resolve() for q in out]:
+            out.append(p)
+    return out
+
+
+def _describe_surfaces(install: Path, manifest: dict[str, Any], host: str) -> dict[str, Any]:
+    """Names and source files of skills/agents/commands/MCP servers.
+
+    Only files whose real path is inside the install root are used, so a
+    symlink pointing elsewhere is never followed. Raises OSError when a
+    directory cannot be listed; build() records that plugin as skipped.
+    """
+    root = install.resolve()
+    surfaces: dict[str, Any] = {k: {} for k in (*SURFACE_KINDS, "mcp_servers")}
+    files: list[Path] = []
+    for loc in _locations(install, root, manifest, "skills"):
+        if loc.is_dir():
+            for d in sorted(loc.iterdir()):
+                md = d / "SKILL.md"
+                if md.is_file() and _inside(md, root):
+                    surfaces["skills"].setdefault(d.name, md)
+    for kind in ("agents", "commands"):
+        for loc in _locations(install, root, manifest, kind):
+            mds = [loc] if loc.is_file() and loc.suffix == ".md" else sorted(loc.glob("*.md")) if loc.is_dir() else []
+            for md in mds:
+                if md.is_file() and _inside(md, root):
+                    surfaces[kind].setdefault(md.stem, md)
+    inline = manifest.get("mcpServers")
+    if isinstance(inline, dict):
+        for k, v in inline.items():
+            if isinstance(v, dict):
+                surfaces["mcp_servers"][str(k)] = None
+    mcp_files = [".mcp.json", "mcp.json"] + ([inline] if isinstance(inline, str) else [])
+    for rel in mcp_files:
+        p = install / rel
+        if not (p.is_file() and _inside(p, root)):
+            continue
+        files.append(p)
+        data = _read_json(p)
+        servers = data.get("mcpServers", data) if isinstance(data, dict) else None
+        if isinstance(servers, dict):
+            for k, v in servers.items():
+                if isinstance(v, dict):
+                    surfaces["mcp_servers"].setdefault(str(k), p)
+    for kind in SURFACE_KINDS:
+        files.extend(surfaces[kind].values())
+    surfaces["files"] = files
+    return surfaces
+
+
+def scan_plugin(found: dict[str, Any]) -> dict[str, Any]:
+    """Manifest + surfaces + fingerprint for one plugin. Raises on unreadable dirs."""
+    if not found.get("install_path"):
+        raise FileNotFoundError("no install path")
+    install = Path(found["install_path"])
+    if not install.is_dir():
+        raise FileNotFoundError(f"install path missing: {install}")
+    mpath = manifest_path(install, found["host"])
+    manifest = _read_json(mpath) if mpath else None
+    manifest = manifest if isinstance(manifest, dict) else {}
+    surfaces = _describe_surfaces(install, manifest, found["host"])
+    inputs = ([mpath] if mpath else []) + surfaces["files"]
+    sig = hashlib.sha256("\n".join(
+        sorted(f"{p.relative_to(install) if p.is_relative_to(install) else p}={_stat_sig(p)}" for p in inputs)
+    ).encode()).hexdigest()[:16]
+    return {"manifest": manifest, "surfaces": surfaces, "sig": f"{len(inputs)}:{sig}"}
+
+
+def _clean(p: str) -> str | None:
+    p = " ".join(p.lower().split()).strip(" .,;:!")
+    if _CLEAN_PHRASE_RE.match(p) and 1 <= len(p.split()) <= 6:
+        return p
+    return None
+
+
+_CLEAN_PHRASE_RE = re.compile(r"^[a-z0-9][a-z0-9 '\-/?]*$")
+
+
 def _description(md: Path) -> str:
+    data = None
     try:
-        with md.open(encoding="utf-8") as fh:
-            head = fh.read(8192)  # frontmatter only; bodies are never read in full
-    except (OSError, UnicodeDecodeError):
+        with md.open("rb") as fh:
+            data = fh.read(FRONTMATTER_READ)  # frontmatter only; bodies are never read
+    except OSError:
         return ""
-    m = _FRONTMATTER_RE.match(head)
+    m = _FRONTMATTER_RE.match(data.decode("utf-8", errors="ignore"))
     if not m:
         return ""
     out: list[str] = []
@@ -216,30 +366,6 @@ def _description(md: Path) -> str:
         elif grab:
             break
     return " ".join(out).strip()
-
-
-def _mcp_names(install: Path, manifest: dict[str, Any]) -> list[str]:
-    names: set[str] = set()
-    inline = manifest.get("mcpServers")
-    if isinstance(inline, dict):
-        names.update(inline)
-    for rel in (".mcp.json", "mcp.json"):
-        data = _read_json(install / rel)
-        if isinstance(data, dict):
-            servers = data.get("mcpServers", data)
-            if isinstance(servers, dict):
-                names.update(k for k, v in servers.items() if isinstance(v, dict))
-    return sorted(names)
-
-
-_CLEAN_PHRASE_RE = re.compile(r"^[a-z0-9][a-z0-9 '\-/?]*$")
-
-
-def _clean(p: str) -> str | None:
-    p = " ".join(p.lower().split()).strip(" .,;:!")
-    if _CLEAN_PHRASE_RE.match(p) and 1 <= len(p.split()) <= 6:
-        return p
-    return None
 
 
 def _phrases(text: str) -> list[str]:
@@ -257,48 +383,32 @@ def _clauses(text: str) -> list[str]:
     return out
 
 
-def describe_plugin(found: dict[str, Any]) -> dict[str, Any]:
-    install = Path(found["install_path"]) if found.get("install_path") else None
+def _str(v: Any) -> str:
+    return v if isinstance(v, str) else ""
+
+
+def describe_plugin(found: dict[str, Any], scanned: dict[str, Any]) -> dict[str, Any]:
+    manifest, surfaces = scanned["manifest"], scanned["surfaces"]
+    interface = manifest.get("interface") if isinstance(manifest.get("interface"), dict) else {}
+    desc = _str(manifest.get("description")) or _str(interface.get("shortDescription"))
     entry = {
-        "kind": "plugin", **found, "summary": "", "use_when": [],
-        "skills": [], "agents": [], "commands": [], "mcp_servers": [],
+        "kind": "plugin", **found, "summary": " ".join(desc.split())[:SUMMARY_MAX],
+        "use_when": [], **{k: sorted(surfaces[k]) for k in (*SURFACE_KINDS, "mcp_servers")},
     }
-    if install is None or not install.is_dir():
-        entry["error"] = "install path missing"
-        return entry
-    mpath = manifest_path(install)
-    manifest = _read_json(mpath) if mpath else None
-    manifest = manifest if isinstance(manifest, dict) else {}
-    desc = manifest.get("description") or (manifest.get("interface") or {}).get("shortDescription") or ""
-    entry["summary"] = " ".join(str(desc).split())[:SUMMARY_MAX]
-    if not entry["version"] and manifest.get("version"):
+    if not entry["version"] and isinstance(manifest.get("version"), (str, int, float)):
         entry["version"] = str(manifest["version"])
-
-    descs: list[str] = []
-    skills_dir = install / "skills"
-    if skills_dir.is_dir():
-        for d in sorted(skills_dir.iterdir()):
-            if (d / "SKILL.md").is_file():
-                entry["skills"].append(d.name)
-                descs.append(_description(d / "SKILL.md"))
-    for kind in ("agents", "commands"):
-        sub = install / kind
-        if sub.is_dir():
-            for md in sorted(sub.glob("*.md")):
-                entry[kind].append(md.stem)
-                descs.append(_description(md))
-    entry["mcp_servers"] = _mcp_names(install, manifest)
-
-    # Priority: quoted triggers > manifest keywords > clauses of skill descriptions.
+    # Triggers come only from frontmatter descriptions (allowlisted): quoted
+    # phrases first, then short clauses of skill descriptions. Manifest
+    # keywords are deliberately NOT copied (outside the field allowlist).
+    skill_descs = [_description(p) for p in surfaces["skills"].values()]
+    other_descs = [_description(p) for k in ("agents", "commands") for p in surfaces[k].values()]
     phrases: list[str] = []
-    for d in descs:
+    for d in skill_descs + other_descs:
         phrases.extend(_phrases(d))
-    keywords = [c for c in (_clean(str(k)) for k in manifest.get("keywords") or []) if c]
-    clauses: list[str] = []
-    for d in descs[: len(entry["skills"])]:
-        clauses.extend(_clauses(d)[:2])
+    for d in skill_descs:
+        phrases.extend(_clauses(d)[:2])
     seen: list[str] = []
-    for p in phrases + keywords + clauses:
+    for p in phrases:
         if p not in seen:
             seen.append(p)
     entry["use_when"] = seen[:USE_WHEN_MAX]
@@ -310,19 +420,20 @@ def describe_plugin(found: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def load_tool_decls(path: Path = TOOLS_FILE) -> list[dict[str, Any]]:
-    data = _read_json(path)
+    data = _read_json(path, MAX_HOST_BYTES)
     tools = data.get("tools") if isinstance(data, dict) else None
-    return [t for t in tools or [] if isinstance(t, dict) and t.get("name")]
+    return [t for t in tools or [] if isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"]]
 
 
 def describe_tools(decls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for t in decls:
         resolved = shutil.which(t["name"])
+        uw = t.get("use_when") if isinstance(t.get("use_when"), list) else []
         out.append({
             "kind": "tool", "name": t["name"], "host": "path",
-            "summary": str(t.get("purpose", ""))[:SUMMARY_MAX],
-            "use_when": list(t.get("use_when") or [])[:USE_WHEN_MAX],
+            "summary": _str(t.get("purpose"))[:SUMMARY_MAX],
+            "use_when": [str(x) for x in uw][:USE_WHEN_MAX],
             "present": resolved is not None, "path": resolved,
         })
     return out
@@ -333,10 +444,16 @@ def describe_tools(decls: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def compute_fingerprint(tools_file: Path = TOOLS_FILE) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any]]:
-    """Return (parts, discovered plugins, host status). Stats only; no bodies read."""
+    """Return (parts, scanned plugins, host status).
+
+    Each plugin part covers EVERY file extraction reads (manifest, SKILL.md,
+    agent/command files, MCP files) by size+mtime, so adding, editing or
+    deleting any of them marks the index stale. A plugin that fails to scan
+    gets an ``error:`` part and is listed under its host's ``skipped``.
+    """
     # The indexer itself is an input: a changed extractor must rebuild the cache.
     parts: dict[str, str] = {"tools-file": _stat_sig(tools_file), "indexer": _stat_sig(Path(__file__))}
-    discovered: list[dict[str, Any]] = []
+    scanned: list[dict[str, Any]] = []
     hosts: dict[str, Any] = {}
     for fn in HOSTS:
         status, found = fn()
@@ -344,14 +461,18 @@ def compute_fingerprint(tools_file: Path = TOOLS_FILE) -> tuple[dict[str, str], 
         hosts[host] = status
         parts[f"host:{host}"] = _stat_sig(Path(status["source"]))
         for f in found:
-            mp = manifest_path(Path(f["install_path"])) if f.get("install_path") else None
-            parts[f"manifest:{host}:{f['name']}@{f['marketplace']}"] = (
-                _stat_sig(mp) if mp else f"no-manifest:{f.get('install_path')}"
-            )
-        discovered.extend(found)
+            key = f"plugin:{host}:{f['name']}@{f['marketplace']}"
+            try:
+                s = scan_plugin(f)
+                parts[key] = s["sig"]
+                scanned.append({"found": f, **s})
+            except Exception as exc:  # noqa: BLE001 — isolate one bad plugin
+                reason = f"{type(exc).__name__}: {exc}"[:200]
+                parts[key] = f"error:{type(exc).__name__}"
+                status.setdefault("skipped", []).append({"name": f["name"], "reason": reason})
     for t in load_tool_decls(tools_file):
         parts[f"tool:{t['name']}"] = shutil.which(t["name"]) or "absent"
-    return parts, discovered, hosts
+    return parts, scanned, hosts
 
 
 def _digest(parts: dict[str, str]) -> str:
@@ -362,22 +483,52 @@ def _digest(parts: dict[str, str]) -> str:
 # Build / write / check
 # ---------------------------------------------------------------------------
 
+def serialize(index: dict[str, Any]) -> bytes:
+    """The exact bytes write_atomic writes; the size cap is measured on these."""
+    return json.dumps(index, indent=1).encode()
+
+
 def _trim(index: dict[str, Any], max_bytes: int) -> dict[str, Any]:
+    """Shrink until the serialized index fits ``max_bytes``; always terminates under it.
+
+    Order: component lists, triggers, summaries, the per-input fingerprint
+    detail (``check`` then reports a bare mismatch), then whole entries from the
+    end (tools before plugins), counted in ``dropped_entries``.
+    """
+    def fits() -> bool:
+        return len(serialize(index)) <= max_bytes
+
+    steps = []
     for limit in (40, 20, 8, 0):
-        if len(json.dumps(index).encode()) <= max_bytes:
+        steps.append(lambda n=limit: [e.__setitem__(k, e[k][:n]) for e in index["entries"]
+                                      for k in (*SURFACE_KINDS, "mcp_servers") if k in e])
+    for n in (2, 0):
+        steps.append(lambda n=n: [e.__setitem__("use_when", e["use_when"][:n]) for e in index["entries"]])
+    for n in (60, 0):
+        steps.append(lambda n=n: [e.__setitem__("summary", e["summary"][:n]) for e in index["entries"]])
+    steps.append(lambda: index.__setitem__("fingerprint_parts", {}))
+    for step in steps:
+        if fits():
             return index
         index["trimmed"] = True
-        for e in index["entries"]:
-            for k in ("skills", "agents", "commands", "mcp_servers"):
-                if k in e and len(e[k]) > limit:
-                    e[k] = e[k][:limit]
+        step()
+    while not fits() and index["entries"]:
+        index["trimmed"] = True
+        index["entries"].pop()
+        index["dropped_entries"] = index.get("dropped_entries", 0) + 1
     return index
 
 
 def build(tools_file: Path = TOOLS_FILE, max_bytes: int = MAX_BYTES) -> dict[str, Any]:
     t0 = time.monotonic()
-    parts, discovered, hosts = compute_fingerprint(tools_file)
-    entries = [describe_plugin(f) for f in discovered]
+    parts, scanned, hosts = compute_fingerprint(tools_file)
+    entries = []
+    for s in scanned:
+        try:
+            entries.append(describe_plugin(s["found"], s))
+        except Exception as exc:  # noqa: BLE001 — isolate one bad plugin
+            hosts[s["found"]["host"]].setdefault("skipped", []).append(
+                {"name": s["found"]["name"], "reason": f"{type(exc).__name__}: {exc}"[:200]})
     for host, status in hosts.items():
         status["plugins"] = sum(1 for e in entries if e["host"] == host)
     entries.extend(describe_tools(load_tool_decls(tools_file)))
@@ -396,7 +547,7 @@ def build(tools_file: Path = TOOLS_FILE, max_bytes: int = MAX_BYTES) -> dict[str
 
 def write_atomic(index: dict[str, Any], out: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps(index, indent=1, sort_keys=False).encode()
+    data = serialize(index)
     fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".plugin-index.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -412,7 +563,7 @@ def write_atomic(index: dict[str, Any], out: Path) -> int:
 
 
 def load_index(out: Path) -> dict[str, Any] | None:
-    data = _read_json(out)
+    data = _read_json(out, 2 * MAX_BYTES)
     return data if isinstance(data, dict) and isinstance(data.get("entries"), list) else None
 
 
@@ -427,7 +578,7 @@ def staleness(out: Path, tools_file: Path = TOOLS_FILE) -> list[str]:
     if index.get("fingerprint") == _digest(parts):
         return []
     old = index.get("fingerprint_parts") or {}
-    reasons = [f"changed: {k}" for k in sorted(set(old) | set(parts)) if old.get(k) != parts.get(k)]
+    reasons = [f"changed: {k}" for k in sorted(set(old) | set(parts)) if old and old.get(k) != parts.get(k)]
     return reasons or ["fingerprint mismatch"]
 
 
@@ -437,6 +588,15 @@ def ensure_fresh(out: Path, tools_file: Path = TOOLS_FILE) -> dict[str, Any]:
         write_atomic(index, out)
         return index
     return load_index(out) or {}
+
+
+def live_surfaces(entry: dict[str, Any]) -> dict[str, list[str]] | None:
+    """Re-scan a plugin on disk; None when it can no longer be scanned."""
+    try:
+        s = scan_plugin({k: entry.get(k) for k in ("host", "name", "marketplace", "version", "install_path")})
+    except Exception:  # noqa: BLE001
+        return None
+    return {k: sorted(s["surfaces"][k]) for k in (*SURFACE_KINDS, "mcp_servers")}
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +679,19 @@ def query(index: dict[str, Any], words: str, host: str | None = None, cap: int =
             print(f"plugin_index: dropped {e['kind']} {e['name']} ({e.get('host')}): {target} no longer exists",
                   file=sys.stderr)
             continue
+        if e["kind"] == "plugin":
+            # Verify the specific surfaces on disk: never hand back a skill,
+            # agent, command or MCP server whose file has gone.
+            live = live_surfaces(e)
+            if live is None:
+                print(f"plugin_index: dropped plugin {e['name']} ({e.get('host')}): can no longer be scanned",
+                      file=sys.stderr)
+                continue
+            gone = sorted(n for k in live for n in set(e.get(k) or []) - set(live[k]))
+            if gone:
+                print(f"plugin_index: {e['name']} ({e.get('host')}): ignoring removed {', '.join(gone)}",
+                      file=sys.stderr)
+            e = {**e, **live}
         seen.add(key)
         out.append({
             "kind": e["kind"], "name": e["name"], "host": e.get("host"), "score": s,
