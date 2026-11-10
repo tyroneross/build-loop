@@ -1,0 +1,10 @@
+[package]
+name = "bl-contract"
+description = "Shared rules for build-loop's native hooks: stamp names, throttle and prune limits, discovery-cache keys, hook event parsing."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"

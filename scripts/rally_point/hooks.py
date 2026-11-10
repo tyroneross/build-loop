@@ -28,7 +28,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from rally_point import actor_identity, channel_paths, discovery_bridge, presence, revision
+    from rally_point import actor_identity, channel_paths, discovery_bridge
     from rally_point.backend_adapter import (
         acknowledge,
         native_room_summary,
@@ -37,7 +37,7 @@ try:
         write_presence as write_backend_presence,
     )
 except ImportError:
-    from . import actor_identity, channel_paths, discovery_bridge, presence, revision
+    from . import actor_identity, channel_paths, discovery_bridge
     from .backend_adapter import (
         acknowledge,
         native_room_summary,
@@ -61,11 +61,29 @@ def _load_checkpoint():
     return checkpoint
 
 
+def _load_local(name: str):
+    """Import the embedded-fallback ``presence`` / ``revision`` on first use.
+
+    Only the non-native (Build Loop local) paths read or write them; native
+    Rally contexts never do, so the per-tool hook skips the import (~15 ms,
+    ``presence`` pulls in ``build_loop_id``).
+    """
+    import importlib
+
+    try:
+        return importlib.import_module(f"rally_point.{name}")
+    except ImportError:
+        return importlib.import_module(f".{name}", __package__)
+
+
 def __getattr__(name: str):
-    # ``hooks.checkpoint`` stays reachable (tests patch through it) without
-    # paying the import at module load.
+    # ``hooks.checkpoint`` / ``hooks.presence`` / ``hooks.revision`` stay
+    # reachable (tests patch through them) without paying the import at
+    # module load.
     if name == "checkpoint":
         return _load_checkpoint()
+    if name in ("presence", "revision"):
+        return _load_local(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -558,9 +576,9 @@ def pre_edit_hint(
     if resolved is None:
         return 0
     slug, channel_dir = resolved
-    current = revision.read_revision(channel_dir)
+    current = _load_local("revision").read_revision(channel_dir)
     session_id = _session_start_id(slug)
-    seen = presence.get_cursor(channel_dir, session_id).get("revision", 0)
+    seen = _load_local("presence").get_cursor(channel_dir, session_id).get("revision", 0)
     if current > seen and not _rally_quiet():
         print(f"rally: peer ahead → checkpoint ({slug} rev {seen}→{current})")
     return 0
@@ -713,7 +731,7 @@ def pre_edit_join(
     ):
         return 0
     try:
-        written = presence.write_presence(
+        written = _load_local("presence").write_presence(
             channel_dir,
             session_id=session_id,
             tool=tool,
