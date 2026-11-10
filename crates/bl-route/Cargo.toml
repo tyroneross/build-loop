@@ -1,0 +1,9 @@
+[package]
+name = "bl-route"
+description = "Native model resolver over references/model-taxonomy.json; returns what scripts/model_index.py and scripts/resolve_agent_model.py return."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json = "1"

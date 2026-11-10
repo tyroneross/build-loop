@@ -1,0 +1,9 @@
+[package]
+name = "bl-acp"
+description = "Hand-rolled Agent Client Protocol v1 client: newline-delimited JSON-RPC over an agent subprocess's stdio, written from the public specification."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json = "1"

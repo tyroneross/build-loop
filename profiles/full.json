@@ -1,0 +1,32 @@
+{
+  "schema": "build-loop.profile.v1",
+  "name": "full",
+  "description": "Claude session with the machine's own Claude Code settings loaded (plugins, hooks, MCP servers, CLAUDE.md), for multi-file work that should behave like a daily session. Slower to start. The policy of this profile is a placeholder and not a safety gate; nothing in this profile protects the machine.",
+  "agent": {
+    "host": "claude_code",
+    "command": "claude-agent-acp",
+    "args": [],
+    "env": {},
+    "model_env": "ANTHROPIC_MODEL",
+    "mode": "default",
+    "session_meta": {
+      "claudeCode": {
+        "options": {
+          "settings": {"permissions": {"ask": ["Bash","Read","Edit","Write","NotebookEdit","Glob","Grep","WebFetch","WebSearch","Agent","Skill"]}}
+        }
+      }
+    }
+  },
+  "sign_in": {"mode": "subscription", "unset_env": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]},
+  "models": {
+    "default": {"segment": "agentic_execution", "tier": "T2"},
+    "plan": {"segment": "generative_reasoning", "tier": "T1"},
+    "review": {"segment": "governance_evaluation", "tier": "T1"},
+    "lookup": {"segment": "generative_reasoning", "tier": "T4"}
+  },
+  "instructions": {"method": true, "append": []},
+  "policy": "slice1-experimental",
+  "mcp_servers": [],
+  "skills": [],
+  "deadline_seconds": 1800
+}

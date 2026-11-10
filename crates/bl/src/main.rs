@@ -21,10 +21,17 @@
 //!   nothing (unknown arguments, or no plugin checkout around the binary);
 //!   the launcher then runs the shell hook itself.
 //!
+//! `bl route` is the native model resolver (see `route_cmd.rs`).
+//! `bl run` is the experimental agent driver (see `run.rs`).
+//!
 //! The binary must live two directories below the plugin root
 //! (`bin/native/bl` or `target/<profile>/bl`).
 
+mod cli;
 mod pre_edit;
+mod profile;
+mod route_cmd;
+mod run;
 mod sys;
 mod trace;
 
@@ -117,6 +124,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() >= 2 && args[0] == "hook" && args[1] == "trace" {
         trace_main(started, &args[2..]);
+    }
+    if args.first().map(String::as_str) == Some("run") {
+        std::process::exit(run::main(started, &args[1..]));
+    }
+    if args.first().map(String::as_str) == Some("route") {
+        std::process::exit(route_cmd::main(&args[1..]));
     }
     if args != ["hook", "pre-edit"] {
         std::process::exit(bl_contract::FALLBACK_EXIT);

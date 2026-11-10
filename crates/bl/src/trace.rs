@@ -324,7 +324,7 @@ fn contains_any(s: &str, words: &[&str]) -> R<bool> {
 
 /// `_redact`: sensitive keys become `"[REDACTED]"` (mirrored exactly); a
 /// string value the inline/value regexes might rewrite falls back.
-fn redact(value: &Value, key: &str) -> R<Value> {
+pub(crate) fn redact(value: &Value, key: &str) -> R<Value> {
     if contains_any(key, &KEY_WORDS)? {
         return Ok(Value::String("[REDACTED]".into()));
     }
@@ -472,7 +472,7 @@ fn state_json_risky(workdir: &str) -> bool {
 
 /// `append_span`: mkdir, lock, rotate, append. Errors end the run silently,
 /// as Python's `main` does.
-fn append(workdir: &Path, line: &[u8]) -> std::io::Result<()> {
+pub(crate) fn append(workdir: &Path, line: &[u8]) -> std::io::Result<()> {
     let dir = workdir.join(".build-loop/telemetry");
     fs::create_dir_all(&dir)?;
     let path = dir.join("tool-traces.jsonl");

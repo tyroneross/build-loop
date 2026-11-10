@@ -1,0 +1,9 @@
+[package]
+name = "bl-gate"
+description = "Permission policy interface for bl run, plus the slice1-experimental placeholder policy (not a safety gate)."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json = "1"

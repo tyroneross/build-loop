@@ -1,10 +1,13 @@
 [package]
 name = "bl"
-description = "build-loop native commands (bl hook pre-edit)."
+description = "build-loop native commands: the hooks (bl hook pre-edit, bl hook trace), the model resolver (bl route) and the experimental agent driver (bl run)."
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [dependencies]
 bl-contract = { path = "../bl-contract" }
+bl-route = { path = "../bl-route" }
+bl-acp = { path = "../bl-acp" }
+bl-gate = { path = "../bl-gate" }
 serde_json = "1"
