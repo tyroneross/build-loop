@@ -76,6 +76,21 @@ def _restore_shared_module_identity():
                 sys.modules[name] = original
 
 
+@pytest.fixture(autouse=True)
+def _isolate_plugin_index(tmp_path_factory, monkeypatch):
+    """Keep tests off the machine-wide ~/.build-loop/plugin-index.json.
+
+    capability_shortlist merges installed plugins by default and rebuilds the
+    index when stale; without this, any test that runs the shortlist (in
+    process or via subprocess, which inherits os.environ) would write the
+    user's real index.
+    """
+    monkeypatch.setenv(
+        "BUILD_LOOP_PLUGIN_INDEX",
+        str(tmp_path_factory.getbasetemp() / "plugin-index.json"),
+    )
+
+
 def _ollama_reachable() -> bool:
     """Fast TCP probe: True if Ollama is listening on 127.0.0.1:11434."""
     try:
