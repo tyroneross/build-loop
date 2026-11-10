@@ -390,17 +390,64 @@ def apply_explicit_only_policy(
     return out
 
 
+def _self_plugin_name(workdir: Path) -> str:
+    for rel in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
+        data = _try_load_registry(workdir / rel)
+        if isinstance(data, dict) and data.get("name"):
+            return str(data["name"])
+    return "build-loop"
+
+
+def load_installed(intent: str, workdir: Path, index_path: Path | None = None) -> list[dict[str, Any]]:
+    """Installed plugins + PATH tools matching `intent`, as registry-shaped entries.
+
+    One collapsed entry per plugin (kind "plugin") or tool (kind "tool").
+    Reads the machine-wide index from scripts/plugin_index.py, rebuilding it
+    when stale; plugin_index.query drops entries whose files are gone. The
+    plugin this repo IS is skipped: its surfaces are already in the registry.
+    Fail-soft: any error yields [] so the shortlist never breaks on it.
+    """
+    try:
+        import plugin_index as pi
+        out_path = index_path or pi.default_index_path()
+        index = pi.ensure_fresh(out_path)
+        hits = pi.query(index, intent, cap=40, include_surfaces=True)
+    except Exception as exc:  # noqa: BLE001 — hint surface, never fatal
+        print(f"capability_shortlist: installed-plugin index unavailable: {exc}", file=sys.stderr)
+        return []
+    self_name = _self_plugin_name(workdir)
+    entries = []
+    for h in hits:
+        if h["kind"] == "plugin" and h["name"] == self_name:
+            continue
+        target = next((v for k, v in h["invoke"].items() if k in ("skill", "agent", "command", "mcp_server", "binary")), h["name"])
+        entries.append({
+            "name": h["name"],
+            "kind": h["kind"],
+            "category": "installed",
+            "description": h.get("summary", ""),
+            "triggers": list(h.get("use_when") or []) + list(h.get("surfaces") or []),
+            "source_path": f"{h['kind']}:{target}",
+            "invoke": h["invoke"],
+            "installed": True,
+        })
+    return entries
+
+
 def shortlist(
     registry: dict[str, Any],
     phase: int,
     intent: str,
     kinds: list[str] | None = None,
     workdir: Path | None = None,
+    installed: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Score and shortlist registry entries against (phase, intent).
 
     `workdir` defaults to the repo root; passed through to trigger reads
-    so synthetic test fixtures can override.
+    so synthetic test fixtures can override. `installed` are entries from
+    `load_installed` (other plugins / PATH tools): scored by the same rule,
+    intent matches only, and ranked below an equally scoring in-repo entry.
     """
     entries: list[dict[str, Any]] = list(registry.get("entries", []) or [])
     if kinds:
@@ -432,15 +479,24 @@ def shortlist(
     # categories based on Phase 1 sub-routers (uiTarget, migrationSource)
     # and triggers (promptAuthoring/promptEditingExisting).
     scored = apply_plugin_surface_collapse(scored)
+    # Installed plugins/tools are already one entry per plugin, so they join
+    # after the collapse. Intent matches only: no phase-category bonus.
+    for e in installed or []:
+        if kinds and e.get("kind") not in kinds:
+            continue
+        s, reasons = score_entry(e, intent_tokens, [], [])
+        if s > 0:
+            scored.append((s, reasons + ["installed"], e))
     scored = apply_explicit_only_policy(scored, intent, entries)
     if workdir is not None:
         triggers = _read_state_triggers(Path(workdir))
         scored = apply_trigger_demotion(scored, triggers)
 
-    scored.sort(key=lambda t: (-t[0], t[2].get("name", "")))
+    # Tie-break: an in-repo surface outranks an installed one at equal score.
+    scored.sort(key=lambda t: (-t[0], bool(t[2].get("installed")), t[2].get("name", "")))
     out_entries = []
     for s, reasons, e in scored[:SHORTLIST_CAP]:
-        out_entries.append({
+        row = {
             "name": e.get("name"),
             "kind": e.get("kind"),
             "category": e.get("category"),
@@ -448,7 +504,10 @@ def shortlist(
             "reasons": reasons,
             "source_path": e.get("source_path"),
             "description": e.get("description"),
-        })
+        }
+        if e.get("invoke"):
+            row["invoke"] = e["invoke"]
+        out_entries.append(row)
     return {
         "phase": phase,
         "intent": intent,
@@ -561,7 +620,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--phase", type=int, required=True, choices=range(1, 7))
     parser.add_argument("--intent", required=True)
     parser.add_argument("--kind", nargs="*", default=None,
-                        choices=["agent", "skill", "command", "hook", "mcp_tool", "script"])
+                        choices=["agent", "skill", "command", "hook", "mcp_tool", "script", "plugin", "tool"])
+    parser.add_argument("--installed", action=argparse.BooleanOptionalAction, default=True,
+                        help="Include matching installed plugins and PATH tools from "
+                             "scripts/plugin_index.py (default on; --no-installed to skip).")
     parser.add_argument("--workdir", default=str(REPO_ROOT_DEFAULT))
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-cache", action="store_true",
@@ -585,7 +647,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
-    result = shortlist(registry, args.phase, args.intent, args.kind, workdir=workdir)
+    installed = load_installed(args.intent, workdir) if args.installed else None
+    result = shortlist(registry, args.phase, args.intent, args.kind, workdir=workdir,
+                       installed=installed)
     # Default behavior is cache-on. --cache-into-state is an explicit reaffirmation
     # that callers (e.g. the orchestrator's mandatory Phase 1 step) use to express
     # intent and exercise the same atomic write path (cache_into_state) used by

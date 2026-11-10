@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "044c74117ff7f6f0e4ec4465dec6c4275ae5ce81a45fdf92c997bf51e65f55f9"
+    "content_sha256": "dbccd5add4d6780caa527cd7142c3253e0a9ec33c7fdb5196835ec32482e3964"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1471,6 +1471,7 @@
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
+      "scripts/plugin_index.py": "Installed plugin + command-line tool index (ring 3).",
       "scripts/preauthorization.py": "Collect and evaluate a run's standing pre-authorization for unattended execution.",
       "scripts/premise_revalidation.py": "premise_revalidation.py — re-validate queue-item premises at drain time.",
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",

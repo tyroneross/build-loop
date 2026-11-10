@@ -1,0 +1,53 @@
+{
+  "_comment": "Command-line tools scripts/plugin_index.py probes with shutil.which. Each purpose is taken from the tool's own --help / usage text (read 2026-11-09). `probe` is a harmless command for a human or agent to confirm the tool; plugin_index.py never runs it.",
+  "tools": [
+    {
+      "name": "rosslabs-lsp",
+      "purpose": "Compiler-grade code intelligence for any agent: def, refs and hover by symbol name, file diagnostics, and routing to the right tool for a topic.",
+      "use_when": ["find references to a symbol", "go to definition", "who calls this function", "symbol type lookup", "type or compile errors", "cross-file symbol question"],
+      "probe": ["rosslabs-lsp", "--help"]
+    },
+    {
+      "name": "architect",
+      "purpose": "Verified architecture graph: scan a repo, validate, query and track it, and render data or dependency diagrams.",
+      "use_when": ["architecture scan", "trace data flow", "dependency diagram", "process or workflow diagram", "compare design alternatives", "architecture graph"],
+      "probe": ["architect", "--help"]
+    },
+    {
+      "name": "et",
+      "purpose": "CLI front-door for Easy Terminal: panes, agents, workspaces, the merge queue, and `et view open` to show an HTML file or local server in the Canvas.",
+      "use_when": ["open html view in canvas", "show a dev server", "easy terminal pane", "merge queue", "launch agent pane"],
+      "probe": ["et", "--help"]
+    },
+    {
+      "name": "ibr",
+      "purpose": "End-to-end design tool for AI coding agents: scan, capture and compare rendered web or native UI.",
+      "use_when": ["verify rendered ui", "screenshot a page", "ui design audit", "visual comparison", "native app accessibility scan"],
+      "probe": ["ibr", "--version"]
+    },
+    {
+      "name": "rally",
+      "purpose": "Repo-local coordination room for parallel agents: enter, claim paths, post handoffs and read the inbox.",
+      "use_when": ["coordinate with peer agents", "claim files", "hand off work", "check agent inbox", "parallel agent sessions"],
+      "probe": ["rally", "help", "frame"]
+    },
+    {
+      "name": "navgator",
+      "purpose": "Architecture connection tracker - know your stack before you change it: scan, impact, connections, trace.",
+      "use_when": ["blast radius of a change", "impact analysis", "component connections", "trace data flow", "architecture freshness", "dependency map"],
+      "probe": ["navgator", "--version"]
+    },
+    {
+      "name": "codex",
+      "purpose": "Codex CLI: interactive by default; `codex exec` runs non-interactively and `codex review` runs a code review.",
+      "use_when": ["second opinion from codex", "run codex non-interactively", "codex code review", "delegate to codex"],
+      "probe": ["codex", "--version"]
+    },
+    {
+      "name": "claude",
+      "purpose": "Claude Code: starts an interactive session by default; -p/--print gives non-interactive output.",
+      "use_when": ["run claude non-interactively", "headless claude session", "launch a claude agent"],
+      "probe": ["claude", "--version"]
+    }
+  ]
+}

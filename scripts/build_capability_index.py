@@ -19,8 +19,14 @@ catalog of CALLABLE TOOLS the plan can reach:
            justfile targets, pyproject [project.scripts] / [tool.poetry.scripts].
            These are the tools a CONSUMER repo already exposes — the plan should
            prefer an existing target over writing a new script (KISS).
-  Ring 3 — plugins / MCP tools / PATH binaries: NOT indexed (verify-on-use). They
-           are environmental and change underfoot; indexing them invites staleness.
+  Ring 3 — installed plugins + declared PATH binaries: indexed SEPARATELY by
+           scripts/plugin_index.py into the machine-wide ~/.build-loop/plugin-index.json
+           (names, a short summary and trigger phrases only), because they are
+           machine-wide, not per repo. Staleness is handled there: a fingerprint
+           of each host's installed-plugin file, each plugin manifest and each
+           tool's `which` result rebuilds the index when anything changes, and
+           every query result is re-checked on disk (verify-on-use).
+           capability_shortlist.py merges its matches in.
 
 Generate-don't-maintain: the index is cached at .build-loop/capability-index.json
 with mtime+size+hash invalidation (mirrors scripts/architecture_freshness.py and

@@ -20,7 +20,7 @@ This skill is a deterministic, structured matcher: **(phase, intent text) → �
 |---|---|---|---|
 | `phase` | int (1–6) | yes | Phase number from build-loop's 5-phase loop (+1 Learn). |
 | `intent` | string | yes | Free-text description of the goal/task for this phase. |
-| `kind` | optional list | no | Filter by `agent | skill | command | hook | mcp_tool | script`. |
+| `kind` | optional list | no | Filter by `agent | skill | command | hook | mcp_tool | script | plugin | tool`. |
 | `workdir` | optional path | no | Repo root containing `.build-loop/capability-registry.json`. Defaults to `$PWD`. |
 
 ## Phase → category routing
@@ -55,6 +55,16 @@ When `phase` is outside 1–6, fall back to scoring purely on intent keyword mat
 5. Sort by score descending, then by `name` ascending for stable tie-breaks.
 6. Return the top 8 with reason tokens (which intent words and which categories matched).
 
+## Installed plugins and tools (on by default)
+
+The registry only sees this repo. `scripts/capability_shortlist.py` also merges matches from `scripts/plugin_index.py`, a machine-wide index (`~/.build-loop/plugin-index.json`, override with `$BUILD_LOOP_PLUGIN_INDEX`) of every plugin installed for Claude Code and Codex plus the command-line tools declared in `references/external-tools.json` (rosslabs-lsp, architect, et, ibr, rally, navgator, codex, claude).
+
+- Each installed plugin or tool becomes ONE entry, kind `plugin` or `tool`, category `installed`, carrying an `invoke` field (the skill, agent, command or MCP server to call, or the binary).
+- They are scored by the same intent rule, get no phase-category bonus, and lose ties to in-repo surfaces. The 8-entry cap still covers everything.
+- The plugin this repo is (build-loop itself) is skipped; its surfaces are already in the registry.
+- Staleness: the index stores a fingerprint of each host's installed-plugin file, each plugin manifest and each tool's `which` result, and rebuilds itself when any of them change. Every result is re-checked on disk before it is returned.
+- `--no-installed` turns the merge off. Standalone lookup: `python3 scripts/plugin_index.py query <words>`.
+
 ## Output shape
 
 ```json
@@ -87,5 +97,5 @@ Write the result to `<workdir>/.build-loop/state.json.activeCapabilities[]` with
 
 - Execute any of the capabilities it surfaces. It returns a shortlist; the orchestrator dispatches.
 - Mutate any source file. Read-only on the repo; write-only to `state.json` (single field).
-- Network-call. Runs purely against the local registry.
+- Network-call. Runs purely against the local registry and the local installed-plugin index.
 - Disambiguate between two capabilities with the same name in different `kind` namespaces — both are surfaced and the orchestrator decides.
