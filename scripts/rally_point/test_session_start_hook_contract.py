@@ -140,7 +140,9 @@ def test_host_tool_precedence(startup, overrides, actor):
 def test_supervisor_preserves_parent_for_identity_and_watch(startup):
     command, _, env = startup
     # Exec avoids introducing the registration shell as another parent.
-    proc = subprocess.run(["/bin/bash", "-c", "exec " + command.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
+    # The registered entry is "<native guard> exit 0; fi; <hook command>".
+    hook = command.split("exit 0; fi; ", 1)[-1]
+    proc = subprocess.run(["/bin/bash", "-c", "exec " + hook.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
     assert proc.returncode == 0
     assert Path(env["HOOK_TEST_ACTOR_LOG"]).read_text() == f"claude_code:claude_code-proc-{os.getpid()}"
     probe = Path(env["HOOK_TEST_PROBE_LOG"])

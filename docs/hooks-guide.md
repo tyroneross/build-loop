@@ -197,3 +197,9 @@ For new advisory checks, observe false positives and missed cases before conside
 **Resolved intake gap:** the initial browser/text fetch exposed metadata only. A bounded IPv4 HTML fetch recovered embedded public caption links, and a script preserved the page, original VTT/JSON, hashes, validation and a timestamped reading copy in research run `agent-hooks-guide-20261018`. The two caption formats are the same publisher source, not independent corroboration. The full video was not downloaded or watched.
 
 **Evidence limit:** this synthesis has source and documentation checks, not a matched runtime experiment. It claims no measured speedup, failure-rate reduction or improvement in audit quality. Sources from the same publisher are not independent corroboration; local recommendations are engineering synthesis informed by the cited failures.
+
+## SessionStart on the native binary
+
+`bl hook session-start --root <plugin root>` runs every SessionStart sub-step in one process: the tool-state snapshot, the architecture staleness check, the Rally restore line and its detached background stage, the closeout reminder and the Codex hook trust report. The Python workers behind four of them still run as children, each under the deadline its shell hook had. The result is one JSON object; `additionalContext` carries each sub-step's context in the order of the old hooks.
+
+The five shell hooks stay registered behind the inverse of the freshness guard and are the oracle for `tests/hook_parity/test_session_start_parity.py`. `BUILD_LOOP_NATIVE_HOOKS=off` selects them. `BUILD_LOOP_SESSION_START_DEADLINE_MS` (100 to 7500) bounds the whole native run; the per-step variables (`BUILD_LOOP_TOOL_STATE_DEADLINE_MS`, `BUILD_LOOP_RALLY_START_DEADLINE_MS`, `BUILD_LOOP_CLOSEOUT_DEADLINE_MS`, `BUILD_LOOP_TRUST_CHECK_DEADLINE_MS`) keep their meaning. Registration and removal steps: `hooks/MAINTENANCE.md`.

@@ -199,3 +199,34 @@ def test_swapped_outputs_change_the_expected_stdout(legacy):
     assert h.registration.context_of(snap.parts[0]) and h.registration.context_of(snap.parts[4])
     assert h.registration.merge(swapped) != h.registration.merge(snap.parts)
 
+
+
+LAUNCHER_CASES = [c for c in CASES if c.name in (
+    "project_claude", "closeout_owed_sits_between_tool_state_and_trust", "not_opted_in", "tool_state_fails")]
+
+
+@pytest.mark.parametrize("state", ["absent", "stale", "off", "fresh"])
+@pytest.mark.parametrize("case", LAUNCHER_CASES, ids=[c.name for c in LAUNCHER_CASES])
+def test_launcher_registered_commands(case, state, tmp_path):
+    """The registered commands, run as the host runs them. Binary absent,
+    stale or switched off: the native entry prints nothing and the five
+    legacy entries behave exactly as the old commands. Fresh: the native
+    entry prints the merged context and the legacy entries print nothing."""
+    if not h.BL.exists():
+        pytest.skip(f"{h.BL} not built")
+    want = h.run_stable("legacy", case, tmp_path / "legacy", plugin=state)
+    got = h.run_stable("registered", case, tmp_path / "registered", plugin=state)
+    skip_if_loaded(case, want, got)
+    native, legacy_parts = got.parts[0], got.parts[1:]
+    if state == "fresh":
+        assert all(p == b"" for p in legacy_parts), legacy_parts
+        assert native.startswith(b"{")
+    else:
+        assert native == b""
+        assert [h.registration.context_of(p) for p in legacy_parts] == \
+            [h.registration.context_of(p) for p in want.parts]
+    assert want.comparable() == got.comparable(), diff(want.comparable(), got.comparable())
+
+
+def test_registration_is_generated():
+    assert h.registration.main(["--check"]) == 0
