@@ -682,9 +682,9 @@
             "decided_at": "2026-08-25T00:00:00Z",
             "decided_by": "user",
             "decided_via": "cli",
-            "decided_in_repo": "/Users/tyroneross/dev/café-app",
+            "decided_in_repo": "/Users/example/dev/café-app",
             "prev_sha256": null,
-            "entry_sha256": "cbff9be797914b86fb993f10a3b3bb930e6175cd68cbba2b7a7eec8a156fdd2e"
+            "entry_sha256": "074591bd23fca5e3764b6a50a3d1f40388ae56d83e438917f34fcd32350bd693"
           }
         ]
       },
