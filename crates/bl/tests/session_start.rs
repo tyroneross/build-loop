@@ -148,8 +148,19 @@ fn cancellation_kills_foreground_workers() {
         let mut child = bl(&root).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("CLAUDE_PROJECT_DIR", &root).stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pidfile.exists() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(5)); }
-        let worker: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        // Shell redirection creates the file before echo writes its PID. Wait
+        // for the completed record, not merely the directory entry, before
+        // delivering the signal whose worker cleanup this test exercises.
+        let worker: i32 = loop {
+            match std::fs::read_to_string(&pidfile) {
+                Ok(record) if record.ends_with('\n') => break record.trim().parse().unwrap(),
+                Ok(_) => {},
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {},
+                Err(err) => panic!("cannot read worker PID: {err}"),
+            }
+            assert!(Instant::now() < deadline, "worker did not publish its PID within two seconds");
+            std::thread::sleep(Duration::from_millis(5));
+        };
         unsafe { kill(child.id() as i32, sig); }
         let stop = Instant::now() + Duration::from_secs(2);
         while child.try_wait().unwrap().is_none() && Instant::now() < stop { std::thread::sleep(Duration::from_millis(5)); }
@@ -186,7 +197,9 @@ fn tool_state_deadline_stops_git_and_preserves_other_context() {
     let started = Instant::now();
     let out = bl(&root).env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("CLAUDE_PROJECT_DIR", &root)
-        .env("BUILD_LOOP_TOOL_STATE_DEADLINE_MS", "200")
+        // Leave room for the fixture shell to start on a loaded host. This
+        // remains below the three-second assertion and five-second run limit.
+        .env("BUILD_LOOP_TOOL_STATE_DEADLINE_MS", "1000")
         .env("BUILD_LOOP_SESSION_START_DEADLINE_MS", "5000")
         .stdin(Stdio::null()).output().unwrap();
     assert_eq!(out.status.code(), Some(0));
