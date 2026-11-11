@@ -128,7 +128,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/commit-state.sh\"",
             "timeout": 5
           }
         ]
