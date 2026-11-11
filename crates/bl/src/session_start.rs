@@ -7,7 +7,8 @@
 //! five SessionStart hooks (`hooks/session-start-tool-state.sh`,
 //! `session-start-architecture.sh`, `session-start-rally-point.sh`,
 //! `closeout.sh session-start`, `session-start-codex-hook-trust.sh`). The
-//! tool-state snapshot is native. Three Python workers still run:
+//! tool-state snapshot and fresh-cache Rally restore are native. Python runs
+//! unsupported restore states and the remaining workers:
 //! `rally_point/hooks.py session-start-safe`,
 //! `stop_closeout.py` and `codex_hook_trust_check.py`.
 //!
@@ -144,7 +145,7 @@ fn kill_children() -> std::sync::MutexGuard<'static, Vec<i32>> {
 
 // ---------------------------------------------------------------- children
 
-enum Ran {
+pub(crate) enum Ran {
     /// The child exited and closed stdout inside its limits.
     Done { out: Vec<u8>, ok: bool },
     /// Deadline passed or output too large: the group was killed.
@@ -153,7 +154,17 @@ enum Ran {
 
 /// Run `cmd` in its own process group until `until`. Like the Perl
 /// supervisor it needs both the exit and EOF on stdout.
-fn run_bounded(mut cmd: Command, stdin: Option<Vec<u8>>, until: Instant) -> Ran {
+pub(crate) fn run_bounded(cmd: Command, stdin: Option<Vec<u8>>, until: Instant) -> Ran {
+    run_bounded_output(cmd, stdin, until, Some(MAX_OUT))
+}
+
+/// Room JSON is an input, not host context; Python captures it without the
+/// host-output limit. Retain the deadline and whole process-group cleanup.
+pub(crate) fn run_room(cmd: Command, until: Instant) -> Ran {
+    run_bounded_output(cmd, None, until, None)
+}
+
+fn run_bounded_output(mut cmd: Command, stdin: Option<Vec<u8>>, until: Instant, max: Option<usize>) -> Ran {
     cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     // SAFETY: the closure only calls setsid, which is async-signal-safe.
@@ -176,8 +187,8 @@ fn run_bounded(mut cmd: Command, stdin: Option<Vec<u8>>, until: Instant) -> Ran 
     if let Some(stdout) = child.stdout.take() {
         std::thread::spawn(move || {
             let mut out = Vec::new();
-            let _ = stdout.take(MAX_OUT as u64 + 1).read_to_end(&mut out);
-            if out.len() > MAX_OUT {
+            let _ = stdout.take(max.map(|n| n as u64 + 1).unwrap_or(u64::MAX)).read_to_end(&mut out);
+            if max.is_some_and(|limit| out.len() > limit) {
                 let _ = tx.send(None);
             } else {
                 let ok = child.wait().map(|s| s.success()).unwrap_or(false);
@@ -531,11 +542,15 @@ fn rally(p: &Plan) -> Vec<u8> {
             _ => return EMPTY.to_vec(),
         }
     }
-    let mut cmd = python(&format!("{pkg}/hooks.py"));
-    cmd.args(["session-start-safe", "--workdir", &p.workdir, "--verbose", "--tool", &p.tool])
-        .args(["--session-id", &p.session_id])
-        .env("BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS", &p.rally_inner_deadline);
-    let Ran::Done { out, .. } = run_bounded(cmd, None, until) else {
+    let restored = crate::rally_restore::restore(&p.root, &p.workdir, &p.tool, &p.session_id, &p.rally_inner_deadline, until)
+        .unwrap_or_else(|_| {
+            let mut cmd = python(&format!("{pkg}/hooks.py"));
+            cmd.args(["session-start-safe", "--workdir", &p.workdir, "--verbose", "--tool", &p.tool])
+                .args(["--session-id", &p.session_id])
+                .env("BUILD_LOOP_RALLY_HOOK_DEADLINE_SECONDS", &p.rally_inner_deadline);
+            run_bounded(cmd, None, until)
+        });
+    let Ran::Done { out, .. } = restored else {
         // The shell hook is killed before it reaches its background stage.
         return EMPTY.to_vec();
     };

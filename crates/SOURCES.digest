@@ -1,4 +1,4 @@
-99f1482b15ccdc27de5d55272f9a5102f76be74b71aa1864297a103abca38d1b
+ed877dbb92634d10bb000973bd2978b11acbb0f952eb4e8e504d2b27c521a550
 # Digest of the sources bin/native/bl is built from: crates/**, Cargo.toml,
 # Cargo.lock and the mirrored files listed in scripts/build_native.py.
 # Line 1 is read by hooks/pre-edit-rally-point.sh and the tool-trace

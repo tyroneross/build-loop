@@ -29,6 +29,7 @@
 
 mod cli;
 mod pre_edit;
+mod rally_restore;
 mod profile;
 mod route_cmd;
 mod run;

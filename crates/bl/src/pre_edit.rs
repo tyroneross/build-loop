@@ -244,6 +244,53 @@ impl Planner<'_> {
     }
 }
 
+/// Fresh discovery only, for the SessionStart restore fast path. The caller
+/// supplies a deadline-bound usage probe. A miss has no refresh/write effects:
+/// SessionStart's Python worker retains cold and stale discovery semantics.
+pub(crate) fn fresh_restore_context(
+    plugin_root: &str,
+    workdir: &str,
+    mut probe: impl FnMut(&str) -> R<bool>,
+) -> R<(String, String, String)> {
+    if nonempty("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")?.is_some() || nonempty("AGENT_RALLY_DISCOVER")?.is_some() {
+        return Err(Fallback("discovery override"));
+    }
+    let cwd = std::env::current_dir().map_err(|_| Fallback("no cwd"))?;
+    let planner = Planner {
+        plugin_root,
+        cwd: cwd.into_os_string().into_string().map_err(|_| Fallback("non-utf8 cwd"))?,
+        home: var("HOME")?, probes: HashMap::new(), refreshes: Vec::new(),
+    };
+    let dir = planner.resolve(&planner.expand(workdir)?)?;
+    for binary in planner.candidates(&dir)? {
+        // A cache miss goes to Python before executing any candidate. This
+        // deliberately narrows the fast path without repeating discovery.
+        // Never skip a supported higher-priority binary because its cache is cold.
+        let meta = fs::metadata(&binary).map_err(|_| Fallback("rally metadata"))?;
+        let env = cache::IDENTITY_ENV.iter().map(|name| Ok((*name, var(name)?))).collect::<R<Vec<_>>>()?;
+        let key = cache::key(&cache::KeyInput {
+            workdir: &dir, binary: &binary,
+            binary_mtime_ns: meta.mtime() as i128 * 1_000_000_000 + meta.mtime_nsec() as i128,
+            binary_size: meta.size(), uid: sys::uid(), env,
+        });
+        let bytes = fs::read(py::join(&planner.cache_dir()?, &format!("{key}.json")))
+            .map_err(|_| Fallback("restore cache miss"))?;
+        cache::evaluate(&bytes, &key, &binary, now(), cache::TTL_SECONDS)?
+            .ok_or(Fallback("restore cache stale"))?;
+        if !probe(&binary)? { continue; }
+        // The oracle reads after probing. A concurrent refresh or TTL crossing
+        // must not leave us using the preflight snapshot.
+        let bytes = fs::read(py::join(&planner.cache_dir()?, &format!("{key}.json")))
+            .map_err(|_| Fallback("restore cache miss"))?;
+        cache::evaluate(&bytes, &key, &binary, now(), cache::TTL_SECONDS)?
+            .ok_or(Fallback("restore cache stale"))?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| Fallback("cache json"))?;
+        let slug = value["raw"]["app_slug"].as_str().ok_or(Fallback("non-string app slug"))?;
+        return Ok((dir, binary, slug.to_string()));
+    }
+    Err(Fallback("no native rally binary"))
+}
+
 fn probe_binary(binary: &str) -> R<bool> {
     if !binary.contains('/') {
         return Err(Fallback("bare rally candidate"));
