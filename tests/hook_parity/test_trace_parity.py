@@ -379,25 +379,32 @@ def _event(i: int) -> bytes:
 
 @needs_bl
 def test_concurrent_mixed_appends_lose_and_interleave_nothing(root):
-    """200 hooks at once, alternating Python and bl, across a rotation: every
-    event lands exactly once as one whole line, and the rotation moved the
-    pre-existing file intact (both writers rotate under the same flock)."""
+    """200 hooks in concurrent mixed batches across a rotation: every event
+    lands exactly once as one whole line, and rotation preserves the old file.
+
+    Both writers deliberately drop events when their bounded lock wait expires.
+    Ten active hooks exercise shared-flock contention without delaying stdin
+    until 200 processes have started and exhausting those fail-open budgets.
+    Separate held-lock cases cover the intended timeout behavior.
+    """
     case = Case("concurrency")
     world = h.build_world(root, case)
     trace = world.proj / h.TRACE
     h.prefill(trace, h.MAX_FILE_BYTES - 60_000)
-    procs = []
-    for i in range(200):
-        impl = "python" if i % 2 else "bl"
-        procs.append(subprocess.Popen(h.argv_for(impl, Case("c", phase="end"), world), stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=world.env,
-                                      cwd=str(world.cwd)))
-    for i, p in enumerate(procs):
-        p.stdin.write(_event(i))
-        p.stdin.close()
-    for p in procs:
-        assert p.wait(timeout=60) == 0
-        assert (p.stdout.read(), p.stderr.read()) == (b"", b"")
+    batch_size = 10
+    for start in range(0, 200, batch_size):
+        procs = []
+        for i in range(start, start + batch_size):
+            impl = "python" if i % 2 else "bl"
+            procs.append(subprocess.Popen(h.argv_for(impl, Case("c", phase="end"), world), stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=world.env,
+                                          cwd=str(world.cwd)))
+        for i, p in enumerate(procs, start=start):
+            p.stdin.write(_event(i))
+            p.stdin.close()
+        for p in procs:
+            assert p.wait(timeout=60) == 0
+            assert (p.stdout.read(), p.stderr.read()) == (b"", b"")
     seen: list[str] = []
     prefill_lines = 0
     for path in (trace, Path(f"{trace}.1"), Path(f"{trace}.2")):
