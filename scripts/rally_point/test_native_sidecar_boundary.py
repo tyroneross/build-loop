@@ -49,6 +49,24 @@ FORBIDDEN_NATIVE_SIDECARS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_actor_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each scenario supplies its own identity, independent of the test host."""
+    for name in (
+        "RALLY_TOOL_ID",
+        "BUILD_LOOP_RALLY_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CURSOR_SESSION_ID",
+        "RALLY_AGENT_ID",
+        "RALLY_SESSION_ID",
+        "TERM_SESSION_ID",
+        "RALLY_OBSERVER_PID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _native_context(workdir: Path) -> BackendContext:
     return BackendContext(
         workdir=workdir,
@@ -155,6 +173,29 @@ def test_native_pre_edit_keeps_two_same_host_sessions_distinct(
         "session-a",
         "session-b",
     ]
+
+
+@pytest.mark.parametrize("actor", ["easy-terminal:pane-a", "codex:delegated-actor"])
+def test_native_pre_edit_honors_injected_actor_without_replacing_host_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    actor: str,
+) -> None:
+    context = _native_context(tmp_path)
+    native_presence = Mock(return_value=NativeResult("ok", backend="rally"))
+    monkeypatch.setattr(hooks, "resolve_operative_repo", lambda *_a, **_kw: tmp_path)
+    monkeypatch.setattr(hooks, "resolve_context", lambda _workdir: context)
+    monkeypatch.setattr(hooks, "write_backend_presence", native_presence)
+    monkeypatch.setenv("RALLY_TOOL_ID", actor)
+    monkeypatch.setenv("CLAUDE_SESSION_ID", "native-hook")
+    monkeypatch.setenv("BUILD_LOOP_RALLY_QUIET", "1")
+
+    assert hooks.pre_edit_join(tmp_path, file_path="src/app.py", now=1000.0) == 0
+
+    native_presence.assert_called_once()
+    assert native_presence.call_args.kwargs["tool"] == actor
+    assert native_presence.call_args.kwargs["session_id"] == "native-hook"
+    _assert_no_native_sidecars(tmp_path)
 
 
 def test_native_session_restore_excludes_only_exact_actor_and_advance_acks_it(
