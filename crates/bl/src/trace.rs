@@ -122,6 +122,7 @@ pub fn run(args: &Args) -> Outcome {
         Err(Fallback(reason)) => return fallback(reason, None),
     };
     if sys::stdin_is_tty() {
+        crate::hook_diagnostic("trace", "no_record");
         return Outcome::Done; // `_payload` reads nothing -> {} -> no tool name.
     }
     let mut bytes = Vec::new();
@@ -133,10 +134,16 @@ pub fn run(args: &Args) -> Outcome {
     }
     match plan(&workdir, &args.phase, &bytes, now_ns()) {
         Ok(Some(line)) => {
-            let _ = append(Path::new(&workdir), line.as_bytes());
+            match append(Path::new(&workdir), line.as_bytes()) {
+                Ok(()) => crate::hook_diagnostic("trace", "append_ok"),
+                Err(_) => crate::hook_diagnostic("trace", "append_error"),
+            }
             Outcome::Done
         }
-        Ok(None) => Outcome::Done,
+        Ok(None) => {
+            crate::hook_diagnostic("trace", "no_record");
+            Outcome::Done
+        },
         Err(Fallback(reason)) => fallback(reason, Some(bytes)),
     }
 }
@@ -483,6 +490,7 @@ pub(crate) fn append(workdir: &Path, line: &[u8]) -> std::io::Result<()> {
             Ok(()) => break,
             Err(e) if e.raw_os_error() == Some(sys::EWOULDBLOCK) => {
                 if Instant::now() >= deadline {
+                    crate::hook_diagnostic("trace", "lock_timeout");
                     return Err(e);
                 }
                 std::thread::sleep(LOCK_POLL);

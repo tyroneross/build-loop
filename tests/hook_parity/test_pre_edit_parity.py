@@ -9,12 +9,15 @@ does the same through the shell launcher when ``bin/native/bl`` exists.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.hook_parity.failure_evidence import save_failure, without_diagnostics
 
 from tests.hook_parity import harness
 from tests.hook_parity.harness import Case
@@ -276,8 +279,13 @@ def test_shell_contract(case, root):
 def _compare(impl: str, case: Case, root: Path):
     case = _materialize(case, root)
     shell, _ = harness.run("shell", case, root)
-    other, _ = harness.run(impl, case, root)
-    assert other.comparable() == shell.comparable()
+    diagnostic_case = replace(case, env={**case.env, "BL_TRACE_EXIT": "1"})
+    raw_other, _ = harness.run(impl, diagnostic_case, root)
+    other = without_diagnostics(raw_other)
+    if not (other.comparable() == shell.comparable()):
+        binary = harness.BL if impl == "bl" else harness.REPO_ROOT / "bin/native/bl"
+        evidence = save_failure(root, case.name, binary, shell, raw_other)
+        pytest.fail(f"Differential mismatch; full snapshots: {evidence}", pytrace=False)
     if case.expect:
         case.expect(other, None)
 

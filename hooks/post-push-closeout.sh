@@ -34,35 +34,21 @@ _HOOK_DIR="$(dirname "$0")"
 
 # Claude supplies one JSON event on stdin, not a TOOL_INPUT variable. Parse
 # only tool_input.command so quoted output or documentation cannot fire this
-# observer. Reuse the pre-action classifier rather than adding another parser.
+# observer. Resolve an unambiguous target; unknown shell forms retain the baton.
 _py=""
 [ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
 [ -n "$_py" ] || exit 0
-CMD="$(printf '%s' "$INPUT" | PYTHONPATH="${PLUGIN_ROOT}/scripts/hooks" "$_py" -c '
-import json, sys
-from git_command_classifier import classify_command
-try:
-    event = json.load(sys.stdin)
-    command = event.get("tool_input", {}).get("command", "")
-    if (event.get("hook_event_name") == "PostToolUse"
-            and event.get("tool_name") == "Bash"
-            and isinstance(command, str) and "push" in classify_command(command)):
-        print(command)
-except (ValueError, AttributeError, TypeError):
-    pass
-' 2>/dev/null)" || exit 0
-[ -n "$CMD" ] || exit 0
+PUSH_DIR="$(printf '%s' "$INPUT" | "$_py" "$PLUGIN_ROOT/scripts/hooks/post_push_target.py" "$PROJECT_DIR" 2>/dev/null)" || exit 0
+[ -n "$PUSH_DIR" ] || exit 0
+PROJECT_DIR="$(git -C "$PUSH_DIR" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$PROJECT_DIR" ] || exit 0
 
 # Attribution audit: files the owner's credit-link gaps as backlog items for
 # the pushed repo (see skills/attribution-standard/SKILL.md). Fully detached so
 # it never delays the turn; the script itself no-ops without an owner profile,
 # for repos the owner doesn't own, or with BUILDLOOP_ATTRIBUTION_AUDIT=0.
 (
-    _before_push="${CMD%%git push*}"
-    _dir="$(printf '%s' "$CMD" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|"]+).*/\1/p' | head -1)"
-    [ -n "$_dir" ] || _dir="$(printf '%s' "$_before_push" | sed -nE 's/(^|.*[";&[:space:]])cd[[:space:]]+([^[:space:];&|"]+).*/\2/p' | head -1)"
-    [ -n "$_dir" ] || _dir="$PROJECT_DIR"
-    case "$_dir" in "~"*) _dir="${HOME}${_dir#\~}" ;; esac
+    _dir="$PROJECT_DIR"
     _common="$(git -C "$_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
     [ -f "${PLUGIN_ROOT}/scripts/attribution_audit.py" ] || exit 0
     _py=""

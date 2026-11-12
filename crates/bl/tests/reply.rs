@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 fn bl() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bl"));
-    cmd.args(["hook", "pre-edit"]);
+    cmd.args(["hook", "pre-edit"])
+        .env_remove("BL_TRACE_EXIT")
+        .env_remove("BL_TRACE_FALLBACK")
+        .env_remove("BL_FORCE_PANIC");
     cmd
 }
 
@@ -45,6 +48,9 @@ fn deadline_replies_with_empty_object() {
     assert_eq!(status.code(), Some(0));
     assert_eq!(stdout, b"{}");
     assert!(started.elapsed() >= Duration::from_millis(150));
+    let mut stderr = Vec::new();
+    child.stderr.take().unwrap().read_to_end(&mut stderr).unwrap();
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
 }
 
 #[test]
@@ -95,4 +101,78 @@ fn deadline_kills_a_hung_child_it_was_waiting_on() {
     }
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!alive, "rally child {pid} survived the hook's deadline");
+}
+
+
+fn assert_diagnostic(stderr: &[u8], hook: &str, reason: &str) {
+    let text = std::str::from_utf8(stderr).unwrap();
+    let prefix = format!("bl: diagnostic: hook={hook} reason={reason} elapsed_ms=");
+    let line = text.lines().find(|line| line.starts_with(&prefix)).expect(text);
+    line[prefix.len()..].parse::<u128>().expect("numeric elapsed metadata");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn opt_in_panic_diagnostic_does_not_expose_panic_text() {
+    let out = bl().env("BL_TRACE_EXIT", "1").env("BL_FORCE_PANIC", "1")
+        .stdin(Stdio::null()).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(out.stdout, b"{}");
+    assert_diagnostic(&out.stderr, "pre-edit", "panic");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("forced by"));
+}
+
+#[test]
+fn opt_in_watchdog_diagnostics_preserve_each_stdout_contract() {
+    for hook in ["pre-edit", "trace"] {
+        let mut cmd = bl();
+        if hook == "trace" {
+            cmd = Command::new(env!("CARGO_BIN_EXE_bl"));
+            cmd.args(["hook", "trace", "--phase", "end"])
+                .env_remove("BL_FORCE_PANIC").env_remove("BL_TRACE_FALLBACK");
+        }
+        let mut child = cmd.env("BL_TRACE_EXIT", "1")
+            .env("BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS", "150")
+            .env_remove("BUILD_LOOP_RALLY_DEBUG")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+            .spawn().unwrap();
+        // An open event pipe makes the watchdog deterministic without changing
+        // either production budget or injecting a slow service.
+        let _keep_open = child.stdin.take();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(out.stdout, if hook == "pre-edit" { &b"{}"[..] } else { &b""[..] });
+        assert_diagnostic(&out.stderr, hook, "watchdog");
+    }
+}
+
+#[test]
+fn trace_no_record_is_silent_unless_diagnostics_requested() {
+    for diagnostic in [false, true] {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_bl"));
+        cmd.args(["hook", "trace", "--phase", "end"])
+            .env_remove("BL_TRACE_FALLBACK").env_remove("BL_TRACE_EXIT")
+            .env_remove("BL_FORCE_PANIC").stdin(Stdio::null());
+        if diagnostic { cmd.env("BL_TRACE_EXIT", "1"); }
+        let out = cmd.output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert!(out.stdout.is_empty());
+        if diagnostic {
+            assert_diagnostic(&out.stderr, "trace", "no_record");
+            assert_diagnostic(&out.stderr, "trace", "completed");
+        } else { assert!(out.stderr.is_empty()); }
+    }
+}
+
+#[test]
+fn missing_shell_reports_exec_failure_without_changing_reply() {
+    let out = bl().env("BL_TRACE_EXIT", "1").env("BL_TRACE_FALLBACK", "1")
+        .env("BUILD_LOOP_RALLY_DEBUG", "1")
+        .env("PATH", "")
+        .stdin(Stdio::null()).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty());
+    assert_diagnostic(&out.stderr, "pre-edit", "fallback");
+    assert_diagnostic(&out.stderr, "pre-edit", "fallback_exec_failed");
+    assert!(out.stderr.starts_with(b"bl: fallback: debug stderr\n"));
 }

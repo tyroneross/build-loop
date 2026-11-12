@@ -191,7 +191,23 @@ class TestResilience(Base):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text("{not json")
         self.assertEqual(af.cmd_check(self.wd), "fresh")
-        af.cmd_mark_stale(self.wd, "x.py")  # must not raise
+        self.assertFalse(af.cmd_mark_stale(self.wd, "x.py"))
+        self.assertEqual(self.state_path.read_text(), "{not json")
+
+    def test_non_object_state_is_preserved_by_both_mutations(self):
+        self.write_state(["unrelated", "data"])
+        before = self.state_path.read_bytes()
+        self.assertFalse(af.cmd_mark_stale(self.wd, "x.py"))
+        self.assertFalse(af.cmd_mark_fresh(self.wd))
+        self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_unreadable_state_is_not_replaced(self):
+        self.write_state({"runs": [{"run_id": "keep"}]})
+        before = self.state_path.read_bytes()
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError):
+            self.assertFalse(af.cmd_mark_stale(self.wd, "x.py"))
+            self.assertFalse(af.cmd_mark_fresh(self.wd))
+        self.assertEqual(self.state_path.read_bytes(), before)
 
     def test_lockfile_path_is_inside_the_architecture_dir(self):
         self.assertEqual(af.cmd_lockfile(self.wd),
@@ -201,6 +217,45 @@ class TestResilience(Base):
         af.cmd_mark_stale(self.wd, "x.py")
         leftovers = [p.name for p in self.state_path.parent.iterdir() if p.name.endswith(".tmp")]
         self.assertEqual(leftovers, [])
+
+
+class TestConcurrentInvalidation(Base):
+    def test_scan_cannot_clear_a_later_edit_of_the_same_file(self):
+        af.cmd_mark_stale(self.wd, "x.py")
+        generation = af.cmd_generation(self.wd)
+        af.cmd_mark_stale(self.wd, "x.py")
+        self.assertFalse(af.cmd_mark_fresh(self.wd, generation))
+        self.assertIs(self.state()["architecture"]["stale"], True)
+        self.assertEqual(self.state()["architecture"]["staleFiles"], ["x.py"])
+        self.assertTrue(af.cmd_mark_fresh(self.wd, af.cmd_generation(self.wd)))
+
+    def test_mark_waits_for_shared_state_writer_and_preserves_its_update(self):
+        import subprocess
+        from atomic_io import LockedFile
+        self.write_state({"execution": {"phase": "before"}})
+        with LockedFile(self.state_path):
+            proc = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import sys; sys.path.insert(0, sys.argv[1]); "
+                 "from pathlib import Path; import architecture_freshness as af; "
+                 "print('ready', flush=True); af.cmd_mark_stale(Path(sys.argv[2]), 'x.py')",
+                 str(HERE), str(self.wd)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(proc.stdout.readline().strip(), "ready")
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    proc.communicate(timeout=0.2)
+                self.write_state({"execution": {"phase": "after"}, "runs": [{"run_id": "new"}]})
+            except BaseException:
+                proc.kill()
+                proc.communicate()
+                raise
+        stdout, stderr = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0, stderr)
+        self.assertEqual(self.state()["execution"], {"phase": "after"})
+        self.assertEqual(self.state()["runs"], [{"run_id": "new"}])
+        self.assertIs(self.state()["architecture"]["stale"], True)
 
 
 if __name__ == "__main__":

@@ -43,12 +43,24 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Held by whoever ends the process, so the deadline `{}` and a normal exit
 /// never interleave.
 pub(crate) static EXIT: Mutex<()> = Mutex::new(());
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// Opt-in metadata only: never format event bytes, paths, or panic payloads.
+/// Default hook stdout/stderr and exit codes remain unchanged.
+pub(crate) fn hook_diagnostic(hook: &'static str, reason: &'static str) {
+    if std::env::var_os("BL_TRACE_EXIT").is_some() {
+        let elapsed = STARTED.get().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+        let _ = writeln!(std::io::stderr().lock(),
+            "bl: diagnostic: hook={hook} reason={reason} elapsed_ms={elapsed}");
+    }
+}
+
 
 /// `bl hook trace` gives up silently after this long. The host kills the
 /// Python hook at 1 s; this only bounds a native run that somehow outlives
@@ -76,6 +88,7 @@ fn plugin_root(marker: &str) -> Option<PathBuf> {
 /// the shell hook without its event could stamp the wrong repo or session.
 fn exec_shell_hook(root: &std::path::Path, stdin: Option<Vec<u8>>, remaining_ms: u64) -> ! {
     if remaining_ms < bl_contract::DEADLINE_MIN_MS {
+        hook_diagnostic("pre-edit", "fallback_budget_exhausted");
         emit_fallback_reply_and_exit();
     }
     let script = root.join("hooks/pre-edit-rally-point.sh");
@@ -88,10 +101,14 @@ fn exec_shell_hook(root: &std::path::Path, stdin: Option<Vec<u8>>, remaining_ms:
             Some(file) => {
                 cmd.stdin(Stdio::from(file));
             }
-            None => emit_fallback_reply_and_exit(),
+            None => {
+                hook_diagnostic("pre-edit", "stdin_transfer_failed");
+                emit_fallback_reply_and_exit()
+            },
         }
     }
     let _ = cmd.exec();
+    hook_diagnostic("pre-edit", "fallback_exec_failed");
     std::process::exit(0)
 }
 
@@ -123,6 +140,7 @@ fn stdin_file(bytes: &[u8]) -> Option<std::fs::File> {
 
 fn main() {
     let started = Instant::now();
+    let _ = STARTED.set(started);
     std::panic::set_hook(Box::new(|_| {}));
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() >= 2 && args[0] == "hook" && args[1] == "trace" {
@@ -153,6 +171,7 @@ fn main() {
         let wait = deadline.saturating_duration_since(Instant::now());
         std::thread::sleep(wait);
         let _guard = EXIT.lock();
+        hook_diagnostic("pre-edit", "watchdog");
         sys::kill_waited_children();
         emit_fallback_reply_and_exit();
     });
@@ -160,15 +179,20 @@ fn main() {
     let outcome = std::panic::catch_unwind(|| pre_edit::run(&root_str));
     let _guard = EXIT.lock();
     match outcome {
-        Ok(pre_edit::Outcome::Done) => std::process::exit(0),
+        Ok(pre_edit::Outcome::Done) => {
+            hook_diagnostic("pre-edit", "completed");
+            std::process::exit(0)
+        },
         Ok(pre_edit::Outcome::Fallback { reason, stdin }) => {
             if std::env::var_os("BL_TRACE_FALLBACK").is_some() {
                 eprintln!("bl: fallback: {reason}");
             }
+            hook_diagnostic("pre-edit", "fallback");
             let spent = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
             exec_shell_hook(&root, stdin, budget.saturating_sub(spent))
         }
         Err(_) => {
+            hook_diagnostic("pre-edit", "panic");
             sys::kill_waited_children();
             emit_fallback_reply_and_exit()
         }
@@ -185,6 +209,7 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
     std::thread::spawn(move || {
         std::thread::sleep((started + TRACE_DEADLINE).saturating_duration_since(Instant::now()));
         let _guard = EXIT.lock();
+        hook_diagnostic("trace", "watchdog");
         std::process::exit(0);
     });
     match std::panic::catch_unwind(|| trace::run(&parsed)) {
@@ -193,11 +218,13 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
             if std::env::var_os("BL_TRACE_FALLBACK").is_some() {
                 eprintln!("bl: fallback: {reason}");
             }
+            hook_diagnostic("trace", "fallback");
             let mut cmd = Command::new("python3");
             cmd.arg(root.join("scripts/tool_trace.py"))
                 .args(["--workdir", &parsed.workdir, "hook", "--phase", &parsed.phase]);
             let Some(bytes) = stdin else {
                 let _ = cmd.exec(); // stdin unread: Python inherits it
+                hook_diagnostic("trace", "fallback_exec_failed");
                 std::process::exit(0)
             };
             // The bytes already read go to Python through a pipe (no temp
@@ -206,15 +233,28 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
             // first cannot deadlock. The deadline thread waits on EXIT, held
             // here, so it never cuts Python short.
             let Ok(mut child) = cmd.stdin(Stdio::piped()).spawn() else {
+                hook_diagnostic("trace", "fallback_spawn_failed");
                 std::process::exit(0)
             };
             if let Some(mut pipe) = child.stdin.take() {
-                let _ = pipe.write_all(&bytes);
+                if pipe.write_all(&bytes).is_err() {
+                    hook_diagnostic("trace", "stdin_transfer_failed");
+                }
             }
             let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+            hook_diagnostic("trace", "fallback_child_finished");
             std::process::exit(code)
         }
-        // Done, or a panic: Python's main swallows every exception and exits 0.
-        _ => std::process::exit(0),
+        Ok(trace::Outcome::Done) => {
+            let _guard = EXIT.lock();
+            hook_diagnostic("trace", "completed");
+            std::process::exit(0)
+        }
+        // Python's main swallows every exception and exits 0.
+        Err(_) => {
+            let _guard = EXIT.lock();
+            hook_diagnostic("trace", "panic");
+            std::process::exit(0)
+        }
     }
 }

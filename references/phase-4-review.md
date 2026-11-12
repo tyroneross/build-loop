@@ -8,6 +8,8 @@ Extracted from `agents/build-orchestrator.md` §"Phase 4: Review (sub-steps A–
 
 **Auto-invoke coordination check (Trigger 3 of 3)** runs before independent-auditor dispatches: execute the branching pseudocode in `references/auto-invoke-coordination.md`; on `mode=coordinated`, ensure all per-chunk verdicts in the active coord file are PASS or resolved-VARIANCE before proceeding (a `verification-pending` chunk blocks build-scope critique). Then run the quality-gate trigger profile (`scripts/review_trigger.py`) and dispatch `independent-auditor` at build scope (+ `security-reviewer` when `triggers.riskSurfaceChange`, + a second-vendor reviewer when `cross_vendor_required` and a peer host is reachable). Verdict routing: `nay`+critical/high → Execute (no iteration burn) or re-plan; medium/low+single-`file:line` → Auto-Resolve. Full trigger-profile invocation, cross-vendor reconciliation, and verdict table in `references/phase-gate-checklist.md` §"Sub-step A — Critic".
 
+**Failure-path and test-evidence questions.** Pass the auditor the review questions R1, R3, R4, R5 and R7 in the Sub-step A Critic section of `references/phase-gate-checklist.md` whenever the diff persists a done/checked flag, replaces the changed component with a fake in tests, matches log or error text for retry or triage, filters failure output, or edits a `set -e` script. Each question names the failure that taught it, a grep lead, and a bad/good example. A changed path that no test executes is reported `⚠️ untested`, never verified.
+
 After independent-auditor returns, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase4-review-a')` once per build with the aggregate of all chunks' `design_doc_delta` + `schema_delta` envelopes. Specialist writes the build-wide app-contract update; its `violations_found[]` flow into the Phase 4 Report alongside independent-auditor's findings.
 
 **Owed-verification manifest (GAP-1 made mechanical — MANDATORY on the parent-must-dispatch rung).** The auditor dispatch ladder above records `auditor_status`, but a nested orchestrator with no Agent tool can only reach `not-run:parent-must-dispatch` — and prose alone never forced the dispatching parent to actually run the owed verifier. When the ladder lands on `not-run:parent-must-dispatch` or `cross-vendor-deferred` for `independent-auditor`, OR `plan-critic` / `security-reviewer` (when `triggers.riskSurfaceChange`) were un-run for the same no-Agent-tool reason, write the manifest:
@@ -50,6 +52,13 @@ complete empty result, with recoverable locators. Passing checks establish the
 behavior exercised; they do not calibrate a numeric quality threshold or prove
 unseen content was represented. Recheck the actual source and owner before
 closing an older finding or creating a duplicate repair task.
+
+A failing grader or merge gate with no diagnostic in its output is an
+infrastructure failure after one bounded retry, recorded separately and never
+routed to Iterate as a defect in the change. A bare `error:` line or a
+`signal N` line is a diagnostic. Full rule:
+the Sub-step A Critic section of `references/phase-gate-checklist.md` (R5 and the gate
+classification note).
 
 ## Sub-step C — Optimize (opt-in)
 

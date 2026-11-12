@@ -61,6 +61,61 @@ else
   fail "pre-commit in-repo-no-guard" "expected exit 0, got $RC"
 fi
 
+# Exercise the production legacy source bodies against helpers installed in
+# Git's effective directory, including linked worktrees whose .git is a file.
+python3 - "$PRE_HOOK" "$POST_HOOK" <<'PY'
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+pre, post = sys.argv[1:]
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    for layout in ("normal", "linked", "custom", "linked-custom"):
+        repo = root / layout
+        repo.mkdir()
+        def git(*args):
+            return subprocess.check_output(["git", *args], cwd=repo, stderr=subprocess.DEVNULL, text=True).strip()
+        git("init", "-q")
+        cwd = repo
+        if layout.startswith("linked"):
+            git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init")
+            cwd = root / (layout + "-checkout")
+            git("worktree", "add", "-b", "linked", str(cwd))
+        if layout.endswith("custom"):
+            git("config", "core.hooksPath", str(root / (layout + " hooks")))
+        hooks = Path(subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"], cwd=cwd, text=True).strip())
+        hooks.mkdir(parents=True, exist_ok=True)
+        receipt = root / (layout + ".receipt")
+        def stub(name, label, code):
+            (hooks / name).write_text(
+                "from pathlib import Path\n"
+                f"with Path({str(receipt)!r}).open('a') as f: f.write({label + chr(10)!r})\n"
+                f"raise SystemExit({code})\n")
+        stub(".private-slug-check.py", "private", 1)
+        stub(".runtime-memory-tracking-check.py", "runtime", 1)
+        assert subprocess.run(["sh", pre], cwd=cwd, capture_output=True).returncode == 1, layout
+        assert receipt.read_text().splitlines() == ["private"], layout
+        stub(".private-slug-check.py", "allowed", 0)
+        assert subprocess.run(["sh", pre], cwd=cwd, capture_output=True).returncode == 1, layout
+        assert receipt.read_text().splitlines() == ["private", "allowed", "runtime"], layout
+        stub(".rally-point-capture.py", "capture", 0)
+        assert subprocess.run(["sh", post], cwd=cwd, capture_output=True).returncode == 0, layout
+        deadline = time.monotonic() + 10
+        while "capture\n" not in receipt.read_text() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert receipt.read_text().splitlines()[-1] == "capture", layout
+        print(f"verified legacy guard/capture: {layout}")
+PY
+if [ "$?" -eq 0 ]; then
+  pass "legacy hooks use effective helper directory across checkout layouts"
+else
+  fail "legacy effective directory" "guard or capture failed"
+fi
+
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

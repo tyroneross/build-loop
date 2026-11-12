@@ -269,6 +269,8 @@ def _run_legacy_stop_hook(
     hook_dir.mkdir(parents=True)
     hook = hook_dir / "stop_finalize.sh"
     shutil.copyfile(LEGACY_STOP_HOOK, hook)
+    (plugin / "hooks").mkdir()
+    shutil.copyfile(LEGACY_STOP_HOOK.parents[2] / "hooks/_bounded_hook.sh", plugin / "hooks/_bounded_hook.sh")
     facade = plugin / "scripts" / "agent_rally.py"
     facade.write_text(
         """import json, os, sys
@@ -1124,6 +1126,8 @@ def test_stop_finalize_does_not_wait_for_slow_rally_release(tmp_path):
     plugin = tmp_path / "plugin"
     (plugin / "scripts" / "hooks").mkdir(parents=True)
     shutil.copyfile(LEGACY_STOP_HOOK, plugin / "scripts" / "hooks" / "stop_finalize.sh")
+    (plugin / "hooks").mkdir()
+    shutil.copyfile(LEGACY_STOP_HOOK.parents[2] / "hooks/_bounded_hook.sh", plugin / "hooks/_bounded_hook.sh")
     done = tmp_path / "release-done"
     (plugin / "scripts" / "agent_rally.py").write_text(
         "import sys, time, pathlib\n"
@@ -1147,3 +1151,81 @@ def test_stop_finalize_does_not_wait_for_slow_rally_release(tmp_path):
     while not done.exists() and time.monotonic() < deadline:
         time.sleep(0.1)
     assert done.exists() and "--session-id slow-1" in done.read_text()
+
+
+# CLI event routing, separate from direct callers' legacy claude_code default.
+def test_codex_stop_cli_passes_exact_host_and_session_to_detached_release(tmp_path, monkeypatch, capsys):
+    import io
+    from rally_point import actor_identity
+    for key in ('RALLY_TOOL_ID', 'BUILD_LOOP_RALLY_TOOL', 'RALLY_HOST_FAMILY',
+                'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CURSOR_SESSION_ID'):
+        monkeypatch.delenv(key, raising=False)
+    calls = []
+    monkeypatch.setattr(stop_closeout, 'release_my_claims_detached',
+                        lambda wd, sid, tool: calls.append((wd, sid, tool)))
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(json.dumps({'session_id': 'codex-session', 'turn_id': 'turn-1'})))
+    assert stop_closeout.main(['--workdir', str(tmp_path), '--hook']) == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert calls == [(tmp_path, 'codex-session', 'codex')]
+    assert actor_identity.native_tool_id(calls[0][2], calls[0][1]) == 'codex:codex-session'
+
+
+def test_stop_host_precedence_preserves_explicit_actor_and_cli_override(monkeypatch):
+    for key in ('RALLY_TOOL_ID', 'BUILD_LOOP_RALLY_TOOL', 'RALLY_HOST_FAMILY',
+                'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CURSOR_SESSION_ID'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('CODEX_THREAD_ID', 'codex-thread')
+    assert stop_closeout._stop_tool({}) == 'codex'
+    assert stop_closeout._stop_tool({}, 'cursor:chosen') == 'cursor:chosen'
+    monkeypatch.setenv('BUILD_LOOP_RALLY_TOOL', 'cursor')
+    assert stop_closeout._stop_tool({}) == 'cursor'
+    monkeypatch.setenv('RALLY_TOOL_ID', '  easy-terminal:ExactActor  ')
+    assert stop_closeout._stop_tool({'turn_id': 'turn'}, 'claude_code') == 'easy-terminal:ExactActor'
+
+
+def test_detached_release_deadline_kills_facade_and_descendant(tmp_path, monkeypatch):
+    import signal
+    scripts = tmp_path / 'plugin/scripts'
+    scripts.mkdir(parents=True)
+    hooks = scripts.parent / 'hooks'
+    hooks.mkdir()
+    shutil.copyfile(LEGACY_STOP_HOOK.parents[2] / 'hooks/_bounded_hook.sh', hooks / '_bounded_hook.sh')
+    pidfile = tmp_path / 'release-pids.json'
+    (scripts / 'agent_rally.py').write_text(
+        'import os,sys,subprocess,signal,time,json\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+        "child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'])\n"
+        f'open({str(pidfile)!r}, "w").write(json.dumps([os.getpid(), child.pid]) + "\\n")\n'
+        'time.sleep(30)\n')
+    monkeypatch.setattr(stop_closeout, '__file__', str(scripts / 'stop_closeout.py'))
+    monkeypatch.setattr(stop_closeout, '_DETACHED_RELEASE_DEADLINE_S', .8)
+    original_popen = subprocess.Popen
+    supervisors = []
+    def record_popen(*args, **kwargs):
+        proc = original_popen(*args, **kwargs)
+        supervisors.append(proc)
+        return proc
+    monkeypatch.setattr(stop_closeout.subprocess, 'Popen', record_popen)
+    try:
+        assert stop_closeout.release_my_claims_detached(tmp_path, 'test-session', tool='codex')
+        assert supervisors[0].wait(timeout=3) == 0
+        pids = json.loads(pidfile.read_text())
+        for pid in pids:
+            status = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+            assert not status or status.startswith('Z'), f'release worker survived deadline: {status}'
+    finally:
+        if pidfile.exists():
+            try:
+                os.killpg(json.loads(pidfile.read_text())[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for proc in supervisors:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+
+def test_detached_release_never_falls_back_to_unbounded_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(stop_closeout.shutil, 'which', lambda _: None)
+    monkeypatch.setattr(stop_closeout.subprocess, 'Popen', lambda *a, **k: (_ for _ in ()).throw(AssertionError('must not spawn')))
+    assert stop_closeout.release_my_claims_detached(tmp_path, 'test-session') is False

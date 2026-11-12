@@ -15,6 +15,7 @@ import tempfile
 import unittest
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -174,6 +175,62 @@ def test_linked_worktree_installs_into_effective_common_hooks(tmp_path: Path):
     hook = Path(effective)
     assert hook.exists()
     assert igh.PRE_MARKER in hook.read_text()
+
+
+@pytest.mark.parametrize("layout", ["normal", "linked", "custom", "relative-custom", "linked-custom"])
+def test_installed_hooks_execute_helpers_from_effective_directory(repo: Path, layout: str):
+    """Exercise generated pre/post hooks, not just where installation writes them."""
+    workdir = repo
+    if layout.startswith("linked"):
+        _git(["config", "user.email", "test@example.com"], repo)
+        _git(["config", "user.name", "Test"], repo)
+        _git(["commit", "--allow-empty", "-m", "init"], repo)
+        workdir = repo.parent / "linked"
+        _git(["worktree", "add", "-b", "linked", str(workdir)], repo)
+    if layout == "relative-custom":
+        (workdir / ".gitignore").write_text(".local-hooks/\n")
+        _git(["config", "core.hooksPath", ".local-hooks"], workdir)
+    elif layout.endswith("custom"):
+        _git(["config", "core.hooksPath", str(repo.parent / "custom hooks")], workdir)
+
+    # Only the committing checkout opts in, including the linked-worktree case.
+    (workdir / ".private-slugs").write_text("some-private-slug\n")
+    assert igh.install(workdir)
+    hooks = Path(subprocess.check_output(
+        ["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+        cwd=workdir, text=True,
+    ).strip())
+    private = hooks / ".private-slug-check.py"
+    runtime = hooks / ".runtime-memory-tracking-check.py"
+    capture = hooks / ".rally-point-capture.py"
+    assert private.is_file() and runtime.is_file() and capture.is_file()
+    receipt = repo.parent / "hook-calls"
+
+    def stub(path: Path, label: str, code: int = 0):
+        path.write_text(
+            f"from pathlib import Path\n"
+            f"with Path({str(receipt)!r}).open('a') as f: f.write({label + chr(10)!r})\n"
+            f"raise SystemExit({code})\n"
+        )
+
+    stub(private, "private-denied", 1)
+    stub(runtime, "runtime-denied", 1)
+    pre = subprocess.run(["sh", str(hooks / "pre-commit")], cwd=workdir, capture_output=True)
+    assert pre.returncode == 1
+    assert receipt.read_text().splitlines() == ["private-denied"]
+
+    stub(private, "private-allowed")
+    pre = subprocess.run(["sh", str(hooks / "pre-commit")], cwd=workdir, capture_output=True)
+    assert pre.returncode == 1
+    assert receipt.read_text().splitlines() == ["private-denied", "private-allowed", "runtime-denied"]
+
+    stub(capture, "captured")
+    post = subprocess.run(["sh", str(hooks / "post-commit")], cwd=workdir, capture_output=True)
+    assert post.returncode == 0
+    deadline = time.monotonic() + 10
+    while "captured\n" not in receipt.read_text() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert receipt.read_text().splitlines()[-1] == "captured"
 
 
 def test_post_commit_reinstall_replaces_stale_segment(repo: Path):

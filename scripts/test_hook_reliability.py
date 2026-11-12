@@ -30,9 +30,18 @@ class HookReliabilityTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'scripts').mkdir()
             (root / 'scripts/architecture_freshness.py').touch()
-            with patch.object(module.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)) as run:
+            # A checked generation lookup succeeds before the actual scan
+            # fails. Model subprocess semantics, then verify no publication.
+            with patch.object(module, 'run_command', side_effect=[
+                subprocess.CompletedProcess([], 0, stdout='0\n', stderr=''),
+                subprocess.CompletedProcess([], 1),
+            ]) as run:
                 self.assertEqual(module.main(['--workdir', tmp]), 1)
-                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_count, 2)
+                self.assertIn('--generation', run.call_args_list[0].args[0])
+                self.assertIn('scan', run.call_args_list[1].args[0])
+                self.assertFalse(any('--mark-fresh' in call.args[0] or 'acp' in call.args[0]
+                                     for call in run.call_args_list))
 
     def test_concurrent_exclude_updates_do_not_lose_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,8 +72,13 @@ class HookReliabilityTests(unittest.TestCase):
             wrapper.write_text(f'''#!{sys.executable}
 import os, subprocess, sys, time
 from pathlib import Path
-source = sys.stdin.read()
-result = subprocess.run([{sys.executable!r}], input=source, capture_output=True, text=True)
+if sys.argv[1:] == ['/dev/fd/3']:
+    source = Path('/dev/fd/3').read_text()
+    event = sys.stdin.read()
+    result = subprocess.run([{sys.executable!r}, '-c', source], input=event, capture_output=True, text=True)
+else:
+    source = sys.stdin.read()
+    result = subprocess.run([{sys.executable!r}], input=source, capture_output=True, text=True)
 if "r.get('session_id')" in source and 'fcntl' not in source:
     barrier = Path({str(root)!r})
     (barrier / ('ready-' + str(os.getpid()))).touch()

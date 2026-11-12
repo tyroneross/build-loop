@@ -1,4 +1,4 @@
-"""Tests for the PreToolUse architecture hook extension allowlist.
+"""Tests for the PostToolUse architecture hook extension allowlist.
 
 The hook (`hooks/pre-edit-architecture.sh`) must NOT mark architecture stale
 or fire a scan for doc-only edits (`.md`, `.txt`, `.json`, etc.). Source-code
@@ -66,6 +66,7 @@ def _seed_workspace(tmp_path: Path) -> Path:
         scripts_dir / "architecture_freshness.py",
     )
     shutil.copy(REPO / "scripts" / "hook_payload.py", scripts_dir / "hook_payload.py")
+    shutil.copy(REPO / "scripts" / "atomic_io.py", scripts_dir / "atomic_io.py")
     os.chmod(hooks_dir / "pre-edit-architecture.sh", 0o755)
     return hooks_dir / "pre-edit-architecture.sh"
 
@@ -144,3 +145,31 @@ def test_untracked_py_does_not_mark_stale(tmp_path: Path) -> None:
     assert rc == 0
     wait_idle(tmp_path)
     assert _is_stale(tmp_path) is False
+
+
+def test_explicit_pre_edit_event_cannot_scan_before_the_edit(tmp_path: Path) -> None:
+    """A stale registration must not publish the source before a delayed edit."""
+    hook = _seed_workspace(tmp_path)
+    source = tmp_path / "src/foo.py"
+    source.parent.mkdir()
+    source.write_text("before\n")
+    env = stub_uv_env(tmp_path, sleep_s=0)
+    uv = tmp_path / "_stubbin/uv"
+    uv.write_text('#!/bin/sh\ncat "$CLAUDE_PROJECT_DIR/src/foo.py" > "$CLAUDE_PROJECT_DIR/scanned-source"\n')
+    payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit",
+               "tool_input": {"file_path": str(source)}}
+    before = subprocess.run(["bash", str(hook)], input=json.dumps(payload),
+                            capture_output=True, text=True, env=env, timeout=10)
+    assert before.returncode == 0
+    wait_idle(tmp_path)
+    assert not (tmp_path / "scanned-source").exists()
+    assert not _is_stale(tmp_path)
+
+    source.write_text("after\n")
+    payload["hook_event_name"] = "PostToolUse"
+    after = subprocess.run(["bash", str(hook)], input=json.dumps(payload),
+                           capture_output=True, text=True, env=env, timeout=10)
+    assert after.returncode == 0
+    wait_idle(tmp_path)
+    assert (tmp_path / "scanned-source").read_text() == "after\n"
+    assert not _is_stale(tmp_path)

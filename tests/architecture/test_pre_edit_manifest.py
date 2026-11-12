@@ -48,6 +48,7 @@ def _seed(tmp_path: Path) -> Path:
                 scripts_dir / "architecture_freshness.py")
     # The hook reads the edit payload through scripts/hook_payload.py.
     shutil.copy(REPO / "scripts" / "hook_payload.py", scripts_dir / "hook_payload.py")
+    shutil.copy(REPO / "scripts" / "atomic_io.py", scripts_dir / "atomic_io.py")
     os.chmod(hooks_dir / "pre-edit-architecture.sh", 0o755)
     return hooks_dir / "pre-edit-architecture.sh"
 

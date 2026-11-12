@@ -76,7 +76,9 @@ if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
   echo "rally-point post-commit: cannot resolve repo toplevel" >&2
   exit 2
 fi
-RALLY_POINT_CAPTURE="$RALLY_POINT_TOPLEVEL/.git/hooks/.rally-point-capture.py"
+RALLY_POINT_HOOKS="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)"
+[ -n "$RALLY_POINT_HOOKS" ] || exit 2
+RALLY_POINT_CAPTURE="$RALLY_POINT_HOOKS/.rally-point-capture.py"
 if [ -f "$RALLY_POINT_CAPTURE" ]; then
   ( python3 "$RALLY_POINT_CAPTURE" >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
 fi
@@ -101,11 +103,13 @@ if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
   echo "private-slug-guard: cannot resolve repo toplevel — refusing to skip the guard" >&2
   exit 2
 fi
-PRIVATE_SLUG_GUARD="$RALLY_POINT_TOPLEVEL/.git/hooks/.private-slug-check.py"
+RALLY_POINT_HOOKS="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)"
+[ -n "$RALLY_POINT_HOOKS" ] || exit 2
+PRIVATE_SLUG_GUARD="$RALLY_POINT_HOOKS/.private-slug-check.py"
 if [ -f "$PRIVATE_SLUG_GUARD" ]; then
   python3 "$PRIVATE_SLUG_GUARD" || exit 1
 fi
-RUNTIME_MEMORY_GUARD="$RALLY_POINT_TOPLEVEL/.git/hooks/.runtime-memory-tracking-check.py"
+RUNTIME_MEMORY_GUARD="$RALLY_POINT_HOOKS/.runtime-memory-tracking-check.py"
 if [ -f "$RUNTIME_MEMORY_GUARD" ]; then
   python3 "$RUNTIME_MEMORY_GUARD" || exit 1
 fi
@@ -364,7 +368,7 @@ def _install_post_commit(hooks_dir: Path) -> None:
         _make_executable(hook)
 
 
-def _repo_has_slug_denylist(hooks_dir: Path) -> bool:
+def _repo_has_slug_denylist(repo: Path) -> bool:
     """Can check_private_slugs.py actually run in this repo?
 
     It needs a ``.private-slugs`` denylist at the repo root. Absent one it
@@ -373,11 +377,14 @@ def _repo_has_slug_denylist(hooks_dir: Path) -> bool:
     counts: a repo that ships the template has opted into the guard and only
     needs the operator to fill it in.
     """
-    root = hooks_dir.parent.parent  # <repo>/.git/hooks -> <repo>
+    top = _git_out(repo, ["rev-parse", "--show-toplevel"])
+    if not top:
+        return False
+    root = Path(top)
     return (root / ".private-slugs").exists() or (root / ".private-slugs.example").exists()
 
 
-def _install_pre_commit(hooks_dir: Path) -> None:
+def _install_pre_commit(hooks_dir: Path, repo: Path) -> None:
     """Install/chain the public-repo hygiene pre-commit. Idempotent.
 
     The guard MUST be able to abort a commit, so (unlike post-commit)
@@ -397,7 +404,7 @@ def _install_pre_commit(hooks_dir: Path) -> None:
         if not private_checker.exists() and not runtime_checker.exists():
             return  # nothing to guard with — skip silently
         guard = hooks_dir / ".private-slug-check.py"
-        if private_checker.exists() and _repo_has_slug_denylist(hooks_dir):
+        if private_checker.exists() and _repo_has_slug_denylist(repo):
             atomic_write_text(guard, _PRE_GUARD_SRC.format(checker=str(private_checker)), executable=True)
             guard.chmod(0o755)
         else:
@@ -500,7 +507,7 @@ def install(repo: Path) -> bool:
         return False
     hooks_dir.mkdir(parents=True, exist_ok=True)
     _install_post_commit(hooks_dir)
-    _install_pre_commit(hooks_dir)
+    _install_pre_commit(hooks_dir, repo)
     return True
 
 

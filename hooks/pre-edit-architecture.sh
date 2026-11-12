@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-# PreToolUse hook (matcher: Edit|Write) — incremental scan trigger.
+# PostToolUse hook (matcher: Edit|Write) — incremental scan trigger.
+# Historical filename retained for explicit callers; registered after successful edits.
 #
 # Contract:
 #   - command-type only (NEVER prompt-type)

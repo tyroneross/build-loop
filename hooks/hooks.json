@@ -47,11 +47,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-architecture.sh\" >/dev/null 2>&1; exit 0",
-            "timeout": 2
-          },
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\"; exit 0",
             "timeout": 2
           }
@@ -85,6 +80,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-architecture.sh\" >/dev/null 2>&1; exit 0",
+            "timeout": 2
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [

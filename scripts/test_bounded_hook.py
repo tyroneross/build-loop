@@ -330,3 +330,174 @@ def test_commit_state_preserves_advisory_and_manifest_wiring(plugin):
         commands = [h["command"] for group in manifest["hooks"]["Stop"] for h in group["hooks"]]
         assert any("/hooks/commit-state.sh" in c for c in commands)
         assert not any("/scripts/commit_state_check.py" in c for c in commands)
+
+
+@pytest.mark.parametrize('cancel', [None, 'SIGTERM', 'SIGINT', 'SIGHUP'])
+def test_resistant_worker_group_is_killed_on_timeout_or_cancel(plugin, cancel):
+    import signal
+    root, env = plugin
+    pidfile = root / 'resistant.json'
+    worker = root / 'resistant.py'
+    worker.write_text(
+        'import os, signal, subprocess, sys, json, time\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        f'open({str(pidfile)!r}, "w").write(json.dumps([os.getpid(), child.pid]) + "\\n")\n'
+        'time.sleep(30)\n'
+    )
+    wrapper = root / 'resistant.sh'
+    wrapper.write_text(
+        f'. "{root}/hooks/_bounded_hook.sh"\n'
+        'bl_bound_hook 1200 1200 advisory "$BASH" "$0"\n'
+        f'exec "{sys.executable}" "{worker}"\n'
+    )
+    p = subprocess.Popen(['/bin/bash', str(wrapper)], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    pids = []
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                record = pidfile.read_text()
+                if record.endswith('\n'):
+                    pids = json.loads(record)
+                    break
+            except FileNotFoundError:
+                pass
+            time.sleep(.005)
+        assert pids, 'worker did not start'
+        started = time.monotonic()
+        if cancel:
+            p.send_signal(getattr(signal, cancel))
+        out, err = p.communicate(timeout=2)
+        assert p.returncode == 0 and not err
+        assert out == (b'' if cancel else b'{}')
+        assert time.monotonic() - started < (1 if cancel else 2)
+        for pid in pids:
+            # An orphan zombie has stopped executing; init owns its reaping.
+            status = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+            assert not status or status.startswith('Z'), f'worker {pid} survived: {status}'
+    finally:
+        if pids:
+            try:
+                os.killpg(pids[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+
+
+def test_timeout_preserves_intentionally_detached_worker(plugin):
+    import signal
+    root, env = plugin
+    pidfile = root / 'detached.pid'
+    worker = root / 'detach.py'
+    worker.write_text(
+        'import subprocess, sys, time\n'
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+        'start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+        f'open({str(pidfile)!r}, "w").write(str(p.pid))\n'
+        'time.sleep(30)\n'
+    )
+    wrapper = root / 'detach.sh'
+    wrapper.write_text(f'. "{root}/hooks/_bounded_hook.sh"\n'
+                       'bl_bound_hook 1200 1200 advisory "$BASH" "$0"\n'
+                       f'exec "{sys.executable}" "{worker}"\n')
+    try:
+        result = subprocess.run(['/bin/bash', str(wrapper)], stdin=subprocess.DEVNULL,
+                                capture_output=True, env=env, timeout=3)
+        assert result.returncode == 0 and result.stdout == b'{}'
+        os.kill(int(pidfile.read_text()), 0)
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_timeout_before_child_sets_session_kills_direct_pid(plugin):
+    root, env = plugin
+    pidfile = root / 'before-setsid.pid'
+    supervisor = root / 'hooks/_bounded_hook.sh'
+    # Deterministically widen the fork/setsid window in the copied fixture.
+    supervisor.write_text(supervisor.read_text().replace(
+        '            POSIX::setsid();',
+        '            open(my $ready, ">", $ENV{TEST_PRE_SETSID_PID}) or die $!;\n'
+        '            print $ready "$$\\n"; close $ready;\n'
+        '            Time::HiRes::sleep(0.5);\n'
+        '            POSIX::setsid();'))
+    wrapper = root / 'race.sh'
+    wrapper.write_text(f'. "{supervisor}"\n'
+                       'bl_bound_hook 150 150 advisory "$BASH" "$0"\n'
+                       'printf "{}"\n')
+    result = subprocess.run(['/bin/bash', str(wrapper)], stdin=subprocess.DEVNULL,
+                            capture_output=True, env=dict(env, TEST_PRE_SETSID_PID=str(pidfile)), timeout=2)
+    assert result.returncode == 0 and result.stdout == b'{}'
+    pid = int(pidfile.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_reaped_leader_does_not_leave_resistant_descendant(plugin):
+    import signal
+    root, _ = plugin
+    pidfile = root / 'descendant.pid'
+    child = (
+        'import signal,time,os\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+        f'open({str(pidfile)!r}, "w").write(str(os.getpid()))\n'
+        'time.sleep(30)\n'
+    )
+    try:
+        result = run_gate(plugin, f'import subprocess,sys\nsubprocess.Popen([sys.executable, "-c", {child!r}])\n')
+        assert json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'] == 'deny'
+        status = subprocess.run(['ps', '-o', 'stat=', '-p', pidfile.read_text()], capture_output=True, text=True).stdout.strip()
+        assert not status or status.startswith('Z')
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_cancellation_between_read_and_publish_discards_completed_output(plugin):
+    root, _ = plugin
+    supervisor = root / 'hooks/_bounded_hook.sh'
+    # Deliver TERM in the narrow window after successful wait/read, immediately
+    # before the publication check; no timing race in the regression fixture.
+    supervisor.write_text(supervisor.read_text().replace(
+        '            last if $cancelled;',
+        '            kill "TERM", $$ if $reaped && $eof;\n'
+        '            last if $cancelled;'))
+    result = run_gate(plugin, "print('{}')\n")
+    assert result.returncode == 0
+    assert result.stdout == ''
+
+
+
+def test_output_eof_does_not_spin_while_child_still_runs(plugin):
+    root, env = plugin
+    supervisor = root / 'hooks/_bounded_hook.sh'
+    observed = root / 'eof-poll-observed'
+    select_line = '            my $n = select(my $rout = $rin, undef, undef, $left < 0.02 ? $left : 0.02);'
+    # Instrument the actual select result in the copied supervisor. A closed
+    # output fd is perpetually readable; after EOF we must instead sleep while
+    # waiting for the still-running child. This detects the first busy poll.
+    supervisor.write_text(supervisor.read_text().replace(select_line, select_line + '\n' +
+        '            if ($eof) {\n'
+        '                open(my $audit, ">", $ENV{TEST_EOF_POLL}) or die $!;\n'
+        '                print $audit "observed"; close $audit;\n'
+        '                die "EOF pipe remained readable" if $n > 0;\n'
+        '            }'))
+    # Keep the child alive until the parent actually polls after EOF; this
+    # handshake avoids relying on a short sleep under a loaded scheduler.
+    result = run_gate(plugin,
+                      "import os,time\nos.close(1)\nend=time.monotonic()+2\n"
+                      "while not os.path.exists(os.environ['TEST_EOF_POLL']) and time.monotonic()<end: time.sleep(.005)\n",
+                      TEST_EOF_POLL=str(observed), BUILD_LOOP_BASH_DEADLINE_MS='500')
+    assert result.returncode == 0 and result.stderr == ''
+    assert observed.read_text() == 'observed'
+    assert json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'] == 'deny'

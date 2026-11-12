@@ -20,7 +20,9 @@ if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
   echo "rally-point post-commit: cannot resolve repo toplevel" >&2
   exit 2
 fi
-RALLY_POINT_CAPTURE="$RALLY_POINT_TOPLEVEL/.git/hooks/.rally-point-capture.py"
+RALLY_POINT_HOOKS="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)"
+[ -n "$RALLY_POINT_HOOKS" ] || exit 2
+RALLY_POINT_CAPTURE="$RALLY_POINT_HOOKS/.rally-point-capture.py"
 if [ -f "$RALLY_POINT_CAPTURE" ]; then
   (
     python3 "$RALLY_POINT_CAPTURE" >/dev/null 2>&1

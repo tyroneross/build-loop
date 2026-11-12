@@ -39,6 +39,10 @@ def _run_hook(workdir: Path, tool_input: str, extra_env: dict[str, str] | None =
     PYTHONPATH=${PLUGIN_ROOT}/scripts internally.  No PYTHONPATH rigging here —
     this exercises the production code path, not a test-injected shortcut.
     """
+    # Every actual push has a Git worktree. Resolve the real toplevel rather
+    # than treating an arbitrary directory containing .build-loop as a repo.
+    if not (workdir / ".git").exists():
+        subprocess.run(["git", "init", "-q", str(workdir)], check=True)
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
         "CLAUDE_PROJECT_DIR": str(workdir),
@@ -126,6 +130,29 @@ class TestGating(unittest.TestCase):
 
 
 class TestFiresOnPush(unittest.TestCase):
+    def test_cross_repository_push_only_closes_pushed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            pushed = Path(tmp) / "other repo"
+            for directory in (session, pushed):
+                (directory / ".build-loop").mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(pushed)], check=True)
+            nested = pushed / "nested"
+            (nested / ".build-loop").mkdir(parents=True)
+            cp = _run_hook(session, f'git -C "{nested}" push origin main')
+            self.assertEqual(cp.returncode, 0)
+            self.assertTrue(_wait_for_log(pushed / ".build-loop/closeout"))
+            self.assertFalse((session / ".build-loop/closeout").exists())
+            self.assertFalse((nested / ".build-loop/closeout").exists())
+
+    def test_ambiguous_push_leaves_session_closeout_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / ".build-loop").mkdir()
+            cp = _run_hook(session, 'git -C "$UNKNOWN_REPO" push')
+            self.assertEqual(cp.returncode, 0)
+            self.assertFalse((session / ".build-loop/closeout").exists())
+
     def test_git_push_fires_background_closeout(self) -> None:
         """Closeout must run (non-empty valid JSON log), not just exist as 0-byte file.
 

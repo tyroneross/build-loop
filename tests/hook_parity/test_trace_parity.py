@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.hook_parity.failure_evidence import save_failure, without_diagnostics
+
 from tests.hook_parity import trace_harness as h
 from tests.hook_parity.trace_harness import Case, payload
 
@@ -349,8 +351,11 @@ def test_python_contract(case, root):
 
 def _compare(case: Case, root: Path):
     oracle = h.run("python", case, root)
-    native = h.run("bl", case, root)
-    assert native.comparable() == oracle.comparable()
+    raw_native = h.run("bl", case, root, extra_env={"BL_TRACE_EXIT": "1"})
+    native = without_diagnostics(raw_native)
+    if not (native.comparable() == oracle.comparable()):
+        evidence = save_failure(root, case.name, h.BL, oracle, raw_native)
+        pytest.fail(f"Differential mismatch; full snapshots: {evidence}", pytrace=False)
     if case.expect:
         case.expect(native)
 

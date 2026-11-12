@@ -42,6 +42,7 @@ _SRC = (_REPO_ROOT_GUESS / "src").resolve()
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from atomic_io import LockedFile  # noqa: E402
 from build_loop.architecture import analysis as A  # noqa: E402
 from build_loop.architecture.schemas import Component, Connection  # noqa: E402
 from build_loop.architecture.storage import (  # noqa: E402
@@ -388,15 +389,17 @@ def _update_state(repo_root: Path, acp_relpath: str) -> None:
     """Set ``state.json.architecture.acpPath`` non-destructively."""
     state_path = repo_root / ".build-loop" / "state.json"
     try:
-        if state_path.exists():
-            data = json.loads(state_path.read_text(encoding="utf-8"))
-        else:
-            data = {}
-        arch_block = data.get("architecture") or {}
-        arch_block["acpPath"] = acp_relpath
-        data["architecture"] = arch_block
-        # Atomic write — same pattern as storage.atomic_write_json.
-        atomic_write_json(state_path, data)
+        # Share the same state.json lock as architecture invalidation and the
+        # orchestrator. Atomic rename alone can restore an older generation.
+        with LockedFile(state_path):
+            if state_path.exists():
+                data = json.loads(state_path.read_text(encoding="utf-8"))
+            else:
+                data = {}
+            arch_block = data.get("architecture") or {}
+            arch_block["acpPath"] = acp_relpath
+            data["architecture"] = arch_block
+            atomic_write_json(state_path, data)
     except Exception as exc:  # pragma: no cover — non-fatal
         print(f"warn: failed to update state.json.architecture.acpPath: {exc}", file=sys.stderr)
 
