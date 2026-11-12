@@ -15,6 +15,7 @@ The existing maintenance entry points remain available when their workflows need
 The script names beginning `session-start-` remain callable for compatibility, but removed handlers are absent from both lifecycle manifests. Other models can call these deterministic commands directly. Automatic events are supported only where a host has a verified adapter; model choice does not change the JSON payload contract.
 
 Build Loop does not register its old prompt classifier or its Skill denial hook.
+The obsolete `route-guard.sh` and `route_guard.py` implementations have been removed.
 The host's routing instructions choose the workflow. The old hooks shared one
 verdict file across sessions in a checkout and could deny explicitly requested
 brainstorming using a different session's prompt. No safety or commit gate
@@ -38,3 +39,5 @@ trusted again after this registration lands.
 To remove the shell hooks after the comparison period: set `LEGACY = ()` in
 the generator, run `--write`, delete the five hook files and their two
 helpers, and drop the hand-off path from `crates/bl/src/session_start.rs`.
+
+Architecture edit observers run on successful PostToolUse Edit/Write events. The historical `pre-edit-architecture.sh` filename remains for direct-call compatibility; it no longer runs before the write.

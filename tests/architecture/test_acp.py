@@ -302,3 +302,54 @@ def test_top_risk_sorted_by_blast_radius(tmp_path: Path) -> None:
     # Specifically A=5, B=3, C=1.
     ids = [r["component_id"] for r in risks if r["component_id"] in ("COMP_A", "COMP_B", "COMP_C")]
     assert ids[:3] == ["COMP_A", "COMP_B", "COMP_C"]
+
+
+def test_acp_state_update_preserves_concurrent_invalidation(tmp_path: Path) -> None:
+    """Exercise the actual ACP writer while a newer edit owns state.json."""
+    import subprocess
+    from atomic_io import LockedFile
+    import architecture_freshness as af
+
+    state_path = tmp_path / ".build-loop/state.json"
+    state_path.parent.mkdir()
+    state_path.write_text(json.dumps({"architecture": {"generation": 1, "stale": False}}))
+    with LockedFile(state_path):
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); "
+             "from pathlib import Path; import build_acp; print('ready', flush=True); "
+             "build_acp._update_state(Path(sys.argv[2]), '.build-loop/architecture/acp.json')",
+             str(_SCRIPTS), str(tmp_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        assert proc.stdout.readline().strip() == "ready"
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                proc.communicate(timeout=0.2)
+            state_path.write_text(json.dumps({
+                "architecture": {"generation": 2, "stale": True, "staleFiles": ["new.py"]},
+                "execution": {"phase": "review"}, "runs": [{"run_id": "keep"}],
+            }))
+        except BaseException:
+            proc.kill()
+            proc.communicate()
+            raise
+    stdout, stderr = proc.communicate(timeout=10)
+    assert proc.returncode == 0, stderr
+    state = json.loads(state_path.read_text())
+    assert state["architecture"]["acpPath"] == ".build-loop/architecture/acp.json"
+    assert state["architecture"]["generation"] == 2
+    assert state["architecture"]["staleFiles"] == ["new.py"]
+    assert state["execution"] == {"phase": "review"}
+    assert state["runs"] == [{"run_id": "keep"}]
+    assert not af.cmd_mark_fresh(tmp_path, expected_generation=1)
+    assert json.loads(state_path.read_text())["architecture"]["stale"] is True
+
+
+@pytest.mark.parametrize("contents", ['{"incomplete":', '["preserve", "unknown"]'])
+def test_acp_writer_preserves_invalid_state(tmp_path: Path, contents: str) -> None:
+    state_path = tmp_path / ".build-loop/state.json"
+    state_path.parent.mkdir()
+    state_path.write_text(contents)
+    build_acp._update_state(tmp_path, ".build-loop/architecture/acp.json")
+    assert state_path.read_text() == contents

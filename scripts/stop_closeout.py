@@ -132,8 +132,9 @@ def release_my_claims_detached(
     The release emits nothing Claude or the user reads (its envelope was only
     parsed for a count nobody consumed), so Stop must not wait ~0.3-5 s for it.
     The child gets its own process group, stdin/stdout/stderr on /dev/null and a
-    hard deadline (perl ``alarm`` survives ``exec``; SIGALRM is a plain
-    termination signal, not SIGKILL). Fail-open: returns False, never raises.
+    bounded process-group supervisor shared by the lifecycle hooks. Its
+    deadline cleans up descendants as well as the facade. Fail-open: returns
+    False, never raises.
     """
     if not str(session_id or "").strip():
         return False
@@ -141,9 +142,13 @@ def release_my_claims_detached(
     if not script.is_file():
         return False
     cmd = [sys.executable, str(script), *_release_args(workdir, session_id, tool)]
-    perl = shutil.which("perl", path=os.defpath + os.pathsep + os.environ.get("PATH", ""))
-    if perl:
-        cmd = [perl, "-e", f"alarm {_DETACHED_RELEASE_DEADLINE_S}; exec @ARGV", *cmd]
+    supervisor = Path(__file__).resolve().parent.parent / "hooks" / "_bounded_hook.sh"
+    if not supervisor.is_file() or not shutil.which("perl"):
+        return False  # Never replace a bounded release with an unbounded orphan.
+    milliseconds = str(int(_DETACHED_RELEASE_DEADLINE_S * 1000))
+    cmd = ["/bin/bash", "-c",
+           '. "$1"; shift; bl_bound_hook "$1" "$1" optional-json "${@:2}"',
+           "build-loop-stop-release", str(supervisor), milliseconds, *cmd]
     try:
         subprocess.Popen(
             cmd,
@@ -751,7 +756,7 @@ def _release_identity(workdir: Path, run_id: str) -> None:
         )
 
 
-def run_stop(workdir: Path, session_id: str, defer_release: bool = False) -> dict:
+def run_stop(workdir: Path, session_id: str, defer_release: bool = False, tool: str = _RALLY_TOOL) -> dict:
     """Stop-mode entrypoint. Returns a Stop-hook JSON dict (always exit 0 upstream)."""
     # Release this tool's Rally file-claims FIRST, unconditionally: a stopped
     # session is no longer editing, so its claims must not leak past Stop (the
@@ -763,9 +768,9 @@ def run_stop(workdir: Path, session_id: str, defer_release: bool = False) -> dic
     # the Rally subprocess; the claim is still released, just off the critical path.
     try:
         if defer_release:
-            release_my_claims_detached(workdir, session_id)
+            release_my_claims_detached(workdir, session_id, tool=tool)
         else:
-            release_my_claims(workdir, session_id=session_id)
+            release_my_claims(workdir, session_id=session_id, tool=tool)
     except Exception:  # noqa: BLE001 — claim release is best-effort; never break Stop
         pass
     state = _read_state(workdir)
@@ -970,26 +975,40 @@ def _archive_markers(workdir: Path, markers: list[Path]) -> None:
             pass  # leave the marker so it re-surfaces; never crash the session start
 
 
-def _read_session_id(explicit: str) -> str:
-    """Session id from --session-id, else the Stop/SessionStart stdin JSON payload."""
-    if explicit:
-        return explicit
+def _read_stop_event() -> dict:
     try:
         if not sys.stdin.isatty():
-            raw = sys.stdin.read()
-            if raw.strip():
-                payload = json.loads(raw)
-                if isinstance(payload, dict):
-                    return str(payload.get("session_id") or "")
+            payload = json.loads(sys.stdin.read() or "{}")
+            return payload if isinstance(payload, dict) else {}
     except (OSError, json.JSONDecodeError):
         pass
-    return ""
+    return {}
+
+
+def _read_session_id(explicit: str) -> str:
+    """Compatibility helper for callers that only need the session ID."""
+    return explicit or str(_read_stop_event().get("session_id") or "")
+
+
+def _stop_tool(event: dict, explicit: str | None = None) -> str:
+    # Match SessionStart actor/host precedence. Keep the session as a separate
+    # argument; agent_rally/actor_identity owns normalization and actor overrides.
+    for value in (os.environ.get("RALLY_TOOL_ID"), explicit,
+                  os.environ.get("BUILD_LOOP_RALLY_TOOL"), os.environ.get("RALLY_HOST_FAMILY")):
+        if value and value.strip():
+            return value.strip()
+    if "turn_id" in event or os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"):
+        return "codex"
+    if os.environ.get("CURSOR_SESSION_ID"):
+        return "cursor"
+    return _RALLY_TOOL
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Structural Stop/SessionStart closeout for inline build-loop runs (f6).")
     p.add_argument("--workdir", required=True)
     p.add_argument("--mode", choices=["stop", "session-start"], default="stop")
+    p.add_argument("--tool", default=None, help="Explicit Stop host family or Rally actor.")
     p.add_argument("--session-id", default="", help="Stop hook session id (else read from stdin JSON).")
     p.add_argument("--hook", action="store_true", help="Emit hook JSON on stdout (the only output mode that matters).")
     args = p.parse_args(argv)
@@ -1000,7 +1019,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.mode == "session-start":
             out, archive_after_emit = run_session_start(workdir)
         else:
-            out = run_stop(workdir, _read_session_id(args.session_id), defer_release=args.hook)
+            # Preserve --session-id callers that intentionally supply no stdin.
+            event = {} if args.session_id else _read_stop_event()
+            session_id = args.session_id or str(event.get("session_id") or "")
+            out = run_stop(workdir, session_id, defer_release=args.hook,
+                           tool=_stop_tool(event, args.tool))
     except KeyboardInterrupt:
         raise
     except BaseException:

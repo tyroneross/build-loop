@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "56a5605cad00d1b1e0544b538bb47631094bfd5e8cfc88c556fe293c443e0d3f"
+    "content_sha256": "17a171269150733c22f99994e81e1bf12ceab6ebdf9346f9245b22f3cac14b4c"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1018,7 +1018,7 @@
       "⊕ PROPOSED — launches the independent auditor peer process once per session."
     ],
     "pre-edit-architecture.sh": [
-      "PreToolUse",
+      "PostToolUse",
       "architecture impact pre-check before an edit"
     ],
     "pre-edit-rally-point.sh": [
@@ -1594,6 +1594,7 @@
       "scripts/hook_payload.py": "Normalize file changes from Claude, Codex and the generic JSON hook contract.\"\"\"",
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
+      "scripts/hooks/post_push_target.py": "Resolve only unambiguous post-push targets; never evaluate shell text.",
       "scripts/hooks/pre_bash_fastpath.py": "In-process runner for pre_bash_dispatch.sh's always-on Python gates.",
       "scripts/hooks/pre_bash_privileged.py": "PreToolUse:Bash hook — route privileged commands through the broker.",
       "scripts/hooks/push_mixed_sessions.py": "Warn when a push carries commits from more than one agent session.",
@@ -1935,12 +1936,12 @@
         "session-start-codex-hook-trust.sh"
       ],
       "PreToolUse": [
-        "pre-edit-architecture.sh",
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",
         "pre-edit-rally-point.sh"
       ],
       "PostToolUse": [
+        "pre-edit-architecture.sh",
         "post-push-closeout.sh"
       ],
       "Stop": [

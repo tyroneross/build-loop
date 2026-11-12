@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Detached worker for hooks/pre-edit-architecture.sh.
 
-The PreToolUse hook only reads stdin to a file and spawns this process in its
+The PostToolUse hook only reads stdin to a file and spawns this process in its
 own process group (stdin/stdout/stderr on /dev/null). Everything the hook used
 to do inline happens here, in the same order:
 
@@ -64,6 +64,10 @@ def classify(payload_text: str, workdir: Path, file_map_path: Path) -> list:
     except json.JSONDecodeError:
         return []
     if not isinstance(payload, dict):
+        return []
+    # Preserve explicit/manual callers without an event name, but a stale
+    # host registration must never scan before the edit has completed.
+    if payload.get("hook_event_name") not in (None, "PostToolUse"):
         return []
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))

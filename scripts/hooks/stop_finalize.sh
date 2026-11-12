@@ -18,9 +18,8 @@
 # Blocking Stop is opt-in only: set BUILD_LOOP_STOP_HOOK_BLOCKING=1 for an
 # explicit safety/integrity gate.
 #
-# Security: all values from the stdin event JSON or filesystem are passed
-# to embedded Python via environment variables, never via shell string
-# interpolation into Python source. Shell injection class is not possible.
+# Security: event JSON travels on stdin; scalar filesystem values use the
+# environment. Neither is interpolated into Python source.
 
 set -euo pipefail
 
@@ -29,16 +28,17 @@ emit_empty() {
 }
 
 INPUT=$(cat)
-export _BL_INPUT="$INPUT"
+# Keep event bytes off argv/environment: valid large payloads can exceed exec
+# limits. fd 3 carries the program; stdin carries the original JSON pipe.
 
 # Steps 1-3 in ONE interpreter start (was five): parse the event and its host,
 # then read state.json phase + the idempotency check from the event's cwd. Output
 # is one tab-separated line; cwd is last so it may contain spaces.
 read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID HAS_STATE PHASE ALREADY CWD <<EOF_VARS
-$(python3 <<'PY'
+$(printf '%s' "$INPUT" | python3 /dev/fd/3 3<<'PY'
 import json, os, sys
 try:
-    d = json.loads(os.environ.get('_BL_INPUT', '{}'))
+    d = json.load(sys.stdin)
 except Exception:
     d = {}
 stop_hook_active = bool(d.get('stop_hook_active', False))
@@ -48,7 +48,13 @@ cwd = d.get('cwd', '') or ''
 # Tab-separated, no special chars in JSON-derived values would survive python's print()
 # But guard against newlines / tabs anyway by replacing them with spaces.
 def safe(v): return str(v).replace('\t', ' ').replace('\n', ' ')
-host = os.environ.get("RALLY_HOST_FAMILY") or os.environ.get("BUILD_LOOP_RALLY_TOOL") or ("codex" if "turn_id" in d or os.environ.get("CODEX_THREAD_ID") else "claude_code" if os.environ.get("CLAUDE_PROJECT_DIR") else "other")
+# Same actor/host order as SessionStart and stop_closeout._stop_tool.
+host = next((os.environ[name].strip() for name in
+             ("RALLY_TOOL_ID", "BUILD_LOOP_RALLY_TOOL", "RALLY_HOST_FAMILY")
+             if os.environ.get(name, "").strip()), None)
+if host is None:
+    host = ("codex" if "turn_id" in d or os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
+            else "cursor" if os.environ.get("CURSOR_SESSION_ID") else "claude_code")
 has_state, phase, already = 'no', '', 'no'
 if not stop_hook_active and not agent_id:
     state_file = os.path.join(cwd or '.', '.build-loop', 'state.json')
@@ -98,26 +104,16 @@ WORKDIR="${CWD:-.}"
 # state.json/report-phase marker. The re-entry guard above remains first so the
 # facade cannot recursively invoke itself.
 #
-# The release prints nothing the hook uses (stdout/stderr were already discarded
-# and failure ignored), so it runs DETACHED: own session via setsid, stdin/out/err
-# on /dev/null, and an `alarm` deadline that survives exec (SIGALRM terminates;
-# nothing is SIGKILLed). Stop no longer waits on the Rally subprocess.
+# Release stays detached, but the shared supervisor owns its full process group
+# and cleans up descendants at the deadline, not just the facade interpreter.
 FACADE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agent_rally.py"
-if [ -n "$SESSION_ID" ] && [ -f "$FACADE" ]; then
-    if command -v perl >/dev/null 2>&1; then
-        ( perl -e 'use POSIX (); POSIX::setsid(); alarm 8; exec @ARGV' \
-            python3 "$FACADE" stop \
-            --workdir "$WORKDIR" \
-            --tool "$HOST_TOOL" \
-            --session-id "$SESSION_ID" \
-            --json </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
-    else
-        ( python3 "$FACADE" stop \
-            --workdir "$WORKDIR" \
-            --tool "$HOST_TOOL" \
-            --session-id "$SESSION_ID" \
-            --json </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
-    fi
+SUPERVISOR="$(dirname "$FACADE")/../hooks/_bounded_hook.sh"
+if [ -n "$SESSION_ID" ] && [ -f "$FACADE" ] && [ -f "$SUPERVISOR" ] && command -v perl >/dev/null 2>&1; then
+    ( perl -e 'use POSIX (); POSIX::setsid(); exec @ARGV' \
+        /bin/bash -c '. "$1"; shift; bl_bound_hook 8000 8000 optional-json "$@"' \
+        build-loop-stop-release "$SUPERVISOR" python3 "$FACADE" stop \
+        --workdir "$WORKDIR" --tool "$HOST_TOOL" --session-id "$SESSION_ID" \
+        --json </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 fi
 
 if [ -n "$AGENT_ID" ]; then

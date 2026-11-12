@@ -8,6 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_architecture_observer_runs_after_successful_edit_in_both_hosts():
+    for name in ("hooks.json", "codex.json"):
+        events = json.loads((ROOT / "hooks" / name).read_text())["hooks"]
+        locations = [(event, group.get("matcher"))
+                     for event, groups in events.items() for group in groups
+                     for handler in group["hooks"]
+                     if "pre-edit-architecture.sh" in handler.get("command", "")]
+        assert locations == [("PostToolUse", "Edit|Write")]
+
+
 def test_registered_stop_does_not_label_a_live_peer_as_crashed(tmp_path):
     # Run the registered commands with unrelated Stop services stubbed out.
     # The former crash annotator is deliberately available as shipping code:
@@ -21,6 +31,10 @@ def test_registered_stop_does_not_label_a_live_peer_as_crashed(tmp_path):
     (plugin / "hooks").mkdir()
     for name in ("state_finalize.py", "atomic_io.py"):
         (plugin / "scripts" / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+    # commit-state is a registered bare command: retain its real fail-open
+    # wrapper and helpers while leaving its unrelated checker unavailable.
+    for name in ("commit-state.sh", "_bounded_hook.sh", "_resolve_python.sh"):
+        (plugin / "hooks" / name).write_bytes((ROOT / "hooks" / name).read_bytes())
     before = state.read_bytes()
     env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin), CLAUDE_PROJECT_DIR=str(tmp_path))
     event = json.dumps({"hook_event_name": "Stop", "session_id": "different-session",

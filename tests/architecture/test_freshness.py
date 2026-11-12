@@ -196,3 +196,42 @@ def test_atomic_write_does_not_clobber_other_keys(tmp_path: Path) -> None:
     # Existing acpPath preserved through the merge.
     assert st["architecture"]["acpPath"] == ".build-loop/architecture/acp.json"
     assert st["architecture"]["stale"] is True
+
+
+def test_background_scan_keeps_invalidation_arriving_during_scan(tmp_path: Path) -> None:
+    """An edit whose worker loses the scan lock must remain visible afterward."""
+    af.cmd_mark_stale(tmp_path, "x.py")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    started = tmp_path / "scan-started"
+    release = tmp_path / "release-scan"
+    uv = bindir / "uv"
+    uv.write_text("#!/bin/sh\n: > \"$SCAN_STARTED\"\n"
+                  "while [ ! -f \"$SCAN_RELEASE\" ]; do sleep 0.02; done\n")
+    uv.chmod(0o755)
+    env = {**os.environ, "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+           "SCAN_STARTED": str(started), "SCAN_RELEASE": str(release)}
+    command = [sys.executable, str(_REPO / "hooks/_arch_scan_bg.py"), "--workdir", str(tmp_path)]
+    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 10
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert started.exists(), "scan did not reach the source-reading stage"
+        af.cmd_mark_stale(tmp_path, "x.py")
+        contender = subprocess.run(command, env=env, capture_output=True, timeout=10)
+        assert contender.returncode == 0
+        release.touch()
+        stdout, stderr = proc.communicate(timeout=10)
+        assert proc.returncode == 0, stderr
+        assert _read_state(tmp_path)["architecture"]["stale"] is True
+        assert _read_state(tmp_path)["architecture"]["staleFiles"] == ["x.py"]
+        # A subsequent scan observing the new generation can clear it.
+        next_scan = subprocess.run(command, env=env, capture_output=True, timeout=10)
+        assert next_scan.returncode == 0, next_scan.stderr
+        assert _read_state(tmp_path)["architecture"]["stale"] is False
+    finally:
+        release.touch()
+        if proc.poll() is None:
+            proc.kill()
+        proc.communicate(timeout=10)
