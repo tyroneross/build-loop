@@ -10,7 +10,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 
 | Doc | Answers | Primary caller |
 |---|---|---|
-| [phase-gate-checklist.md](phase-gate-checklist.md) | Phase 1 Assess full protocol + Phase 4 Review sub-steps A–G routing checklist | `agents/build-orchestrator.md` |
+| [phase-gate-checklist.md](phase-gate-checklist.md) | Phase 1 Assess full protocol + Phase 4 Review sub-steps A–G routing checklist, including the Critic's failure-path and test-evidence questions (R1, R3, R4, R5, R7) and infrastructure-failure classification for gates | `agents/build-orchestrator.md` |
 | [trigger-rules.md](trigger-rules.md) | How to set sub-routers (`uiTarget`, `platform`, `migrationSource`) + triggers in Phase 1 | `agents/build-orchestrator.md` |
 | [memory-systems.md](memory-systems.md) | Memory read protocol (Phase 1 Assess) + write protocol (Phase 4 Review-G); backend degradation | `agents/build-orchestrator.md`, `phase-1-assess.md` |
 | [research-trigger-policy.md](research-trigger-policy.md) | When Research plugin work is required; t-shirt depth lower bounds; final-claim citation gate | `agents/build-orchestrator.md`, `phase-1-assess.md`, `phase-2-plan.md` |
