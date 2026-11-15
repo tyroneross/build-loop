@@ -274,13 +274,30 @@ def _strip_guards(cmd: str) -> str:
     return out
 
 
+# Local POSIX/Bash functions are not PATH dependencies. Recognize definitions
+# in scrubbed shell code, not quoted strings, comments or heredoc payloads.
+FUNCTION_DEF_RE = re.compile(
+    r"(?:^|(?<=[;&|\n{`])|(?<=\$\())\s*(?:"
+    r"function\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s*\(\s*\))?"
+    r"|([A-Za-z_][A-Za-z0-9_-]*)\s*\(\s*\))\s*\{"
+)
+
+
 def _find_bare_risky(cmd: str) -> list[str]:
     """Return risky bare-binary tokens found in `cmd`, order-preserving.
 
     Risky = (in KNOWN_RISKY) OR (not in MINIMAL_PATH_SAFE and not a path/var).
     """
     guarded = _collect_guarded_names(cmd)
-    scrubbed = _strip_guards(cmd)
+    code = "\n".join(_strip_shell_comment(line) for line in cmd.split("\n"))
+    scrubbed = _strip_guards(code)
+    definitions = list(FUNCTION_DEF_RE.finditer(scrubbed))
+    local_functions = [(m.group(1) or m.group(2), m.start()) for m in definitions]
+    # Hide only declaration headers. A separator in place of the opening brace
+    # exposes the first body command, so risky binaries inside remain findings.
+    for match in reversed(definitions):
+        scrubbed = (scrubbed[:match.start()] + " " * (match.end() - match.start() - 1)
+                    + ";" + scrubbed[match.end():])
     seen: list[str] = []
     seen_set: set[str] = set()
     for m in BARE_TOKEN_RE.finditer(scrubbed):
@@ -290,6 +307,8 @@ def _find_bare_risky(cmd: str) -> list[str]:
         if token in MINIMAL_PATH_SAFE:
             continue
         if token in guarded:
+            continue
+        if any(token == name and position <= m.start() for name, position in local_functions):
             continue
         # Skip env-var assignments: `FOO=bar somecmd` — the BARE_TOKEN_RE
         # captures FOO; rule out by checking the next char.

@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Native hook parity
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native hooks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      AGENT_RALLY_BINARY: /nonexistent
+      BUILD_LOOP_DISABLE_SIBLING_RALLY: "1"
+      BUILD_LOOP_APPS_ROOT: ${{ github.workspace }}/.ci-rally-apps
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Sync core and test dependencies
+        run: uv sync --python 3.11 --extra test
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Check native source digest
+        run: uv run --python 3.11 python scripts/build_native.py --check-digest
+
+      - name: Build and verify native hooks
+        # The supported pipeline runs locked release build, Rust tests, all
+        # hook parity cases, then installs locally and checks real launchers.
+        run: uv run --python 3.11 python scripts/build_native.py

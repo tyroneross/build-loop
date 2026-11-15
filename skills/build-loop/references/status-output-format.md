@@ -149,50 +149,8 @@ Run this check on every block. Any "no" means rewrite, not ship.
 6. Does the block end with a decision or a status?
 7. Would you be comfortable if this line were quoted back with no surrounding text?
 
-## 7. Worked progression — why the near-misses fail
-
-Real sequence from the session that produced this file. Each attempt fixed a
-different level and the sentence stayed unusable, because the defect was in message
-logic the whole time.
-
-**Original (jargon):** *"The resolvers disagree on T3/T4."*
-Project-internal vocabulary; meaningless outside this codebase.
-
-**Attempt 1 — FAILS:** *"Two lookups pick different models."*
-Plainer, and no more useful. No actor, no target, no modality. The reader asks "why
-would they?" and has nothing to do next.
-
-**Attempt 2 — ALSO FAILS:** *"Ask for the same tier two different ways and you get
-two different models back — one path sorts by release date, the other by capability
-rank."*
-Accurate, and still wrong. Diagnosis-first: it explains the internals, so the reader
-now understands the bug and still has to work out what to do about it.
-
-**PASSES:**
-```
-We need one code path per model tier
-Today we have 2+ paths, with inconsistent results
-```
-Actor (`we`), specific object (`one code path per model tier`), modality (`need` =
-requirement). Target state first, gap second. Longer than attempt 1 — length was
-never the goal.
-
-## 8. Worked example — a full block
-
-```
-2 Groq models shut down on 2026-08-16
-Anything still pointing at them fails outright, and the catalog lists them as
-live, so the next person to read it picks a dead model.
-
- - llama-3.1-8b-instant — shut down 2026-08-16, replacement openai/gpt-oss-20b
- - llama-3.3-70b-versatile — shut down 2026-08-16, replacements
-   openai/gpt-oss-120b and qwen/qwen3.6-27b
- - Both were free + developer plan only; enterprise spend unaffected
- - To fix: re-read Groq's official docs, update all 15 entries, mark those 2
-   retired, and move the re-check date forward
- - I need your approval — this needs live doc lookups, and I will not move the
-   date without doing them
-```
+For worked examples, read [the style examples appendix](output-style-examples.md)
+when a concrete formatting example is needed.
 
 ## 9. Escape hatches
 

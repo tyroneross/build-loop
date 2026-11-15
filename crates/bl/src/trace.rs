@@ -12,20 +12,16 @@
 //! Nothing is printed and the exit status is 0, as in Python, whose `main`
 //! swallows every exception.
 //!
-//! `plan` only reads and decides; anything it cannot mirror exactly returns
-//! [`Fallback`] before a single side effect and the caller runs Python with
-//! the stdin bytes already read. Handed to Python:
-//! - stdin Python may decode differently (not UTF-8, rejected by serde);
-//! - non-string `tool_name`/`tool`/`session_id`/`tool_use_id` values (`str()`);
-//! - a truthy `timestamp` (it sets the start time and run attribution);
-//! - floats or integers beyond 64 bits in recorded content;
-//! - strings the redaction regexes might touch (prefilter below);
-//! - Codex result text the failure regex might match;
-//! - a state.json nested deeper than [`STATE_DEPTH_LIMIT`], where Python's
-//!   uncaught `RecursionError` would suppress the write.
+//! UTF-8 host events use native parsing, redaction and temporal attribution.
+//! JSON is bounded to 64 MiB and 256 container levels before recursive parsing.
+//! Finite floats and arbitrary integers preserve the Python argument hash format.
+//! Invalid encoding, non-string identity metadata, non-finite JSON extensions and
+//! unsupported timestamps produce no record and an opt-in static diagnostic.
+//! Trace input never invokes Python. Missing/unreadable state means no run owner.
 
 use bl_contract::{py, Fallback, R};
 use serde_json::{Map, Value};
+use json::RawValue;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -36,6 +32,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::sys;
 
+#[path = "trace_redact.rs"]
+mod redaction;
+#[path = "trace_json.rs"]
+mod json;
+#[path = "trace_time.rs"]
+mod temporal;
+
 /// `tool_trace.MAX_PREVIEW_CHARS`.
 const MAX_PREVIEW_CHARS: usize = 512;
 /// `tool_trace.MAX_FILE_BYTES`.
@@ -44,8 +47,7 @@ const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 const ROTATED: [&str; 2] = [".1", ".2"];
 /// `transcript_adapter.MAX_SOURCE_BYTES`: larger state files are never parsed.
 const MAX_STATE_BYTES: u64 = 64 * 1024 * 1024;
-/// Python 3.14's decoder parses far deeper; this is a conservative bound.
-const STATE_DEPTH_LIMIT: usize = 200;
+
 /// `LockedFile(path, timeout_s=1)` and its 50 ms poll.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 const LOCK_POLL: Duration = Duration::from_millis(50);
@@ -58,19 +60,9 @@ const KEY_WORDS: [&str; 13] = [
     "authorization", "cookie", "password", "passwd", "secret", "token", "credential",
     "apikey", "api_key", "api-key", "privatekey", "private_key", "private-key",
 ];
-/// Every `SENSITIVE_INLINE` or `SENSITIVE_VALUE` match contains one of these
-/// (lower-cased). A string containing none is left unchanged by `_redact`.
-const VALUE_WORDS: [&str; 20] = [
-    "authorization", "cookie", "password", "passwd", "secret", "token", "credential",
-    "apikey", "api_key", "api-key", "api key", "privatekey", "private_key", "private-key",
-    "private key", "bearer", "ghp", "github_pat", "sk-", "sk_",
-];
 
 pub enum Outcome {
     Done,
-    /// Hand to Python. `stdin` holds the bytes already consumed (`None`
-    /// when stdin was never read).
-    Fallback { reason: &'static str, stdin: Option<Vec<u8>> },
 }
 
 pub struct Args {
@@ -112,7 +104,19 @@ pub fn parse_args(args: &[String]) -> Option<Args> {
 }
 
 pub fn run(args: &Args) -> Outcome {
-    let fallback = |reason, stdin| Outcome::Fallback { reason, stdin };
+    let fallback = |reason: &'static str, _stdin: Option<Vec<u8>>| {
+        let category = match reason {
+            "stdin not utf-8" => "unsupported_encoding",
+            "non-string field" => "unsupported_metadata",
+            "json byte limit" | "json depth limit" => "unsupported_limits",
+            "nonfinite number" => "unsupported_number",
+            "unsupported timestamp" => "unsupported_timestamp",
+            "invalid json" | "codex response json" => "unsupported_json",
+            _ => "unsupported_environment",
+        };
+        crate::hook_diagnostic("trace", category);
+        Outcome::Done
+    };
     // `Path(args.workdir).resolve()` runs before stdin is read.
     let Some(cwd) = std::env::current_dir().ok().and_then(|p| p.to_str().map(String::from)) else {
         return fallback("cwd not utf-8", None);
@@ -126,11 +130,8 @@ pub fn run(args: &Args) -> Outcome {
         return Outcome::Done; // `_payload` reads nothing -> {} -> no tool name.
     }
     let mut bytes = Vec::new();
-    if std::io::stdin().lock().read_to_end(&mut bytes).is_err() {
+    if std::io::stdin().lock().take(json::MAX_BYTES as u64 + 1).read_to_end(&mut bytes).is_err() {
         return fallback("stdin read error", Some(bytes));
-    }
-    if let Err(Fallback(reason)) = stdin_decodes_as_utf8(bytes.is_ascii()) {
-        return fallback(reason, Some(bytes));
     }
     match plan(&workdir, &args.phase, &bytes, now_ns()) {
         Ok(Some(line)) => {
@@ -148,56 +149,6 @@ pub fn run(args: &Args) -> Outcome {
     }
 }
 
-/// Whether Python 3's `sys.stdin` decodes these bytes exactly as UTF-8
-/// (`plan` assumes it). Precedence, per the `PYTHONIOENCODING`, `PYTHONUTF8`
-/// and UTF-8 Mode docs: a non-empty encoding in `PYTHONIOENCODING` wins;
-/// then `PYTHONUTF8=1` forces UTF-8 and `=0` forbids the automatic switch;
-/// otherwise the LC_CTYPE locale (first non-empty of `LC_ALL`, `LC_CTYPE`,
-/// `LANG`, default `C`) decides, with `C`/`POSIX` turning on UTF-8 mode.
-/// Locale charsets are ASCII supersets, so pure-ASCII input only needs the
-/// `PYTHONIOENCODING` and validity checks.
-fn stdin_decodes_as_utf8(ascii: bool) -> R<()> {
-    let var = |name: &str| -> R<Option<String>> {
-        match std::env::var_os(name) {
-            None => Ok(None),
-            Some(v) if v.is_empty() => Ok(None),
-            Some(v) => v.into_string().map(Some).map_err(|_| Fallback("non-utf8 env")),
-        }
-    };
-    let utf8_name = |n: &str| n.to_ascii_lowercase().replace(['-', '_'], "").contains("utf8");
-    let utf8_mode = match var("PYTHONUTF8")?.as_deref() {
-        None => None,
-        Some("1") => Some(true),
-        Some("0") => Some(false),
-        Some(_) => return Err(Fallback("PYTHONUTF8 value")), // Python refuses to start
-    };
-    if let Some(io) = var("PYTHONIOENCODING")? {
-        let encoding = io.split(':').next().unwrap_or("");
-        if !encoding.is_empty() {
-            return if encoding.to_ascii_lowercase().replace(['-', '_'], "") == "utf8" {
-                Ok(())
-            } else {
-                Err(Fallback("PYTHONIOENCODING"))
-            };
-        }
-    }
-    if ascii || utf8_mode == Some(true) {
-        return Ok(());
-    }
-    let mut locale = "C".to_string();
-    for name in ["LC_ALL", "LC_CTYPE", "LANG"] {
-        if let Some(v) = var(name)? {
-            locale = v;
-            break;
-        }
-    }
-    if utf8_name(&locale) || (utf8_mode.is_none() && (locale == "C" || locale == "POSIX")) {
-        Ok(())
-    } else {
-        Err(Fallback("non-utf-8 stdin locale"))
-    }
-}
-
 fn now_ns() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
 }
@@ -209,15 +160,9 @@ pub fn plan(workdir: &str, phase: &str, stdin: &[u8], now_ns: u128) -> R<Option<
     if py::strip(text).is_empty() {
         return Ok(None);
     }
-    let data: Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        // A truncated document is invalid for Python too.
-        Err(e) if e.is_eof() => return Ok(None),
-        Err(_) => return Err(Fallback("json serde rejects")),
-    };
-    let Value::Object(data) = data else {
-        return Ok(None);
-    };
+    let raw = json::raw(text)?;
+    if !raw.get().starts_with('{') { return Ok(None); }
+    let data = json::object(&raw)?;
     let phase = codex_failure_phase(phase, &data)?;
     let tool_name = text_field(&data, &["tool_name", "tool"])?;
     if tool_name.is_empty() {
@@ -231,26 +176,29 @@ pub fn plan(workdir: &str, phase: &str, stdin: &[u8], now_ns: u128) -> R<Option<
         },
     };
     let tool_use_id = text_field(&data, &["tool_use_id", "tool_call_id"])?;
-    if data.get("timestamp").is_some_and(py::truthy) {
-        return Err(Fallback("payload timestamp"));
-    }
-    if state_json_risky(workdir) {
-        return Err(Fallback("deep state.json"));
-    }
+    let timestamp = match data.get("timestamp") {
+        Some(v) if json::truthy(v)? => {
+            let text = json::text(v).map_err(|_| Fallback("unsupported timestamp"))?;
+            Some(temporal::event_time(&text).ok_or(Fallback("unsupported timestamp"))?)
+        }
+        _ => None,
+    };
+    let run_state = timestamp.and_then(|_| read_state(workdir));
+    let run_id = timestamp.and_then(|t| run_state.as_ref().and_then(|s| temporal::attached_run(s, &session_id, t)));
     let result = if data.contains_key("tool_response") { data.get("tool_response") } else { data.get("tool_result") };
-    let is_error = phase == "error" || data.get("is_error").is_some_and(py::truthy);
+    let is_error = phase == "error" || data.get("is_error").map(|v| json::truthy(v)).transpose()?.unwrap_or(false);
 
     let mut attrs: BTreeMap<String, String> = BTreeMap::new();
     attrs.insert("gen_ai.operation.name".into(), py::json_string("execute_tool"));
     attrs.insert("gen_ai.tool.name".into(), py::json_string(&tool_name));
     attrs.insert("build_loop.tool.call_id_sha256".into(), py::json_string(&py::sha256_hex(&tool_use_id)));
     attrs.insert("session.id".into(), py::json_string(&session_id));
-    // `_attached_run_id` is None without a payload timestamp.
-    attrs.insert("build_loop.run_id".into(), "null".into());
+    attrs.insert("build_loop.run_id".into(), run_id.map(py::json_string).unwrap_or_else(|| "null".into()));
     attrs.insert("build_loop.tool.phase".into(), py::json_string(phase));
     for (prefix, value) in [("gen_ai.tool.call.arguments", data.get("tool_input")), ("gen_ai.tool.call.result", result)] {
         match value {
-            None | Some(Value::Null) => {}
+            None => {},
+            Some(v) if v.get() == "null" => {},
             Some(v) => content_attributes(prefix, v, &mut attrs)?,
         }
     }
@@ -271,7 +219,7 @@ pub fn plan(workdir: &str, phase: &str, stdin: &[u8], now_ns: u128) -> R<Option<
     span.insert("name".into(), py::json_string(&format!("execute_tool {tool_name}")));
     span.insert("kind".into(), py::json_string("INTERNAL"));
     span.insert("event".into(), py::json_string(phase));
-    span.insert("start_time_unix_nano".into(), now_ns.to_string());
+    span.insert("start_time_unix_nano".into(), timestamp.map(temporal::nanos).filter(|t| *t != 0).map(|t| t.to_string()).unwrap_or_else(|| now_ns.to_string()));
     span.insert("end_time_unix_nano".into(), "null".into());
     span.insert("duration_ms".into(), "null".into());
     span.insert("status".into(), format!("{{\"code\":{}}}", py::json_string(status)));
@@ -284,11 +232,11 @@ fn join(map: &BTreeMap<String, String>) -> String {
 }
 
 /// `str(payload.get(a) or payload.get(b) or "")` for string values.
-fn text_field(data: &Map<String, Value>, keys: &[&str]) -> R<String> {
+fn text_field(data: &BTreeMap<String, RawValue<'_>>, keys: &[&str]) -> R<String> {
     for key in keys {
         match data.get(*key) {
-            Some(v) if py::truthy(v) => {
-                return v.as_str().map(String::from).ok_or(Fallback("non-string field"));
+            Some(v) if json::truthy(v)? => {
+                return json::text(v).map_err(|_| Fallback("non-string field"));
             }
             _ => {}
         }
@@ -297,65 +245,44 @@ fn text_field(data: &Map<String, Value>, keys: &[&str]) -> R<String> {
 }
 
 /// `_content_attributes`.
-fn content_attributes(prefix: &str, value: &Value, attrs: &mut BTreeMap<String, String>) -> R<()> {
-    let redacted = redact(value, "")?;
-    let encoded = py::dumps_sorted(&redacted, false)?;
+fn content_attributes(prefix: &str, value: &RawValue, attrs: &mut BTreeMap<String, String>) -> R<()> {
+    let encoded = json::redacted(value)?;
     let chars = encoded.chars().count();
     let preview: String = encoded.chars().take(MAX_PREVIEW_CHARS).collect();
     attrs.insert(format!("{prefix}.bytes"), encoded.len().to_string());
     attrs.insert(format!("{prefix}.sha256"), py::json_string(&py::sha256_hex(&encoded)));
     attrs.insert(format!("{prefix}.preview"), py::json_string(&preview));
     attrs.insert(format!("{prefix}.truncated"), (chars > MAX_PREVIEW_CHARS).to_string());
-    if let Value::Object(map) = &redacted {
-        let mut keys: Vec<&String> = map.keys().collect();
-        keys.sort();
-        let list: Vec<String> = keys.into_iter().take(50).map(|k| py::json_string(k)).collect();
+    if let Some(keys) = json::redacted_keys(value)? {
+        let list: Vec<String> = keys.into_iter().map(|k| py::json_string(&k)).collect();
         attrs.insert(format!("{prefix}.keys"), format!("[{}]", list.join(",")));
     }
     Ok(())
 }
 
-/// Characters `re.IGNORECASE` matches against ASCII letters (İ ı ſ K);
-/// the ASCII-lowercase prefilters below cannot see them.
-fn has_fold_char(s: &str) -> bool {
-    s.contains(['\u{130}', '\u{131}', '\u{17f}', '\u{212a}'])
-}
-
-fn contains_any(s: &str, words: &[&str]) -> R<bool> {
-    if has_fold_char(s) {
-        return Err(Fallback("case-fold character"));
-    }
-    let lower = s.to_ascii_lowercase();
-    Ok(words.iter().any(|w| lower.contains(w)))
-}
-
-/// `_redact`: sensitive keys become `"[REDACTED]"` (mirrored exactly); a
-/// string value the inline/value regexes might rewrite falls back.
+/// `_redact`, including inline assignments and bearer/token string values.
 pub(crate) fn redact(value: &Value, key: &str) -> R<Value> {
-    if contains_any(key, &KEY_WORDS)? {
+    if redaction::sensitive_key(key) {
         return Ok(Value::String("[REDACTED]".into()));
     }
     Ok(match value {
         Value::Object(map) => {
             let mut out = Map::new();
             for (k, v) in map {
-                out.insert(k.clone(), redact(v, k)?);
+                // Map iteration is sorted by original key: sanitized collisions
+                // deterministically retain the last original key, as in Python.
+                out.insert(redaction::redact(k), redact(v, k)?);
             }
             Value::Object(out)
         }
         Value::Array(items) => Value::Array(items.iter().take(50).map(|v| redact(v, "")).collect::<R<_>>()?),
-        Value::String(s) => {
-            if contains_any(s, &VALUE_WORDS)? {
-                return Err(Fallback("value may need redaction"));
-            }
-            value.clone()
-        }
+        Value::String(s) => Value::String(redaction::redact(s)),
         other => other.clone(),
     })
 }
 
 /// `codex_failure_phase`.
-fn codex_failure_phase<'a>(phase: &'a str, data: &Map<String, Value>) -> R<&'a str> {
+fn codex_failure_phase<'a>(phase: &'a str, data: &BTreeMap<String, RawValue<'_>>) -> R<&'a str> {
     if phase != "end" || !data.contains_key("turn_id") {
         return Ok(phase);
     }
@@ -364,49 +291,41 @@ fn codex_failure_phase<'a>(phase: &'a str, data: &Map<String, Value>) -> R<&'a s
 }
 
 /// `_codex_response_failed` after `_decode_maybe_json`.
-fn codex_response_failed(response: Option<&Value>) -> R<bool> {
+fn codex_response_failed(response: Option<&RawValue>) -> R<bool> {
+    let Some(mut response) = response else { return Ok(false); };
     let decoded;
-    let response = match response {
-        Some(Value::String(s)) => match serde_json::from_str::<Value>(s) {
-            Ok(v) => {
-                decoded = v;
-                &decoded
-            }
-            Err(_) if python_may_decode(s) => return Err(Fallback("codex response json")),
-            Err(_) => return failed_process(s),
-        },
-        Some(v) => v,
-        None => return Ok(false),
-    };
-    match response {
-        Value::String(s) => failed_process(s),
-        Value::Object(o) => {
-            if o.get("is_error") == Some(&Value::Bool(true)) || o.get("error").is_some_and(py::truthy) {
-                return Ok(true);
-            }
-            for key in ["exit_code", "exitCode", "returncode", "status_code"] {
-                if let Some(Value::Number(n)) = o.get(key) {
-                    if n.as_f64().is_some_and(|f| f != 0.0) {
-                        return Ok(true);
-                    }
-                }
-            }
-            for key in ["output", "stdout", "content"] {
-                if let Some(Value::String(s)) = o.get(key) {
-                    if failed_process(s)? {
-                        return Ok(true);
-                    }
-                }
-            }
-            Ok(false)
-        }
-        _ => Ok(false),
+    let parsed;
+    if response.get().starts_with('"') {
+        decoded = json::text(response)?;
+        response = match json::raw(&decoded) {
+            Ok(v) => { parsed = v; &parsed },
+            Err(_) if python_may_decode(&decoded) => return Err(Fallback("codex response json")),
+            Err(_) => return failed_process(&decoded),
+        };
     }
+    if response.get().starts_with('"') { return failed_process(&json::text(response)?); }
+    if !response.get().starts_with('{') { return Ok(false); }
+    let object = json::object(response)?;
+    if object.get("is_error").is_some_and(|v| v.get() == "true")
+        || object.get("error").map(|v| json::truthy(v)).transpose()?.unwrap_or(false) {
+        return Ok(true);
+    }
+    for key in ["exit_code", "exitCode", "returncode", "status_code"] {
+        if let Some(value) = object.get(key) {
+            if json::number_nonzero(value)? { return Ok(true); }
+        }
+    }
+    for key in ["output", "stdout", "content"] {
+        if let Some(value) = object.get(key).filter(|v| v.get().starts_with('"')) {
+            if failed_process(&json::text(value)?)? { return Ok(true); }
+        }
+    }
+    Ok(false)
 }
 
-/// Whether `json.loads` might accept a string serde rejected: Python also
-/// takes `NaN`/`Infinity`, lone surrogate escapes, deeper nesting and numbers
-/// serde cannot hold (`1e999`, a 400-digit integer). A number can only occur
+/// Whether `json.loads` might accept a string outside the native contract:
+/// Python also takes `NaN`/`Infinity`, lone surrogate escapes, deeper nesting
+/// and non-finite exponents (`1e999`). A number can only occur
 /// in a document whose first character is `{`, `[`, `-` or a digit (a
 /// string, `true`, `false` or `null` start cannot contain one), so for those
 /// any digit counts.
@@ -420,61 +339,35 @@ fn python_may_decode(s: &str) -> bool {
         || s.matches(['[', '{']).count() >= 100
 }
 
-/// `FAILED_PROCESS.search(s)`. Every match contains "exited", "failed" or
-/// "exit status"; text with none of them cannot match, anything else falls
-/// back.
+/// `FAILED_PROCESS.search(s)`, preserving Python Unicode matching.
 fn failed_process(s: &str) -> R<bool> {
-    if contains_any(s, &["exit", "failed"])? {
-        return Err(Fallback("codex failure text"));
-    }
-    Ok(false)
+    Ok(redaction::failed_process(s))
 }
 
-/// Whether `_run_context` could raise `RecursionError` on state.json (the
-/// only exception it does not catch, which would suppress the write). Reads
-/// like `_open_regular_binary`: non-blocking open, regular files only, at
-/// most 64 MiB. Brackets are counted outside strings; a prefix Python parses
-/// tokenises identically, so the count bounds its depth. BOMs and NUL bytes
-/// (other encodings) fall back.
-fn state_json_risky(workdir: &str) -> bool {
-    let path = Path::new(workdir).join(".build-loop/state.json");
-    let Ok(file) = OpenOptions::new().read(true).custom_flags(sys::O_NONBLOCK).open(&path) else {
-        return false;
+/// Bounded regular-file metadata only; malformed/missing state cannot confer
+/// run membership. No timestamp means no run attribution and no state read.
+fn read_state(workdir: &str) -> Option<Value> {
+    let file = OpenOptions::new().read(true).custom_flags(sys::O_NONBLOCK)
+        .open(Path::new(workdir).join(".build-loop/state.json")).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.file_type().is_file() || meta.size() > MAX_STATE_BYTES { return None; }
+    let mut bytes = Vec::new();
+    (&file).take(MAX_STATE_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    let root = json::object(&json::syntax(std::str::from_utf8(&bytes).ok()?).ok()?).ok()?;
+    // Only ownership metadata matters. An unrelated arbitrary integer must not
+    // make an otherwise valid active-run snapshot unreadable by normal Value.
+    let select = |map: &BTreeMap<String, RawValue<'_>>, keys: &[&str]| -> Map<String, Value> {
+        keys.iter().filter_map(|key| map.get(*key).map(|v| {
+            let value = if v.get() == "null" { Value::Null }
+                else { json::text(v).map(Value::String).unwrap_or(Value::Bool(false)) };
+            ((*key).to_string(), value)
+        })).collect()
     };
-    match file.metadata() {
-        Ok(m) if m.file_type().is_file() && m.size() <= MAX_STATE_BYTES => {}
-        _ => return false,
-    }
-    let mut data = Vec::new();
-    if (&file).take(MAX_STATE_BYTES + 1).read_to_end(&mut data).is_err() {
-        return false;
-    }
-    if data.starts_with(b"\xef\xbb\xbf") || data.starts_with(b"\xfe\xff") || data.starts_with(b"\xff\xfe") || data.contains(&0) {
-        return true;
-    }
-    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
-    for &b in &data {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match b {
-            b'"' => in_string = true,
-            b'[' | b'{' => {
-                depth += 1;
-                max = max.max(depth);
-            }
-            b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    max > STATE_DEPTH_LIMIT
+    let execution = json::object(root.get("execution")?).ok()?;
+    let mut state = select(&root, &["run_id", "build_loop_id"]);
+    state.insert("execution".into(), Value::Object(select(&execution,
+        &["run_id", "build_loop_id", "started_at", "ended_at", "current_session_id", "started_by_session_id"])));
+    Some(Value::Object(state))
 }
 
 /// `append_span`: mkdir, lock, rotate, append. Errors end the run silently,
@@ -590,21 +483,17 @@ mod tests {
 
     #[test]
     fn nothing_written() {
-        for stdin in ["", " \n", "[1]", "{}", r#"{"tool_name":""}"#, r#"{"tool_name": "B", "#] {
+        for stdin in ["", " \n", "[1]", "{}", r#"{"tool_name":""}"#] {
             assert_eq!(line(stdin).unwrap(), None, "{stdin}");
         }
     }
 
     #[test]
-    fn hand_offs() {
+    fn unsupported_inputs() {
         for stdin in [
             "{x",
+            r#"{"tool_name": "B", "#,
             r#"{"tool_name":1}"#,
-            r#"{"tool_name":"B","timestamp":"2026-01-01T00:00:00Z"}"#,
-            r#"{"tool_name":"B","tool_input":{"t":1.5}}"#,
-            r#"{"tool_name":"B","tool_input":{"c":"Bearer x"}}"#,
-            r#"{"tool_name":"B","tool_input":{"c":"ſ"}}"#,
-            r#"{"tool_name":"B","turn_id":1,"tool_response":"Process exited with code 1"}"#,
             r#"{"tool_name":"B","turn_id":1,"tool_response":"{\"exit_code\": NaN}"}"#,
         ] {
             assert!(line(stdin).is_err(), "{stdin}");
@@ -624,8 +513,8 @@ mod tests {
     #[test]
     fn codex_failures() {
         let p = |s: &str| {
-            let v: Value = serde_json::from_str(s).unwrap();
-            codex_failure_phase("end", v.as_object().unwrap()).map(String::from)
+            let v = json::object(&json::raw(s).unwrap()).unwrap();
+            codex_failure_phase("end", &v).map(String::from)
         };
         assert_eq!(p(r#"{"turn_id":1,"tool_response":{"exit_code":3}}"#).unwrap(), "error");
         assert_eq!(p(r#"{"turn_id":1,"tool_response":{"exitCode":0,"output":"ok"}}"#).unwrap(), "end");
@@ -633,7 +522,7 @@ mod tests {
         assert_eq!(p(r#"{"turn_id":1,"tool_response":"{\"is_error\":true}"}"#).unwrap(), "error");
         assert_eq!(p(r#"{"turn_id":1,"tool_response":{"returncode":true}}"#).unwrap(), "end");
         assert_eq!(p(r#"{"tool_response":{"exit_code":3}}"#).unwrap(), "end");
-        assert!(p(r#"{"turn_id":1,"tool_response":{"output":"command failed: 2"}}"#).is_err());
+        assert_eq!(p(r#"{"turn_id":1,"tool_response":{"output":"command failed: 2"}}"#).unwrap(), "error");
         for big in [r#"{\"returncode\": 1e999}"#, r#"{\"error\": 1e999}"#, r#"[1e999]"#] {
             let payload = format!(r#"{{"turn_id":1,"tool_response":"{big}"}}"#);
             assert!(p(&payload).is_err(), "{payload}");

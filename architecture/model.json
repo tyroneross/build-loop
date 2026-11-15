@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "17a171269150733c22f99994e81e1bf12ceab6ebdf9346f9245b22f3cac14b4c"
+    "content_sha256": "3ced1692f0237bc69d7ecb01235a9f97b48604f2b2f25da00afaa1a61e25e9fe"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -597,10 +597,9 @@
           "id": "pd.reap",
           "name": "Reap presence + collapse branches",
           "kind": "process",
-          "desc": "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch.",
+          "desc": "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch. Commit-state inspection is an explicit CLI action (`python3 scripts/commit_state_check.py --workdir .`), not an automatic Stop hook.",
           "hooks": [
             "(stop) state_finalize.py",
-            "(stop) commit_state_check.py",
             "(stop) closeout.sh"
           ],
           "agents": []
@@ -807,10 +806,6 @@
     "(stop) state_finalize.py": [
       "Stop",
       "finalize run state"
-    ],
-    "(stop) commit_state_check.py": [
-      "Stop",
-      "verify commit / state consistency"
     ],
     "(stop) closeout.sh": [
       "Stop",
@@ -1608,7 +1603,7 @@
       "scripts/semantic_index/_bench_hybrid.py": "Quick latency bench for the SQLite hybrid recall path.",
       "scripts/semantic_index/backfill.py": "Backfill missing embeddings and refresh unknown or mismatched model provenance.",
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
-      "scripts/session_start_hook_command.py": "The SessionStart hook commands in hooks/hooks.json, from one template.",
+      "scripts/session_start_hook_command.py": "One SessionStart registration, with native dispatch and bounded recovery.",
       "scripts/share_presentation_check.py": "Check Build Loop's scoped share-presentation record; never claim render proof.\"\"\"",
       "scripts/skill_index.py": "",
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
@@ -1699,13 +1694,6 @@
       "scripts/write_subagent_result.py": "M1 — Persist implementer subagent return envelopes."
     },
     "hooks_by_event": {
-      "SessionStart": [
-        "session-start-tool-state.sh",
-        "session-start-architecture.sh",
-        "session-start-rally-point.sh",
-        "closeout.sh",
-        "session-start-codex-hook-trust.sh"
-      ],
       "PreToolUse": [
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",
@@ -1718,7 +1706,6 @@
       "Stop": [
         "stop_finalize.sh",
         "closeout.sh",
-        "commit-state.sh",
         "stop-transcript-sweep.sh"
       ],
       "SessionEnd": [

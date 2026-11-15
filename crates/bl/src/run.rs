@@ -318,12 +318,11 @@ impl Handler for Driver<'_> {
 }
 
 /// What may be printed or stored of tool input: the value after the
-/// redaction `bl hook trace` applies. Sensitive keys are replaced; a string
-/// the trace path would hand to Python for inline redaction (it may hold a
-/// credential) is withheld whole, since that regex is not ported.
+/// redaction `bl hook trace` applies. Sensitive keys and inline credentials
+/// are replaced; any unsupported redaction is withheld whole.
 fn redacted(input: &Value) -> Value {
     match input {
-        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), trace::redact(&Value::Null, k).ok().filter(Value::is_string).unwrap_or_else(|| redacted(v)))).collect()),
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (shown(&Value::String(k.clone())), trace::redact(&Value::Null, k).ok().filter(Value::is_string).unwrap_or_else(|| redacted(v)))).collect()),
         Value::Array(items) => Value::Array(items.iter().map(redacted).collect()),
         other => trace::redact(other, "").unwrap_or_else(|_| Value::String(WITHHELD.into())),
     }
@@ -560,16 +559,32 @@ mod tests {
     /// Finding 7: tool input goes through the trace redaction.
     #[test]
     fn tool_input_is_redacted_before_it_is_shown_or_stored() {
-        let input = json!({"command": "curl -H 'Authorization: Bearer abc123' https://x", "api_key": "sk-live-1", "nested": {"password": "p", "path": "a.txt"}, "list": ["ok", "token=abc"]});
+        let input = json!({"command": "curl -H 'Authorization: Bearer abc123' https://x", "api_key": "sk-live-1", "nested": {"password": "fixture-password", "path": "a.txt"}, "list": ["ok", "token=fixture-token"]});
         let out = redacted(&input);
-        assert_eq!(out["command"], WITHHELD);
+        assert_eq!(out["command"], "curl -H 'Authorization: [REDACTED]' https://x");
         assert_eq!(out["api_key"], "[REDACTED]");
         assert_eq!(out["nested"], json!({"password": "[REDACTED]", "path": "a.txt"}));
-        assert_eq!(out["list"], json!(["ok", WITHHELD]));
-        let text = out.to_string();
-        assert!(!text.contains("abc123") && !text.contains("sk-live-1"));
+        assert_eq!(out["list"], json!(["ok", "token=[REDACTED]"]));
+        for text in [out.to_string(), shown(&input)] {
+            for secret in ["abc123", "sk-live-1", "fixture-password", "fixture-token"] {
+                assert!(!text.contains(secret), "credential escaped into shown/stored tool input");
+            }
+            assert!(text.contains("https://x") && text.contains("a.txt"));
+        }
         assert_eq!(shown(&json!("git status --short")), "git status --short");
-        assert_eq!(shown(&json!("echo secret=1")), WITHHELD);
+        assert_eq!(shown(&json!("echo secret=fixture-inline")), "echo secret=[REDACTED]");
+        assert!(input["command"].as_str().unwrap().contains("abc123"), "display redaction must not alter executed input");
+    }
+
+    #[test]
+    fn secret_object_keys_are_hidden_in_driver_output() {
+        let input = json!({"gho_abcdefgh": {"ghu_abcdefgh": "safe"}, "normal": ["ghs_abcdefgh", "ghr_abcdefgh"]});
+        assert_eq!(redacted(&input), json!({"[REDACTED]": {"[REDACTED]": "safe"}, "normal": ["[REDACTED]", "[REDACTED]"]}));
+        for text in [redacted(&input).to_string(), shown(&input)] {
+            assert!(!text.contains("abcdefgh"));
+            assert!(text.contains("safe") && text.contains("normal"));
+        }
+        assert_eq!(redacted(&json!({"ghp_abcdefgh":"last", "gho_abcdefgh":"first"})), json!({"[REDACTED]":"last"}));
     }
 
     #[test]

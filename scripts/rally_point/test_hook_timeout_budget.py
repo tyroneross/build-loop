@@ -354,3 +354,23 @@ def test_background_join_writes_even_inside_throttle_window(monkeypatch, tmp_pat
     assert rc == rc2 == 0
     assert len(writes) == 2
     assert spawned == []
+
+
+def test_failed_background_spawn_remains_retryable(monkeypatch, tmp_path):
+    _native_join_env(monkeypatch, tmp_path)
+    attempts = []
+
+    def fail_spawn(*args, **kwargs):
+        attempts.append(kwargs)
+        raise OSError("process limit")
+
+    monkeypatch.setattr(hooks, "_spawn_background_join", fail_spawn)
+    previous = discovery_bridge.enable_nonblocking(True)
+    try:
+        for _ in range(2):
+            assert hooks.pre_edit_join(tmp_path, tool="claude_code", session_id="s1",
+                                       context=_FakeNativeContext(), now=1000) == 0
+        assert len(attempts) == 2
+        assert not list((tmp_path / ".build-loop/rally-hook-throttle").glob("*.stamp"))
+    finally:
+        discovery_bridge.enable_nonblocking(previous)

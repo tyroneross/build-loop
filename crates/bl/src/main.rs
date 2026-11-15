@@ -4,10 +4,9 @@
 //!
 //! `bl hook trace --workdir W --phase P` replaces
 //! `python3 scripts/tool_trace.py --workdir W hook --phase P` (see
-//! `trace.rs`). It exits 0 and prints nothing; cases it cannot mirror run
-//! that Python command with the stdin bytes already read (through a pipe)
-//! and exit with its status; exit 75 means unknown arguments or no plugin
-//! checkout, nothing read.
+//! `trace.rs`). It exits 0 and prints nothing; unsupported events emit
+//! a static diagnostic when explicitly requested and safely emit no record.
+//! It never invokes Python; exit 75 means unknown arguments, nothing read.
 //!
 //! `bl hook pre-edit` replaces the shell + Perl + Python chain behind
 //! `hooks/pre-edit-rally-point.sh` for native Rally contexts. Contract:
@@ -28,7 +27,9 @@
 //! (`bin/native/bl` or `target/<profile>/bl`).
 
 mod cli;
+mod hook_trust;
 mod pre_edit;
+mod pre_bash;
 mod rally_restore;
 mod profile;
 mod route_cmd;
@@ -155,6 +156,12 @@ fn main() {
     if args.len() >= 2 && args[0] == "hook" && args[1] == "session-start" {
         session_start::main(started, &args[2..]);
     }
+    if args == ["hook", "pre-bash"] {
+        let Some(root) = plugin_root("scripts/hooks/pre_bash_dispatch.sh") else {
+            std::process::exit(bl_contract::FALLBACK_EXIT);
+        };
+        pre_bash::main(started, &root);
+    }
     if args != ["hook", "pre-edit"] {
         std::process::exit(bl_contract::FALLBACK_EXIT);
     }
@@ -203,9 +210,6 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
     let Some(parsed) = trace::parse_args(args) else {
         std::process::exit(bl_contract::FALLBACK_EXIT);
     };
-    let Some(root) = plugin_root("scripts/tool_trace.py") else {
-        std::process::exit(bl_contract::FALLBACK_EXIT);
-    };
     std::thread::spawn(move || {
         std::thread::sleep((started + TRACE_DEADLINE).saturating_duration_since(Instant::now()));
         let _guard = EXIT.lock();
@@ -213,39 +217,7 @@ fn trace_main(started: Instant, args: &[String]) -> ! {
         std::process::exit(0);
     });
     match std::panic::catch_unwind(|| trace::run(&parsed)) {
-        Ok(trace::Outcome::Fallback { reason, stdin }) => {
-            let _guard = EXIT.lock();
-            if std::env::var_os("BL_TRACE_FALLBACK").is_some() {
-                eprintln!("bl: fallback: {reason}");
-            }
-            hook_diagnostic("trace", "fallback");
-            let mut cmd = Command::new("python3");
-            cmd.arg(root.join("scripts/tool_trace.py"))
-                .args(["--workdir", &parsed.workdir, "hook", "--phase", &parsed.phase]);
-            let Some(bytes) = stdin else {
-                let _ = cmd.exec(); // stdin unread: Python inherits it
-                hook_diagnostic("trace", "fallback_exec_failed");
-                std::process::exit(0)
-            };
-            // The bytes already read go to Python through a pipe (no temp
-            // file, so an unwritable TMPDIR cannot lose the line). Python
-            // reads stdin to EOF before anything else, so writing all of it
-            // first cannot deadlock. The deadline thread waits on EXIT, held
-            // here, so it never cuts Python short.
-            let Ok(mut child) = cmd.stdin(Stdio::piped()).spawn() else {
-                hook_diagnostic("trace", "fallback_spawn_failed");
-                std::process::exit(0)
-            };
-            if let Some(mut pipe) = child.stdin.take() {
-                if pipe.write_all(&bytes).is_err() {
-                    hook_diagnostic("trace", "stdin_transfer_failed");
-                }
-            }
-            let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
-            hook_diagnostic("trace", "fallback_child_finished");
-            std::process::exit(code)
-        }
-        Ok(trace::Outcome::Done) => {
+        Ok(_) => {
             let _guard = EXIT.lock();
             hook_diagnostic("trace", "completed");
             std::process::exit(0)

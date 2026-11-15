@@ -87,6 +87,8 @@ MIRRORED = (
     "hooks/session-start-tool-state.sh",
     "scripts/session_start_hook_command.py",
     "scripts/tool_state_paths.py",
+    "scripts/codex_hook_trust_check.py",
+    "scripts/hooks/pre_bash_dispatch.sh",
 )
 # Every path whose change changes the digest; also the artifact guard's watch list.
 WATCHED = ("Cargo.toml", "Cargo.lock", "crates/") + MIRRORED
@@ -236,13 +238,17 @@ def build_and_install(repo: Path = REPO, dest: Path = DEFAULT_DEST, run=run_step
     # otherwise build elsewhere and leave an older binary at this path.
     target = repo / "target"
     built = target / "release" / "bl"
+    semantic = target / "release" / "examples" / "pre_edit_semantics"
     built.unlink(missing_ok=True)
-    run("cargo build", ["cargo", "build", "--release", "--locked", "--target-dir", str(target)], repo)
+    semantic.unlink(missing_ok=True)
+    run("cargo build", ["cargo", "build", "--release", "--locked", "--bins", "--examples", "--target-dir", str(target)], repo)
     run("cargo test", ["cargo", "test", "--locked", "--target-dir", str(target)], repo)
     if not built.is_file():
         raise BuildError(f"cargo build left no binary at {built}")
+    if not semantic.is_file():
+        raise BuildError(f"cargo build left no semantic test runner at {semantic}")
     run("parity harness", [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                           "tests/hook_parity"], repo, {"BL_BIN": str(built)})
+                           "tests/hook_parity"], repo, {"BL_BIN": str(built), "BL_PRE_EDIT_SEMANTICS_BIN": str(semantic)})
     if compute_digest(repo) != digest:
         raise BuildError("sources changed during the build; run it again")
     install(built, dest, digest)

@@ -101,22 +101,33 @@ def read_hooks(hooks_json: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _load_fingerprints(path: Path) -> dict[str, str]:
+def _load_fingerprints(path: Path) -> dict[str, str] | None:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-        return loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError):
+        return loaded if isinstance(loaded, dict) else None
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError):
+        return None
 
 
 def _save_fingerprints(path: Path, data: dict[str, str]) -> None:
+    tmp = path.with_suffix(f".{os.getpid()}.part")
+    created = False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(f".{os.getpid()}.part")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        with tmp.open("x", encoding="utf-8") as handle:
+            created = True
+            handle.write(json.dumps(data, indent=2, sort_keys=True))
         os.replace(tmp, path)
     except OSError:
         return
+    finally:
+        if created:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def check(
@@ -139,7 +150,8 @@ def check(
         errors.append(f"Cannot read hook definitions: {type(exc).__name__}")
 
     fp_file = fingerprints or fingerprint_path()
-    seen = _load_fingerprints(fp_file)
+    prior_state = _load_fingerprints(fp_file)
+    seen = prior_state or {}
     updated = dict(seen)
     untrusted: list[dict[str, Any]] = []
     unknown: list[dict[str, Any]] = []
@@ -169,7 +181,7 @@ def check(
         unknown.append({**item, "reason": "recorded hashes require Codex native verification"})
         updated[key] = entry["digest"]
 
-    if record:
+    if record and prior_state is not None:
         _save_fingerprints(fp_file, updated)
 
     return {
@@ -246,6 +258,19 @@ def render_sweep(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+KNOWN_EVENTS = frozenset(EVENT_KEYS) | {
+    "PostToolUseFailure", "PostCompact", "Interrupt", "SubagentStart", "SubagentStop",
+    "Notification", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted",
+}
+
+
+def _display(item: dict[str, Any]) -> tuple[str, str]:
+    if item["event"] in KNOWN_EVENTS:
+        return item["event"], item["key"]
+    positions = item["key"].rsplit(":", 2)[-2:]
+    return "unrecognized event", "unrecognized_event:" + ":".join(positions)
+
+
 def render(result: dict[str, Any], quiet_unknown: bool = False) -> str:
     if result["ok"] or (quiet_unknown and not any(
             result[key] for key in ("errors", "untrusted", "position_drift"))):
@@ -253,13 +278,16 @@ def render(result: dict[str, Any], quiet_unknown: bool = False) -> str:
     lines = ["Codex hook trust: review recorded state in /hooks."]
     lines.extend(f"   {error}" for error in result["errors"])
     for item in result["untrusted"]:
-        lines.append(f"   {item['event']} {item['key']}: {item['reason']}")
+        event, key = _display(item)
+        lines.append(f"   {event} {key}: {item['reason']}")
     if result["unknown"]:
         lines.append(f"   {len(result['unknown'])} recorded grant(s); current native hashes unverified.")
     if result["position_drift"]:
         lines.append("   Observed command changes at recorded positions (possible ordinal shift):")
         for item in result["position_drift"]:
-            lines.append(f"   {item['event']} {item['key']}  {item['command'][:70]}")
+            event, key = _display(item)
+            excerpt = json.dumps(item["command"][:70], ensure_ascii=True)
+            lines.append(f"   {event} {key}  command (untrusted data): {excerpt}")
     lines.append("   Only Codex can confirm current hook trust; this check changes no grants.")
     return "\n".join(lines) + "\n"
 

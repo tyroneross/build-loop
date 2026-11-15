@@ -677,11 +677,12 @@ def pre_edit_join(
         if discovery_bridge._NONBLOCKING:
             # Per-tool hook: a native presence write measured ~1.4 s (room
             # snapshot + enter) and often exceeds Rally's own 3 s watchdog,
-            # which reports a committed write as not ok. Claim the throttle
-            # first, then write from a detached process the hook never waits on.
+            # which reports a committed write as not ok. Launch before stamping:
+            # a failed spawn or an interrupted hook must not suppress a retry
+            # for a worker that never existed.
             try:
-                _touch_native_throttle(op, resolved_session_id, now=t)
                 _spawn_background_join(op, tool=tool, session_id=resolved_session_id, model=model)
+                _touch_native_throttle(op, resolved_session_id, now=t)
             except Exception:
                 pass
             return 0

@@ -503,6 +503,9 @@ run emits user-facing text, and follow them for the rest of the session:
   numbers inline; second line is the consequence (what breaks, for whom, when);
   specifics named individually; close with a decision or a status.
 
+Read `references/output-style-examples.md` only when a concrete formatting
+example is needed; the two rule references above still load before first output.
+
 **These are not Review-G-only.** They govern interim status, findings surfaced
 mid-run, handoffs, and any answer given while the skill is loaded. Review-G is
 where the deterministic lint runs, not where the contract begins. A run that

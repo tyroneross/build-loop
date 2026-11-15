@@ -21,19 +21,58 @@
 #
 # Envelopes are merged by permissionDecision precedence: deny > ask > allow (allow emitted as {}).
 #
-# ALWAYS exits 0 (Claude Code contract: non-zero = hook failure, not deny).
-# Fail-open: any sub-gate error degrades to allow. Minimal-PATH safe: python3
-# is in the safe set; sub-scripts are absolute-pathed.
+# The commit auditor preserves exit 2 for its deliberate block. Other decisions
+# use the JSON envelope. Whole-invocation failure denies with a retry instruction;
+# each existing sub-gate below retains its own policy and failure behavior.
 
 set -euo pipefail
 
 # Host cancellation discards every gate result. Finish before its 20s deadline
 # and deny this attempt with a retry instruction if required checks cannot finish.
 _DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Native supervision keeps this dispatcher as the only policy authority.
+# An internal child skips this guard and the legacy Perl supervisor together.
+_NATIVE_ROOT="$_DISPATCH_DIR/../.."
+if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] \
+    && [ "${BUILD_LOOP_BOUNDED_HOOK_CHILD:-}" != "$0" ] \
+    && [ -x "$_NATIVE_ROOT/bin/native/bl" ] \
+    && { read -r BL_BUILT_DIGEST < "$_NATIVE_ROOT/bin/native/bl.sources"; } 2>/dev/null \
+    && { read -r BL_TREE_DIGEST < "$_NATIVE_ROOT/crates/SOURCES.digest"; } 2>/dev/null \
+    && [ -n "$BL_TREE_DIGEST" ] && [ "$BL_BUILT_DIGEST" = "$BL_TREE_DIGEST" ]; then
+    # Hosts cancel the registered shell PID, not necessarily its children.
+    # Install before spawn; a signal before PID assignment is forwarded below.
+    _NATIVE_PID=""
+    _NATIVE_CANCELLED=0
+    trap '_NATIVE_CANCELLED=1; _NATIVE_WAIT_INTERRUPTED=1; if [ -n "$_NATIVE_PID" ]; then kill -TERM "$_NATIVE_PID" 2>/dev/null || :; fi' HUP INT TERM
+    BUILD_LOOP_PRE_BASH_SHELL="$BASH" BUILD_LOOP_PRE_BASH_PARENT_PID="$PPID" \
+        "$_NATIVE_ROOT/bin/native/bl" hook pre-bash "$@" <&0 &
+    _NATIVE_PID=$!
+    if [ "$_NATIVE_CANCELLED" = 1 ]; then kill -TERM "$_NATIVE_PID" 2>/dev/null || :; fi
+    # A trapped signal interrupts wait before the native child's cleanup ends.
+    # Wait again until it is reaped; preserve its deliberate exit-2 denial.
+    _NATIVE_RC=0
+    while :; do
+        _NATIVE_WAIT_INTERRUPTED=0
+        _NATIVE_RC=0
+        wait "$_NATIVE_PID" || _NATIVE_RC=$?
+        # Completed wait (including 127) is authoritative; a reused PID is not.
+        if [ "$_NATIVE_RC" -le 128 ] || [ "$_NATIVE_WAIT_INTERRUPTED" = 0 ]; then break; fi
+    done
+    trap - HUP INT TERM
+    if [ "$_NATIVE_CANCELLED" = 1 ]; then exit 0; fi
+    case "$_NATIVE_RC" in 75|126|127) ;; *) exit "$_NATIVE_RC" ;; esac
+fi
 . "$_DISPATCH_DIR/../../hooks/_bounded_hook.sh"
 bl_bound_hook "${BUILD_LOOP_BASH_DEADLINE_MS:-18000}" 18000 gate "$BASH" "$0" "$@"
 
 INPUT=$(cat)
+# App-launched hosts may omit HOME. Resolve only this hook's home comparisons
+# through Bash's passwd-backed tilde expansion; do not rewrite the host env.
+_BL_HOME="${HOME-}"
+if [ "${HOME+x}" != x ]; then
+    _BL_HOME=~
+    if [ "$_BL_HOME" = '~' ]; then exit 1; fi
+fi
 
 # Plugin root, resolved BEFORE the kill switch because the kill-switch path
 # needs it to write its mark. Pure shell, no subprocess, so the switch's
@@ -254,7 +293,7 @@ _bl_effective_dir() {
     for cand in "$git_c" "$cd_p"; do
         [ -n "$cand" ] || continue
         case "$cand" in
-            "~"*) cand="$HOME${cand#\~}" ;;
+            "~"*) cand="$_BL_HOME${cand#\~}" ;;
             /*) : ;;
             *) cand="$CWD/$cand" ;;
         esac
@@ -309,7 +348,7 @@ PY
 # Empty/root/HOME cwd never enforces — HOME hosts ~/.build-loop/ (global memory
 # + audit state), so a literal existence check there would arm the gate for
 # every shell command run from the user's home directory.
-if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$HOME" ]; then
+if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$_BL_HOME" ]; then
     _bl_pass
     exit 0
 fi
@@ -323,7 +362,7 @@ if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.jso
     _EARLY_GATES=""  # git runs first: compute the gates after it
     BL_SCOPE_ROOT=$(_bl_repo_root "$CWD")
 fi
-if [ "$BL_SCOPE_ROOT" = "/" ] || [ "$BL_SCOPE_ROOT" = "$HOME" ]; then
+if [ "$BL_SCOPE_ROOT" = "/" ] || [ "$BL_SCOPE_ROOT" = "$_BL_HOME" ]; then
     _bl_pass
     exit 0
 fi

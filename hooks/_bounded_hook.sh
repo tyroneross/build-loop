@@ -9,6 +9,14 @@ bl_bound_hook() {
         unset BUILD_LOOP_BOUNDED_HOOK_CHILD
         return 0
     fi
+    # The recovery aggregator adds a process frame. Consume only its explicit,
+    # numeric observer parent; ordinary hook invocations retain their own PPID.
+    local observer_parent="${PPID:-0}"
+    case "${BUILD_LOOP_SESSION_START_AGGREGATOR_PARENT_PID:-}" in
+        ''|*[!0-9]*) ;;
+        *) observer_parent="$BUILD_LOOP_SESSION_START_AGGREGATOR_PARENT_PID" ;;
+    esac
+    unset BUILD_LOOP_SESSION_START_AGGREGATOR_PARENT_PID
     local fallback='{}'
     if [ "$output" = gate ]; then
         fallback='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Build Loop checks did not finish. Retry the command so its required checks can run."}}'
@@ -113,5 +121,5 @@ bl_bound_hook() {
         $stop->();
         print $fallback unless $cancelled;
         exit 0;
-    ' "$budget" "$maximum" "$output" "$fallback" "${PPID:-0}" "$0" "$@"
+    ' "$budget" "$maximum" "$output" "$fallback" "$observer_parent" "$0" "$@"
 }

@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 58 skills · 493 scripts · 15 hooks** (auto-discovered 17a17126)
+**29 agents · 58 skills · 493 scripts · 9 hooks** (auto-discovered 3ced1692)
 
 <details><summary>agents</summary>
 
@@ -685,7 +685,6 @@ hook_overrides:
   "pre_bash_dispatch.sh": { purpose: "guard / classify bash + dispatch actions" }
   "(post) state.json updater": { event: "PostToolUse · Bash", purpose: "track changed files into state.json" }
   "(stop) state_finalize.py": { event: "Stop", purpose: "finalize run state" }
-  "(stop) commit_state_check.py": { event: "Stop", purpose: "verify commit / state consistency" }
   "(stop) closeout.sh": { event: "Stop", purpose: "run closeout at stop" }
   "(post) post-push-closeout.sh": { event: "PostToolUse · Bash", purpose: "trigger closeout + retrospective after a push" }
 
@@ -777,7 +776,7 @@ phases:
     out: ["collapsed branch → main", "archived coord"]
     agents: []
     steps:
-      - { id: "pd.reap", name: "Reap presence + collapse branches", kind: process, desc: "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch.", hooks: ["(stop) state_finalize.py", "(stop) commit_state_check.py", "(stop) closeout.sh"], agents: [] }
+      - { id: "pd.reap", name: "Reap presence + collapse branches", kind: process, desc: "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch. Commit-state inspection is an explicit CLI action (`python3 scripts/commit_state_check.py --workdir .`), not an automatic Stop hook.", hooks: ["(stop) state_finalize.py", "(stop) closeout.sh"], agents: [] }
       - { id: "pd.push", name: "Production push?", kind: gate, tier: "T1", desc: "Pushing to production always asks a human first; this gate is never sampled and never auto-approved.", hooks: ["(post) post-push-closeout.sh"], agents: [], branches: "approved → push\nelse → hold" }
 
   - id: p6

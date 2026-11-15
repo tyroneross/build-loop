@@ -321,13 +321,14 @@ REPO_W=$(mktemp -d)
 ( cd "$REPO_W" && git init -q && git config user.email t@e.com && git config user.name t )
 # Build a ~100 KB JSON-ish blob (INVALID JSON so hooks.py falls through
 # gracefully — the 64KB cap test is about not crashing, not about parsing).
-BIG_PAYLOAD=$(python3 -c "print('{\"tool_input\":{\"file_path\":\"/tmp/x.py\",\"extra\":\"' + 'A'*102400 + '\"}}')")
-RC=$(printf '%s' "$BIG_PAYLOAD" | \
-     BUILD_LOOP_APPS_ROOT="$APPS5" \
+BIG_INPUT=$(mktemp)
+python3 -c "print('{\"tool_input\":{\"file_path\":\"/tmp/x.py\",\"extra\":\"' + 'A'*102400 + '\"}}')" > "$BIG_INPUT"
+RC=$(BUILD_LOOP_APPS_ROOT="$APPS5" \
      BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
      BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=5 \
      CLAUDE_PROJECT_DIR="$REPO_W" \
-     bash "$PE_HOOK" >/dev/null 2>/dev/null; echo $?)
+     bash "$PE_HOOK" < "$BIG_INPUT" >/dev/null 2>/dev/null; echo $?)
+rm -f "$BIG_INPUT"
 if [ "$RC" -eq 0 ]; then
   pass "64KB stdin cap: exit 0 on oversized payload"
 else

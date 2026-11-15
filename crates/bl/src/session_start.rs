@@ -10,7 +10,7 @@
 //! tool-state snapshot and fresh-cache Rally restore are native. Python runs
 //! unsupported restore states and the remaining workers:
 //! `rally_point/hooks.py session-start-safe`,
-//! `stop_closeout.py` and `codex_hook_trust_check.py`.
+//! `stop_closeout.py`. The hook-trust advisory reads metadata natively.
 //!
 //! Contract:
 //! - exit 0 for every outcome, 75 only for unknown arguments;
@@ -45,7 +45,7 @@ use std::sync::{mpsc, Mutex};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::pre_edit::{nonempty, var, which};
+use crate::pre_edit::{nonempty, var};
 use crate::{sys, EXIT};
 
 /// `_bounded_hook.sh`: a hook that prints more than this is cut.
@@ -391,12 +391,9 @@ fn plan(root: &str, stdin: &[u8]) -> R<Plan> {
     if nonempty("BUILD_LOOP_RALLY_SESSION_START_FOREGROUND")?.as_deref() == Some("1") {
         return Err(Fallback("rally foreground diagnosis"));
     }
-    for tool in ["python3", "perl"] {
-        // Without either, each shell hook degrades in its own way.
-        if which(tool)?.is_none() {
-            return Err(Fallback("python3 or perl missing"));
-        }
-    }
+    // Native steps do not depend on an interpreter. A missing optional Python
+    // worker degrades only its own step through run_bounded; it must not hide
+    // native provenance or trust context by handing the whole run to shell.
     if stdin.len() > MAX_OUT || stdin.contains(&0) {
         return Err(Fallback("stdin too large or holds NUL"));
     }
@@ -641,18 +638,19 @@ fn closeout(p: &Plan) -> Vec<u8> {
 
 /// `session-start-codex-hook-trust.sh` (supervisor mode `json`).
 fn trust(p: &Plan) -> Vec<u8> {
-    let script = format!("{}/scripts/codex_hook_trust_check.py", p.root);
-    if !Path::new(&script).is_file() {
-        return EMPTY.to_vec();
-    }
-    let mut cmd = python(&script);
-    cmd.args(["--workdir", &p.workdir, "--quiet-unknown"]);
-    match run_bounded(cmd, None, Instant::now() + p.budgets.trust) {
-        Ran::Done { out, .. } => match report_json(&out).map(|j| envelope(&j)) {
-            Some(bytes) if bytes.len() <= MAX_OUT => bytes,
-            _ => EMPTY.to_vec(),
-        },
-        Ran::Cut => EMPTY.to_vec(),
+    // Home lookup follows Path.home(), including its passwd fallback when HOME
+    // is unset. Only recorded grant metadata is read; no credential service runs.
+    #[allow(deprecated)]
+    let home = std::env::home_dir();
+    let Some(home) = home else { return EMPTY.to_vec(); };
+    let home = if home.as_os_str().is_empty() { std::path::PathBuf::from("/") } else { home };
+    let state = std::env::var_os("XDG_STATE_HOME").filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".local/state"));
+    let report = crate::hook_trust::report(Path::new(&p.root), Path::new(&p.workdir),
+        &home, &state, Instant::now() + p.budgets.trust);
+    match report_json(report.as_bytes()).map(|j| envelope(&j)) {
+        Some(bytes) if bytes.len() <= MAX_OUT => bytes,
+        _ => EMPTY.to_vec(),
     }
 }
 

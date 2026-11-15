@@ -21,7 +21,7 @@ def plugin(tmp_path):
     (root / "scripts/rally_point").mkdir(parents=True)
     (root / ".build-loop").mkdir()
     for name in ("pre-edit-rally-point.sh", "closeout.sh", "_resolve_python.sh", "_bounded_hook.sh",
-                 "session-start-git-hooks.sh", "session-start-tool-state.sh", "session-start-memory.sh", "commit-state.sh"):
+                 "session-start-git-hooks.sh", "session-start-tool-state.sh", "session-start-memory.sh"):
         source = ROOT / "hooks" / name
         if source.exists():
             shutil.copy2(source, root / "hooks" / name)
@@ -280,56 +280,6 @@ def test_memory_bootstrap_retries_partial_store_without_overwriting(plugin):
     assert second.returncode == 0
     assert (dest / "seed").read_text() == "complete"
     assert (dest / "personal").read_text() == "preserve"
-
-
-def test_commit_state_stalled_stdin_finishes_before_host(plugin):
-    root, env = plugin
-    (root / "scripts/commit_state_check.py").write_text("import sys\nsys.stdin.read()\nprint('{}')\n")
-    proc = subprocess.Popen(
-        ["/bin/bash", str(root / "hooks/commit-state.sh")],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, cwd=root, env=dict(env, BUILD_LOOP_COMMIT_STATE_DEADLINE_MS="150"),
-    )
-    try:
-        proc.stdin.write('{"stop_hook_active":false}')
-        proc.stdin.flush()  # Deliberately keep the host pipe open.
-        assert proc.wait(timeout=2) == 0
-        assert json.loads(proc.stdout.read()) == {}
-    finally:
-        proc.stdin.close()
-        if proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=2)
-        proc.stdout.close()
-        proc.stderr.close()
-
-
-def test_commit_state_bounds_interpreter_startup_and_clamps_budget(plugin):
-    root, env = plugin
-    (root / "scripts/commit_state_check.py").write_text("print('{}')\n")
-    bindir = root / "bin"
-    bindir.mkdir()
-    python = bindir / "python3"
-    python.write_text('#!/bin/sh\n/bin/sleep 6\n')
-    python.chmod(0o755)
-    proc, elapsed = run_hook(plugin, "commit-state.sh", PATH=str(bindir) + ":" + env["PATH"],
-                             BUILD_LOOP_COMMIT_STATE_DEADLINE_MS="999999")
-    assert elapsed < 5
-    assert proc.returncode == 0
-    assert json.loads(proc.stdout) == {}
-
-
-def test_commit_state_preserves_advisory_and_manifest_wiring(plugin):
-    root, _ = plugin
-    expected = {"systemMessage": "fixture advisory"}
-    (root / "scripts/commit_state_check.py").write_text(f"print({json.dumps(expected)!r})\n")
-    proc, _ = run_hook(plugin, "commit-state.sh")
-    assert json.loads(proc.stdout) == expected
-    for name in ("codex.json", "hooks.json"):
-        manifest = json.loads((ROOT / "hooks" / name).read_text())
-        commands = [h["command"] for group in manifest["hooks"]["Stop"] for h in group["hooks"]]
-        assert any("/hooks/commit-state.sh" in c for c in commands)
-        assert not any("/scripts/commit_state_check.py" in c for c in commands)
 
 
 @pytest.mark.parametrize('cancel', [None, 'SIGTERM', 'SIGINT', 'SIGHUP'])

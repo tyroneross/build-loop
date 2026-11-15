@@ -5,8 +5,8 @@
 //! Mirrors `python3 scripts/rally_point/hooks.py pre-edit` for native Rally
 //! contexts: resolve the operative repo, skip when this session's throttle
 //! stamp is fresh, read the discovery cache (spawning the detached refresher
-//! when it is stale or missing), then touch and prune the stamp and spawn
-//! the detached `pre-edit-join-bg` writer. Nothing is printed.
+//! when it is stale or missing), then launch the detached `pre-edit-join-bg`
+//! writer before touching and pruning its throttle stamp. Nothing is printed.
 //!
 //! Work happens in two passes. `plan` only reads (git, the rally usage
 //! probe, cache and stamp files) and decides; any input it cannot mirror
@@ -550,6 +550,20 @@ fn touch_and_join(python: &str, plugin_root: &str, w: &StampWork) {
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
+    // A throttle records a launched worker, never an intention to launch one.
+    // If the deadline interrupts us before spawn, the next edit must retry.
+    // If it interrupts after spawn, a duplicate join is safe and preferable
+    // to suppressing coordination for a worker that never existed.
+    let script = format!("{plugin_root}/scripts/rally_point/hooks.py");
+    if !spawn_detached(
+        python,
+        &[
+            &script, "pre-edit-join-bg", "--workdir", &w.toplevel, "--tool", &w.tool, "--session-id",
+            &w.session_id, "--model", "unknown",
+        ],
+    ) {
+        return;
+    }
     // Touch, never truncate: an existing stamp keeps its bytes.
     if !sys::set_times(&path, None)
         && fs::OpenOptions::new().write(true).create(true).truncate(false).mode(0o666).open(&path).is_err()
@@ -577,14 +591,6 @@ fn touch_and_join(python: &str, plugin_root: &str, w: &StampWork) {
             let _ = fs::remove_file(py::join(&dir, &name));
         }
     }
-    let script = format!("{plugin_root}/scripts/rally_point/hooks.py");
-    spawn_detached(
-        python,
-        &[
-            &script, "pre-edit-join-bg", "--workdir", &w.toplevel, "--tool", &w.tool, "--session-id",
-            &w.session_id, "--model", "unknown",
-        ],
-    );
 }
 
 /// Run the hook. Reads stdin (capped) unless it is a terminal.
@@ -621,4 +627,30 @@ pub fn run(plugin_root: &str) -> Outcome {
         touch_and_join(&plan.python, plugin_root, work);
     }
     Outcome::Done
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_launch_never_creates_or_refreshes_a_throttle() {
+        let root = std::env::temp_dir().join(format!("bl-join-{}-{}", std::process::id(), now()));
+        fs::create_dir_all(&root).unwrap();
+        let work = StampWork {
+            toplevel: root.to_str().unwrap().to_owned(),
+            session_id: "launch-failure".into(), tool: "codex".into(),
+            t: now(), throttle: 60.0,
+        };
+        let path = stamp::path(&work.toplevel, &work.session_id);
+        touch_and_join("/nonexistent/bl-python", "unused", &work);
+        assert!(!Path::new(&path).exists(), "a failed spawn must remain retryable");
+        fs::write(&path, b"existing stamp").unwrap();
+        assert!(sys::set_times(&path, Some(work.t - 120.0)));
+        let before = mtime(&fs::metadata(&path).unwrap());
+        touch_and_join("/nonexistent/bl-python", "unused", &work);
+        assert_eq!(mtime(&fs::metadata(&path).unwrap()), before);
+        assert_eq!(fs::read(&path).unwrap(), b"existing stamp");
+        fs::remove_dir_all(root).unwrap();
+    }
 }

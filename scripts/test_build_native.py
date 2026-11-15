@@ -48,9 +48,11 @@ def _runner(fail_on: str | None = None, produce: bool = True):
     """Stand-in for run_step; ``cargo build`` writes the binary unless told not to."""
     calls: list[str] = []
     argvs: list[list[str]] = []
+    environments = []
 
     def run(label, argv, repo, env=None):
         calls.append(label)
+        environments.append(env)
         argvs.append(argv)
         if label == fail_on:
             raise bn.BuildError(f"{label} failed (exit 1)")
@@ -58,7 +60,11 @@ def _runner(fail_on: str | None = None, produce: bool = True):
             built = Path(argv[argv.index("--target-dir") + 1]) / "release" / "bl"
             built.parent.mkdir(parents=True, exist_ok=True)
             built.write_text("#!/bin/sh\nexit 0\n")
+            example = built.parent / "examples/pre_edit_semantics"
+            example.parent.mkdir(exist_ok=True)
+            example.write_text("test only")
     run.argvs = argvs
+    run.environments = environments
     return run, calls
 
 
@@ -171,3 +177,23 @@ def test_cli_check_exit_codes(tmp_path):
                         capture_output=True, text=True)
     assert cp.returncode == 1
     assert cp.stderr.count("\n") == 1 and "no executable" in cp.stderr
+
+
+def test_semantic_runner_built_checked_and_never_installed(repo, tmp_path):
+    run, _ = _runner()
+    dest = tmp_path / "dest"
+    bn.build_and_install(repo, dest, run)
+    assert "--bins" in run.argvs[0] and "--examples" in run.argvs[0]
+    assert run.environments[2]["BL_PRE_EDIT_SEMANTICS_BIN"] == str(repo / "target/release/examples/pre_edit_semantics")
+    assert not (dest / "pre_edit_semantics").exists()
+
+
+def test_missing_semantic_runner_fails_before_parity(repo, tmp_path):
+    delegate, calls = _runner()
+    def run(label, argv, repo, env=None):
+        delegate(label, argv, repo, env)
+        if label == "cargo build":
+            (repo / "target/release/examples/pre_edit_semantics").unlink()
+    with pytest.raises(bn.BuildError, match="no semantic test runner"):
+        bn.build_and_install(repo, tmp_path / "dest", run)
+    assert "parity harness" not in calls

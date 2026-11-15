@@ -223,6 +223,94 @@ class SyncPluginCacheTests(unittest.TestCase):
         hosts = {item["host"] for item in json.loads(result.stdout)["results"]}
         self.assertEqual(hosts, {"claude", "codex"})
 
+    def invalid_claude_registration(self, codex_origin: str = "local"):
+        home = self.root / "isolated-home"
+        claude = home / ".claude/plugins/cache/local/build-loop/1.0.0"
+        claude.parent.mkdir(parents=True)
+        claude.symlink_to(self.source.resolve(), target_is_directory=True)
+        write(home / ".claude/plugins/installed_plugins.json", json.dumps({
+            "plugins": {"build-loop@local": [{"scope": "user", "version": "1.0.0",
+                                               "installPath": str(claude)}]}}))
+        codex = home / ".codex/plugins/cache/local/build-loop/1.0.0"
+        write(codex / "README.md", "old cache\n")
+        write(codex / ".et-source-receipt.json", json.dumps({
+            "source_kind": codex_origin,
+            "source": str(self.source.resolve()) if codex_origin == "local" else "owner/plugin",
+        }))
+        env = {**os.environ, "HOME": str(home), "CODEX_HOME": str(home / ".codex"),
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        return claude, codex, env
+
+    def test_all_isolates_invalid_claude_symlink_and_syncs_owned_codex(self):
+        import sync_plugin_cache as sync
+        claude, codex, env = self.invalid_claude_registration()
+        # HEAD-only synchronization must not copy or overwrite the dirty source.
+        write(self.source / "README.md", "uncommitted source\n")
+        before = sync.tree_fingerprint(self.source)
+        link_before = os.readlink(claude)
+        registry = Path(env["HOME"]) / ".claude/plugins/installed_plugins.json"
+        registry_before = registry.read_bytes()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--source", str(self.source), "--host", "all", "--json"],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        failed, completed = payload["results"]
+        self.assertEqual((failed["host"], failed["action"], failed["ok"]), ("claude", "error", False))
+        self.assertIn("registered Claude cache path is invalid", failed["error"])
+        self.assertEqual((completed["host"], completed["action"], completed["ok"]),
+                         ("codex", "full_sync", True))
+        self.assertEqual((codex / "README.md").read_text(), "committed\n")
+        self.assertEqual(sync.tree_fingerprint(self.source), before)
+        self.assertTrue(claude.is_symlink())
+        self.assertEqual(os.readlink(claude), link_before)
+        self.assertEqual(registry.read_bytes(), registry_before)
+
+    def test_all_keeps_remote_codex_untouched_after_claude_failure(self):
+        import sync_plugin_cache as sync
+        claude, codex, env = self.invalid_claude_registration("github")
+        before = sync.tree_fingerprint(codex)
+        source_before = sync.tree_fingerprint(self.source)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--source", str(self.source), "--host", "all", "--json"],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["results"][1]["reason"], "selected_source_not_owned")
+        self.assertEqual(sync.tree_fingerprint(codex), before)
+        self.assertEqual(sync.tree_fingerprint(self.source), source_before)
+        self.assertTrue(claude.is_symlink())
+
+    def test_explicit_claude_failure_retains_error_exit_and_leaves_codex(self):
+        import sync_plugin_cache as sync
+        claude, codex, env = self.invalid_claude_registration()
+        before = sync.tree_fingerprint(codex)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--source", str(self.source), "--host", "claude", "--json"],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        payload = json.loads(result.stdout)
+        self.assertEqual(set(payload), {"ok", "error"})
+        self.assertFalse(payload["ok"])
+        self.assertIn("registered Claude cache path is invalid", payload["error"])
+        self.assertEqual(sync.tree_fingerprint(codex), before)
+        self.assertTrue(claude.is_symlink())
+
+    def test_materialization_failure_prevents_every_host_write(self):
+        from unittest.mock import patch
+        import sync_plugin_cache as sync
+        args = sync.parse_args(["--host", "all", "--source", str(self.source)])
+        with patch.object(sync, "materialize_source_for_sync", side_effect=sync.SyncError("bad snapshot")), \
+                patch.object(sync, "sync_one_host") as sync_host:
+            with self.assertRaisesRegex(sync.SyncError, "bad snapshot"):
+                sync.build_sync_payload(self.source, args)
+            sync_host.assert_not_called()
+
     def test_targeted_file_sync_does_not_delete_existing_cache(self) -> None:
         write(self.codex_cache / "keep.txt", "keep\n")
         write(self.source / "README.md", "dirty target\n")

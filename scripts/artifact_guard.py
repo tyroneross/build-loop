@@ -107,7 +107,9 @@ ARTIFACTS: tuple[Artifact, ...] = (
                "hooks/session-start-rally-point.sh",
                "hooks/session-start-tool-state.sh",
                "scripts/session_start_hook_command.py",
-               "scripts/tool_state_paths.py"),
+               "scripts/tool_state_paths.py",
+               "scripts/codex_hook_trust_check.py",
+               "scripts/hooks/pre_bash_dispatch.sh"),
         check_argv=("scripts/build_native.py", "--check-digest"),
         # Judge the commit on index blobs and the staged digest: a build may
         # have rewritten the working-tree digest without it being staged.

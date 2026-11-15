@@ -12,7 +12,10 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 import os
+import re
+from collections import Counter
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -283,7 +286,7 @@ def _compare(impl: str, case: Case, root: Path):
     raw_other, _ = harness.run(impl, diagnostic_case, root)
     other = without_diagnostics(raw_other)
     if not (other.comparable() == shell.comparable()):
-        binary = harness.BL if impl == "bl" else harness.REPO_ROOT / "bin/native/bl"
+        binary = harness.PRE_EDIT_SEMANTICS if impl == "semantics" else harness.BL if impl == "bl" else harness.REPO_ROOT / "bin/native/bl"
         evidence = save_failure(root, case.name, binary, shell, raw_other)
         pytest.fail(f"Differential mismatch; full snapshots: {evidence}", pytrace=False)
     if case.expect:
@@ -293,7 +296,11 @@ def _compare(impl: str, case: Case, root: Path):
 @pytest.mark.skipif(not harness.BL.exists(), reason="bl not built (cargo build --release)")
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
 def test_bl_matches_shell(case, root):
-    _compare("bl", case, root)
+    if case.name not in FALLBACK_CASES and not case.supervised:
+        assert harness.PRE_EDIT_SEMANTICS.is_file(), "build the pre_edit_semantics example"
+        _compare("semantics", case, root)
+    else:
+        _compare("bl", case, root)
 
 
 # bl hands these to the shell hook; through the launcher that re-enters the
@@ -325,7 +332,7 @@ NATIVE_FRESH = NATIVE_BIN.exists() and _first_line(NATIVE_BIN.parent / "bl.sourc
     ids=[c.name for c in CASES if c.name not in FALLBACK_CASES],
 )
 def test_launcher_matches_shell(case, root):
-    _compare("launcher", case, root)
+    _release_compare("launcher", case, root)
 
 
 @pytest.mark.skipif(NATIVE_BIN.exists(), reason="needs bin/native/bl absent")
@@ -401,3 +408,115 @@ def test_launcher_freshness_guard(name, tmp_path):
     built, tree, env, native = GUARD_CASES[name]
     root = _guard_root(tmp_path, built=built, tree=tree)
     assert _launch(root, tmp_path, **env) is native
+
+
+RELEASE_OUTCOMES = Counter()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def report_pre_edit_release_outcomes(request):
+    yield
+    reporter = request.config.pluginmanager.getplugin("terminalreporter")
+    if reporter and RELEASE_OUTCOMES:
+        reporter.write_line(f"pre-edit release outcomes: {dict(RELEASE_OUTCOMES)}")
+
+
+def _release_compare(impl, case, root, *, require_completion=False):
+    if case.supervised:
+        return _compare(impl, case, root)
+    case = _materialize(case, root)
+    oracle, _ = harness.run("shell", case, root)
+    raw, _ = harness.run(impl, replace(case, env={**case.env, "BL_TRACE_EXIT": "1"}), root)
+    try:
+        _check_release_outcome(raw, oracle, case, impl, require_completion)
+    except AssertionError:
+        binary = harness.BL if impl == "bl" else NATIVE_BIN
+        evidence = save_failure(root, case.name, binary, oracle, raw)
+        pytest.fail(f"Release outcome mismatch; full snapshots: {evidence}", pytrace=False)
+
+
+def _check_release_outcome(raw, oracle, case, impl, require_completion):
+    terminal = re.fullmatch(rb"bl: diagnostic: hook=pre-edit reason=(completed|watchdog) elapsed_ms=([0-9]+)\n", raw.stderr)
+    assert terminal is not None, raw.stderr
+    reason = terminal[1].decode()
+    RELEASE_OUTCOMES[f"{impl}:{reason}"] += 1
+    if reason == "completed":
+        completed = without_diagnostics(raw)
+        assert completed.comparable() == oracle.comparable()
+        if case.expect:
+            case.expect(completed, None)
+    else:
+        assert not require_completion, "controlled release smoke must complete"
+        assert raw.rc == 0 and raw.stdout == b"{}"
+        # Wall-clock slack tolerates scheduling; the held-stdin tests below
+        # independently pin the production default and maximum deadline.
+        assert 100 <= int(terminal[2]) <= 5000
+        assert raw.elapsed < 5, raw.elapsed
+        launched = set()
+        for argv in _joins(raw):
+            if "--session-id" in argv and "--workdir" in argv:
+                session = argv[argv.index("--session-id") + 1]
+                safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", session).strip("._") or "unknown"
+                workdir = argv[argv.index("--workdir") + 1].removeprefix("<root>/")
+                launched.add(f"{workdir}/.build-loop/rally-hook-throttle/{safe}.stamp")
+        changed = [k for k, v in raw.files.items()
+                   if "rally-hook-throttle/" in k and v.startswith(("new", "touched"))]
+        assert all(stamp in launched for stamp in changed), (changed, raw.spawns)
+
+
+
+@pytest.mark.skipif(not harness.BL.exists(), reason="bl not built")
+@pytest.mark.parametrize("case", [c for c in CASES if c.name not in FALLBACK_CASES and not c.supervised],
+                         ids=[c.name for c in CASES if c.name not in FALLBACK_CASES and not c.supervised])
+def test_release_pre_edit_outcome(case, root):
+    _release_compare("bl", case, root)
+
+
+@pytest.mark.skipif(not harness.BL.exists(), reason="bl not built")
+@pytest.mark.parametrize("name", ["native_first_edit", "fresh_stamp_short_circuits",
+                                  "missing_cache_no_stamp", "unscoped_slug", "edit_other_repo"])
+def test_release_supported_completion_smoke(name, root):
+    case = next(c for c in CASES if c.name == name)
+    _release_compare("bl", case, root, require_completion=True)
+
+
+@pytest.mark.skipif(not harness.BL.exists(), reason="bl not built")
+@pytest.mark.parametrize("budget", [None, "99999"])
+def test_release_default_and_capped_deadline_with_open_stdin(budget, tmp_path):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "BL_TRACE_EXIT": "1"}
+    if budget is not None:
+        env["BUILD_LOOP_RALLY_PRE_EDIT_DEADLINE_MS"] = budget
+    started = time.monotonic()
+    child = subprocess.Popen([str(harness.BL), "hook", "pre-edit"], env=env,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        child.wait(timeout=5)  # Keep stdin open: the production read must stall.
+        stdout, stderr = child.stdout.read(), child.stderr.read()
+        assert child.returncode == 0 and stdout == b"{}"
+        terminal = re.fullmatch(rb"bl: diagnostic: hook=pre-edit reason=watchdog elapsed_ms=([0-9]+)\n", stderr)
+        assert terminal is not None, stderr
+        assert 1500 <= int(terminal[1]) < 2500, stderr
+        assert time.monotonic() - started < 5
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
+
+
+def test_release_validator_rejects_other_room_stamp_and_panic():
+    base = harness.Snapshot(0, b"{}", b"bl: diagnostic: hook=pre-edit reason=watchdog elapsed_ms=1500\n",
+                            {"repo/.build-loop/rally-hook-throttle/session.stamp": "touched:0"},
+                            [("python", "hooks.py", "pre-edit-join-bg", "--workdir", "<root>/other", "--session-id", "session")], 1.5)
+    with pytest.raises(AssertionError):
+        _check_release_outcome(base, base, Case("cross-room"), "validator", False)
+    with pytest.raises(AssertionError):
+        _check_release_outcome(replace(base, stderr=base.stderr.replace(b"watchdog", b"panic")), base, Case("panic"), "validator", False)
+
+
+@pytest.mark.skipif(not harness.PRE_EDIT_SEMANTICS.exists(), reason="semantic example not built")
+def test_semantic_runner_rejects_fallback(root):
+    case = Case("reject-fallback", env={"BUILD_LOOP_RALLY_DEBUG": "1"})
+    snap, _ = harness.run("semantics", case, root)
+    assert snap.rc == 75
+    assert snap.stdout == b"" and not snap.spawns and not snap.files
+    assert snap.stderr == b"pre-edit semantic runner: unexpected fallback\n"

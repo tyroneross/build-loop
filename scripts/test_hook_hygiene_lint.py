@@ -206,6 +206,32 @@ class HH001BareBinaryTests(unittest.TestCase):
         cmd = "cat <<EOF\nnot a command\nEOF\nnode -v"
         self.assertEqual(self._hh001_binaries(cmd), ["node", None])
 
+    def test_local_function_calls_are_not_path_dependencies(self) -> None:
+        for command in (
+            'dispatch() { printf ok; }; dispatch; exit 0',
+            'dispatch ()\n{ printf ok; }\ndispatch; exit 0',
+            'function dispatch { printf ok; }; dispatch; exit 0',
+            'function dispatch() { printf ok; }; dispatch; exit 0',
+            'node() { printf fixture; }; node; exit 0',
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._hh001_binaries(command), [])
+
+    def test_function_body_still_checks_external_commands(self) -> None:
+        self.assertEqual(self._hh001_binaries('dispatch() { node -v; }; dispatch; exit 0'), ['node'])
+        self.assertEqual(self._hh001_binaries('function dispatch { rally status; }; dispatch; exit 0'), ['rally'])
+        self.assertEqual(self._hh001_binaries('outer() { inner() { node -v; }; inner; }; outer; exit 0'), ['node'])
+
+    def test_data_or_later_definition_does_not_hide_external_call(self) -> None:
+        for command in (
+            "printf 'node() { printf fake; }'; node -v; exit 0",
+            '# node() { printf fake; }\nnode -v; exit 0',
+            "cat <<'EOF'\nnode() { printf fake; }\nEOF\nnode -v; exit 0",
+            'node -v; node() { printf local; }; exit 0',
+        ):
+            with self.subTest(command=command):
+                self.assertIn('node', self._hh001_binaries(command))
+
     def test_plugin_root_path_not_flagged(self) -> None:
         path = _write_json({"hooks": {"SessionStart": [
             {"matcher": "", "hooks": [

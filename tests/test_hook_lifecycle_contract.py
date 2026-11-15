@@ -31,10 +31,6 @@ def test_registered_stop_does_not_label_a_live_peer_as_crashed(tmp_path):
     (plugin / "hooks").mkdir()
     for name in ("state_finalize.py", "atomic_io.py"):
         (plugin / "scripts" / name).write_bytes((ROOT / "scripts" / name).read_bytes())
-    # commit-state is a registered bare command: retain its real fail-open
-    # wrapper and helpers while leaving its unrelated checker unavailable.
-    for name in ("commit-state.sh", "_bounded_hook.sh", "_resolve_python.sh"):
-        (plugin / "hooks" / name).write_bytes((ROOT / "hooks" / name).read_bytes())
     before = state.read_bytes()
     env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin), CLAUDE_PROJECT_DIR=str(tmp_path))
     event = json.dumps({"hook_event_name": "Stop", "session_id": "different-session",
@@ -45,3 +41,13 @@ def test_registered_stop_does_not_label_a_live_peer_as_crashed(tmp_path):
                            text=True, capture_output=True, env=env, cwd=tmp_path,
                            timeout=10, check=True)
     assert state.read_bytes() == before
+
+
+def test_stop_does_not_report_unowned_tracked_dirt():
+    # Global Git dirt is not evidence that this turn left completed work behind.
+    for name in ("hooks.json", "codex.json"):
+        events = json.loads((ROOT / "hooks" / name).read_text())["hooks"]
+        commands = [handler["command"] for group in events["Stop"] for handler in group["hooks"]]
+        assert not any("commit-state.sh" in command or "commit_state_check.py" in command
+                       for command in commands)
+    assert (ROOT / "scripts/commit_state_check.py").exists()  # Explicit check stays available.

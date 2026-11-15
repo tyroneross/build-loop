@@ -441,6 +441,9 @@ def print_human(results: list[dict[str, Any]], source_mode: str, materialized_so
         if action == "skipped":
             print(f"- {host}: skipped ({result.get('reason')})")
             continue
+        if action == "error":
+            print(f"- {host}: error ({result['error']})")
+            continue
         ok = "OK" if result.get("ok", True) else "WARN"
         print(f"- {host}: {ok} {action} {result.get('plugin')}@{result.get('version')}")
         if result.get("cache"):
@@ -480,16 +483,23 @@ def build_sync_payload(source: Path, args: argparse.Namespace) -> dict[str, Any]
     source_for_sync, source_mode, tmp = materialize_source_for_sync(source, args)
     try:
         explicit_host = args.host != "all"
-        results = [
-            sync_one_host(
-                host=host,
-                explicit_host=explicit_host,
-                source_for_sync=source_for_sync,
-                source_for_manifest=source_for_sync,
-                args=args,
-            )
-            for host in host_list(args.host)
-        ]
+        results = []
+        for host in host_list(args.host):
+            try:
+                result = sync_one_host(
+                    host=host,
+                    explicit_host=explicit_host,
+                    source_for_sync=source_for_sync,
+                    source_for_manifest=source_for_sync,
+                    args=args,
+                )
+            except SyncError as exc:
+                if explicit_host:
+                    raise
+                # Host destinations are independent. Retain the failure while
+                # allowing other eligible hosts through their existing guards.
+                result = {"host": host, "action": "error", "ok": False, "error": str(exc)}
+            results.append(result)
         return {
             "ok": all(result.get("ok", True) for result in results),
             "source": str(source),

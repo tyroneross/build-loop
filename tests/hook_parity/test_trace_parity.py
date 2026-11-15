@@ -5,9 +5,9 @@
 ``test_python_contract`` pins each case's outcome on the Python hook alone
 (the oracle). ``test_bl_matches_python`` runs ``bl hook trace`` on the same
 case and requires identical exit status, stdout, stderr and files.
-``test_bl_handles_or_hands_off`` pins which cases ``bl`` handles itself and
-which it hands to Python, so a regression to "always hand off" cannot pass
-the comparison vacuously.
+Supported UTF-8 host events retain strict Python parity. Explicit unsupported
+input and Python-only decoding settings have separate native contract tests;
+no trace event is handed to Python.
 """
 from __future__ import annotations
 
@@ -173,11 +173,11 @@ CASES = [
          expect=span(tool="shell", call="call_1", event="error")),
     Case("codex_post_is_error", codex({"is_error": True}),
          expect=span(tool="shell", call="call_1", event="error")),
-    Case("codex_post_failed_text", codex("Process exited with code 1"), native=False,
+    Case("codex_post_failed_text", codex("Process exited with code 1"),
          expect=span(tool="shell", call="call_1", event="error")),
-    Case("codex_post_exit_zero_text", codex("Exit code: 0\nOutput: fine"), native=False,
+    Case("codex_post_exit_zero_text", codex("Exit code: 0\nOutput: fine"),
          expect=span(tool="shell", call="call_1")),
-    Case("codex_post_nan_string", codex('{"exit_code": NaN}'), native=False,
+    Case("codex_post_nan_string", codex('{"exit_code": NaN}'),
          expect=span(tool="shell", call="call_1", event="error")),
     Case("codex_post_plain_text", codex("total 0\nREADME.md"),
          expect=span(tool="shell", call="call_1")),
@@ -186,13 +186,13 @@ CASES = [
          expect=span(tool="Read", call="c1")),
     Case("duplicate_keys_last_wins", b'{"tool_name":"A","tool_name":"B","session_id":"sess-1"}',
          expect=span(tool="B")),
-    Case("tool_name_non_string", payload(tool_name=5, session_id=SESSION), native=False,
+    Case("tool_name_non_string", payload(tool_name=5, session_id=SESSION),
          expect=span(tool="5")),
     Case("session_from_env", payload(tool_name="Grep"), env={"CLAUDE_SESSION_ID": "env-sess"},
          expect=span(tool="Grep", session="env-sess")),
     Case("session_unknown", payload(tool_name="Grep"),
          expect=span(tool="Grep", session="unknown")),
-    Case("session_non_string", payload(tool_name="Grep", session_id=7), native=False,
+    Case("session_non_string", payload(tool_name="Grep", session_id=7),
          expect=span(tool="Grep", session="7")),
     Case("is_error_truthy_on_end", payload(tool_name="Grep", session_id=SESSION, is_error=1),
          expect=span(tool="Grep", status="ERROR")),
@@ -208,13 +208,13 @@ CASES = [
          expect=span(tool="Grep", attrs={"gen_ai.tool.call.arguments.preview":
                                          '{"b":true,"big":18446744073709551615,"m":0,"n":-42,"z":null}'})),
     Case("float_input", payload(tool_name="Grep", session_id=SESSION, tool_input={"t": 1.5}),
-         native=False, expect=span(tool="Grep", attrs={"gen_ai.tool.call.arguments.preview": '{"t":1.5}'})),
+         expect=span(tool="Grep", attrs={"gen_ai.tool.call.arguments.preview": '{"t":1.5}'})),
     Case("huge_int_input", b'{"tool_name":"Grep","session_id":"sess-1","tool_input":{"n":123456789012345678901234567890}}',
-         native=False, expect=span(tool="Grep", attrs={
+         expect=span(tool="Grep", attrs={
              "gen_ai.tool.call.arguments.preview": '{"n":123456789012345678901234567890}'})),
     Case("timestamp_attaches_run", payload(tool_name="Grep", session_id=SESSION,
                                            timestamp="2026-06-01T00:00:00Z"),
-         state=_active_state(), native=False, start_ns=1_780_272_000_000_000_000,
+         state=_active_state(), start_ns=1_780_272_000_000_000_000,
          expect=span(tool="Grep", attrs={"build_loop.run_id": "bl-run-1"})),
     Case("timestamp_falsy", payload(tool_name="Grep", session_id=SESSION, timestamp=""),
          state=_active_state(), expect=span(tool="Grep", attrs={"build_loop.run_id": None})),
@@ -245,62 +245,114 @@ CASES = [
              '"url":"https://e.x"}'})),
     Case("sensitive_value", payload(tool_name="Bash", session_id=SESSION,
                                     tool_input={"command": "curl -H 'Authorization: Bearer abc123' x"}),
-         native=False, expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview":
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview":
                                                        '{"command":"curl -H \'Authorization: [REDACTED]\' x"}'})),
     Case("sk_value", payload(tool_name="Bash", session_id=SESSION, tool_input={"c": "use sk-abcdefghijkl"}),
-         native=False, expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview": '{"c":"use [REDACTED]"}'})),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview": '{"c":"use [REDACTED]"}'})),
     Case("case_fold_char", payload(tool_name="Bash", session_id=SESSION, tool_input={"c": "ſecret=1"}),
-         native=False, expect=span(tool="Bash")),
+         expect=span(tool="Bash")),
+    Case("redaction_nested_unicode", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"prİvate_Key": {"nested": "fixture-private"}, "list": [
+             {"command": "API KEY = 'fixture-inline'"},
+             "BEARER\u001cfixture-bearer", "ſecret=fixture-secret"]}),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview":
+             '{"list":[{"command":"API KEY = [REDACTED]"},"BEARER\\u001c[REDACTED]",'
+             '"ſecret=[REDACTED]"],"prİvate_Key":"[REDACTED]"}'})),
+    Case("redaction_token_boundaries", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"c": "éghp_abcdefgh ghp_abcdefghé ghp_abcdefgh- ghp_abcdefgh́ "
+                          "sk-project-abcdefgh-xyzé sk_abcdefg sk_abcdefgh _ghp_abcdefgh"}),
+         expect=span(tool="Bash")),
+    Case("redaction_quotes_and_punctuation", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"c": 'password="a b"; TOKEN=\'c,d\', api-key: bearer abc ] '
+                          'x_token=abc; passwd=unterminated\"quoted secret="" cookie=1'}),
+         expect=span(tool="Bash")),
+    Case("redaction_long_unicode_preview", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"c": "😀" * 490 + " token=fixture-secret " + "é" * 1000}),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.truncated": True})),
+    Case("redaction_list_limit", payload(tool_name="Bash", session_id=SESSION,
+         tool_input=["token=fixture-secret"] * 50 + ["Bearer fixture-outside-limit"]),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.truncated": True})),
+    Case("redaction_long_identifier", payload(tool_name="Bash", session_id=SESSION,
+         tool_input="x" + "sk_aaaaaaaa" * 20000 + " Bearer fixture-secret"),
+         expect=span(tool="Bash", attrs={
+             "gen_ai.tool.call.arguments.sha256": sha(json.dumps(
+                 "x" + "sk_aaaaaaaa" * 20000 + " Bearer [REDACTED]")),
+             "gen_ai.tool.call.arguments.truncated": True})),
+    Case("redaction_embedded_bearer", payload(tool_name="Bash", session_id=SESSION,
+         tool_input="xsk_aaaabearer fixture-secret"),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview":
+             '"xsk_aaaabearer [REDACTED]"'})),
+    Case("redaction_github_token_families", payload(tool_name="Bash", session_id=SESSION,
+         tool_input=[f"{prefix}_abcdefgh" for prefix in ("gho", "ghp", "ghs", "ghu", "ghr")]),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview":
+             json.dumps(["[REDACTED]"] * 5, separators=(",", ":"))})),
+    Case("redaction_sensitive_object_keys", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"gho_abcdefgh": {"ghu_abcdefgh": "safe"},
+                     "normal": [{"ghs_abcdefgh": "safe"}], "token=fixture-key-secret": "hidden"}),
+         expect=span(tool="Bash", attrs={
+             "gen_ai.tool.call.arguments.keys": ["[REDACTED]", "normal", "token=[REDACTED]"],
+             "gen_ai.tool.call.arguments.preview":
+                 '{"[REDACTED]":{"[REDACTED]":"safe"},"normal":[{"[REDACTED]":"safe"}],'
+                 '"token=[REDACTED]":"[REDACTED]"}'})),
+    Case("redaction_key_collision", payload(tool_name="Bash", session_id=SESSION,
+         tool_input={"ghp_abcdefgh": "last original key", "gho_abcdefgh": "first original key"}),
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.keys": ["[REDACTED]"],
+             "gen_ai.tool.call.arguments.preview": '{"[REDACTED]":"last original key"}'})),
+    Case("redaction_native_without_tmpdir", payload(tool_name="Bash", session_id=SESSION,
+         tool_input="token=fixture-secret"), env={"TMPDIR": "/nonexistent-dir"},
+         expect=span(tool="Bash", attrs={"gen_ai.tool.call.arguments.preview": '"token=[REDACTED]"'})),
+    Case("codex_unicode_failure_text", codex("ſcript\u001cfailed: 2"),
+         expect=span(tool="shell", call="call_1", event="error")),
     Case("deep_payload", payload(tool_name="Grep", session_id=SESSION, tool_input=deep(150)),
-         native=False, expect=span(tool="Grep")),
+         expect=span(tool="Grep")),
     # --- numbers serde cannot hold inside a Codex JSON string (F2) ---------
-    Case("codex_returncode_overflow", codex('{"returncode": 1e999}'), native=False,
+    Case("codex_returncode_overflow", codex('{"returncode": 1e999}'),
          expect=span(tool="shell", call="call_1", event="error")),
-    Case("codex_error_overflow", codex('{"error": 1e999}'), native=False,
+    Case("codex_error_overflow", codex('{"error": 1e999}'),
          expect=span(tool="shell", call="call_1", event="error")),
-    Case("codex_status_code_400_digits", codex('{"status_code": 1' + "0" * 400 + "}"), native=False,
+    Case("codex_status_code_400_digits", codex('{"status_code": 1' + "0" * 400 + "}"),
          expect=span(tool="shell", call="call_1", event="error")),
     # --- hand-off with an unwritable TMPDIR (F3) ---------------------------
     Case("handoff_with_unwritable_tmpdir", payload(tool_name="Bash", session_id=SESSION,
-                                                   tool_input={"command": "echo token=abc"}),
-         native=False, env={"TMPDIR": "/nonexistent-dir"}, expect=span(tool="Bash")),
+                                                   tool_input={"command": "echo token=abc", "fraction": 1.5}),
+         env={"TMPDIR": "/nonexistent-dir"}, expect=span(tool="Bash")),
     # --- stdin encoding Python would use (F4); RAW is non-ASCII on stdin ----
     Case("latin1_locale_non_ascii", RAW,
-         native=False, env={"LC_ALL": "en_US.ISO8859-1"}),
+         env={"LC_ALL": "en_US.ISO8859-1"}),
     Case("latin1_locale_ascii", claude("PostToolUse"), env={"LC_ALL": "en_US.ISO8859-1"},
          expect=span(tool="Bash", call="toolu_01")),
     Case("lc_ctype_latin1_non_ascii", RAW,
-         native=False, env={"LC_CTYPE": "en_US.ISO8859-1"}),
+         env={"LC_CTYPE": "en_US.ISO8859-1"}),
     Case("lc_all_utf8_over_latin1_lang", RAW,
          env={"LC_ALL": "en_US.UTF-8", "LANG": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
     Case("ioencoding_latin1_non_ascii", RAW,
-         native=False, env={"PYTHONIOENCODING": "latin-1"}),
-    Case("ioencoding_utf16_ascii", claude("PostToolUse"), native=False, env={"PYTHONIOENCODING": "utf-16"}),
+         env={"PYTHONIOENCODING": "latin-1"}),
+    Case("ioencoding_utf16_ascii", claude("PostToolUse"), env={"PYTHONIOENCODING": "utf-16"}),
     Case("ioencoding_utf8_non_ascii", RAW,
          env={"PYTHONIOENCODING": "UTF-8:strict", "LC_ALL": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
     Case("c_locale_non_ascii", RAW,
          env={"LANG": "C"}, expect=span(tool="Edit")),
     Case("utf8_mode_off_c_locale_non_ascii", RAW,
-         native=False, env={"LANG": "C", "PYTHONUTF8": "0"}, expect=span(tool="Edit")),  # C.UTF-8 coercion; bl hands off conservatively
-    Case("unknown_locale_non_ascii", RAW, native=False, env={"LANG": "xx_XX.ISO8859-1"},
+         env={"LANG": "C", "PYTHONUTF8": "0"}, expect=span(tool="Edit")),  # C.UTF-8 coercion; bl hands off conservatively
+    Case("unknown_locale_non_ascii", RAW, env={"LANG": "xx_XX.ISO8859-1"},
          expect=span(tool="Edit")),  # Python falls back to C (UTF-8); bl hands off conservatively
     Case("utf8_mode_on_latin1_locale", RAW,
          env={"PYTHONUTF8": "1", "LC_ALL": "en_US.ISO8859-1"}, expect=span(tool="Edit")),
-    Case("utf8_mode_invalid_value", claude("PostToolUse"), native=False, env={"PYTHONUTF8": "2"}),
+    Case("utf8_mode_invalid_value", claude("PostToolUse"), env={"PYTHONUTF8": "2"}),
     # --- malformed stdin --------------------------------------------------
     Case("empty_stdin", b"", expect=nothing),
     Case("whitespace_stdin", b" \n\t\r ", expect=nothing),
     Case("no_tool_name", payload(session_id=SESSION, tool_input={"a": 1}), expect=nothing),
     Case("non_object_stdin", b"[1, 2]", expect=nothing),
     Case("truncated_stdin", b'{"tool_name": "Bash", ', expect=nothing),
-    Case("malformed_stdin", b"{not json", native=False, expect=nothing),
-    Case("invalid_utf8", b'\xff{"tool_name":"Bash"}', native=False, expect=nothing),
-    Case("bom_stdin", b'\xef\xbb\xbf{"tool_name":"Bash"}', native=False, expect=nothing),
+    Case("malformed_stdin", b"{not json", expect=nothing),
+    Case("invalid_utf8", b'\xff{"tool_name":"Bash"}', expect=nothing),
+    Case("bom_stdin", b'\xef\xbb\xbf{"tool_name":"Bash"}', expect=nothing),
     # --- state.json -------------------------------------------------------
     Case("state_missing", claude("PostToolUse"), state=None, expect=span(tool="Bash", call="toolu_01")),
     Case("state_malformed", claude("PostToolUse"), state=b"{oops", expect=span(tool="Bash", call="toolu_01")),
     Case("state_is_directory", claude("PostToolUse"), state="dir", expect=span(tool="Bash", call="toolu_01")),
-    Case("state_deeply_nested", claude("PostToolUse"), state=b"[" * 300 + b"]" * 300, native=False,
+    Case("state_deeply_nested", claude("PostToolUse"), state=b"[" * 300 + b"]" * 300,
          expect=span(tool="Bash", call="toolu_01")),
     # --- workdir ----------------------------------------------------------
     Case("project_without_build_loop", claude("PostToolUse"), workdir="bare",
@@ -335,6 +387,29 @@ def root(tmp_path):
     return tmp_path.resolve() / "w"
 
 
+# These inputs are outside the native host contract. No partial record or Python
+# subprocess is permitted; diagnostics identify the skipped category without data.
+UNSUPPORTED = {
+    "codex_post_nan_string": "unsupported_json",
+    "codex_returncode_overflow": "unsupported_json",
+    "codex_error_overflow": "unsupported_json",
+    "tool_name_non_string": "unsupported_metadata",
+    "session_non_string": "unsupported_metadata",
+    "truncated_stdin": "unsupported_json",
+    "malformed_stdin": "unsupported_json",
+    "invalid_utf8": "unsupported_encoding",
+    "bom_stdin": "unsupported_json",
+}
+# Python runtime locale overrides do not alter the native UTF-8 wire format.
+ENCODING_OVERRIDES = {
+    "latin1_locale_non_ascii", "lc_ctype_latin1_non_ascii",
+    "ioencoding_latin1_non_ascii", "ioencoding_utf16_ascii",
+    "utf8_mode_off_c_locale_non_ascii", "unknown_locale_non_ascii",
+    "utf8_mode_invalid_value",
+}
+PARITY_CASES = [c for c in CASES if c.name not in UNSUPPORTED and c.name not in ENCODING_OVERRIDES]
+
+
 def test_case_names_unique():
     assert len({c.name for c in CASES}) == len(CASES)
 
@@ -364,17 +439,48 @@ needs_bl = pytest.mark.skipif(not h.BL.exists(), reason="bl not built (cargo bui
 
 
 @needs_bl
-@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+@pytest.mark.parametrize("case", PARITY_CASES, ids=[c.name for c in PARITY_CASES])
 def test_bl_matches_python(case, root):
     _compare(case, root)
 
 
 @needs_bl
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
-def test_bl_handles_or_hands_off(case, root):
+def test_bl_never_hands_trace_events_to_python(case, root):
+    raw = h.run("bl", case, root, extra_env={"BL_TRACE_FALLBACK": "1", "BL_TRACE_EXIT": "1"})
+    assert b"bl: fallback:" not in raw.stderr
+    snap = without_diagnostics(raw)
+    if case.name in UNSUPPORTED:
+        assert ("reason=" + UNSUPPORTED[case.name]).encode() in raw.stderr, raw.stderr
+        nothing(snap)
+    else:
+        assert b"unsupported_" not in raw.stderr, raw.stderr
+        if case.name in ENCODING_OVERRIDES:
+            check = span(tool="Bash", call="toolu_01") if case.stdin != RAW else span(tool="Edit")
+            check(snap)
+            if case.stdin == RAW:
+                expected = json.dumps(NON_ASCII, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                assert snap.new_lines[0]["attributes"]["gen_ai.tool.call.arguments.sha256"] == sha(expected)
+        elif case.expect:
+            case.expect(snap)
+
+
+@needs_bl
+def test_native_redaction_hashes_full_sanitized_content_before_preview(root):
+    value = {"authorization": "fixture-auth", "nested": ["Bearer fixture-bearer", "secret='fixture-space'"],
+             "content": "😀" * 490 + " token=fixture-tail " + "é" * 1000}
+    sanitized = {"authorization": "[REDACTED]", "nested": ["Bearer [REDACTED]", "secret=[REDACTED]"],
+                 "content": "😀" * 490 + " token=[REDACTED] " + "é" * 1000}
+    case = Case("native_redaction_full_hash", payload(tool_name="Bash", session_id=SESSION, tool_input=value))
     snap = h.run("bl", case, root, extra_env={"BL_TRACE_FALLBACK": "1"})
-    handed_off = snap.stderr.startswith(b"bl: fallback:")
-    assert handed_off == (not case.native), snap.stderr
+    encoded = json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    span(tool="Bash", attrs={
+        "gen_ai.tool.call.arguments.sha256": sha(encoded),
+        "gen_ai.tool.call.arguments.bytes": len(encoded.encode()),
+        "gen_ai.tool.call.arguments.preview": encoded[:512],
+        "gen_ai.tool.call.arguments.truncated": True,
+    })(snap)
+    assert all("fixture-" not in body for body in snap.files.values())
 
 
 # --- concurrency and readers ---------------------------------------------
@@ -564,12 +670,14 @@ def test_launcher_without_usable_binary_matches_inline(case, cond, root, tmp_pat
 
 
 @needs_bl
-@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+@pytest.mark.parametrize("case", PARITY_CASES, ids=[c.name for c in PARITY_CASES])
 def test_launcher_with_fresh_binary_matches_inline(case, root, tmp_path):
     plugin = _plugin(tmp_path, "real")
     old = _hook(INLINE, case, root, plugin)
     new = _hook(_registered(case.phase), case, root, plugin)
-    assert new.comparable() == old.comparable()
+    if new.comparable() != old.comparable():
+        evidence = save_failure(root, case.name, plugin / "bin/native/bl", old, new)
+        pytest.fail(f"Launcher mismatch; full snapshots: {evidence}", pytrace=False)
 
 
 @needs_bl
@@ -597,3 +705,183 @@ def test_launcher_late_fallback_never_duplicates(root, tmp_path):
     assert (snap.rc, snap.stdout, snap.stderr) == (0, b"", b"")
     body = snap.files["proj/.build-loop/telemetry/tool-traces.jsonl"]
     assert body.endswith(':{"stub":1}\n'), body
+
+
+@needs_bl
+@pytest.mark.parametrize("timestamp", [
+    "2026-06-01T00:00:00Z", "2026-05-31T17:00:00-07:00",
+    "2026-06-01T05:30:00.123456+05:30", "2026-06-01T00:00:00.123456789Z",
+    "1900-01-01T00:00:00Z", "9999-12-31T23:59:59.999999Z",
+])
+def test_native_timestamp_precision_matches_persisted_python_time(timestamp, root):
+    import datetime
+    ns = int(datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1e9)
+    case = Case("timestamp_precision", payload(tool_name="Grep", session_id=SESSION,
+                timestamp=timestamp), start_ns=ns, state=_active_state())
+    _compare(case, root)
+
+
+@needs_bl
+@pytest.mark.parametrize("change,session,expected", [
+    ({}, SESSION, "bl-run-1"),
+    ({"current_session_id": "resumed", "started_by_session_id": SESSION}, SESSION, "bl-run-1"),
+    ({"current_session_id": "other"}, SESSION, None),
+    ({"started_at": "2026-06-01T00:00:00.000001Z"}, SESSION, None),
+    ({"started_at": "20260601T000000Z", "ended_at": "2026-06-01T00:00:00Z"}, SESSION, "bl-run-1"),
+    ({"ended_at": "2026-05-31T23:59:59.999999Z"}, SESSION, None),
+    ({"ended_at": "invalid"}, SESSION, None),
+    ({"ended_at": "2025-01-01T00:00:00Z"}, SESSION, None),
+    ({"build_loop_id": "conflicting"}, SESSION, None),
+    ({"run_id": None}, SESSION, None),
+])
+def test_native_temporal_ownership_never_borrows_another_run(change, session, expected, root):
+    state = json.loads(_active_state())
+    state["execution"].update(change)
+    state["runs"] = [{"run_id": "completed-history", "session_id": session}]
+    case = Case("temporal_ownership", payload(tool_name="Grep", session_id=session,
+                timestamp="2026-06-01T00:00:00Z"), state=json.dumps(state).encode(),
+                start_ns=1_780_272_000_000_000_000,
+                expect=span(tool="Grep", session=session, attrs={"build_loop.run_id": expected}))
+    _compare(case, root)
+
+
+@needs_bl
+@pytest.mark.parametrize("levels,accepted", [(254, True), (255, True), (256, False), (1000, False)])
+def test_native_real_input_depth_bound_is_safe(levels, accepted, root):
+    # Root adds one container. Construct bytes directly; Python recursion is not
+    # part of this native boundary test and no event payload appears in diagnostics.
+    raw = b'{"tool_name":"Grep","session_id":"sess-1","tool_input":' + b'[' * levels + b'0' + b']' * levels + b'}'
+    case = Case("depth_boundary", raw)
+    result = h.run("bl", case, root, extra_env={"BL_TRACE_EXIT": "1"})
+    snap = without_diagnostics(result)
+    if accepted:
+        span(tool="Grep")(snap)
+        assert b"reason=append_ok" in result.stderr
+    else:
+        nothing(snap)
+        assert b"reason=unsupported_limits" in result.stderr
+    assert b"bl: fallback:" not in result.stderr
+
+
+@needs_bl
+@pytest.mark.parametrize("raw,reason", [
+    (b'{"tool_name":"Bash","tool_input":1e999}', "unsupported_number"),
+    (b'{"tool_name":"Bash","tool_input":NaN}', "unsupported_json"),
+    (b'{"tool_name":"Bash","timestamp":"not-time"}', "unsupported_timestamp"),
+    (b'{"tool_name":"Bash","timestamp":"0000-01-01T00:00:00Z"}', "unsupported_timestamp"),
+    (b'{"tool_name":"Bash","timestamp":"2026-06-01T00:00:00z"}', "unsupported_timestamp"),
+    (b'{"tool_name":"Bash","timestamp":"2026-06-30T23:59:60Z"}', "unsupported_timestamp"),
+    (b'{"tool_name":"Bash","tool_input":"\\ud800"}', "unsupported_json"),
+])
+def test_native_unsupported_input_is_silent_by_default_and_countable(raw, reason, root):
+    case = Case("unsupported_contract", raw)
+    nothing(h.run("bl", case, root))
+    diagnosed = h.run("bl", case, root, extra_env={"BL_TRACE_EXIT": "1"})
+    nothing(without_diagnostics(diagnosed))
+    assert ("reason=" + reason).encode() in diagnosed.stderr
+    assert b"bl: fallback:" not in diagnosed.stderr
+
+
+@needs_bl
+def test_native_numeric_fingerprints_remain_compatible_with_shared_reader(root, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(h.REPO_ROOT / "scripts"))
+    import tool_trace
+    case = Case("numeric_reader", payload(tool_name="Grep", session_id=SESSION,
+                timestamp="2026-06-01T00:00:00Z", tool_input={"float": 1e-7, "negative_zero": -0.0,
+                "huge": 10**400, "nested": [1.5, "token=fixture-hidden"]}),
+                start_ns=1_780_272_000_000_000_000, state=_active_state())
+    legacy = h.run("python", case, root)
+    native = h.run("bl", case, root)
+    assert native.comparable() == legacy.comparable()
+    path = tmp_path / "reader.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in legacy.new_lines + native.new_lines))
+    diagnostics = {"invalid_records": 0}
+    rows = list(tool_trace._iter_trace_rows(path, diagnostics=diagnostics))
+    assert len(rows) == 2 and diagnostics["invalid_records"] == 0
+    assert rows[0]["attributes"]["gen_ai.tool.call.arguments.sha256"] == rows[1]["attributes"]["gen_ai.tool.call.arguments.sha256"]
+    assert all(row["attributes"]["build_loop.run_id"] == "bl-run-1" for row in rows)
+    assert "fixture-hidden" not in path.read_text()
+    # Live hook records remain observed hook spans, never counted as reconciled
+    # tool calls merely because the writer changed language.
+    summary = tool_trace.summarize_path(path, run_id="bl-run-1")
+    assert summary["tool_calls"] == 0
+    assert summary["coverage"]["invalid_trace_records"] == 0
+
+
+@needs_bl
+@pytest.mark.parametrize("value", [
+    {"$serde_json::private::Number": "1"},
+    {"$serde_json::private::Number": "secret=fixture-hidden", "safe": [1.5]},
+    [{"$serde_json::private::Number": "1e999"}, 10**400],
+])
+def test_native_arbitrary_precision_cannot_reinterpret_real_object_keys(value, root):
+    _compare(Case("reserved_number_key", payload(tool_name="Grep", session_id=SESSION, tool_input=value)), root)
+
+
+@needs_bl
+@pytest.mark.parametrize("literal", ["-0", "0", "-0.0", "1e-999", "-1e-999", "1e23", "1e-4", "1e-5", "1e16", "1e15", "1.7976931348623157e308", "5e-324"])
+def test_native_numeric_lexemes_keep_python_fingerprint(literal, root):
+    raw = b'{"tool_name":"Grep","session_id":"sess-1","tool_input":' + literal.encode() + b'}'
+    _compare(Case("numeric_lexeme", raw), root)
+
+
+@needs_bl
+def test_native_attribution_ignores_unrelated_large_numbers_in_state(root):
+    state = json.loads(_active_state())
+    state["unrelated"] = 10**400
+    state["execution"]["irrelevant"] = {"$serde_json::private::Number": "1", "huge": 10**400}
+    case = Case("state_large_numbers", payload(tool_name="Grep", session_id=SESSION, timestamp="2026-06-01T00:00:00Z"),
+                state=json.dumps(state).encode(), start_ns=1_780_272_000_000_000_000,
+                expect=span(tool="Grep", attrs={"build_loop.run_id": "bl-run-1"}))
+    _compare(case, root)
+
+
+@needs_bl
+@pytest.mark.parametrize("unrelated", [b'1e999', b'-1e999', b'{"nested":[1e999]}'])
+def test_native_state_numeric_range_does_not_change_shared_reader_attribution(unrelated, root, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(h.REPO_ROOT / "scripts"))
+    import tool_trace
+    state = _active_state()[:-1] + b',"unrelated":' + unrelated + b'}'
+    case = Case("state_numeric_range", payload(tool_name="Grep", session_id=SESSION,
+                timestamp="2026-06-01T00:00:00Z"), state=state,
+                start_ns=1_780_272_000_000_000_000,
+                expect=span(tool="Grep", attrs={"build_loop.run_id": "bl-run-1"}))
+    _compare(case, root)
+    native = h.run("bl", case, root)
+    path = tmp_path / "state-range-reader.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in native.new_lines))
+    diagnostics = {"invalid_records": 0}
+    rows = list(tool_trace._iter_trace_rows(path, diagnostics=diagnostics))
+    assert diagnostics["invalid_records"] == 0 and len(rows) == 1
+    assert rows[0]["attributes"]["build_loop.run_id"] == "bl-run-1"
+    assert rows[0]["start_time_unix_nano"] == case.start_ns
+
+
+@needs_bl
+@pytest.mark.parametrize("value", [
+    {"$serde_json::private::RawValue": "[]"},
+    {"$serde_json::private::RawValue": '{"file_path":"/other/x.py"}', "safe": True},
+    {"nested": [{"$serde_json::private::RawValue": "secret=fixture-hidden"}]},
+])
+def test_native_literal_raw_value_keys_are_ordinary_data(value, root):
+    _compare(Case("literal_raw_key", payload(tool_name="Grep", session_id=SESSION, tool_input=value)), root)
+
+
+@needs_bl
+def test_native_large_integer_extension_is_readable_without_python_digit_limit(root, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(h.REPO_ROOT / "scripts"))
+    import tool_trace
+    digits = b"9" * 5000  # Deliberately beyond CPython's default4300-digit decoder guard.
+    case = Case("large_integer_extension", b'{"tool_name":"Grep","session_id":"sess-1","tool_input":' + digits + b'}')
+    result = h.run("bl", case, root)
+    span(tool="Grep")(result)
+    attrs = result.new_lines[0]["attributes"]
+    assert attrs["gen_ai.tool.call.arguments.sha256"] == hashlib.sha256(digits).hexdigest()
+    assert attrs["gen_ai.tool.call.arguments.preview"] == "9" * 512
+    assert attrs["gen_ai.tool.call.arguments.bytes"] == 5000
+    assert attrs["gen_ai.tool.call.arguments.truncated"] is True
+    path = tmp_path / "large-integer-reader.jsonl"
+    path.write_text(json.dumps(result.new_lines[0]) + "\n")
+    diagnostics = {"invalid_records": 0}
+    assert len(list(tool_trace._iter_trace_rows(path, diagnostics=diagnostics))) == 1
+    assert diagnostics["invalid_records"] == 0

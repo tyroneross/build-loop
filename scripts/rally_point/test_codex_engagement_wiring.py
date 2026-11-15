@@ -89,11 +89,11 @@ def test_claude_plugin_preserves_session_start_event_stdin() -> None:
         hook.get("command", "")
         for matcher in data["hooks"]["SessionStart"]
         for hook in matcher.get("hooks", [])
-        if "session-start-rally-point.sh" in str(hook.get("command", ""))
     ]
-    assert commands
+    from scripts import session_start_hook_command as registration
+    assert commands == [registration.NATIVE]
     assert all("</dev/null" not in command for command in commands), (
-        "The Rally SessionStart hook must receive Claude's event JSON session_id."
+        "The consolidated SessionStart command must receive Claude's event JSON session_id."
     )
 
 

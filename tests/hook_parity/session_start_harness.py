@@ -42,7 +42,7 @@ BL = Path(os.environ.get("BL_BIN") or REPO_ROOT / "target" / "release" / "bl")
 REAL_PYTHON = os.path.realpath(sys.executable)
 SESSION = "11111111-2222-3333-4444-555555555555"
 # Calls the shell hooks make only to compute a value bl computes itself.
-HELPERS = ("-", "-c", "actor_identity.py")
+HELPERS = ("-", "-c", "actor_identity.py", "codex_hook_trust_check.py", "session_start_hook_command.py")
 # The shortest step deadline is 1.2 s (architecture) and 1.5 s elsewhere.
 SLOW_SECONDS = 1.1
 RECORDED_ONLY = ("session_probe.py", "peer_collision.py", "_arch_scan_bg.py")
@@ -113,6 +113,7 @@ class Snapshot:
     # A step ran long enough that a deadline may have cut it (machine load).
     slow: bool = False
     stderr: bytes = b""
+    trust_python_calls: int = 0
 
     def comparable(self) -> dict:
         return {"rc": self.rc, "stdout": self.stdout, "files": self.files, "spawns": self.spawns,
@@ -356,8 +357,11 @@ def run(impl: str, case: Case, root: Path, *, merge=registration.merge, argv: li
     elapsed = time.time() - started
     spawns, background = collect_spawns(world)
     stdout = _norm(stdout.decode("utf-8", "replace"), world.root).encode()
+    log = world.spawns / "log"
+    trust_calls = sum(line.startswith("codex_hook_trust_check.py\x1f")
+                      for line in (log.read_text() if log.exists() else "").split("\x1d"))
     return Snapshot(rc, stdout, parts, snapshot_files(world), spawns, background, elapsed,
-                    slow=world.slowest >= SLOW_SECONDS, stderr=stderr)
+                    slow=world.slowest >= SLOW_SECONDS, stderr=stderr, trust_python_calls=trust_calls)
 
 
 def run_stable(impl: str, case: Case, root: Path, attempts: int = 4, **kwargs) -> Snapshot:

@@ -19,7 +19,17 @@ fn scratch(name: &str) -> PathBuf {
 fn bl(root: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bl"));
     cmd.args(["hook", "session-start", "--root"]).arg(root);
+    cmd.env("HOME", root).env("XDG_STATE_HOME", root.join("state"));
     cmd
+}
+
+const TRUST_CONTEXT: &str = "Codex hook trust: review recorded state in /hooks.\n   Stop stop:0:0: no recorded grant\n   Only Codex can confirm current hook trust; this check changes no grants.";
+
+fn trust_fixture(root: &Path) {
+    std::fs::create_dir_all(root.join(".codex")).unwrap();
+    std::fs::write(root.join(".codex/config.toml"), "").unwrap();
+    std::fs::write(root.join(".codex/hooks.json"),
+        r#"{"hooks":{"Stop":[{"hooks":[{"command":"echo fixture"}]}]}}"#).unwrap();
 }
 
 #[test]
@@ -74,11 +84,11 @@ fn run_deadline_prints_an_empty_object_when_stdin_never_closes() {
 #[test]
 fn run_deadline_keeps_finished_steps_and_kills_the_rest() {
     let root = scratch("partial");
+    trust_fixture(&root);
     let bin = root.join("bin");
     std::fs::create_dir_all(root.join("scripts")).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(root.join("scripts/tool_state_paths.py"), "").unwrap();
-    std::fs::write(root.join("scripts/codex_hook_trust_check.py"), "").unwrap();
     let pidfile = root.join("hung.pid");
     let stub = format!(
         "#!/bin/sh\ncase \"$1\" in */codex_hook_trust_check.py) echo 'trust report';; \
@@ -98,10 +108,9 @@ fn run_deadline_keeps_finished_steps_and_kills_the_rest() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8(out.stdout).unwrap(),
-        "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"trust report\"}}\n"
-    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["hookSpecificOutput"]["additionalContext"], TRUST_CONTEXT);
+
     let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
     std::thread::sleep(Duration::from_millis(200));
     let alive = Command::new("/bin/kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success();
@@ -112,12 +121,12 @@ fn run_deadline_keeps_finished_steps_and_kills_the_rest() {
 #[test]
 fn stalled_event_input_preserves_independent_context() {
     let root = scratch("stdin-context");
+    trust_fixture(&root);
     let bin = root.join("bin");
     std::fs::create_dir_all(root.join("scripts")).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(root.join("scripts/codex_hook_trust_check.py"), "").unwrap();
     let python = bin.join("python3");
-    std::fs::write(&python, "#!/bin/sh\necho 'independent trust context'\n").unwrap();
+    std::fs::write(&python, "#!/bin/sh\nexit 91\n").unwrap();
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut child = bl(&root)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
@@ -128,8 +137,7 @@ fn stalled_event_input_preserves_independent_context() {
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(0));
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(value["hookSpecificOutput"]["additionalContext"].as_str().unwrap()
-        .contains("independent trust context"));
+    assert_eq!(value["hookSpecificOutput"]["additionalContext"], TRUST_CONTEXT);
 }
 
 #[test]
@@ -182,15 +190,16 @@ fn cancellation_kills_foreground_workers() {
 #[test]
 fn tool_state_deadline_stops_git_and_preserves_other_context() {
     let root = scratch("tool-state-deadline");
+    trust_fixture(&root);
     let bin = root.join("bin");
     std::fs::create_dir_all(root.join("scripts")).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    for name in ["tool_state_paths.py", "codex_hook_trust_check.py"] {
+    for name in ["tool_state_paths.py"] {
         std::fs::write(root.join("scripts").join(name), "").unwrap();
     }
     let pidfile = root.join("git.pid");
     std::fs::write(bin.join("git"), format!("#!/bin/sh\necho $$ > '{}'\nexec /bin/sleep 30\n", pidfile.display())).unwrap();
-    std::fs::write(bin.join("python3"), "#!/bin/sh\necho 'independent trust context'\n").unwrap();
+    std::fs::write(bin.join("python3"), "#!/bin/sh\nexit 91\n").unwrap();
     for name in ["git", "python3"] {
         std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -204,7 +213,7 @@ fn tool_state_deadline_stops_git_and_preserves_other_context() {
         .stdin(Stdio::null()).output().unwrap();
     assert_eq!(out.status.code(), Some(0));
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["hookSpecificOutput"]["additionalContext"], "independent trust context");
+    assert_eq!(value["hookSpecificOutput"]["additionalContext"], TRUST_CONTEXT);
     assert!(started.elapsed() < Duration::from_secs(3));
     let pid = std::fs::read_to_string(pidfile).unwrap().trim().to_string();
     let alive = Command::new("/bin/kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success();

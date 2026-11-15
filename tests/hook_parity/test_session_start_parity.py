@@ -188,21 +188,36 @@ def test_legacy_contract(case, legacy, tmp_path):
         assert case.expect(first) is not False
 
 
-@pytest.mark.parametrize("case", CASES, ids=IDS)
+@pytest.mark.parametrize("case", [c for c in CASES if c.path == "full"],
+                         ids=[c.name for c in CASES if c.path == "full"])
 def test_bl_matches_legacy(case, legacy, tmp_path):
     if not h.BL.exists():
         pytest.skip(f"{h.BL} not built")
     # Python-only fault injection no longer reaches a native snapshot.
     # Keep the legacy failure tests above, and compare native behavior with
     # the same case without the obsolete worker fault.
-    if case.env.get("HARNESS_SLOW") == "tool_state_paths.py" or case.env.get("HARNESS_FAIL") == "tool_state_paths.py":
+    if case.env.get("HARNESS_SLOW") in ("tool_state_paths.py", "codex_hook_trust_check.py") or case.env.get("HARNESS_FAIL") in ("tool_state_paths.py", "codex_hook_trust_check.py"):
         case = replace(case, name=case.name + "_native", timing=False,
                        env={k: v for k, v in case.env.items() if not k.startswith("HARNESS_")})
     want = legacy(case)
     got = h.run_stable("bl", case, tmp_path / "bl")
     skip_if_loaded(case, want, got)
     assert (b"bl: fallback:" in got.stderr) == case.handoff, got.stderr
+    if not case.handoff:
+        assert got.trust_python_calls == 0, "native trust must not invoke Python"
     assert want.comparable() == got.comparable(), diff(want.comparable(), got.comparable())
+
+
+@pytest.mark.parametrize("path", ["no-python", "no-perl"])
+def test_native_context_survives_missing_legacy_interpreters(path, tmp_path):
+    if not h.BL.exists():
+        pytest.skip(f"{h.BL} not built")
+    case = Case("native_without_" + path, path=path)
+    got = h.run_stable("bl", case, tmp_path / "native")
+    assert got.rc == 0
+    assert b"bl: fallback:" not in got.stderr
+    assert got.trust_python_calls == 0
+    expect_contexts(TOOL_STATE, TRUST)(got)
 
 
 def test_swapped_outputs_change_the_expected_stdout(legacy):
@@ -224,22 +239,24 @@ LAUNCHER_CASES = [c for c in CASES if c.name in (
 @pytest.mark.parametrize("case", LAUNCHER_CASES, ids=[c.name for c in LAUNCHER_CASES])
 def test_launcher_registered_commands(case, state, tmp_path):
     """The registered commands, run as the host runs them. Binary absent,
-    stale or switched off: the native entry prints nothing and the five
-    legacy entries behave exactly as the old commands. Fresh: the native
-    entry prints the merged context and the legacy entries print nothing."""
+    stale or switched off: the recovery aggregator runs the five legacy
+    commands. Fresh: the native entry prints merged context. Either path must
+    deliver exactly one JSON response with the same effects."""
     if not h.BL.exists():
         pytest.skip(f"{h.BL} not built")
+    # A fresh native binary does not invoke the Python trust helper. Keep the
+    # absent/stale/off oracle failure tests; native failures have Rust fixtures.
+    if state == "fresh" and case.env.get("HARNESS_FAIL") == "codex_hook_trust_check.py":
+        case = replace(case, env={k: v for k, v in case.env.items() if k != "HARNESS_FAIL"})
     want = h.run_stable("legacy", case, tmp_path / "legacy", plugin=state)
     got = h.run_stable("registered", case, tmp_path / "registered", plugin=state)
     skip_if_loaded(case, want, got)
-    native, legacy_parts = got.parts[0], got.parts[1:]
+    assert len(got.parts) == 1
+    assert got.parts[0].startswith(b"{")
     if state == "fresh":
-        assert all(p == b"" for p in legacy_parts), legacy_parts
-        assert native.startswith(b"{")
+        assert got.trust_python_calls == 0, "fresh launcher must use native trust"
     else:
-        assert native == b""
-        assert [h.registration.context_of(p) for p in legacy_parts] == \
-            [h.registration.context_of(p) for p in want.parts]
+        assert got.trust_python_calls == want.trust_python_calls
     assert want.comparable() == got.comparable(), diff(want.comparable(), got.comparable())
 
 

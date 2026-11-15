@@ -1,33 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""The SessionStart hook commands in hooks/hooks.json, from one template.
+"""One SessionStart registration, with native dispatch and bounded recovery.
 
-``LEGACY`` is the five shell hooks as they were registered before the native
-path existed: (name, command, host timeout in seconds, matcher group). They
-are the fallback for the comparison period and the oracle for
-tests/hook_parity/test_session_start_parity.py.
+The fresh native binary aggregates five sub-step contexts. When it is absent,
+stale or disabled, --fallback runs the LEGACY commands with their own budgets
+and merges their output by the same rule. LEGACY also remains the parity oracle.
+No fallback interpreter is started on the fresh native path.
 
-Why six entries and not one. A host reads a hook's stdout as JSON only when
-it is exactly one JSON object (Claude Code: code.claude.com/docs/en/hooks
-"Exit code 0"; Codex: developers.openai.com/codex/hooks "SessionStart"), and
-runs every matching hook concurrently. Five hooks therefore deliver five
-separate contexts, and one process can deliver only one object. So:
-
-- one new entry runs ``bin/native/bl hook session-start`` behind the
-  freshness guard and prints ONE object whose ``additionalContext`` joins the
-  sub-steps' contexts in order (``merge`` below is the rule; ``bl`` implements
-  the same rule and the parity suite compares them byte for byte);
-- each legacy entry keeps its exact old command behind the NEGATED guard, so
-  with the binary absent, stale or switched off the host runs today's five
-  commands unchanged, and with a fresh binary each is one shell that starts
-  nothing.
-
-Removing the shell hooks later is: delete the five legacy entries (set
-``LEGACY = ()``), run ``--write``, delete the hook files.
-
-``python3 scripts/session_start_hook_command.py --write`` rewrites hooks.json
-and the Codex copy hooks/codex.json; ``--check`` exits 1 when either differs.
+--write / --check generate hooks/hooks.json and hooks/codex.json.
 """
 from __future__ import annotations
 
@@ -95,8 +76,29 @@ GUARD = " ".join([
     '&& { read -r b < "$r/crates/SOURCES.digest"; } 2>/dev/null',
     '&& [ -n "$b" ] && [ "$a" = "$b" ]; then',
 ])
-# No `exec`: bl's parent stays this shell, as each hook's parent was.
-NATIVE = GUARD + ' "$r/bin/native/bl" hook session-start --root "$r" 2>/dev/null; fi; exit 0'
+# No `exec`: preserve the observer parent while forwarding host cancellation.
+# Wait status, not PID liveness, tells us when the child has been reaped.
+CHILD_RUNNER = " ".join([
+    '_bl_session_child() { p=""; cancelled=0; interrupted=0;',
+    "trap 'cancelled=1; interrupted=1; if [ -n \"$p\" ]; then kill -TERM \"$p\" 2>/dev/null || :; fi' HUP INT TERM;",
+    '"$@" <&0 & p=$!;',
+    'if [ "$cancelled" = 1 ]; then kill -TERM "$p" 2>/dev/null || :; fi;',
+    'while :; do interrupted=0; child_rc=0; wait "$p" || child_rc=$?;',
+    'if [ "$child_rc" -le 128 ] || [ "$interrupted" = 0 ]; then break; fi; done;',
+    'trap - HUP INT TERM; if [ "$cancelled" = 1 ]; then exit 0; fi; return "$child_rc"; };',
+])
+RECOVERY = (
+    'if command -v python3 >/dev/null 2>&1; then '
+    '_bl_session_child python3 "$r/scripts/session_start_hook_command.py" --fallback "$r" 2>/dev/null; '
+    "else printf '{}'; fi"
+)
+NATIVE = CHILD_RUNNER + " " + GUARD + (
+    ' _bl_session_child "$r/bin/native/bl" hook session-start --root "$r" 2>/dev/null; rc=$?; '
+    # These codes guarantee the hook never read its event. Do not replay after
+    # arbitrary failures: a started worker could already have changed state.
+    'case "$rc" in 75|126|127) ' + RECOVERY + ';; esac; '
+    'else ' + RECOVERY + '; fi; exit 0'
+)
 # tool-state (2 s host limit today) runs first, then at most the longest
 # remaining hook (5 s), plus a second of margin; today's five limits sum to 14.
 NATIVE_TIMEOUT = 8
@@ -108,13 +110,9 @@ def legacy_command(command: str) -> str:
 
 
 def groups() -> list[dict]:
-    """The SessionStart registration: the native entry, then each legacy
-    hook in its original matcher group and order."""
-    out: list[dict] = [{"matcher": "", "hooks": [
-        {"type": "command", "command": NATIVE, "timeout": NATIVE_TIMEOUT}]}, {"hooks": []}]
-    for _name, command, timeout, group in LEGACY:
-        out[group]["hooks"].append({"type": "command", "command": legacy_command(command), "timeout": timeout})
-    return [g for g in out if g["hooks"]]
+    """Exactly one host command and one JSON response on either runtime path."""
+    return [{"matcher": "", "hooks": [
+        {"type": "command", "command": NATIVE, "timeout": NATIVE_TIMEOUT}]}]
 
 
 def render(text: str) -> str:
@@ -128,7 +126,136 @@ def render(text: str) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def fallback(root: str, payload: bytes | None, legacy=None) -> bytes:
+    """Recovery-only aggregation, with the same event copied to every command.
+
+    Tool-state completes before coordination starts. Other steps are independent
+    and run concurrently, so their original per-hook budgets fit the 8s host limit.
+    """
+    import concurrent.futures
+    import os
+    import signal
+    import select
+    import subprocess
+    import threading
+    import time
+
+    commands = LEGACY if legacy is None else legacy
+    started = time.monotonic()
+    raw_limit = os.environ.get("BUILD_LOOP_SESSION_START_DEADLINE_MS", "7500")
+    limit = int(raw_limit) if raw_limit.isascii() and raw_limit.isdigit() else 7500
+    limit = limit if 100 <= limit <= 7500 else 7500
+    overall_until = started + limit / 1000
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=root)
+    # Recovery must not skip itself or redispatch the unusable fresh binary.
+    env["BUILD_LOOP_NATIVE_HOOKS"] = "off"
+    env["BUILD_LOOP_SESSION_START_AGGREGATOR_PARENT_PID"] = str(os.getppid())
+    children = set()
+    lock = threading.Lock()
+    cancelled = threading.Event()
+
+    def stop(proc):
+        # TERM reaches the legacy supervisor, which cleans its own child group.
+        # Leave enough grace for that supervisor's 70ms bounded cleanup.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                pass
+            if sig == signal.SIGTERM:
+                time.sleep(0.1)
+
+    def run(item, event):
+        _name, command, timeout, _group = item
+        with lock:
+            if cancelled.is_set():
+                return b"{}"
+            try:
+                proc = subprocess.Popen(["/bin/sh", "-c", command], env=env,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError:
+                return b"{}"
+            children.add(proc)
+        try:
+            until = min(time.monotonic() + timeout, overall_until)
+            next_input = event
+            while not cancelled.is_set() and time.monotonic() < until:
+                try:
+                    stdout, _ = proc.communicate(next_input, timeout=min(.05, max(.001, until-time.monotonic())))
+                    return stdout if not cancelled.is_set() else b"{}"
+                except subprocess.TimeoutExpired:
+                    next_input = None
+            stop(proc)
+            try:
+                proc.communicate(timeout=0.2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            return b"{}"
+        except OSError:
+            stop(proc)
+            return b"{}"
+        finally:
+            for pipe in (proc.stdin, proc.stdout):
+                if pipe is not None:
+                    pipe.close()
+            with lock:
+                children.discard(proc)
+
+    def cancel(_sig, _frame):
+        # A flag avoids interrupting Popen between spawn and child registration.
+        cancelled.set()
+
+    previous = {sig: signal.signal(sig, cancel)
+                for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(commands)))
+    try:
+        if not commands:
+            return b"{}"
+        independent = {i: pool.submit(run, item, b"") for i, item in enumerate(commands)
+                       if item[0] in ("architecture", "closeout", "codex-hook-trust")}
+        if payload is None:
+            # Legacy event readers cap at 64 KiB and the tool-state supervisor
+            # gives stdin at most 1.5s. Independent contexts must not wait for EOF.
+            data = bytearray()
+            read_until = min(overall_until, started + 1.5)
+            while len(data) < 65536 and not cancelled.is_set() and time.monotonic() < read_until:
+                ready, _, _ = select.select([sys.stdin.fileno()], [], [],
+                    min(.05, max(0, read_until-time.monotonic())))
+                if ready:
+                    chunk = os.read(sys.stdin.fileno(), min(8192, 65536-len(data)))
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+            payload = bytes(data)
+        outputs = [b"{}"] * len(commands)
+        dependent = [i for i in range(len(commands)) if i not in independent]
+        if dependent and not cancelled.is_set():
+            first = dependent.pop(0)
+            outputs[first] = run(commands[first], payload)
+        futures = {**independent, **{i: pool.submit(run, commands[i], payload) for i in dependent}}
+        for i, future in futures.items():
+            outputs[i] = future.result()
+        return b"{}" if cancelled.is_set() else merge(outputs)
+    finally:
+        cancelled.set()
+        # A worker cannot register a new child after this lock has been taken.
+        with lock:
+            active = list(children)
+        for proc in active:
+            stop(proc)
+        pool.shutdown(wait=True, cancel_futures=True)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[0] == "--fallback":
+        try:
+            sys.stdout.buffer.write(fallback(argv[1], None))
+        except (OSError, ValueError):
+            sys.stdout.buffer.write(b"{}")
+        return 0
     if argv not in (["--write"], ["--check"]):
         print(__doc__.split("\n\n")[0], file=sys.stderr)
         return 2

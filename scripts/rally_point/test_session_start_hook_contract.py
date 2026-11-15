@@ -1,4 +1,4 @@
-"""The registered startup command must return JSON within the host deadline."""
+"""Legacy Rally worker contracts plus the consolidated registered stdin boundary."""
 from __future__ import annotations
 
 import json
@@ -12,6 +12,8 @@ import textwrap
 import time
 
 import pytest
+
+from scripts import session_start_hook_command as registration
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -72,8 +74,10 @@ def startup(tmp_path: Path):
         "HOOK_TEST_ACTOR_LOG": str(tmp_path / "actor"),
         "HOOK_TEST_PROBE_LOG": str(tmp_path / "probe"),
     })
-    registered = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]["SessionStart"]
-    command = next(h["command"] for group in registered for h in group["hooks"] if "session-start-rally-point.sh" in h["command"])
+    # Keep interpreter, Perl deadline and standalone worker tests on the actual
+    # recovery worker; it is no longer a separate host registration.
+    command = next(command for name, command, _timeout, _group in registration.LEGACY
+                   if name == "rally-point")
     payload = json.dumps({"session_id": "session-a", "hook_event_name": "SessionStart"}, indent=2)
     return command, payload, env
 
@@ -86,7 +90,7 @@ def run_startup(startup, **overrides):
 
 
 @pytest.mark.parametrize("host", ["codex", "claude_code"])
-def test_registered_command_returns_one_session_start_envelope(startup, host):
+def test_legacy_worker_returns_one_session_start_envelope(startup, host):
     overrides = {"CODEX_THREAD_ID": "session-a"} if host == "codex" else {"CLAUDE_SESSION_ID": "session-a"}
     proc, elapsed = run_startup(startup, **overrides)
     assert proc.returncode == 0
@@ -141,9 +145,8 @@ def test_host_tool_precedence(startup, overrides, actor):
 def test_supervisor_preserves_parent_for_identity_and_watch(startup):
     command, _, env = startup
     # Exec avoids introducing the registration shell as another parent.
-    # The registered entry is "<native guard> exit 0; fi; <hook command>".
-    hook = command.split("exit 0; fi; ", 1)[-1]
-    proc = subprocess.run(["/bin/bash", "-c", "exec " + hook.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
+    # Invoke the standalone recovery worker directly for its parent contract.
+    proc = subprocess.run(["/bin/bash", "-c", "exec " + command.split(" 2>/dev/null;")[0]], input="{}", capture_output=True, text=True, env=env, timeout=3)
     assert proc.returncode == 0
     assert Path(env["HOOK_TEST_ACTOR_LOG"]).read_text() == f"claude_code:claude_code-proc-{os.getpid()}"
     probe = Path(env["HOOK_TEST_PROBE_LOG"])
@@ -239,3 +242,22 @@ def test_stdin_without_eof_is_inside_deadline(startup):
             proc.wait(timeout=2)
         proc.stdout.close()
         proc.stderr.close()
+
+
+@pytest.mark.parametrize("manifest,host", [("hooks/hooks.json", "claude_code"), ("hooks/codex.json", "codex")])
+def test_consolidated_registration_delivers_event_stdin_to_rally_worker(startup, manifest, host):
+    _, _, env = startup
+    plugin = Path(env["CLAUDE_PLUGIN_ROOT"])
+    shutil.copy2(ROOT / "scripts/session_start_hook_command.py", plugin / "scripts/session_start_hook_command.py")
+    groups = json.loads((ROOT / manifest).read_text())["hooks"]["SessionStart"]
+    commands = [hook["command"] for group in groups for hook in group["hooks"]]
+    assert commands == [registration.NATIVE]
+    event = json.dumps({"session_id": "event-only-registered", "hook_event_name": "SessionStart"}, indent=2)
+    # No environment session ID can substitute for this event-only identity.
+    result = subprocess.run(["/bin/sh", "-c", commands[0]], input=event,
+        env=dict(env, RALLY_HOST_FAMILY=host, BUILD_LOOP_NATIVE_HOOKS="off"),
+        capture_output=True, text=True, timeout=registration.NATIVE_TIMEOUT + 1)
+    assert result.returncode == 0 and result.stderr == ""
+    assert json.loads(result.stdout) == {"hookSpecificOutput": {"hookEventName": "SessionStart",
+        "additionalContext": "Rally Point: fixture - 1 live peer(s)"}}
+    assert Path(env["HOOK_TEST_ACTOR_LOG"]).read_text() == f"{host}:event-only-registered"

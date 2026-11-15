@@ -58,8 +58,6 @@ EXTRA: list[tuple[str, str, object, dict]] = [
     ("compound-first-word", "policy", "echo ok && danger-block now", {}),
     ("compound-first-word-2", "opted", "ls && git push --force origin main", {}),
     ("autonomy-ask-default", "opted", "gh pr merge 12 --squash", {}),
-    ("home-unset", "opted", "ls", {"HOME": None}),
-    ("home-unset-plain", "plain", "ls", {"HOME": None}),
     ("cwd-is-home", "home", "danger-block now", {}),
     ("git-dir-env", "opted", "ls", {"GIT_DIR": "/nonexistent"}),
     ("python-missing", "opted", "ls", {"PATH": "@nopy"}),
@@ -196,7 +194,7 @@ def make_paths(base: Path) -> dict[str, str]:
     return {"@nopy": str(nopy), "@gatesfail": f"{gf}:{os.environ.get('PATH', '')}"}
 
 
-def run_case(tree: Path, scratch: dict, paths: dict[str, str], case) -> subprocess.CompletedProcess:
+def run_case(tree: Path, scratch: dict, paths: dict[str, str], case, *, argv=None) -> subprocess.CompletedProcess:
     name, project, spec, extra = case
     cwd = scratch[project]
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "BUILD_LOOP_", "BL_", "CLAUDE_"))}
@@ -207,7 +205,7 @@ def run_case(tree: Path, scratch: dict, paths: dict[str, str], case) -> subproce
         else:
             env[key] = paths.get(value, value)
     run_dir = Path(cwd) if Path(cwd).is_dir() else scratch["opted"]
-    return subprocess.run(["/bin/bash", "-c", HOOK], cwd=run_dir, input=event_bytes(spec, cwd, f"diff-{name}"),
+    return subprocess.run(argv or ["/bin/bash", "-c", HOOK], cwd=run_dir, input=event_bytes(spec, cwd, f"diff-{name}"),
                           capture_output=True, env=env, timeout=60)
 
 
@@ -306,6 +304,68 @@ class Differential(unittest.TestCase):
             self.skipTest("this checkout still starts a second python3 for the gates")
         self.assertEqual((a.returncode, a.stdout), (2, b"{}"))
         self.assertEqual((b.returncode, b.stdout), (0, b"{}\n"))
+
+
+class MissingHomeContract(unittest.TestCase):
+    """Intentional repair, not legacy byte parity: both old home-unset cases
+    crashed under set-u and emitted deny plus an unbound-variable diagnostic.
+    New source must evaluate real scope/policy in native and recovery modes.
+    """
+    def test_unset_home_preserves_policy_for_native_and_fallback(self):
+        binary = Path(os.environ.get("BL_BIN") or PLUGIN_ROOT / "target/release/bl")
+        self.assertTrue(binary.is_file(), "build the native binary before the missing-HOME contract test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            scratch = make_scratch(root / "scratch")
+            paths = make_paths(root / "path")
+            cases = [("opted", "ls", None), ("plain", "ls", None),
+                     ("policy", "danger-block now", "deny"),
+                     ("policy", "danger-confirm now", "ask"),
+                     ("plain", "security find-generic-password -s fixture -w", "deny"),
+                     ("opted", "rm -rf /", "deny")]
+            for mode in ["fallback", "native"]:
+                for project, command, decision in cases:
+                    with self.subTest(mode=mode, project=project, command=command):
+                        case = ("missing-home", project, command,
+                                {"HOME": None, "BUILD_LOOP_NATIVE_HOOKS": "off"})
+                        argv = [str(binary), "hook", "pre-bash"] if mode == "native" else None
+                        result = run_case(PLUGIN_ROOT, scratch, paths, case, argv=argv)
+                        self.assertEqual(result.returncode, 0)
+                        self.assertEqual(result.stderr, b"")
+                        envelope = json.loads(result.stdout)
+                        self.assertEqual(envelope.get("hookSpecificOutput", {}).get("permissionDecision"), decision)
+
+
+    def test_unresolved_passwd_home_fails_closed_but_explicit_empty_home_remains_supported(self):
+        binary = Path(os.environ.get("BL_BIN") or PLUGIN_ROOT / "target/release/bl")
+        self.assertTrue(binary.is_file())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            owned = head_owned()
+            script = "scripts/hooks/pre_bash_dispatch.sh"
+            self.assertIn(b"_BL_HOME=~", owned[script])
+            # Fault only the shell's current-user lookup result; never change
+            # the real passwd database or expose a production override switch.
+            owned[script] = owned[script].replace(b"_BL_HOME=~", b"_BL_HOME='~'", 1)
+            tree = make_tree(root / "tree", owned)
+            (tree / "bin").unlink()  # Replace the fixture symlink, never its target.
+            (tree / "bin/native").mkdir(parents=True)
+            local_binary = tree / "bin/native/bl"
+            shutil.copy2(binary, local_binary)
+            scratch = make_scratch(root / "scratch")
+            paths = make_paths(root / "path")
+            for mode in ["fallback", "native"]:
+                for home, expected in [(None, "deny"), ("", None)]:
+                    with self.subTest(mode=mode, home=home):
+                        case = ("missing-passwd-home", "opted", "ls",
+                                {"HOME": home, "BUILD_LOOP_NATIVE_HOOKS": "off"})
+                        argv = [str(local_binary), "hook", "pre-bash"] if mode == "native" else None
+                        result = run_case(tree, scratch, paths, case, argv=argv)
+                        self.assertEqual((result.returncode, result.stderr), (0, b""))
+                        envelope = json.loads(result.stdout)
+                        self.assertEqual(envelope.get("hookSpecificOutput", {}).get("permissionDecision"), expected)
+                        if expected:
+                            self.assertIn("checks did not finish", envelope["hookSpecificOutput"]["permissionDecisionReason"])
 
 
 class ToplevelProofAgreesWithGit(unittest.TestCase):

@@ -39,7 +39,7 @@ SENSITIVE_KEY = re.compile(
     re.IGNORECASE,
 )
 SENSITIVE_VALUE = re.compile(
-    r"(?i)(bearer\s+)[a-z0-9._~+/=-]+|\b(?:sk(?:-[a-z0-9]+)*|ghp|github_pat)[_-][a-z0-9_-]{8,}\b"
+    r"(?i)(bearer\s+)[a-z0-9._~+/=-]+|\b(?:sk(?:-[a-z0-9]+)*|gh[opsur]|github_pat)[_-][a-z0-9_-]{8,}\b"
 )
 SENSITIVE_INLINE = re.compile(
     r"(?i)\b((?:[a-z0-9]+[_-])*(?:authorization|cookie|password|passwd|secret|token|"
@@ -69,7 +69,10 @@ def _redact(value: Any, *, key: str = "") -> Any:
     if SENSITIVE_KEY.search(key):
         return "[REDACTED]"
     if isinstance(value, dict):
-        return {str(k): _redact(v, key=str(k)) for k, v in value.items()}
+        # Sort original keys before sanitizing: collisions retain the last original
+        # key consistently across runtimes; no secret key survives in previews/keys.
+        return {_redact(str(k)): _redact(v, key=str(k))
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
     if isinstance(value, list):
         return [_redact(item) for item in value[:50]]
     if isinstance(value, str):

@@ -29,6 +29,7 @@ from typing import Callable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK = REPO_ROOT / "hooks" / "pre-edit-rally-point.sh"
 BL = Path(os.environ.get("BL_BIN") or REPO_ROOT / "target" / "release" / "bl")
+PRE_EDIT_SEMANTICS = Path(os.environ.get("BL_PRE_EDIT_SEMANTICS_BIN") or REPO_ROOT / "target/release/examples/pre_edit_semantics")
 REAL_PYTHON = os.path.realpath(sys.executable)
 FIXED_STUB_MTIME = 1_000_000_000
 
@@ -281,6 +282,9 @@ def run(impl: str, case: Case, root: Path, script: Path = HOOK) -> tuple[Snapsho
         argv = ["bash", str(HOOK)]
     elif impl == "script":
         argv = ["bash", str(script)]
+    elif impl == "semantics":
+        env["CLAUDE_PLUGIN_ROOT"] = str(REPO_ROOT)
+        argv = [str(PRE_EDIT_SEMANTICS)]
     elif impl == "bl":
         argv = [str(BL), "hook", "pre-edit"]
     elif impl == "launcher":
