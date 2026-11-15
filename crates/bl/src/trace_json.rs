@@ -8,11 +8,15 @@ use super::redaction;
 pub(super) const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const MAX_DEPTH: usize = 256;
 
-/// Validated JSON slice. Private construction keeps traversal inside the bounds
-/// checked by syntax(); no global serde feature changes object interpretation.
-#[derive(Clone, Copy)]
-pub(super) struct RawValue<'a>(&'a str);
-impl RawValue<'_> { pub(super) fn get(&self) -> &str { self.0 } }
+/// Parsed once, with borrowed numeric lexemes. Traversal borrows child nodes
+/// without rescanning, cloning, or copying nested payloads.
+pub(super) struct RawValue<'a>(Node<'a>);
+struct Node<'a> { source: &'a str, kind: Kind<'a> }
+enum Kind<'a> {
+    Object(BTreeMap<String, RawValue<'a>>), Array(Vec<RawValue<'a>>),
+    Text(String), Scalar,
+}
+impl RawValue<'_> { pub(super) fn get(&self) -> &str { self.0.source } }
 
 pub(super) fn raw(text: &str) -> R<RawValue<'_>> {
     let value = syntax(text)?;
@@ -26,12 +30,10 @@ pub(super) fn syntax(text: &str) -> R<RawValue<'_>> {
     if text.len() > MAX_BYTES { return Err(Fallback("json byte limit")); }
     let mut cursor = Cursor { text, at: 0 };
     cursor.space();
-    let begin = cursor.at;
-    cursor.scan(0)?;
-    let end = cursor.at;
+    let value = cursor.scan(0)?;
     cursor.space();
     if cursor.at != text.len() { return Err(Fallback("invalid json")); }
-    Ok(RawValue(&text[begin..end]))
+    Ok(value)
 }
 
 struct Cursor<'a> { text: &'a str, at: usize }
@@ -44,7 +46,7 @@ impl<'a> Cursor<'a> {
     fn require(&mut self, byte: u8) -> R<()> {
         if self.take(byte) { Ok(()) } else { Err(Fallback("invalid json")) }
     }
-    fn string(&mut self) -> R<&'a str> {
+    fn string(&mut self) -> R<String> {
         let begin = self.at;
         self.require(b'"')?;
         loop {
@@ -61,33 +63,40 @@ impl<'a> Cursor<'a> {
         }
         let token = &self.text[begin..self.at];
         // Ordinary serde handles Unicode/escapes only, never a special map key.
-        serde_json::from_str::<String>(token).map_err(|_| Fallback("invalid json"))?;
-        Ok(token)
+        serde_json::from_str::<String>(token).map_err(|_| Fallback("invalid json"))
     }
     fn digits(&mut self) -> R<()> {
         let begin = self.at;
         while matches!(self.peek(), Some(b'0'..=b'9')) { self.at += 1; }
         if self.at == begin { Err(Fallback("invalid json")) } else { Ok(()) }
     }
-    fn scan(&mut self, depth: usize) -> R<()> {
+    fn scan(&mut self, depth: usize) -> R<RawValue<'a>> {
         self.space();
-        match self.peek() {
+        let begin = self.at;
+        let kind = match self.peek() {
             Some(b'{' | b'[') => {
                 if depth >= MAX_DEPTH { return Err(Fallback("json depth limit")); }
                 let object = self.take(b'{');
                 if !object { self.require(b'[')?; }
                 let end = if object { b'}' } else { b']' };
+                let mut fields = BTreeMap::new();
+                let mut items = Vec::new();
                 self.space();
-                if self.take(end) { return Ok(()); }
-                loop {
-                    if object { self.string()?; self.space(); self.require(b':')?; }
-                    self.scan(depth + 1)?;
-                    self.space();
-                    if self.take(end) { break; }
-                    self.require(b',')?; self.space();
+                if !self.take(end) {
+                    loop {
+                        let key = if object {
+                            let key = self.string()?; self.space(); self.require(b':')?; Some(key)
+                        } else { None };
+                        let child = self.scan(depth + 1)?;
+                        if let Some(key) = key { fields.insert(key, child); } else { items.push(child); }
+                        self.space();
+                        if self.take(end) { break; }
+                        self.require(b',')?; self.space();
+                    }
                 }
+                if object { Kind::Object(fields) } else { Kind::Array(items) }
             }
-            Some(b'"') => { self.string()?; }
+            Some(b'"') => Kind::Text(self.string()?),
             Some(b'-' | b'0'..=b'9') => {
                 self.take(b'-');
                 if !self.take(b'0') { self.digits()?; }
@@ -96,48 +105,27 @@ impl<'a> Cursor<'a> {
                     if !self.take(b'+') { self.take(b'-'); }
                     self.digits()?;
                 }
+                Kind::Scalar
             }
             _ => {
                 let tail = &self.text[self.at..];
                 let token = ["true", "false", "null"].into_iter().find(|token| tail.starts_with(token))
                     .ok_or(Fallback("invalid json"))?;
-                self.at += token.len();
+                self.at += token.len(); Kind::Scalar
             }
-        }
-        Ok(())
-    }
-    fn child(&mut self) -> R<RawValue<'a>> {
-        self.space(); let begin = self.at; self.scan(0)?;
-        Ok(RawValue(&self.text[begin..self.at]))
+        };
+        Ok(RawValue(Node { source: &self.text[begin..self.at], kind }))
     }
 }
 
-pub(super) fn object<'a>(raw: &RawValue<'a>) -> R<BTreeMap<String, RawValue<'a>>> {
-    let mut cursor = Cursor { text: raw.0, at: 0 };
-    cursor.require(b'{')?; cursor.space();
-    let mut values = BTreeMap::new();
-    if cursor.take(b'}') { return Ok(values); }
-    loop {
-        let key = serde_json::from_str::<String>(cursor.string()?).map_err(|_| Fallback("invalid json"))?;
-        cursor.space(); cursor.require(b':')?;
-        values.insert(key, cursor.child()?);
-        cursor.space(); if cursor.take(b'}') { return Ok(values); }
-        cursor.require(b',')?; cursor.space();
-    }
+pub(super) fn object<'r, 'a>(raw: &'r RawValue<'a>) -> R<&'r BTreeMap<String, RawValue<'a>>> {
+    match &raw.0.kind { Kind::Object(values) => Ok(values), _ => Err(Fallback("invalid json")) }
 }
 pub(super) fn text(raw: &RawValue<'_>) -> R<String> {
-    serde_json::from_str(raw.0).map_err(|_| Fallback("invalid json"))
+    match &raw.0.kind { Kind::Text(value) => Ok(value.clone()), _ => Err(Fallback("invalid json")) }
 }
-fn array<'a>(raw: &RawValue<'a>) -> R<Vec<RawValue<'a>>> {
-    let mut cursor = Cursor { text: raw.0, at: 0 };
-    cursor.require(b'[')?; cursor.space();
-    let mut values = Vec::new();
-    if cursor.take(b']') { return Ok(values); }
-    loop {
-        values.push(cursor.child()?);
-        cursor.space(); if cursor.take(b']') { return Ok(values); }
-        cursor.require(b',')?;
-    }
+fn array<'r, 'a>(raw: &'r RawValue<'a>) -> R<&'r [RawValue<'a>]> {
+    match &raw.0.kind { Kind::Array(values) => Ok(values), _ => Err(Fallback("invalid json")) }
 }
 fn numeric(raw: &RawValue) -> bool { matches!(raw.get().as_bytes()[0], b'-' | b'0'..=b'9') }
 fn validate(raw: &RawValue) -> R<()> {
@@ -199,31 +187,63 @@ pub(super) fn redacted_keys(raw: &RawValue) -> R<Option<Vec<String>>> {
     keys.sort(); keys.dedup(); keys.truncate(50); Ok(Some(keys))
 }
 fn encode(raw: &RawValue, key: &str, redact: bool) -> R<String> {
-    if redact && redaction::sensitive_key(key) { return Ok(py::json_string_unicode("[REDACTED]")); }
-    Ok(match raw.get().as_bytes()[0] {
-        b'{' => {
+    let mut output = String::new();
+    encode_into(raw, key, redact, &mut output)?;
+    Ok(output)
+}
+fn encode_into(raw: &RawValue, key: &str, redact: bool, output: &mut String) -> R<()> {
+    if redact && redaction::sensitive_key(key) {
+        output.push_str(&py::json_string_unicode("[REDACTED]")); return Ok(());
+    }
+    match &raw.0.kind {
+        Kind::Object(values) => {
             let mut fields = BTreeMap::new();
-            for (key, value) in object(raw)? {
-                let shown = if redact { redaction::redact(&key) } else { key.clone() };
-                fields.insert(shown, encode(&value, &key, redact)?);
+            for (key, value) in values {
+                let shown = if redact { redaction::redact(key) } else { key.clone() };
+                fields.insert(shown, (key, value));
             }
-            format!("{{{}}}", fields.into_iter().map(|(k,v)| format!("{}:{v}", py::json_string_unicode(&k))).collect::<Vec<_>>().join(","))
+            output.push('{');
+            for (index, (shown, (key, value))) in fields.into_iter().enumerate() {
+                if index > 0 { output.push(','); }
+                output.push_str(&py::json_string_unicode(&shown)); output.push(':');
+                encode_into(value, key, redact, output)?;
+            }
+            output.push('}');
         }
-        b'[' => {
-            let values = array(raw)?;
+        Kind::Array(values) => {
+            output.push('[');
             let limit = if redact { 50 } else { values.len() };
-            format!("[{}]", values.into_iter().take(limit).map(|v| encode(&v, "", redact)).collect::<R<Vec<_>>>()?.join(","))
+            for (index, value) in values.iter().take(limit).enumerate() {
+                if index > 0 { output.push(','); }
+                encode_into(value, "", redact, output)?;
+            }
+            output.push(']');
         }
-        b'"' => { let text = text(raw)?; py::json_string_unicode(&if redact { redaction::redact(&text) } else { text }) },
-        _ if numeric(raw) => number(raw.get())?,
-        _ => raw.get().into(),
-    })
+        Kind::Text(text) => output.push_str(&py::json_string_unicode(&if redact { redaction::redact(text) } else { text.clone() })),
+        Kind::Scalar => output.push_str(&if numeric(raw) { number(raw.get())? } else { raw.get().into() }),
+    }
+    Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn decoded_duplicate_keys_and_redacted_collisions_keep_last_winner() {
+        let input = r#"{"a":1e999,"\u0061":-0,"z":2,"secret=x":"first","secret=y":"last"}"#;
+        let parsed = raw(input).unwrap();
+        assert_eq!(dumps(&parsed).unwrap(), r#"{"a":0,"secret=x":"first","secret=y":"last","z":2}"#);
+        assert_eq!(redacted(&parsed).unwrap(), r#"{"a":0,"secret=[REDACTED]":"[REDACTED]","z":2}"#);
+        assert!(raw(r#"{"a":0,"\u0061":1e999}"#).is_err());
+    }
+
+    #[test]
+    fn shared_output_preserves_large_nested_content() {
+        let input = format!("{}\"{}\"{}", "[".repeat(128), "safe content ".repeat(16384), "]".repeat(128));
+        assert_eq!(redacted(&raw(&input).unwrap()).unwrap(), input);
+    }
 
     #[test]
     fn ordinary_value_keeps_literal_private_number_key() {

@@ -767,10 +767,6 @@ def test_native_real_input_depth_bound_is_safe(levels, accepted, root):
 @pytest.mark.parametrize("raw,reason", [
     (b'{"tool_name":"Bash","tool_input":1e999}', "unsupported_number"),
     (b'{"tool_name":"Bash","tool_input":NaN}', "unsupported_json"),
-    (b'{"tool_name":"Bash","timestamp":"not-time"}', "unsupported_timestamp"),
-    (b'{"tool_name":"Bash","timestamp":"0000-01-01T00:00:00Z"}', "unsupported_timestamp"),
-    (b'{"tool_name":"Bash","timestamp":"2026-06-01T00:00:00z"}', "unsupported_timestamp"),
-    (b'{"tool_name":"Bash","timestamp":"2026-06-30T23:59:60Z"}', "unsupported_timestamp"),
     (b'{"tool_name":"Bash","tool_input":"\\ud800"}', "unsupported_json"),
 ])
 def test_native_unsupported_input_is_silent_by_default_and_countable(raw, reason, root):
@@ -885,3 +881,36 @@ def test_native_large_integer_extension_is_readable_without_python_digit_limit(r
     diagnostics = {"invalid_records": 0}
     assert len(list(tool_trace._iter_trace_rows(path, diagnostics=diagnostics))) == 1
     assert diagnostics["invalid_records"] == 0
+
+
+@needs_bl
+@pytest.mark.parametrize("timestamp", ["not-time", "0000-01-01T00:00:00Z",
+    "2026-06-01T00:00:00z", "2026-06-30T23:59:60Z", "2026-06-01", 123, True, [1], {"secret": "fixture-hidden"}])
+def test_native_unusable_timestamp_preserves_event_without_run(timestamp, root):
+    case = Case("uncertain_time", payload(tool_name="Grep", session_id=SESSION,
+        timestamp=timestamp, tool_input={"safe": "context"}), state=_active_state())
+    for env in ({}, {"BL_TRACE_EXIT": "1"}):
+        result = h.run("bl", case, root, extra_env=env)
+        snap = without_diagnostics(result)
+        span(tool="Grep", attrs={"build_loop.run_id": None})(snap)
+        # Harness only normalizes timestamps inside the measured invocation.
+        # A guessed epoch or historical timestamp remains nonzero and fails.
+        assert snap.new_lines[0]["start_time_unix_nano"] == 0
+        assert "context" in snap.new_lines[0]["attributes"]["gen_ai.tool.call.arguments.preview"]
+        if env:
+            assert result.stderr.count(b"reason=timestamp_unavailable") == 1
+            assert b"reason=append_ok" in result.stderr
+            assert b"fixture-hidden" not in result.stderr
+        else:
+            assert result.stderr == b""
+
+
+@needs_bl
+@pytest.mark.parametrize("prefix,run_id", [(b"\xef\xbb\xbf", "bl-run-1"),
+    (b"\xef\xbb\xbf" * 2, None)])
+def test_native_saved_state_bom_preserves_safe_attribution(prefix, run_id, root):
+    case = Case("state_bom", payload(tool_name="Grep", session_id=SESSION,
+        timestamp="2026-06-01T00:00:00Z"), state=prefix + _active_state(),
+        start_ns=1_780_272_000_000_000_000,
+        expect=span(tool="Grep", attrs={"build_loop.run_id": run_id}))
+    _compare(case, root)

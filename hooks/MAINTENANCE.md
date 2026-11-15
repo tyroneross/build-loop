@@ -112,10 +112,13 @@ binary uses one bounded recovery registration.
 Native trace accepts UTF-8 host events bounded to 64 MiB and 256 container levels.
 Finite numeric fingerprints, supported timestamps, run/session ownership, redaction,
 shared locks and rotation stay native. Invalid JSON/encoding, non-string identity
-metadata, non-finite content and unsupported timestamps safely produce no record;
+metadata and non-finite content safely produce no record;
 `BL_TRACE_EXIT=1` exposes static reasons without payload text. This is an explicit
 coverage limit, not evidence that those events never occurred. Standalone native
-trace does not require Python or a Python source marker.
+trace does not require Python or a Python source marker. Unusable timestamps retain
+the event at observation time with a null run ID and the static opt-in reason
+`timestamp_unavailable`; they never confer run membership. Saved state accepts one
+leading UTF-8 BOM, with the same byte/depth bounds; event input does not accept a BOM.
 
 Model-independent operation requires host adapters to normalize event/tool names,
 stdin, transcript locators, root variables and response envelopes before invoking

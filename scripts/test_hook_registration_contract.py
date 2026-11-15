@@ -1,13 +1,16 @@
 """Pin event ownership where a turn and a session have different lifetimes."""
 import json
+import shutil
 from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+SHELLS = ["/bin/sh"] + ([shutil.which("dash")] if shutil.which("dash") else [])
 
 
+@pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("binary", ["75", "126", "127", "directory", "bad-interpreter", "0", "1", "2"])
-def test_startup_recovers_only_when_native_did_not_consume_input(tmp_path, binary):
+def test_startup_recovers_only_when_native_did_not_consume_input(tmp_path, binary, shell):
     import os
     import shutil
     import subprocess
@@ -33,7 +36,7 @@ cat > "$CLAUDE_PLUGIN_ROOT/recovered-input"
 printf 'recovery context'
 ''')
     payload = '{"session_id":"fixture-🌍"}\n'.encode()
-    result = subprocess.run(["/bin/sh", "-c", registration.NATIVE], input=payload,
+    result = subprocess.run([shell, "-c", registration.NATIVE], input=payload,
         capture_output=True, timeout=5, env=dict(os.environ,
             CLAUDE_PLUGIN_ROOT=str(tmp_path), CLAUDE_PROJECT_DIR=str(tmp_path),
             BUILD_LOOP_NATIVE_HOOKS="1", BUILD_LOOP_SESSION_START_DEADLINE_MS="7500"))
@@ -201,7 +204,8 @@ def test_recovery_open_stdin_preserves_independent_and_provenance_context(tmp_pa
 
 @pytest.mark.parametrize("runtime", ["native", "recovery"])
 @pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGINT", "SIGHUP"])
-def test_registered_startup_cancellation_reaches_supervisor_and_worker(tmp_path, runtime, signal_name):
+@pytest.mark.parametrize("shell", SHELLS)
+def test_registered_startup_cancellation_reaches_supervisor_and_worker(tmp_path, runtime, signal_name, shell):
     import os
     import shutil
     import signal
@@ -229,7 +233,7 @@ def test_registered_startup_cancellation_reaches_supervisor_and_worker(tmp_path,
     env = dict(PATH=f"{tmp_path}/path:/usr/bin:/bin", HOME=str(tmp_path / "home"),
                CLAUDE_PLUGIN_ROOT=str(tmp_path), CLAUDE_PROJECT_DIR=str(tmp_path),
                BUILD_LOOP_SESSION_START_DEADLINE_MS="7500")
-    child = subprocess.Popen(["/bin/sh", "-c", registration.NATIVE], env=env,
+    child = subprocess.Popen([shell, "-c", registration.NATIVE], env=env,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     supervisor = worker = None
     try:
@@ -272,3 +276,20 @@ def test_registered_child_runner_finishes_completed_wait_even_if_pid_is_reused(t
                + f" _bl_session_child /bin/sh -c 'exit {status}'; exit $?")
     result = subprocess.run(["/bin/sh", "-c", command], capture_output=True, timeout=2)
     assert result.returncode == status
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_child_runner_preserves_input_and_restores_caller_fd3(tmp_path, shell):
+    import subprocess
+    import session_start_hook_command as registration
+    child = tmp_path / "child.sh"
+    child.write_text('if ( : <&3 ) 2>/dev/null; then exit 99; fi\ncat\n')
+    saved = tmp_path / "caller-fd3"
+    command = ('exec 3>"$1"; ' + registration.CHILD_RUNNER
+               + ' _bl_session_child /bin/sh "$2"; rc=$?; '
+               + 'printf retained >&3; exit "$rc"')
+    payload = b'{"session_id":"fd-boundary"}\n'
+    result = subprocess.run([shell, "-c", command, "test", str(saved), str(child)],
+                            input=payload, capture_output=True, timeout=2)
+    assert (result.returncode, result.stdout, result.stderr) == (0, payload, b"")
+    assert saved.read_bytes() == b"retained"

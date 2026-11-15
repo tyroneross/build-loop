@@ -78,14 +78,16 @@ GUARD = " ".join([
 ])
 # No `exec`: preserve the observer parent while forwarding host cancellation.
 # Wait status, not PID liveness, tells us when the child has been reaped.
+# Function-scoped fd 3 preserves event stdin before dash redirects async fd 0
+# to /dev/null, and restores the caller's fd 3 after each invocation.
 CHILD_RUNNER = " ".join([
     '_bl_session_child() { p=""; cancelled=0; interrupted=0;',
     "trap 'cancelled=1; interrupted=1; if [ -n \"$p\" ]; then kill -TERM \"$p\" 2>/dev/null || :; fi' HUP INT TERM;",
-    '"$@" <&0 & p=$!;',
+    '"$@" <&3 3<&- & p=$!;',
     'if [ "$cancelled" = 1 ]; then kill -TERM "$p" 2>/dev/null || :; fi;',
     'while :; do interrupted=0; child_rc=0; wait "$p" || child_rc=$?;',
     'if [ "$child_rc" -le 128 ] || [ "$interrupted" = 0 ]; then break; fi; done;',
-    'trap - HUP INT TERM; if [ "$cancelled" = 1 ]; then exit 0; fi; return "$child_rc"; };',
+    'trap - HUP INT TERM; if [ "$cancelled" = 1 ]; then exit 0; fi; return "$child_rc"; } 3<&0;',
 ])
 RECOVERY = (
     'if command -v python3 >/dev/null 2>&1; then '

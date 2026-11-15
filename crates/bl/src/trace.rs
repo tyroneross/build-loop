@@ -16,7 +16,9 @@
 //! JSON is bounded to 64 MiB and 256 container levels before recursive parsing.
 //! Finite floats and arbitrary integers preserve the Python argument hash format.
 //! Invalid encoding, non-string identity metadata, non-finite JSON extensions and
-//! unsupported timestamps produce no record and an opt-in static diagnostic.
+//! invalid JSON produces no record and an opt-in static diagnostic.
+//! Unusable timestamps retain observation-time records without run attribution.
+//! Saved state accepts one leading UTF-8 BOM; event input remains strict JSON.
 //! Trace input never invokes Python. Missing/unreadable state means no run owner.
 
 use bl_contract::{py, Fallback, R};
@@ -110,7 +112,6 @@ pub fn run(args: &Args) -> Outcome {
             "non-string field" => "unsupported_metadata",
             "json byte limit" | "json depth limit" => "unsupported_limits",
             "nonfinite number" => "unsupported_number",
-            "unsupported timestamp" => "unsupported_timestamp",
             "invalid json" | "codex response json" => "unsupported_json",
             _ => "unsupported_environment",
         };
@@ -178,8 +179,11 @@ pub fn plan(workdir: &str, phase: &str, stdin: &[u8], now_ns: u128) -> R<Option<
     let tool_use_id = text_field(&data, &["tool_use_id", "tool_call_id"])?;
     let timestamp = match data.get("timestamp") {
         Some(v) if json::truthy(v)? => {
-            let text = json::text(v).map_err(|_| Fallback("unsupported timestamp"))?;
-            Some(temporal::event_time(&text).ok_or(Fallback("unsupported timestamp"))?)
+            let parsed = json::text(v).ok().and_then(|text| temporal::event_time(&text));
+            if parsed.is_none() {
+                crate::hook_diagnostic("trace", "timestamp_unavailable");
+            }
+            parsed
         }
         _ => None,
     };
@@ -353,7 +357,10 @@ fn read_state(workdir: &str) -> Option<Value> {
     if !meta.file_type().is_file() || meta.size() > MAX_STATE_BYTES { return None; }
     let mut bytes = Vec::new();
     (&file).take(MAX_STATE_BYTES + 1).read_to_end(&mut bytes).ok()?;
-    let root = json::object(&json::syntax(std::str::from_utf8(&bytes).ok()?).ok()?).ok()?;
+    if bytes.len() as u64 > MAX_STATE_BYTES { return None; }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
+    let parsed = json::syntax(std::str::from_utf8(bytes).ok()?).ok()?;
+    let root = json::object(&parsed).ok()?;
     // Only ownership metadata matters. An unrelated arbitrary integer must not
     // make an otherwise valid active-run snapshot unreadable by normal Value.
     let select = |map: &BTreeMap<String, RawValue<'_>>, keys: &[&str]| -> Map<String, Value> {
@@ -513,7 +520,8 @@ mod tests {
     #[test]
     fn codex_failures() {
         let p = |s: &str| {
-            let v = json::object(&json::raw(s).unwrap()).unwrap();
+            let parsed = json::raw(s).unwrap();
+            let v = json::object(&parsed).unwrap();
             codex_failure_phase("end", &v).map(String::from)
         };
         assert_eq!(p(r#"{"turn_id":1,"tool_response":{"exit_code":3}}"#).unwrap(), "error");

@@ -244,8 +244,9 @@ def test_stdin_without_eof_is_inside_deadline(startup):
         proc.stderr.close()
 
 
+@pytest.mark.parametrize("shell", ["/bin/sh"] + ([shutil.which("dash")] if shutil.which("dash") else []))
 @pytest.mark.parametrize("manifest,host", [("hooks/hooks.json", "claude_code"), ("hooks/codex.json", "codex")])
-def test_consolidated_registration_delivers_event_stdin_to_rally_worker(startup, manifest, host):
+def test_consolidated_registration_delivers_event_stdin_to_rally_worker(startup, manifest, host, shell):
     _, _, env = startup
     plugin = Path(env["CLAUDE_PLUGIN_ROOT"])
     shutil.copy2(ROOT / "scripts/session_start_hook_command.py", plugin / "scripts/session_start_hook_command.py")
@@ -254,7 +255,7 @@ def test_consolidated_registration_delivers_event_stdin_to_rally_worker(startup,
     assert commands == [registration.NATIVE]
     event = json.dumps({"session_id": "event-only-registered", "hook_event_name": "SessionStart"}, indent=2)
     # No environment session ID can substitute for this event-only identity.
-    result = subprocess.run(["/bin/sh", "-c", commands[0]], input=event,
+    result = subprocess.run([shell, "-c", commands[0]], input=event,
         env=dict(env, RALLY_HOST_FAMILY=host, BUILD_LOOP_NATIVE_HOOKS="off"),
         capture_output=True, text=True, timeout=registration.NATIVE_TIMEOUT + 1)
     assert result.returncode == 0 and result.stderr == ""
