@@ -3,10 +3,16 @@
 //! Per-session throttle stamps (`hooks.py:_native_throttle_path` and the
 //! prune rules beside it).
 //!
-//! The stamp NAME format is not frozen: it derives from the session id after
-//! `actor_identity._safe_segment` (lowercased, possibly hashed). Easy
-//! Terminal's daemon may name stamps differently (unverified); this port
-//! keeps today's naming.
+//! Shared filename contract: preserve ASCII letters (including case), digits,
+//! `_`, `.`, and `-`; replace each other run with `_`, trim only leading/trailing
+//! `.` and `_`, use `unknown` when empty, then append `.stamp`.
+//!
+//! This function consumes the caller's session identifier. Actor normalization
+//! is a separate operation (`identity::resolve_session_id` in the native hook);
+//! filename construction itself never lowercases, hashes, or truncates it.
+//! Callers sharing a throttle must agree on that input identity, not just this
+//! filename rule. Lossy filename collisions are retained for compatibility;
+//! a stamp is a retry throttle, not proof of ownership or authorization.
 
 use crate::py;
 use crate::R;
@@ -100,6 +106,39 @@ mod tests {
         assert_eq!(file_name("._x_."), "x.stamp");
         assert_eq!(file_name("//"), "unknown.stamp");
         assert_eq!(path("/r", "s"), "/r/.build-loop/rally-hook-throttle/s.stamp");
+    }
+
+    #[test]
+    fn shared_filename_contract_preserves_identity_boundary() {
+        // Fixed vectors from hooks.py:_native_throttle_path, not actor ID
+        // normalization. Keep external consumers from accidentally applying
+        // casefolding, hashing, path traversal, or an extra hyphen trim here.
+        for (input, expected) in [
+            ("Event-Session_1", "Event-Session_1.stamp"),
+            ("a.b-c_d", "a.b-c_d.stamp"),
+            ("a :/\\ b", "a_b.stamp"),
+            ("a__b", "a__b.stamp"),
+            ("__..Case..__", "Case.stamp"),
+            ("-", "-.stamp"),
+            ("._-_.", "-.stamp"),
+            ("", "unknown.stamp"),
+            ("..", "unknown.stamp"),
+            ("../", "unknown.stamp"),
+            ("é😀", "unknown.stamp"),
+            ("Aé😀B", "A_B.stamp"),
+            ("a\n\tb", "a_b.stamp"),
+            ("a b", "a_b.stamp"),
+            ("a/b", "a_b.stamp"),
+        ] {
+            assert_eq!(file_name(input), expected, "input {input:?}");
+        }
+        let long = "A".repeat(100);
+        assert_eq!(file_name(&long), format!("{long}.stamp"));
+        // The native pre-edit caller resolves actor identity before stamping.
+        // Raw identity and resolved identity intentionally yield different names.
+        let resolved = crate::identity::safe_segment("Event-Session_1", 72);
+        assert_eq!(file_name(&resolved), "event-session_1.stamp");
+        assert_ne!(file_name("Event-Session_1"), file_name(&resolved));
     }
 
     #[test]

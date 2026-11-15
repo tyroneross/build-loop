@@ -49,6 +49,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -138,8 +139,14 @@ def _index_bytes(repo: Path, paths: list[str]) -> dict[str, bytes]:
         if entry:
             meta, path = entry.split("\t", 1)
             shas.append((path, meta.split()[1]))
-    cat = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"],
-                         input="".join(f"{sha}\n" for _, sha in shas).encode(), capture_output=True)
+    # A batch can produce enough output to fill its pipe while communicate()
+    # is still writing requests (observed blocking os.write on macOS). Supply
+    # requests from a file so only output pipes need draining concurrently.
+    with tempfile.TemporaryFile() as requests:
+        requests.write("".join(f"{sha}\n" for _, sha in shas).encode())
+        requests.seek(0)
+        cat = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"],
+                             stdin=requests, capture_output=True)
     if cat.returncode != 0:
         raise BuildError("git cat-file failed")
     out, buf = {}, cat.stdout

@@ -8,6 +8,8 @@ digest itself is covered by tests/test_native_sources_digest.py.
 from __future__ import annotations
 
 import importlib.util
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -197,3 +199,39 @@ def test_missing_semantic_runner_fails_before_parity(repo, tmp_path):
     with pytest.raises(bn.BuildError, match="no semantic test runner"):
         bn.build_and_install(repo, tmp_path / "dest", run)
     assert "parity harness" not in calls
+
+
+def test_index_batch_drains_large_output_without_blocking_request_writes(tmp_path):
+    """Exercise real Git with request and response streams larger than pipes.
+
+    The outer watchdog owns the whole child group: an inner communicate timeout
+    cannot interrupt the blocking stdin write that caused the macOS regression.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    paths = [f"blob-{i:04d}" for i in range(256)]
+    for i, name in enumerate(paths):
+        (tmp_path / name).write_bytes(bytes([i]) * 65536)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    # Staged bytes must win over later working-tree edits.
+    (tmp_path / paths[0]).write_bytes(b"unstaged")
+    code = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("build_native", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+paths = [f"blob-{i:04d}" for i in range(256)]
+actual = module._index_bytes(Path(sys.argv[2]), paths)
+assert actual == {name: bytes([i]) * 65536 for i, name in enumerate(paths)}
+"""
+    child = subprocess.Popen([sys.executable, "-c", code, str(_SCRIPT), str(tmp_path)],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             start_new_session=True)
+    try:
+        stdout, stderr = child.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.communicate()
+        pytest.fail("staged batch reader deadlocked while writing requests/draining output")
+    assert child.returncode == 0, stderr.decode(errors="replace")
+    assert stdout == b""
