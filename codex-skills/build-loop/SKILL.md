@@ -12,7 +12,11 @@ public-justification: "Codex has no commands surface, so a skill is the only way
 This is the only public Codex entrypoint. Route the user's plain-language goal
 through the canonical workflow without asking them to choose a mode or helper.
 
-Load and follow the canonical workflow:
+Scope check first, before loading anything else. If the goal is a clearly specified single-file edit, a config change, or a fix under ~20 lines, and it is not a debug, research, optimize, root-cause, retrospective, plan, PRD, or resume request: do not load the skill. Make the change directly, verify it the cheapest way available, and report what changed and how you verified it.
+
+Higher-priority instructions and required repository checks still apply.
+
+Otherwise, load and follow the canonical workflow:
 
 ```text
 ../../skills/build-loop/SKILL.md

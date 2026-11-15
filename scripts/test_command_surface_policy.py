@@ -51,6 +51,17 @@ def _justification_block() -> str:
 
 
 class CommandSurfaceTests(unittest.TestCase):
+    def test_codex_scope_check_matches_claude_before_canonical_read(self):
+        root = Path(__file__).resolve().parents[1]
+        claude = (root / "commands/run.md").read_text(encoding="utf-8")
+        codex = (root / "codex-skills/build-loop/SKILL.md").read_text(encoding="utf-8")
+        scope = next(p for p in claude.split("\n\n") if p.startswith("Scope check first,"))
+        self.assertIn(scope, codex)
+        self.assertLess(codex.index(scope), codex.index("Otherwise, load and follow the canonical workflow:"))
+        self.assertLess(codex.index("Otherwise, load and follow"), codex.index("../../skills/build-loop/SKILL.md"))
+        self.assertIn("Higher-priority instructions and required repository checks still apply.", codex)
+        self.assertIn("## Completion gate", codex)
+
     def test_only_run_is_human_facing(self):
         found = {p.stem for p in COMMANDS_DIR.glob("*.md")}
         self.assertEqual(
