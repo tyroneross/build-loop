@@ -92,6 +92,76 @@ affected checks. Stop on acceptance, budget exhaustion, or existing non-converge
 limits. Repeated unchanged feedback requires reassessing the cause. Additional
 review rounds need a named uncertainty; prose approval alone proves no behavior.
 
+## Quality first, then user effort and efficiency
+
+The objective is a materially better user outcome than the same model with its
+native tools and no added loop. Minimize user corrections and repeated questions;
+compare latency and tokens alongside quality, never use them to excuse a quality
+regression. A passing closeout record, longer review, or more tests alone does not
+establish better code. Define acceptance from the user's goal and preserve existing
+behavior, maintainability, and delivery requirements where applicable.
+
+When changing an existing API, file format, or persisted data, set
+`compatibility_preservation: true` in the review context. Consume the returned
+`review_focus` in the existing review: compare old and new behavior on copied
+representative inputs and test the new contract. This focus addresses the observed
+legacy-data failure; it adds no extra review stage. If real historical inputs are
+unavailable, report that coverage gap. Do not extrapolate an extreme synthetic
+input into a common requirement without task evidence.
+
+Keep routing and recall decisions in the existing `--harness-json` object: selected
+structure and reason, relevant tool/workflow revisions, preference/context source
+references, recalled item IDs and which were actually used, rejected candidates,
+and remaining uncertainty. Existing memory-facade read telemetry records exposure;
+a returned memory or an opened file is not evidence that it improved the result.
+Use task-relevant recall at assessment and again after a failure invalidates the
+plan. Save execution progress with context snapshots, not as a user preference.
+Explicit current instructions supersede learned preferences; stale evidence must
+be refreshed. No new memory backend, timer, or always-on process is required.
+
+For a learned workflow comparison, use the existing experiment `created` row's
+optional `workflow_contract` and each run's `harness.workflow_evaluation`. Run
+`python3 scripts/workflow_evidence.py --workdir <repo> --experiment <name>` from
+the plugin root. Its output explains every exclusion, missing measurement and
+per-case delta. Learn consumes the same evaluator when sample sweep is enabled. A completed review
+is recorded in the existing experiment log; unchanged evidence does not dispatch
+the same review again while that receipt remains in Learn's retained log window.
+Truncation is reported and can cause re-review; changed evidence is reconsidered.
+A workflow contract cannot fall back to the older outcome-based comparison.
+
+Freeze before execution: case IDs and snapshots, unique baseline/candidate run IDs,
+held-out assignments, checker and
+manifest hashes, baseline/candidate workflow revisions, a meaningful positive
+minimum quality gain, and the required pair count. Choose the gain and sample
+size from the task's consequences and planned evaluation, not after seeing scores.
+Record the no-loop baseline configuration and freeze receipt. Match model and
+served identity, effort, host, available tools, permissions, budget, checker,
+allowed memory corpus, preference snapshot, intervention-count definition, and task
+family. Count post-request user messages needed to correct, clarify, approve or
+recover; exclude the initial request, automated messages and new user scope. Match opportunities,
+not the actual tool calls or memories selected: those are treatment behavior.
+
+Quality is an externally checked 0..1 score under the frozen rubric, separate from
+`accepted` and `completed`. Record user interventions explicitly under that same counting definition; omitted telemetry
+is unknown, not zero. Preserve timeouts, failed attempts, all assigned arms, resource
+costs and measurement evidence. Development/posthoc checks generate hypotheses;
+fresh held-out tasks evaluate them. Do not train and validate on the same cases.
+
+The evaluator requires all assigned pairs, the prespecified quality gain, no
+per-case quality regression, accepted completed candidates, and measured user
+intervention counts that do not increase. Count does not measure user time or
+difficulty; those remain separate coverage gaps. Time/token deltas remain separate, including null
+for unknown. A qualifying result is only `review_candidate`: independent review
+must validate cited hashes, oracle quality, task representativeness, identity,
+absence of leakage and applicability before any promotion. Legacy observational
+candidate scores do not prove improvement over no-loop execution. Existing explicit
+promotion authority remains unchanged. Re-evaluate on changed context or observed
+regressions; never silently expand a learned workflow's task scope.
+
+The executable schema and writer-to-Learn example are in
+`scripts/workflow_evidence.py` and `scripts/test_workflow_evidence.py`. They use
+existing run and experiment stores; no second learning ledger is created.
+
 ## Memory across occasional runs
 
 Reuse the `scripts/memory_facade/` recall API, `scripts/context_snapshot.py`, and existing task

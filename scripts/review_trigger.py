@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-PROFILE_VERSION = "1.1"
+PROFILE_VERSION = "1.2"
 UNKNOWN_VALUES = {"unknown", "uncertain", "ambiguous", "tbd", "unverified"}
 TRUE_VALUES = {"1", "true", "yes", "y", "on", "required", "high", "critical"}
 FALSE_VALUES = {"0", "false", "no", "n", "off", "none", "low", "minor", "trivial"}
@@ -38,6 +39,7 @@ HIGH_RISK_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 PLAN_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("non_trivial", ("nonTrivial", "non_trivial")),
+    ("compatibility_preservation", ("compatibility_preservation", "backward_compatibility", "existing_data_compatibility")),
 )
 
 FILE_REASON_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -73,13 +75,18 @@ def _norm_key(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
-def _flatten(obj: Any, out: dict[str, Any] | None = None) -> dict[str, Any]:
+def _flatten(obj: Any, out: dict[str, list[Any]] | None = None) -> dict[str, list[Any]]:
+    """Keep all same-level aliases; current shallow context outranks history."""
     if out is None:
         out = {}
     if isinstance(obj, dict):
+        level: dict[str, list[Any]] = {}
         for key, value in obj.items():
             if isinstance(key, str):
-                out.setdefault(_norm_key(key), value)
+                level.setdefault(_norm_key(key), []).append(value)
+        for key, values in level.items():
+            out.setdefault(key, values)
+        for value in obj.values():
             if isinstance(value, dict):
                 _flatten(value, out)
     return out
@@ -104,11 +111,11 @@ def _truth_state(value: Any) -> bool | None:
 
 
 def _signal_state(flat: dict[str, Any], aliases: Iterable[str]) -> bool | None:
-    for alias in aliases:
-        key = _norm_key(alias)
-        if key in flat:
-            return _truth_state(flat[key])
-    return False
+    states = [_truth_state(value) for key in {_norm_key(alias) for alias in aliases}
+              for value in flat.get(key, [])]
+    if any(state is True for state in states):
+        return True
+    return None if any(state is None for state in states) else False
 
 
 def _changed_files_from_context(context: dict[str, Any]) -> list[str]:
@@ -120,16 +127,19 @@ def _changed_files_from_context(context: dict[str, Any]) -> list[str]:
     return []
 
 
-def _numeric(flat: dict[str, Any], aliases: Iterable[str]) -> float | None:
-    for alias in aliases:
-        key = _norm_key(alias)
-        if key not in flat:
-            continue
-        try:
-            return float(flat[key])
-        except (TypeError, ValueError):
-            return None
-    return None
+def _numeric(flat: dict[str, Any], aliases: Iterable[str], *, prefer_lower: bool = False) -> float | None:
+    values = []
+    for key in {_norm_key(alias) for alias in aliases}:
+        for raw in flat.get(key, []):
+            try:
+                value = float(raw)
+                if math.isfinite(value):
+                    values.append(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+    if not values:
+        return None
+    return min(values) if prefer_lower else max(values, key=abs)
 
 
 def _path_reasons(changed_files: list[str]) -> list[str]:
@@ -159,6 +169,8 @@ def _reasons_from_signals(
 
 def _plan_reasons(flat: dict[str, Any], file_count: int) -> list[str]:
     reasons = _reasons_from_signals(flat, PLAN_SIGNALS)
+    if _signal_state(flat, ("compatibility_preservation", "backward_compatibility", "existing_data_compatibility")) is None:
+        reasons.append("ambiguous_compatibility_preservation")
     trivial_aliases = ("trivial", "is_trivial")
     trivial_is_present = any(_norm_key(alias) in flat for alias in trivial_aliases)
     if trivial_is_present and _signal_state(flat, trivial_aliases) is False:
@@ -172,15 +184,19 @@ def _metric_reasons(flat: dict[str, Any]) -> tuple[list[str], list[str]]:
     high_risk_reasons: list[str] = []
     plan_reasons: list[str] = []
 
-    confidence = _numeric(flat, ("criticConfidence", "critic_confidence", "confidence"))
+    confidence = _numeric(flat, ("criticConfidence", "critic_confidence", "confidence"), prefer_lower=True)
     if confidence is not None and confidence < 0.65:
         high_risk_reasons.append("low_confidence")
+    elif confidence is None and any(_norm_key(k) in flat for k in ("criticConfidence", "critic_confidence", "confidence")):
+        high_risk_reasons.append("ambiguous_confidence")
 
     loc_delta = _numeric(flat, ("loc_delta", "lines_changed", "changed_lines"))
     if loc_delta is not None and abs(loc_delta) >= 20:
         plan_reasons.append("loc_delta")
     if loc_delta is not None and abs(loc_delta) >= 200:
         high_risk_reasons.append("large_diff")
+    elif loc_delta is None and any(_norm_key(k) in flat for k in ("loc_delta", "lines_changed", "changed_lines")):
+        high_risk_reasons.append("ambiguous_loc_delta")
 
     return high_risk_reasons, plan_reasons
 
@@ -219,6 +235,16 @@ def build_profile(context: dict[str, Any], changed_files: list[str] | None = Non
             if execution_profile in {"skip", "high"}
             else ["fact_check_on_changed_claims", "security_on_risk_signal", "simplify_on_complexity_signal"]
         ),
+        "review_focus": ([{
+            "id": "existing_behavior_compatibility",
+            "reason": "Preserve existing callers and persisted data while changing behavior.",
+            "checks": [
+                "Inspect existing callers and persisted representations before editing.",
+                "Run the original behavior and candidate on copies of representative existing inputs.",
+                "Verify new behavior, retries and unchanged state on rejected inputs.",
+            ],
+            "evidence_required": "Record original/candidate results and input provenance; missing real inputs remain a coverage gap.",
+        }] if any(r.endswith("compatibility_preservation") for r in plan_reasons) else []),
         "reasons": reasons,
         "changed_files": sorted(set(files)),
     }
@@ -250,7 +276,10 @@ def main(argv: list[str] | None = None) -> int:
 
     context = _load_context(args.context)
     if args.lines_changed is not None:
-        context["lines_changed"] = abs(args.lines_changed)
+        override_keys = {_norm_key(k) for k in ("loc_delta", "lines_changed", "changed_lines")}
+        context = {k: v for k, v in context.items() if _norm_key(k) not in override_keys}
+        for key in ("loc_delta", "lines_changed", "changed_lines"):
+            context[key] = abs(args.lines_changed)
     print(json.dumps(build_profile(context, args.changed_file), indent=2, sort_keys=True))
     return 0
 

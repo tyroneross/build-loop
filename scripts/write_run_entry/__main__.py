@@ -279,6 +279,12 @@ def _load_optional_payloads(args: argparse.Namespace) -> dict:
     )
     if not isinstance(manual_interventions, list):
         raise ValueError("--manual-interventions-json must decode to a list")
+    harness = load_config_object(args.harness_json, "--harness-json") if args.harness_json else None
+    if harness is not None and "workflow_evaluation" in harness:
+        from workflow_evidence import validate_observation
+        validate_observation(harness["workflow_evaluation"])
+        if harness["workflow_evaluation"]["accepted"] and args.outcome != "pass":
+            raise ValueError("accepted workflow observation requires pass run outcome")
     return {
         "phases": phases,
         "manual_interventions": manual_interventions,
@@ -286,7 +292,7 @@ def _load_optional_payloads(args: argparse.Namespace) -> dict:
         "judge_decisions": load_judge_decisions(args.judge_decisions_json) if args.judge_decisions_json else None,
         "budget_summary": load_budget_summary(args.budget_summary_json) if args.budget_summary_json else None,
         "models": load_config_object(args.models_json, "--models-json") if args.models_json else None,
-        "harness": load_config_object(args.harness_json, "--harness-json") if args.harness_json else None,
+        "harness": harness,
     }
 
 

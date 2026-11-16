@@ -97,5 +97,64 @@ class ReviewTriggerTests(unittest.TestCase):
         self.assertIn("loc_delta", payload["reasons"])
 
 
+
+class CompatibilityFocusTests(unittest.TestCase):
+
+    def test_compatibility_focus_reuses_review_and_preserves_high_risk(self):
+        profile = build_profile({'compatibility_preservation': True})
+        assert profile['execution_profile'] == 'standard'
+        assert profile['review_focus'][0]['id'] == 'existing_behavior_compatibility'
+        high = build_profile({'compatibility_preservation': True, 'persistence_change': True})
+        assert high['cross_vendor_required'] is True
+        assert high['execution_profile'] == 'high'
+        assert high['review_focus'] == profile['review_focus']
+        assert build_profile({})['review_focus'] == []
+
+
+    def test_unknown_compatibility_keeps_review_focus(self):
+        profile = build_profile({'compatibility_preservation': 'unknown'})
+        assert profile['independent_review_required']
+        assert profile['review_focus']
+
+
+    def test_existing_ambiguous_nontrivial_behavior_unchanged(self):
+        assert build_profile({'nonTrivial': 'unknown'})['execution_profile'] == 'skip'
+
+class InvalidNumericSignalTests(unittest.TestCase):
+    def test_invalid_confidence_is_unknown_not_no_risk(self):
+        for value in (None, 'unavailable', float('nan'), float('inf'), 10**1000):
+            profile = build_profile({'confidence': value})
+            self.assertIn('ambiguous_confidence', profile['reasons'])
+            self.assertTrue(profile['independent_review_required'])
+
+    def test_invalid_numeric_alias_does_not_hide_valid_later_alias(self):
+        profile = build_profile({'criticConfidence': 'unknown', 'confidence': .4})
+        self.assertIn('low_confidence', profile['reasons'])
+        profile = build_profile({'lines_changed': 'unknown'})
+        self.assertIn('ambiguous_loc_delta', profile['reasons'])
+
+class SignalPrecedenceTests(unittest.TestCase):
+    def test_top_level_signal_and_true_alias_cannot_be_masked(self):
+        self.assertIn('risk_surface_change', build_profile({'meta': {'risk': False}, 'risk': True})['reasons'])
+        self.assertIn('new_dependency', build_profile({'newDependency': False, 'dependency_delta': True})['reasons'])
+
+    def test_normalized_collisions_preserve_true_and_conservative_numbers(self):
+        for context in ({'riskSurfaceChange': False, 'risk_surface_change': True},
+                        {'risk_surface_change': True, 'riskSurfaceChange': False}):
+            self.assertIn('risk_surface_change', build_profile(context)['reasons'])
+        profile = build_profile({'criticConfidence': .9, 'critic_confidence': .2})
+        self.assertIn('low_confidence', profile['reasons'])
+        profile = build_profile({'locDelta': 1, 'loc_delta': -250})
+        self.assertIn('large_diff', profile['reasons'])
+
+    def test_cli_line_count_overrides_stale_aliases(self):
+        with tempfile.TemporaryDirectory() as td:
+            context = Path(td) / 'context.json'
+            context.write_text(json.dumps({'meta': {'lines_changed': 1}, 'loc_delta': 1, 'locDelta': 1}))
+            proc = subprocess.run([sys.executable, str(SCRIPT), '--context', str(context),
+                                   '--lines-changed', '250', '--json'], text=True, capture_output=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn('large_diff', json.loads(proc.stdout)['reasons'])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

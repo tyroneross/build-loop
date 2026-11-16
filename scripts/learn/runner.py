@@ -661,6 +661,42 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
             created = _head_created_row(path)
         if not created:
             continue
+        # Explicit quality contracts never fall through to weaker outcome proxies.
+        if "workflow_contract" in created:
+            from workflow_evidence import compare
+            name = str(created.get("artifact") or path.stem)
+            assessment = compare(created["workflow_contract"], all_runs, name)
+            if name != path.stem:
+                assessment.update(status="insufficient_evidence", eligible_for_review=False)
+                assessment["reasons"].append("artifact must match experiment filename")
+            artifact = _artifact_path(workdir, name)
+            artifact_digest = hashlib.sha256(artifact.read_bytes()).hexdigest() if artifact else None
+            already_reviewed = any(
+                row.get("event") == "workflow_reviewed"
+                and row.get("verdict") in {"approve", "rethink", "new_approach"}
+                and row.get("evaluation_sha256") == assessment.get("evaluation_sha256")
+                and assessment.get("evaluation_sha256")
+                and row.get("artifact_sha256") == artifact_digest
+                for row in rows
+            )
+            assessment["review_dispatch"] = "already_reviewed" if already_reviewed else "not_eligible"
+            if assessment["eligible_for_review"] and artifact is None:
+                assessment["review_dispatch"] = "artifact_missing"
+            elif assessment["eligible_for_review"] and not already_reviewed:
+                assessment["review_dispatch"] = "pending"
+            result.setdefault("workflow_evaluations", []).append({"artifact": name, **assessment})
+            if assessment["eligible_for_review"] and artifact is not None and not already_reviewed:
+                result["eligible"] += 1
+                orders.append(_work_order(
+                    run_id, "promotion-reviewer", name, "sample-sweep",
+                    artifact_path=str(artifact.relative_to(workdir)),
+                    experiment_log=str(path.relative_to(workdir)),
+                    artifact_sha256=artifact_digest,
+                    sample_size=len(assessment["pairs"]),
+                    workflow_runs=".build-loop/state.json",
+                    target_metric=assessment,
+                ))
+            continue
         # Non-confounded applied rows are the sample; the ones carrying a real
         # number are the MEASURED sample. The difference used to vanish inside
         # one filter, which is how every promotion gate sat inert without
@@ -866,6 +902,7 @@ def _sample_sweep(workdir: Path, run_id: str) -> tuple[list[dict[str, Any]], dic
                     "delta": delta,
                     "required_delta": required,
                     "comparison": comparison,
+                    "evidence_boundary": "observational candidate; not matched no-loop quality evidence",
                     "met": True,
                 },
             )
@@ -1188,6 +1225,24 @@ def attest(
             artifact_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         if status == "complete" and order.get("role") == "promotion-reviewer" and not verdict:
             raise ValueError("promotion-reviewer completion requires a verdict")
+        if status == "complete" and order.get("role") == "promotion-reviewer":
+            evaluation = order.get("target_metric", {})
+            if evaluation.get("evaluation_sha256"):
+                if verdict not in {"approve", "rethink", "new_approach"}:
+                    raise ValueError("workflow review verdict must be approve, rethink or new_approach")
+                reviewed_path, _ = _contained_artifact(root, order.get("artifact_path", ""))
+                if hashlib.sha256(reviewed_path.read_bytes()).hexdigest() != order.get("artifact_sha256"):
+                    raise ValueError("workflow artifact changed since review dispatch")
+                from write_run_entry.iohelpers import append_experiment_row, experiment_log_path
+                experiment_path = experiment_log_path(root / ".build-loop/experiments", order["pattern_key"])
+                if experiment_path is None or not experiment_path.is_file():
+                    raise ValueError("workflow review requires its existing experiment log")
+                append_experiment_row(experiment_path, {
+                    "event": "workflow_reviewed", "run_id": run_id,
+                    "evaluation_sha256": evaluation["evaluation_sha256"],
+                    "artifact_sha256": order.get("artifact_sha256"),
+                    "verdict": verdict, "date": _now(),
+                })
         order["status"] = status
         order["attested_at"] = _now()
         if artifact:

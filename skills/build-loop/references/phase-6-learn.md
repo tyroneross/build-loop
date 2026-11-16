@@ -129,3 +129,19 @@ At assessment, identify the affected producers/consumers and query the relevant
 registry before changing their interface. After verification, update evidence and
 link it to local memory. The automated Learn call enforces the final query;
 pre-edit ordering remains an agent instruction, not an edit interception hook.
+
+## Quality-first workflow experiments
+
+Use the optional `workflow_contract` on the existing experiment's `created` row
+and `harness.workflow_evaluation` on existing run records for matched comparisons.
+The run writer validates observations; Learn evaluates these contracts before
+legacy outcome/sample checks and never downgrades malformed or incomplete evidence
+to the legacy path. Each receipt names missing pairs, context mismatch, unknown
+quality/user effort, regressions, and measured deltas. See
+[workflow selection](workflow-selection.md#quality-first-then-user-effort-and-efficiency)
+for matching, freeze, recall, and promotion rules.
+
+Legacy sample comparisons remain observational leads for the reviewer. They do
+not establish quality gains over the same model without a loop. New workflow
+contracts emit only review candidates; they neither activate a skill nor grant
+permission to write curated memory.

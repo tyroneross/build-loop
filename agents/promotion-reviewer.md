@@ -48,6 +48,40 @@ Lazy (only when a candidate variance prompts it):
 - Specific `feedback_*.md` / `pattern_*.md` files cited as relevant
 - `state.json.runs[-5:]` for context on what the recent build environment looked like
 
+## Matched workflow evidence
+
+When the created experiment row contains `workflow_contract`, read it eagerly
+alongside `workflow_runs` (the existing `.build-loop/state.json`). Locate every
+assigned baseline/candidate run by the IDs in `target_metric.pairs`; do not limit
+this audit to the last five runs or substitute legacy `applied` metrics. Run
+`python3 scripts/workflow_evidence.py --workdir <repo> --experiment <name>` through
+the parent if this read-only role cannot execute it.
+
+Have the parent recompute the freeze/manifest and oracle SHA-256 over cited files
+and retain the executed command, actual digest and file path in a verification
+receipt. Inspect that receipt; missing recomputation is `rethink`, not approval.
+Verify freeze before
+execution, all assigned cases, fresh held-out provenance, workflow revisions and
+actual baseline trace/configuration showing no added loop. Confirm matching model
+identity, host, permissions, available tools, memory corpus and preference context.
+Inspect external artifact-quality checks and completion evidence; self-reported
+JSON does not authenticate these claims. Missing provenance or unknown identity
+is `rethink`, never approval. Verify the declared pair count and meaningful quality
+gain against the consequences of this task; the legacy eight-row check below does
+not substitute for the frozen matched-study design. Small samples cannot establish
+population superiority or optimal routing.
+
+Check that candidate changes are exactly the authorized treatment, no assigned
+failures disappeared, no per-case quality regression or intervention-count increase
+was hidden in an average, and all candidate outcomes were accepted and completed.
+Intervention count does not measure user time/difficulty. Assess those coverage
+limits and resource deltas separately. A workflow can qualify for review while
+using more tokens to achieve better quality. Review applicability and withdrawal
+conditions before routing reuse; do not expand beyond the evaluated context.
+
+Legacy sample-sweep evidence remains an observational lead. It cannot support a
+claim of quality improvement over the same model without the loop.
+
 ## What you check
 
 Run these checks against the candidate. Each produces zero or more variances.
@@ -56,7 +90,7 @@ Run these checks against the candidate. Each produces zero or more variances.
    - Auto-promote of memory-writing agents (potential `C-MEMORY/no_silent_constitutional_amendment` violation)
    - Skills that bypass pre-commit hooks (`C-AGENT/no_bypass_pre_commit_hooks`)
    - Agents claiming to disable auth or skip verification (`C-AUTH`, `C-CLAIMS`)
-2. **Sample integrity** — is the `sample_size ≥ 8` claim real?
+2. **Sample integrity (legacy experiments only, without `workflow_contract`)** — is the `sample_size ≥ 8` claim real? For workflow contracts, use the matched-study protocol above instead of this item.
    - Each entry in `experiments/<name>.jsonl` should have `confounded: false`
    - Outcomes should span ≥ 2 distinct projects unless the artifact is intentionally project-scoped
    - No single run should dominate (e.g. 6 of 8 from one run = effective sample of 3)
