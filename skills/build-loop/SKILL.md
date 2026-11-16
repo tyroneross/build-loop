@@ -10,7 +10,11 @@ user-invocable: false
 
 # Build Loop — Orchestrated Development
 
-A 5-phase development loop with a mandatory Phase 6: assess state and criteria, plan, execute, review (critic/validate/fact-check/report as sub-steps), iterate on review failures. Phase 6 Learn (mandatory; always runs) detects cross-build recurring patterns and drafts experimental skills; below 3 runs it accrues; debug-only and budget-exhausted runs defer the expensive arm.
+Select an execution structure with [workflow selection](references/workflow-selection.md)
+before loading phase protocols. Direct work and fixed chains follow that reference;
+the six-phase protocol below applies to adaptive orchestration and tasks whose
+repository rules require it. Within that protocol, Phase 6 Learn is mandatory:
+below 3 runs it accrues; debug-only and budget-exhausted runs defer expensive mining.
 
 ## Routing
 
@@ -18,7 +22,7 @@ A 5-phase development loop with a mandatory Phase 6: assess state and criteria, 
 
 Intent → internal mode:
 
-- **Build** (default): full 5-phase loop + mandatory Phase 6 Learn — implementation / fix / refactor / migrate / update / "add" / "wire up" language.
+- **Build** (default intent): implementation / fix / refactor / migrate / update / "add" / "wire up" language. Select direct, fixed-chain, or adaptive execution by task shape; only adaptive execution defaults to the full loop and mandatory Phase 6 Learn.
 - **Debug**: deep iterative root-cause investigation — symptom language ("broken", "doesn't work", "failing"); also auto-invoked on Review-B failures.
 - **Optimize**: metric-driven optimization loop — "speed up", "reduce", "improve" + a mechanical metric.
 - **Research**: pre-decision analysis and a research packet — "research", "evaluate", "compare", "should I". Research-only requests end with a recommendation. An explicit request to research then implement continues through the authorized build.
@@ -80,11 +84,16 @@ Both are conditional modes — their flag tables, budget/iteration caps, questio
 - the invocation carries `--long` / `--budget` / `--autonomous=false` / `--no-regrets`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
 - `state.json.selfRecursive.enabled` is true, or the invocation carries `--per-commit` / `--no-per-commit` → **Per-Commit Mode** detail.
 
-Default behavior: complete Phase 1–6 and required fixes autonomously within a 2h budget. Additional eligible queue/backlog pickup is on unless no-regrets is explicitly disabled; see `references/keep-going-policy.md`.
+For adaptive orchestration, complete Phase 1–6 and required fixes autonomously within a 2h budget. Its additional eligible queue/backlog pickup is on unless no-regrets is explicitly disabled; see `references/keep-going-policy.md`. Direct and fixed-chain work stop at the requested outcome under the selector; they do not inherit queue pickup merely by entering Build Loop.
 
 ## Scope Check
 
-Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value. `/build-loop:run` applies this same check before it loads this skill, so a skipped task never pays for this file; the check here covers direct skill loads.
+Apply [workflow selection](references/workflow-selection.md), including on direct
+skill loads. Known dependencies and checkable outcomes can use a fixed chain
+across several files. Escalate when evidence invalidates that plan. Preserve
+required checks and review obligations on every path. The remaining phase
+instructions apply after adaptive orchestration is selected, not to every build
+verb or multi-file edit.
 
 ## RossLabs LSP at component boundaries
 

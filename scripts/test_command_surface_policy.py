@@ -51,16 +51,40 @@ def _justification_block() -> str:
 
 
 class CommandSurfaceTests(unittest.TestCase):
-    def test_codex_scope_check_matches_claude_before_canonical_read(self):
+    def test_hosts_select_task_shape_before_canonical_read(self):
         root = Path(__file__).resolve().parents[1]
         claude = (root / "commands/run.md").read_text(encoding="utf-8")
         codex = (root / "codex-skills/build-loop/SKILL.md").read_text(encoding="utf-8")
-        scope = next(p for p in claude.split("\n\n") if p.startswith("Scope check first,"))
-        self.assertIn(scope, codex)
-        self.assertLess(codex.index(scope), codex.index("Otherwise, load and follow the canonical workflow:"))
-        self.assertLess(codex.index("Otherwise, load and follow"), codex.index("../../skills/build-loop/SKILL.md"))
+        policy = root / "skills/build-loop/references/workflow-selection.md"
+        self.assertTrue(policy.is_file())
+        for entry, canonical in ((claude, "Load the `build-loop:build-loop` skill"),
+                                 (codex, "../../skills/build-loop/SKILL.md")):
+            self.assertLess(entry.index("workflow-selection.md"), entry.index(canonical))
+            self.assertIn("Preserve intent, resume obligations, and required repository checks", entry)
+            self.assertIn("direct work, a fixed chain, or adaptive orchestration", entry)
+            self.assertNotIn("fix under ~20 lines", entry)
+        relative = "../../skills/build-loop/references/workflow-selection.md"
+        self.assertEqual((root / "codex-skills/build-loop" / relative).resolve(), policy)
         self.assertIn("Higher-priority instructions and required repository checks still apply.", codex)
         self.assertIn("## Completion gate", codex)
+        self.assertIn("branch needs no collapse receipt.", codex)
+
+    def test_task_shape_policy_keeps_authority_and_verification(self):
+        root = Path(__file__).resolve().parents[1]
+        policy = (root / "skills/build-loop/references/workflow-selection.md").read_text()
+        for contract in (
+            "predictable multi-file changes", "required reviews",
+            "never reclassify incomplete work", "host delegation",
+            "required independent review stays owed", "remaining budget",
+            "host requirement", "Interactive routing does not install schedulers",
+            "not a demonstrated performance improvement",
+        ):
+            self.assertIn(contract, " ".join(policy.split()))
+        for path in ("skills/build-loop/SKILL.md", "agents/build-orchestrator.md"):
+            self.assertIn("workflow-selection.md", (root / path).read_text())
+        import json
+        package = json.loads((root / "package.json").read_text())
+        self.assertIn("skills", package["files"])
 
     def test_only_run_is_human_facing(self):
         found = {p.stem for p in COMMANDS_DIR.glob("*.md")}

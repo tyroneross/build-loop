@@ -8,9 +8,9 @@ argument-hint: "[--parallel] [--no-regrets on|off] [goal description]"
 {{#if ARGUMENTS}}
 Goal: `{{ARGUMENTS}}`
 
-Scope check first, before loading anything else. If the goal is a clearly specified single-file edit, a config change, or a fix under ~20 lines, and it is not a debug, research, optimize, root-cause, retrospective, plan, PRD, or resume request: do not load the skill. Make the change directly, verify it the cheapest way available, and report what changed and how you verified it.
+Scope check first: read `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/references/workflow-selection.md`. Preserve intent, resume obligations, and required repository checks; select direct work, a fixed chain, or adaptive orchestration. File count alone does not require the full loop.
 
-Otherwise, load the `build-loop:build-loop` skill and follow it for this goal.
+Follow the selected path. Load the `build-loop:build-loop` skill only for adaptive orchestration, specialist intent routing, resume, or a requirement that needs the full protocol.
 {{else}}
 Load the `build-loop:build-loop` skill. Ask the user what they're building or changing.
 {{/if}}

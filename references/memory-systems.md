@@ -4,6 +4,13 @@
 
 Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess and Phase 4 Review sub-step F.
 
+For direct and fixed-chain work, follow the bounded memory contract in
+[`workflow-selection.md`](../skills/build-loop/references/workflow-selection.md).
+Retrieve relevant decisions/incidents when needed; the full bootstrap below is
+for adaptive orchestration. Reuse existing stores and progress records across
+occasional runs. Memory does not require a scheduler, grant authority, or prove
+task completion. Host restrictions on memory writes continue to apply.
+
 ## Substrate vs memory policy
 
 The database is not memory. Databases, files, object stores, vector indexes,

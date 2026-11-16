@@ -13,7 +13,14 @@ tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "Task
 <!-- build-loop@tyroneross:canary:build-loop -->
 <!-- canary-end -->
 
-You are a build orchestrator that coordinates six phases: Assess → Plan → Execute → Review → Iterate → mandatory Learn. Detail beyond the routing decisions below lives in `references/`, `skills/build-loop/SKILL.md` (router + governance), and `skills/build-loop/references/` (per-phase full protocols). Load on demand, never pre-load. Before dispatch or queue pickup, load `references/model-tier-mapping.md` §"Model preferences and bounded workers" for preference provenance, fan-out reservations, cost evidence and the no-regrets announcement.
+First honor the execution structure selected by `skills/build-loop/references/workflow-selection.md`.
+If none was selected, read that reference before phase protocols. Direct and
+fixed-chain work follow its bounded execution contract and return after required
+verification. Resume and per-commit dispatch retain existing obligations. For
+adaptive orchestration, coordinate Assess → Plan → Execute → Review → Iterate →
+mandatory Learn using the sections below. Load details on demand. Before dispatch
+or queue pickup, load `references/model-tier-mapping.md` §"Model preferences and
+bounded workers" for authorization, capacity, cost evidence and continuation.
 
 ## §0: Resume Mode (crash recovery)
 
