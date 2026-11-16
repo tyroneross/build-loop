@@ -7,6 +7,21 @@ these are execution structures within that owner.
 
 ## Preserve intent and authority
 
+- Honor an execution structure selected by the user or upstream dispatcher;
+  selection may escalate it, never downgrade a structure selected upstream.
+  Questions and explicit read-only requests take precedence over resuming actions.
+  Before selecting fresh
+  work, inspect relevant unfinished run state in `.build-loop/state.json`, owed
+  verification, and run-created branches/worktrees. Continue aligned unfinished
+  work under its original contract; unrelated historical debt does not select the
+  route for a new task.
+- Honor explicit mode flags before selecting: `--parallel`, `--no-regrets`,
+  `--long`, `--budget`, `--autonomous=false`, and per-commit overrides retain their
+  existing meanings. Load the canonical skill's applicable mode protocol to
+  resolve them; do not silently discard a flag on a lighter path. Explicit full
+  loop requests and active `selfRecursive.enabled` or per-commit dispatch use the
+  canonical protocol. Reading a mode protocol alone does not require six phases
+  when that mode permits bounded work; if the mode protocol is silent, use adaptive.
 - Questions and read-only assessments end with an answer. Explicit research then
   implementation retains both steps.
 - Resume existing work with its scope, remaining budget, and owed verification.
@@ -19,6 +34,14 @@ these are execution structures within that owner.
   isolation, recovery, and closeout requirements apply to every path. A lighter
   path changes orchestration overhead, not acceptance. If repository instructions
   require six phases for the task, select adaptive orchestration.
+  In Build Loop's own repository, the current AGENTS.md/CLAUDE.md mandates
+  intentionally keep significant multi-step changes on adaptive orchestration.
+  Fixed chains are available in consuming repositories without that mandate;
+  this selector does not amend or override those repository instructions.
+- Existing risk classification and model-tier pins apply on every path, including
+  database/migration, auth/secrets, production, and destructive operations. Load
+  their applicable contracts before acting; when the effect or required checks
+  are uncertain, use adaptive orchestration.
 
 ## Select the execution structure
 
@@ -28,11 +51,24 @@ these are execution structures within that owner.
 | **Fixed chain** | Dependent steps and boundaries are known before execution, including predictable multi-file changes. | State goal and acceptance checks, give a short ordered plan, execute with relevant intermediate checks, verify the integrated result and required reviews, report outcome and limits. Keep execution in the lead session by default. |
 | **Adaptive orchestration** | Investigation changes the decomposition, workstreams need dynamic integration, or risk/uncertainty requires the full protocol. | Load the canonical skill; run Assess, Plan, Execute, Review, Iterate, Learn. Choose each next action from observed tool/test feedback within the accepted goal and budget. |
 
+The fixed-chain review floor is relevant executable acceptance checks plus one
+scoped independent review of the changed files and integrated result. Reuse an
+already-required independent review; do not add a duplicate round. If that review
+is unavailable, report it owed and the run partial. Apply the existing 2h default
+budget unless the user sets another. A failed correction with no new evidence
+ends blind retries: reassess and escalate to the adaptive protocol if further
+investigation is needed. Budget exhaustion ends the run with remaining work stated.
+After any failed check, reassess before retrying. Follow the canonical skill's
+"Question-led inspections and investigations" search-and-batch rule; only rerun
+after the evidence supports a correction. Read only that section when needed.
+A local correction does not by itself require restarting the phase ledger.
+
 For direct and fixed-chain work, do not load six-phase references, create a phase
 ledger, drain unrelated work, or start cross-run mining solely for the workflow.
 Existing explicit obligations still apply. Finish when the requested outcome and
 required checks are met. Record structure and reason in the existing plan/run
-record, or the short readback when no record exists.
+record. Direct work may use the short readback when no record exists; fixed
+chains retain the run record described below.
 
 Inspect uncertainty with a bounded read or probe before selecting. Escalate when
 unknown dependencies, conflicting ownership, or failed checks invalidate the plan.
@@ -46,7 +82,9 @@ in the fixed chain.
 review when required, to either a chain or adaptive run. Honor host delegation
 authorization and capacity. Sequential execution remains valid when delegation is
 unavailable; a required independent review stays owed, never becomes a self-review
-pass.
+pass. Before any dispatch, load the repository-root
+`references/model-tier-mapping.md` section "Model preferences and bounded workers";
+use its existing tier pins and capacity/permission checks.
 
 **Evaluator–optimizer** adds iteration when a test, grader, or scoped reviewer can
 identify an actionable gap against acceptance criteria. Correct the gap and rerun
@@ -56,7 +94,9 @@ review rounds need a named uncertainty; prose approval alone proves no behavior.
 
 ## Memory across occasional runs
 
-Reuse the memory facade, working context, and existing task progress. For bounded
+Reuse the `scripts/memory_facade/` recall API, `scripts/context_snapshot.py`, and existing task
+progress, resolved from the plugin root. Full store details live in repository-root
+`references/memory-systems.md`. For bounded
 work, retrieve goal-relevant decisions or incidents when prior context matters.
 For adaptive work, use the canonical context bootstrap. Do not load full histories
 or require a memory backend for an unrelated small task.
@@ -67,6 +107,19 @@ Task progress records the goal, completed work with evidence, next action, owed
 verification, and pending approvals. Save progress through the existing context
 mechanism before handoff or interruption. Memory cannot grant authority, satisfy
 a review, or prove an external effect.
+
+Progress belongs in the run/context record, not automatically in host memory.
+For a fixed chain, retain structure, reason, checks, outcome, and remaining work
+in `.build-loop/state.json` `runs[]` through
+`python3 -m scripts.write_run_entry` from the plugin root (entrypoint:
+`scripts/write_run_entry/__main__.py`). Its required arguments are `--workdir`,
+`--goal`, and `--outcome`; use existing `--scope build` and review-evidence options
+for code changes. Put structure, reason, budget start time, and excluded historical
+debt in the existing free-form object accepted by `--harness-json <file>`, and
+check commands in `--diagnostic-commands`. This preserves the existing run schema
+and outcomes consumed by Learn; do not invent top-level fields or a new run type.
+This lets later assessment include these runs without
+creating a second phase ledger. Do not promote the record into curated memory.
 
 Curated lessons need evidence, scope, freshness, and supersession information.
 Use existing authorized writers and memory policy; preserve any host requirement

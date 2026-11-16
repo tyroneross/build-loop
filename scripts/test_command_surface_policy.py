@@ -63,6 +63,7 @@ class CommandSurfaceTests(unittest.TestCase):
             self.assertIn("Preserve intent, resume obligations, and required repository checks", entry)
             self.assertIn("direct work, a fixed chain, or adaptive orchestration", entry)
             self.assertNotIn("fix under ~20 lines", entry)
+            self.assertIn("If the selector cannot be read, load the canonical skill and use adaptive orchestration without retrying the selector.", entry)
         relative = "../../skills/build-loop/references/workflow-selection.md"
         self.assertEqual((root / "codex-skills/build-loop" / relative).resolve(), policy)
         self.assertIn("Higher-priority instructions and required repository checks still apply.", codex)
@@ -78,10 +79,26 @@ class CommandSurfaceTests(unittest.TestCase):
             "required independent review stays owed", "remaining budget",
             "host requirement", "Interactive routing does not install schedulers",
             "not a demonstrated performance improvement",
+            "never downgrade a structure selected upstream", ".build-loop/state.json",
+            "selfRecursive.enabled", "--budget", "--parallel", "--no-regrets",
+            "fixed-chain review floor", "scoped independent review",
+            "existing 2h default", "failed correction with no new evidence",
+            "model-tier-mapping.md", "not automatically in host memory",
+            "After any failed check, reassess before retrying",
+            "does not amend or override those repository instructions",
         ):
             self.assertIn(contract, " ".join(policy.split()))
         for path in ("skills/build-loop/SKILL.md", "agents/build-orchestrator.md"):
             self.assertIn("workflow-selection.md", (root / path).read_text())
+        for path in ("scripts/memory_facade/__init__.py", "scripts/context_snapshot.py",
+                     "references/memory-systems.md", "references/model-tier-mapping.md",
+                     "scripts/write_run_entry/__main__.py"):
+            self.assertTrue((root / path).is_file(), path)
+        self.assertIn("python3 -m scripts.write_run_entry", policy)
+        self.assertIn("--harness-json <file>", policy)
+        orchestrator = (root / "agents/build-orchestrator.md").read_text()
+        self.assertIn("Being dispatched as build-orchestrator selects adaptive orchestration", orchestrator)
+        self.assertIn("If the selector is unavailable, use adaptive orchestration directly", (root / "skills/build-loop/SKILL.md").read_text())
         import json
         package = json.loads((root / "package.json").read_text())
         self.assertIn("skills", package["files"])

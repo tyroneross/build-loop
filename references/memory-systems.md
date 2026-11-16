@@ -43,7 +43,7 @@ metadata.
 | Semantic facts | Postgres `agent_memory.<schema>.semantic_facts` | Embeddings + structured facts for hybrid retrieval. | Project-tagged, opt-in |
 | Debugger incidents | `.build-loop/issues/*.md` plus optional standalone Coding Debugger MCP | Bug history with local recall; optional verdict-classifier feedback loop when Coding Debugger is installed. | Project-local by default; optional cross-project |
 
-The **memory facade** at `scripts/memory_facade.py` exposes one `recall(query, kind, project, limit)` over all four with graceful degradation. Use it instead of writing four ad-hoc reads.
+The **memory facade** at `scripts/memory_facade/__init__.py` exposes one `recall(query, kind, project, limit)` over all four with graceful degradation. Use it instead of writing four ad-hoc reads.
 
 ## Read protocol — Phase 1 Assess
 
@@ -63,7 +63,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 **Return shape**: JSON packet with `{ generated_at, run_id, workdir, project, query, terms, decision_history, sources, agent_brief }`. The run ID binds Phase 1 retrieval to the verified plan and Phase 6 decision update receipt. A run-scoped copy of `decision_history` is saved first at `.build-loop/decisions/<run_id>-context.json` so concurrent runs cannot replace one another's evidence.
 
 `sources` includes:
-- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `<memory-root>`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
+- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `<memory-root>`, plus the facade's `recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
 - Ephemeral project plans must be archived before cleanup removes them. Use `scripts/archive_project_plan.py <plan> --workdir "$PWD"` to copy them into `build-loop-memory/projects/<slug>/archive/plans/<YYYY-MM-DD>/`; pass `--remove-source` only when the local file should be deleted after the archive write succeeds.
 - `repo_local`: `.build-loop/feedback.md`, `.build-loop/state.json` summary including `runs[-3:]` and backend health when present, plus current `.build-loop/intent.md`, `.build-loop/goal.md`, and `.build-loop/plan.md`.
 - `codex_memory`: `~/.codex/memories/MEMORY.md` registry hits and bounded excerpts from linked `rollout_summaries/*` files.
@@ -75,7 +75,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 
 Read once at Assess, then query again when the task changes domain, a premise fails, a repeated error appears, a planning decision needs prior evidence, or a handoff resumes work. Use `memory_locator.py --query "<specific decision or symptom>" --project <slug> --limit 3 --json`; open only relevant canonical records. A milestone-vs-HEAD check alone cannot detect changed relevance or another session's new memory. At unchanged phase boundaries, reuse the already-read capsule rather than reload bootstrap.
 
-Use `capability_shortlist.py` when choosing a tool for a new task class; its registry refreshes when source surfaces change. Use the locator for deterministic memory paths and `memory_facade.py recall` when richer content retrieval is needed. Widen the query or backend only after a useful local miss. Record a memory-use event only after opening and applying or explicitly rejecting a record, linked to its retrieval correlation ID; a path hit is retrieval evidence, not use.
+Use `capability_shortlist.py` when choosing a tool for a new task class; its registry refreshes when source surfaces change. Use the locator for deterministic memory paths and `memory_facade/__init__.py --query` when richer content retrieval is needed. Widen the query or backend only after a useful local miss. Record a memory-use event only after opening and applying or explicitly rejecting a record, linked to its retrieval correlation ID; a path hit is retrieval evidence, not use.
 
 ### 1a. Live context snapshots (handoff/resume, not durable memory)
 
@@ -101,7 +101,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
 The bootstrap calls the facade directly. Use the standalone command when debugging the canonical memory layer itself:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade/__init__.py \
   --query "<goal-keywords>" \
   --limit 10
 ```
@@ -145,7 +145,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 | Step | Surface | Return shape | Empty-OK | On backend down |
 |---|---|---|---|---|
 | 1 | `context_bootstrap.py` | JSON packet w/ `sources.*.reasons[]` + `agent_brief` | yes | per-source `reason`; other sources still respond |
-| 2 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
+| 2 | `memory_facade/__init__.py --query` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
 | 3 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
 | 4 | optional `mcp__plugin_coding_debugger__list` | `{ incidents: [...] }` | yes | step 3 already covered the fallback |
 | 5 | `scripts/backend_health.py` | one-liner + JSON envelope written to `state.json.architecture.backendHealth` | n/a | per-backend `ok: false` + `reason`; other backends still probable |

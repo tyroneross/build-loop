@@ -14,7 +14,9 @@ tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "Task
 <!-- canary-end -->
 
 First honor the execution structure selected by `skills/build-loop/references/workflow-selection.md`.
-If none was selected, read that reference before phase protocols. Direct and
+Being dispatched as build-orchestrator selects adaptive orchestration unless the
+dispatcher explicitly supplies another structure. If the selector cannot be read,
+use adaptive directly and report the missing reference. Direct and
 fixed-chain work follow its bounded execution contract and return after required
 verification. Resume and per-commit dispatch retain existing obligations. For
 adaptive orchestration, coordinate Assess → Plan → Execute → Review → Iterate →

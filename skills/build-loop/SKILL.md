@@ -15,6 +15,8 @@ before loading phase protocols. Direct work and fixed chains follow that referen
 the six-phase protocol below applies to adaptive orchestration and tasks whose
 repository rules require it. Within that protocol, Phase 6 Learn is mandatory:
 below 3 runs it accrues; debug-only and budget-exhausted runs defer expensive mining.
+If the selector is unavailable, use adaptive orchestration directly and report
+the missing reference; do not loop back to the failed read.
 
 ## Routing
 

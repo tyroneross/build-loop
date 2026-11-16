@@ -10,6 +10,8 @@ Goal: `{{ARGUMENTS}}`
 
 Scope check first: read `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/references/workflow-selection.md`. Preserve intent, resume obligations, and required repository checks; select direct work, a fixed chain, or adaptive orchestration. File count alone does not require the full loop.
 
+If the selector cannot be read, load the canonical skill and use adaptive orchestration without retrying the selector. Report the missing selector; do not improvise a lighter path.
+
 Follow the selected path. Load the `build-loop:build-loop` skill only for adaptive orchestration, specialist intent routing, resume, or a requirement that needs the full protocol.
 {{else}}
 Load the `build-loop:build-loop` skill. Ask the user what they're building or changing.

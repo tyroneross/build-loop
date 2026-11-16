@@ -14,6 +14,8 @@ through the canonical workflow without asking them to choose a mode or helper.
 
 Scope check first: read `../../skills/build-loop/references/workflow-selection.md` relative to this file. Preserve intent, resume obligations, and required repository checks; select direct work, a fixed chain, or adaptive orchestration. File count alone does not require the full loop.
 
+If the selector cannot be read, load the canonical skill and use adaptive orchestration without retrying the selector. Report the missing selector; do not improvise a lighter path.
+
 Higher-priority instructions and required repository checks still apply.
 
 Follow the selected path. For adaptive orchestration, specialist intent routing,
