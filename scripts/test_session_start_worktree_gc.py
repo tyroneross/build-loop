@@ -275,10 +275,23 @@ def test_sweep_survives_the_hook_being_killed_at_its_deadline(tmp_path: Path) ->
     stub = tmp_path / "lsof-slow"
     stub.write_text("#!/bin/sh\nsleep 2\nprintf 'p1\\nfcwd\\nn/\\n'\n")
     stub.chmod(0o755)
-    # 100 ms is below Python start-up for the reaper, so the wrapper kills the hook.
-    env = {**_osenv(), "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_PLUGIN_ROOT": str(_HOOK.parent.parent),
-           "BUILD_LOOP_SWEEP_LSOF": str(stub), "BUILD_LOOP_WORKTREE_REPORT_DEADLINE_MS": "100"}
+    # Keep the real detached sweep, but block the foreground reporter so the
+    # deadline is exercised regardless of interpreter startup speed.
+    plugin = tmp_path / "plugin"
+    scripts = plugin / "scripts"
+    (scripts / "worktree_reaper").mkdir(parents=True)
+    (scripts / "merged_worktree_sweep.py").symlink_to(
+        _HOOK.parent.parent / "scripts" / "merged_worktree_sweep.py"
+    )
+    started = tmp_path / "reporter-started"
+    (scripts / "worktree_reaper" / "__main__.py").write_text(
+        "import time\nfrom pathlib import Path\n"
+        f"Path({str(started)!r}).touch()\ntime.sleep(30)\n"
+    )
+    env = {**_osenv(), "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_PLUGIN_ROOT": str(plugin),
+           "BUILD_LOOP_SWEEP_LSOF": str(stub), "BUILD_LOOP_WORKTREE_REPORT_DEADLINE_MS": "1500"}
     subprocess.run(["bash", str(_HOOK)], env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    assert started.exists(), "foreground reporter must start before the deadline"
     assert not (root / ".build-loop" / "worktree-gc-last.txt").exists(), "hook should have been cut off"
     out = _wait_for_sweep(root)
     assert "Ready to remove" in out and str(wt.resolve()) in out
