@@ -25,6 +25,22 @@ impl Fixture {
     }
 }
 impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+/// Each fixture copies the binary and runs it while other test threads fork.
+/// On Linux a fork can briefly inherit the copy's write handle, so exec fails
+/// with ETXTBSY (26, "Text file busy"); retrying the spawn is the standard fix.
+trait SpawnRetry { fn start(&mut self) -> std::process::Child; fn out(&mut self) -> std::process::Output; }
+impl SpawnRetry for Command {
+    fn start(&mut self) -> std::process::Child {
+        for _ in 0..100 {
+            match self.spawn() {
+                Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(Duration::from_millis(10)),
+                result => return result.unwrap(),
+            }
+        }
+        self.spawn().unwrap()
+    }
+    fn out(&mut self) -> std::process::Output { self.start().wait_with_output().unwrap() }
+}
 fn deny(out: &[u8]) {
     let value: serde_json::Value = serde_json::from_slice(out).unwrap();
     assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
@@ -47,7 +63,7 @@ input=$(cat)
 printf '%s' "$input"
 exit 2"#);
     let mut child = fixture.command().env("BUILD_LOOP_PRE_BASH_PARENT_PID", "4321")
-        .env("FIXTURE_VALUE", "unchanged").stdin(Stdio::piped()).spawn().unwrap();
+        .env("FIXTURE_VALUE", "unchanged").stdin(Stdio::piped()).start();
     let expected = br#"{ "hookSpecificOutput": {"permissionDecision":"deny"}, "systemMessage":"policy wins" }"#;
     child.stdin.take().unwrap().write_all(expected).unwrap();
     let output = child.wait_with_output().unwrap();
@@ -62,7 +78,7 @@ fn incomplete_invalid_or_failed_results_deny_and_preserve_exit_two() {
                        ("printf '{}'; exit 1", 0), ("exit 0", 0),
                        ("printf '{'; head -c 65536 /dev/zero", 0)] {
         let fixture = Fixture::new(body);
-        let output = fixture.command().output().unwrap();
+        let output = fixture.command().out();
         assert_eq!(output.status.code(), Some(rc));
         deny(&output.stdout);
     }
@@ -73,7 +89,7 @@ fn stalled_stdin_and_stdout_eof_are_both_bounded() {
     for body in ["cat >/dev/null; printf '{}'", "printf '{}'; exec sleep 30", "(sleep 30) & exit 0"] {
         let fixture = Fixture::new(body);
         let started = Instant::now();
-        let mut child = fixture.command().stdin(Stdio::piped()).spawn().unwrap();
+        let mut child = fixture.command().stdin(Stdio::piped()).start();
         let keep_open = child.stdin.take();
         let output = child.wait_with_output().unwrap();
         drop(keep_open);
@@ -89,7 +105,7 @@ fn timeout_kills_term_resistant_descendant_even_after_leader_exits() {
 echo $! > grandchild.pid
 printf '{}'
 exit 0"#);
-    let output = fixture.command().output().unwrap();
+    let output = fixture.command().out();
     deny(&output.stdout);
     let pid: i32 = fs::read_to_string(fixture.0.join("grandchild.pid")).unwrap().trim().parse().unwrap();
     dead(pid);
@@ -101,7 +117,7 @@ fn cancellation_is_silent_and_cleans_spawned_group() {
 (trap '' TERM; exec sleep 30) &
 echo $! > grandchild.pid
 wait"#);
-    let child = fixture.command().env("BUILD_LOOP_BASH_DEADLINE_MS", "5000").spawn().unwrap();
+    let child = fixture.command().env("BUILD_LOOP_BASH_DEADLINE_MS", "5000").start();
     let until = Instant::now() + Duration::from_secs(2);
     while fs::read_to_string(fixture.0.join("grandchild.pid")).ok().and_then(|p| p.trim().parse::<i32>().ok()).is_none() && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(1));
@@ -117,9 +133,9 @@ wait"#);
 #[test]
 fn spawn_failure_denies_and_unknown_arguments_do_not_read_stdin() {
     let fixture = Fixture::new("printf '{}'");
-    let output = fixture.command().env("BUILD_LOOP_PRE_BASH_SHELL", "/no/such/bash").output().unwrap();
+    let output = fixture.command().env("BUILD_LOOP_PRE_BASH_SHELL", "/no/such/bash").out();
     deny(&output.stdout);
-    let mut child = fixture.command().arg("unexpected").stdin(Stdio::piped()).spawn().unwrap();
+    let mut child = fixture.command().arg("unexpected").stdin(Stdio::piped()).start();
     let keep_open = child.stdin.take();
     let output = child.wait_with_output().unwrap();
     drop(keep_open);
@@ -132,7 +148,7 @@ fn spawn_failure_denies_and_unknown_arguments_do_not_read_stdin() {
 fn cancellation_during_startup_never_leaves_a_started_worker() {
     for _ in 0..12 {
         let fixture = Fixture::new("echo $$ > worker.pid; exec sleep 30");
-        let child = fixture.command().env("BUILD_LOOP_BASH_DEADLINE_MS", "5000").spawn().unwrap();
+        let child = fixture.command().env("BUILD_LOOP_BASH_DEADLINE_MS", "5000").start();
         std::thread::sleep(Duration::from_millis(1));
         unsafe { kill(child.id() as i32, 15); }
         let output = child.wait_with_output().unwrap();
@@ -150,7 +166,7 @@ fn output_cap_distinguishes_valid_json_at_and_above_boundary() {
         let object = format!(r#"{{"x":"{}"}}"#, "x".repeat(length - 8));
         assert_eq!(object.len(), length);
         let fixture = Fixture::new(&format!("printf '%s' '{object}'"));
-        let output = fixture.command().output().unwrap();
+        let output = fixture.command().out();
         assert_eq!(output.status.code(), Some(0));
         if length == 65_536 { assert_eq!(output.stdout, object.as_bytes()); }
         else { deny(&output.stdout); }
@@ -162,7 +178,7 @@ fn literal_private_keys_remain_objects() {
     for key in ["$serde_json::private::Number", "$serde_json::private::RawValue"] {
         let object = format!(r#"{{"{key}":"[]"}}"#);
         let fixture = Fixture::new(&format!("printf '%s' '{object}'"));
-        let output = fixture.command().output().unwrap();
+        let output = fixture.command().out();
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(output.stdout, object.as_bytes());
     }
