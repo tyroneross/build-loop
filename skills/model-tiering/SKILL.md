@@ -57,18 +57,9 @@ Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `s
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
 
-### Provider workload catalogs (on demand)
+### Choosing an API provider for a downstream workload
 
-When a task asks which API model or provider should run a downstream workload, read the provider's dated guide and machine-readable snapshot together:
-
-| Provider | Decision guide | Machine-readable catalog |
-|---|---|---|
-| Groq | `references/provider-catalogs/groq.md` | `references/provider-catalogs/groq-models.json` |
-| OpenRouter | `references/provider-catalogs/openrouter.md` | `references/provider-catalogs/openrouter-models.json` |
-| Fireworks AI | `references/provider-catalogs/fireworks-ai.md` | `references/provider-catalogs/fireworks-ai-models.json` |
-| Together AI | `references/provider-catalogs/together-ai.md` | `references/provider-catalogs/together-ai-models.json` |
-
-Keep provider catalogs separate from host-agent reachability. A catalog entry does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark. Reverify a catalog after its `review_after` date, on any deprecation change, and before production billing or capacity decisions because availability, pricing, rate limits, throughput, and capability compatibility are dynamic. For catalogs marked non-exhaustive, query the recorded live catalog source before selecting a model.
+When a task asks which API model or provider should run a downstream workload, research the provider's current official docs (api-registry first, then WebSearch) and cite them. Build Loop keeps no provider snapshot, because a dated copy goes stale within weeks. A provider model does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark.
 
 ### GPT-5.6 Codex policy
 
