@@ -1252,7 +1252,7 @@ def command_reason(command: str, *, cwd: str | None = None,
                     if (inner_reason := command_reason(shlex.join(inner), cwd=cwd, helpers=helpers,
                                       platform=platform, environment=effective_environment, cwd_uncertain=command_cwd_uncertain)):
                         return inner_reason
-        if platform != "darwin":
+        if platform != "darwin" and exe != "git":
             continue
         # Shell text cannot establish an approved auth route: expansions,
         # unset/export and wrapper environments can trigger stored-credential
@@ -1315,6 +1315,10 @@ def command_reason(command: str, *, cwd: str | None = None,
                 if (inner_reason := command_reason(body, **dict(
                         kwargs, environment=effective_environment, cwd_uncertain=True))):
                     return GIT_BODY_REFUSAL.format(sub=argv[index], where=where) + inner_reason
+        # Git command bodies can invoke forbidden credential commands on any
+        # host. Only the Keychain transport checks below are macOS-specific.
+        if platform != "darwin":
+            continue
         network = index < len(argv) and argv[index] not in _LOCAL_GIT and not argv[index].startswith("-")
         if network and argv[index] in {"remote", "submodule"}:
             # Only these forms contact a remote; `git remote -v`, `add`,

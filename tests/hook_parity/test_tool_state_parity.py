@@ -151,3 +151,20 @@ def test_non_utf8_hook_name_falls_back_before_writing(world):
     before = normalize(json.loads((state(repo) / 'latest.json').read_text()))
     assert run(world, True) == want
     assert normalize(json.loads((state(repo) / 'latest.json').read_text())) == before
+
+
+@pytest.mark.parametrize("raw_prefix", [b"", b"\xff", b"\xed\xb3\xbf"])
+def test_python_worker_surrogate_context_survives_native_merge(world, raw_prefix):
+    """Exercise Python surrogateescape JSON on every OS, including APFS."""
+    repo, plugin = world
+    (repo / '.build-loop').mkdir()
+    want = run(world, False)
+    context = 'bad-\udcff; quote " and slash \\; emoji \U0001f600'
+    response = json.dumps({'hookSpecificOutput': {'additionalContext': context}}).encode()
+    response = response.replace(b'bad-', raw_prefix + b'bad-')
+    (plugin / 'scripts/stop_closeout.py').write_text(
+        f'import sys; sys.stdout.buffer.write({response!r})\n')
+    # The host decodes child stdout with replacement before parsing JSON.
+    expected_context = json.loads(response.decode('utf-8', errors='replace'))['hookSpecificOutput']['additionalContext']
+    want['hookSpecificOutput']['additionalContext'] += '\n\n' + expected_context
+    assert run(world, True) == want

@@ -237,12 +237,12 @@ def test_a_profile_that_would_not_ask_is_refused_unless_allowed(tmp_path: Path) 
     _assert_no_process_left(tmp_path)
 
 
-def test_tool_input_that_may_hold_a_credential_is_withheld(tmp_path: Path) -> None:
+def test_tool_input_credential_is_redacted_before_emission(tmp_path: Path) -> None:
     """Finding 7: stderr and the summary carry redacted tool input."""
     project = _project(tmp_path)
     cp = subprocess.run([str(BL), "run", "--profile", str(_profile(tmp_path)), "--json", "--cwd", str(project), "x"], capture_output=True, text=True, env=_env(tmp_path, "secret"))
     assert cp.returncode == 0, cp.stderr
     assert "hunter2" not in cp.stderr and "hunter2" not in cp.stdout
-    assert "[withheld: may contain a credential]" in cp.stderr
+    assert "Authorization: [REDACTED]" in cp.stderr
     tool = json.loads(cp.stdout)["tools"][0]
-    assert tool["input"] == {"command": "[withheld: may contain a credential]", "api_key": "[REDACTED]"} and tool["decision"] == "refuse"
+    assert tool["input"] == {"command": "curl -H 'Authorization: [REDACTED]' https://example.com", "api_key": "[REDACTED]"} and tool["decision"] == "refuse"

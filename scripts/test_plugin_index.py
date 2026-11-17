@@ -438,7 +438,7 @@ def test_shortlist_cli_no_installed_excludes_installed_matches(fake, tmp_path, c
 
     def run(*extra):
         assert cs.main(["--phase", "2", "--intent", "research sources", "--workdir", str(workdir),
-                        "--json", "--no-cache", *extra]) == 0
+                        "--host", "claude", "--json", "--no-cache", *extra]) == 0
         return [r["name"] for r in json.loads(capsys.readouterr().out)["results"]]
 
     assert "research" in run()

@@ -275,6 +275,11 @@ def selected_origin(cache: Path, host: str) -> dict | None:
         marketplace, name, version = cache.resolve().relative_to(managed.resolve()).parts
     except ValueError:
         return None  # An explicit export outside the host cache is not an installed plugin.
+    # Only a cache and registry both absent establish a first installation.
+    # A new version must still honor an existing marketplace registration.
+    registry = host_home / ('config.toml' if host == 'codex' else 'plugins/known_marketplaces.json')
+    if not cache.exists() and not cache.is_symlink() and not registry.exists() and not registry.is_symlink():
+        return None
     receipt = cache / '.et-source-receipt.json'
     if receipt.is_file():
         data = json.loads(receipt.read_text())

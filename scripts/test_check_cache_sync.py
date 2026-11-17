@@ -342,6 +342,24 @@ class SelectedOriginTests(unittest.TestCase):
         write(self.home / '.codex/plugins/cache/local/build-loop/1.0.0/README.md', 'local')
         with self.assertRaisesRegex(ValueError, 'multiple'):
             check_cache_sync.default_cache(self.source, 'codex', 'build-loop', '1.0.0', None)
+    def test_first_install_has_no_selected_origin(self):
+        self.assertIsNone(check_cache_sync.selected_origin(self.cache.with_name('2.0.0'), 'codex'))
+
+    def test_new_version_preserves_registered_github_origin(self):
+        write(self.home / '.codex/config.toml', '[marketplaces.remote]\nsource_type="github"\nsource="owner/repo"\n')
+        self.assertEqual(check_cache_sync.selected_origin(self.cache.with_name('2.0.0'), 'codex'),
+                         {'kind': 'github', 'source': 'owner/repo'})
+
+    def test_dangling_registry_is_not_a_first_install(self):
+        registry = self.home / '.codex/config.toml'
+        registry.symlink_to(self.home / 'lost-config.toml')
+        with self.assertRaises(FileNotFoundError):
+            check_cache_sync.selected_origin(self.cache.with_name('2.0.0'), 'codex')
+
+    def test_existing_cache_without_registry_still_fails_closed(self):
+        with self.assertRaises(FileNotFoundError):
+            check_cache_sync.selected_origin(self.cache, 'codex')
+
     def test_github_origin_stays_github(self):
         write(self.home / '.codex/config.toml', '[marketplaces.remote]\nsource_type="github"\nsource="owner/repo"\n')
         self.assertEqual(check_cache_sync.selected_origin(self.cache, 'codex'), {'kind':'github','source':'owner/repo'})

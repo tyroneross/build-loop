@@ -52,7 +52,6 @@ use crate::{sys, EXIT};
 const MAX_OUT: usize = 65_536;
 /// Whole-run limit; below the registration's host timeout.
 const RUN_DEADLINE_MS: u64 = 7_500;
-const CONTEXT_SEPARATOR: &str = "\n\n";
 const EMPTY: &[u8] = b"{}";
 
 /// Output slots in hook order: tool-state, rally, closeout, trust.
@@ -96,6 +95,7 @@ fn stop_group(pid: i32) {
 
 // ---------------------------------------------------------------- merge
 
+
 /// What one hook's stdout adds to the session, by the hosts' parse rule
 /// (`session_start_hook_command.context_of`).
 fn context_of(stdout: &[u8]) -> Option<String> {
@@ -117,13 +117,79 @@ fn envelope(context_json: &str) -> Vec<u8> {
         .into_bytes()
 }
 
-/// The one stdout for these hook stdouts, in order.
+/// serde's byte-string decoder retains Python's lone surrogates as WTF-8,
+/// without enabling raw_value (which changes Value's special-key behavior).
+struct ContextBytes(Vec<u8>);
+impl<'de> serde::Deserialize<'de> for ContextBytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BytesVisitor;
+        impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+            type Value = ContextBytes;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON context string")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+                Ok(ContextBytes(bytes.to_vec()))
+            }
+        }
+        deserializer.deserialize_bytes(BytesVisitor)
+    }
+}
+
+/// Encode the decoder's UTF-8 plus three-byte surrogate sequences as JSON.
+fn context_bytes_json(mut bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() { return None; }
+    let mut out = String::from("\"");
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => { out.push_str(inner(&py::json_string(text))); break; }
+            Err(error) => {
+                let (valid, rest) = bytes.split_at(error.valid_up_to());
+                out.push_str(inner(&py::json_string(std::str::from_utf8(valid).ok()?)));
+                if rest.len() < 3 || rest[0] != 0xed || !(0xa0..=0xbf).contains(&rest[1])
+                    || !(0x80..=0xbf).contains(&rest[2]) { return None; }
+                let code = ((rest[0] as u16 & 15) << 12) | ((rest[1] as u16 & 63) << 6) | (rest[2] as u16 & 63);
+                out.push_str(&format!("\\u{code:04x}"));
+                bytes = &rest[3..];
+            }
+        }
+    }
+    out.push('"');
+    Some(out)
+}
+
+fn context_json(stdout: &[u8]) -> Option<String> {
+    if let Some(context) = context_of(stdout) {
+        return Some(py::json_string(&context));
+    }
+    // The byte decoder permits literal control bytes; the host JSON parser
+    // does not. Validate syntax first while allowing escaped lone surrogates.
+    let text = String::from_utf8_lossy(stdout);
+    let stdout = text.as_bytes();
+    if !is_json_object(stdout) { return None; }
+    #[derive(serde::Deserialize)]
+    struct Hook {
+        #[serde(rename = "additionalContext")]
+        context: ContextBytes,
+    }
+    #[derive(serde::Deserialize)]
+    struct Output {
+        #[serde(rename = "hookSpecificOutput")]
+        hook: Hook,
+    }
+    let output: Output = serde_json::from_slice(stdout).ok()?;
+    context_bytes_json(&output.hook.context.0)
+}
+
+/// The one stdout for these hook stdouts, in order. Join validated JSON
+/// string interiors so escaped surrogates survive without decoding them.
 fn merge(parts: &[Option<Vec<u8>>]) -> Vec<u8> {
-    let contexts: Vec<String> = parts.iter().flatten().filter_map(|p| context_of(p)).collect();
+    let contexts: Vec<String> = parts.iter().flatten().filter_map(|p| context_json(p)).collect();
     if contexts.is_empty() {
         return EMPTY.to_vec();
     }
-    envelope(&py::json_string(&contexts.join(CONTEXT_SEPARATOR)))
+    let interiors: Vec<&str> = contexts.iter().map(|s| &s[1..s.len() - 1]).collect();
+    envelope(&format!("\"{}\"", interiors.join("\\n\\n")))
 }
 
 /// Print the merge of whatever is complete and exit 0. Caller holds `EXIT`.
@@ -343,7 +409,10 @@ fn inner(quoted: &str) -> &str {
 }
 
 fn is_json_object(bytes: &[u8]) -> bool {
-    matches!(serde_json::from_slice::<Value>(bytes), Ok(Value::Object(_)))
+    let text = String::from_utf8_lossy(bytes);
+    let bytes = text.as_bytes();
+    bytes.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{')
+        && serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok()
 }
 
 fn or_empty(bytes: Vec<u8>) -> Vec<u8> {
@@ -846,6 +915,40 @@ mod tests {
         assert_eq!(context_of(b"{\"hookSpecificOutput\": {\"additionalContext\": \"\"}}"), None);
         assert_eq!(context_of(b"{\"hookSpecificOutput\": {\"additionalContext\": 3}}"), None);
         assert_eq!(context_of(b"[1]").as_deref(), Some("[1]"));
+    }
+
+    #[test]
+    fn merge_preserves_python_surrogateescape_context_and_other_steps() {
+        let raw = br#"{"hookSpecificOutput":{"additionalContext":"bad-\udcff"}}"#;
+        let merged = merge(&[Some(raw.to_vec()), Some(ctx("next \u{2014} step"))]);
+        assert_eq!(merged, envelope(r#""bad-\udcff\n\nnext \u2014 step""#));
+        let raw = br#"{"hookSpecificOutput":{"additionalContext":"\ud800x\udfff"}}"#;
+        assert_eq!(merge(&[Some(raw.to_vec())]), envelope(r#""\ud800x\udfff""#));
+    }
+
+    #[test]
+    fn raw_context_still_requires_valid_json_and_a_nonempty_string() {
+        for raw in [
+            "{\"hookSpecificOutput\":{\"additionalContext\":\"bad\0context\"}}",
+            "{\"hookSpecificOutput\":{\"additionalContext\":\"bad\ncontext\"}}",
+            r#"{"hookSpecificOutput":{"additionalContext":"\udcff"}} trailing}"#,
+            r#"{"hookSpecificOutput":{"additionalContext":"\xFF"}}"#,
+            r#"{"other":"\udcff","hookSpecificOutput":{"additionalContext":3}}"#,
+            r#"{"other":"\udcff","hookSpecificOutput":{"additionalContext":""}}"#,
+        ] {
+            assert_eq!(merge(&[Some(raw.as_bytes().to_vec())]), b"{}");
+        }
+    }
+
+    #[test]
+    fn raw_invalid_utf8_uses_host_replacement_before_surrogate_decoding() {
+        for (raw, expected) in [
+            (b"{\"hookSpecificOutput\":{\"additionalContext\":\"\xff\\udcff\"}}".as_slice(), r#""\ufffd\udcff""#),
+            (b"{\"hookSpecificOutput\":{\"additionalContext\":\"\xed\xb3\xbf\\udcff\"}}".as_slice(), r#""\ufffd\ufffd\ufffd\udcff""#),
+        ] {
+            assert!(is_json_object(raw));
+            assert_eq!(merge(&[Some(or_empty(raw.to_vec()))]), envelope(expected));
+        }
     }
 
     #[test]

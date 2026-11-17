@@ -75,7 +75,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           cargo build --locked -p bl
-          cargo build --release --locked -p bl
+          cargo build --release --locked -p bl --examples --bins
 
       - name: Run deterministic test suite (known-red baseline enforced)
         # WRAPPED by scripts/ci_known_red_gate.py, which applies the SAME

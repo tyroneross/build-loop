@@ -388,8 +388,13 @@ class ToplevelProofAgreesWithGit(unittest.TestCase):
                 with unittest.mock.patch.dict(os.environ, {"GIT_DIR": "/nonexistent"}):
                     self.assertFalse(fp._is_own_toplevel(str(scratch["opted"])))
         # The proof must actually fire where it pays: a repo root and a linked worktree.
-        for name in ("opted", "policy", "linked", "linkedpol"):
-            self.assertIn(str(scratch[name]), skipped, name)
+        import fcntl
+        if hasattr(fcntl, "F_GETPATH"):
+            for name in ("opted", "policy", "linked", "linkedpol"):
+                self.assertIn(str(scratch[name]), skipped, name)
+        else:
+            # The proof uses macOS F_GETPATH; other platforms must ask Git.
+            self.assertEqual(skipped, set())
         for name in ("symlink", "slash", "mixedcase", "corewt", "invdot", "optsub", "nested"):
             self.assertNotIn(str(scratch[name]), skipped, name)
 
