@@ -138,3 +138,6 @@ archive/
 /.ci-rally-apps/_unscoped/.migrated
 /.ci-rally-apps/_unscoped/sessions/*-*-*-*-*.json
 /.ci-rally-apps/_unscoped/watchers/*-*-*-*-*.json
+
+# Vendored-module install receipt (records the installer's local source path)
+vendor/color_engine/INSTALLED.json

@@ -26,9 +26,8 @@ Folding would add maintenance cost without present payoff. The *durable value* �
 already captured canonically.
 
 ## Durability & resume path
-- The harness **code is now backed up** as its own private repo:
-  `github.com/tyroneross/grounding-harness` (pushed 2026-06-16, after stripping `.rally`/`.build-loop`
-  runtime state). Cheap insurance against losing the reusable tool. If grounding work resumes — the
+- The harness **code is now backed up** as its own private repo, `grounding-harness`
+  (pushed 2026-06-16, after stripping `.rally`/`.build-loop` runtime state; not publicly available). Cheap insurance against losing the reusable tool. If grounding work resumes — the
   untested frontiers where gaps actually live: **long-context (lost-in-the-middle),
   adversarial/contradictory evidence, multi-source synthesis** — reuse the scripts there.
 - Durable capture (lessons):
