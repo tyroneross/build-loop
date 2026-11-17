@@ -45,6 +45,10 @@ jobs:
       BUILD_LOOP_APPS_ROOT: ${{ github.workspace }}/.ci-rally-apps
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # The pre-bash differential test reads its pinned base commit
+          # (git show <sha>:...), which a depth-1 checkout does not contain.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -63,6 +67,15 @@ jobs:
         # The optional `db` extra is deliberately omitted so `db`-marked tests
         # auto-skip.
         run: uv sync --extra test
+
+      - name: Build the native hook binary (debug and release)
+        # Hook parity and launcher tests execute target/debug/bl and
+        # target/release/bl. Without this step they fail on a missing file;
+        # locally they pass only because a developer build already exists.
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo build --locked -p bl
+          cargo build --release --locked -p bl
 
       - name: Run deterministic test suite (known-red baseline enforced)
         # WRAPPED by scripts/ci_known_red_gate.py, which applies the SAME
