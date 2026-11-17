@@ -245,7 +245,7 @@ def test_stdin_without_eof_is_inside_deadline(startup):
 
 
 @pytest.mark.parametrize("shell", ["/bin/sh"] + ([shutil.which("dash")] if shutil.which("dash") else []))
-@pytest.mark.parametrize("manifest,host", [("hooks/hooks.json", "claude_code"), ("hooks/codex.json", "codex")])
+@pytest.mark.parametrize("manifest,host", [("hooks/hooks.json", "claude_code")])
 def test_consolidated_registration_delivers_event_stdin_to_rally_worker(startup, manifest, host, shell):
     _, _, env = startup
     plugin = Path(env["CLAUDE_PLUGIN_ROOT"])

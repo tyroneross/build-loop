@@ -338,3 +338,49 @@ def test_lsof_override_bypasses_libproc(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("BUILD_LOOP_SWEEP_LSOF", str(tmp_path / "does-not-exist"))
     monkeypatch.setattr(sweep_mod, "libproc_cwds", lambda: ["/should/not/be/used"])
     assert sweep_mod.lsof_cwds(5.0) == (None, "lsof unavailable")
+
+
+def test_linked_worktree_on_default_branch_is_never_swept(repo: Path, env: dict[str, str]) -> None:
+    git(env, repo, "branch", "feature")
+    git(env, repo, "checkout", "-q", "feature")
+    canon = repo.parent / "elsewhere" / "canon"
+    canon.parent.mkdir(exist_ok=True)
+    git(env, repo, "worktree", "add", "-q", str(canon), "main")
+    for mode in ("dry-run", "act"):
+        r = run(repo, mode)
+        assert paths(r["base_checkout"]) == {os.path.realpath(canon)}
+        assert not paths(r["ready_to_remove"]) and not paths(r["removed"])
+        assert canon.is_dir()
+        assert "branch refs/heads/main" in git(env, repo, "worktree", "list", "--porcelain").stdout
+
+
+def test_linked_worktree_on_custom_base_branch_is_never_swept(repo: Path, env: dict[str, str]) -> None:
+    git(env, repo, "branch", "release")
+    rel = repo.parent / "elsewhere" / "rel"
+    rel.parent.mkdir(exist_ok=True)
+    git(env, repo, "worktree", "add", "-q", str(rel), "release")
+    r = run(repo, "act", base="release")
+    assert paths(r["base_checkout"]) == {os.path.realpath(rel)}
+    assert not paths(r["removed"]) and rel.is_dir()
+
+
+def test_only_and_exclude_filter_paths(repo: Path, env: dict[str, str]) -> None:
+    a = add_worktree(env, repo, "a", merge=True)
+    b = add_worktree(env, repo, "b", merge=True)
+    ra, rb = os.path.realpath(a), os.path.realpath(b)
+    r = run(repo, "dry-run", only=[str(a)])
+    assert paths(r["ready_to_remove"]) == {ra} and paths(r["excluded"]) == {rb}
+    r = run(repo, "dry-run", exclude=[str(a)])
+    assert paths(r["ready_to_remove"]) == {rb} and paths(r["excluded"]) == {ra}
+    r = run(repo, "dry-run", exclude=[str(a)], max_worktrees=1)
+    assert paths(r["ready_to_remove"]) == {rb} and not r["unchecked"]
+
+
+def test_cli_defaults_to_dry_run(repo: Path, env: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
+    add_worktree(env, repo, "m", merge=True)
+    rc = sweep_mod.main(["--repo", str(repo), "--json", "--min-idle-minutes", "0"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["mode"] == "dry-run"
+    assert len(out["ready_to_remove"]) == 1
+    assert not (repo / ".build-loop").exists()
+    assert not (repo.parent / "repo.worktrees").exists()

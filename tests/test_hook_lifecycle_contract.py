@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_architecture_observer_runs_after_successful_edit_in_both_hosts():
-    for name in ("hooks.json", "codex.json"):
+def test_architecture_observer_runs_after_successful_edit_in_claude():
+    for name in ("hooks.json",):
         events = json.loads((ROOT / "hooks" / name).read_text())["hooks"]
         locations = [(event, group.get("matcher"))
                      for event, groups in events.items() for group in groups
@@ -45,7 +45,7 @@ def test_registered_stop_does_not_label_a_live_peer_as_crashed(tmp_path):
 
 def test_stop_does_not_report_unowned_tracked_dirt():
     # Global Git dirt is not evidence that this turn left completed work behind.
-    for name in ("hooks.json", "codex.json"):
+    for name in ("hooks.json",):
         events = json.loads((ROOT / "hooks" / name).read_text())["hooks"]
         commands = [handler["command"] for group in events["Stop"] for handler in group["hooks"]]
         assert not any("commit-state.sh" in command or "commit_state_check.py" in command

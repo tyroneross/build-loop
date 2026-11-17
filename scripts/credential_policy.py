@@ -48,12 +48,11 @@ GIT_CONFIG_READ_REFUSAL = (
     "git checkout, or pass `-c credential.helper=` to disable helpers for this command."
 )
 GH_REFUSAL = (
-    "`gh {sub}` needs gh's GitHub login. gh keeps that token in the macOS Keychain, and the owner "
-    "rule forbids both Keychain access and moving the token to plaintext storage, so every gh call "
-    "except help/version is refused (a token file anywhere is not proof for the host gh will use). "
-    "Allowed instead: `gh --help`, `gh --version`, `gh <sub> --help`; git fetch/pull/push/clone with "
-    "https://github.com (the approved gh credential helper); unauthenticated reads of public data "
-    "(e.g. `curl https://api.github.com/...`). Ask the owner for anything that needs gh's login."
+    "`gh {sub}` is outside the approved normal GitHub service commands. Existing configured "
+    "login is allowed for api, release, run, workflow, search, label, status, browse, "
+    "repo view/list, pr view/list/diff/checks and issue view/list. "
+    "Credential extraction or changes (gh auth), extensions and unknown aliases remain refused. "
+    "Do not extract tokens, substitute plaintext storage, or retry a login/unlock prompt."
 )
 EXPANSION_REFUSAL = (
     "The program name `{word}` uses {kind}, which the credential policy does not evaluate, so it "
@@ -82,6 +81,7 @@ _GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|HOME|XDG_CONFIG_HOME)=")
 _GIT_ENV_NAMES = re.compile(r"^(GIT_CONFIG\w*|HOME|XDG_CONFIG_HOME|GIT_SSH\w*|GIT_EXEC_PATH)$")
 # Variables whose VALUE a program later runs as a command.
 _EXEC_ENV = {"GIT_PAGER", "PAGER", "MANPAGER", "GIT_EDITOR", "EDITOR", "VISUAL", "GIT_SEQUENCE_EDITOR",
+             "GH_BROWSER", "GH_PAGER", "GH_EDITOR",
              "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_ASKPASS", "SSH_ASKPASS", "LESSOPEN", "BROWSER"}
 # git -c keys whose value git runs as a command.
 _EXEC_GIT_KEYS = re.compile(r"^(core\.(pager|editor|sshcommand|askpass|fsmonitor)|sequence\.editor|pager\..+"
@@ -1254,11 +1254,20 @@ def command_reason(command: str, *, cwd: str | None = None,
                         return inner_reason
         if platform != "darwin" and exe != "git":
             continue
-        # Shell text cannot establish an approved auth route: expansions,
-        # unset/export and wrapper environments can trigger stored-credential
-        # fallback. Use the connected service instead of guessing from tokens.
+        # Owner authorization (2026-11-11): normal gh service operations may
+        # use the existing configured login, including incidental Keychain use.
         if exe == "gh":
-            first = next((a for a in argv[1:] if not a.startswith("-")), "")
+            first = argv[1] if len(argv) > 1 else ""
+            for name in ("GH_BROWSER", "GH_PAGER", "GH_EDITOR", "BROWSER", "PAGER",
+                         "GIT_EDITOR", "VISUAL", "EDITOR"):
+                if value := effective_environment.get(name):
+                    if reason := command_reason(value, **dict(kwargs, environment={})):
+                        return reason
+            read_only = {"repo": {"view", "list"}, "pr": {"view", "list", "diff", "checks"},
+                         "issue": {"view", "list"}}
+            if (first in {"api", "release", "run", "workflow", "search", "label", "status", "browse"}
+                    or len(argv) > 2 and argv[2] in read_only.get(first, set())):
+                continue
             return GH_REFUSAL.format(sub=first or "…")
         if exe in {"ssh", "scp", "sftp", "sshfs"}:
             if (ssh_reason := _ssh_reason(exe, argv[1:])):

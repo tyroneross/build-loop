@@ -240,7 +240,7 @@ class StopSweepHostContractTests(unittest.TestCase):
 
     # ---- the convicting tests -----------------------------------------
 
-    def test_registered_codex_from_subdir_without_claude_environment(self):
+    def test_direct_wrapper_from_subdir_without_claude_environment(self):
         from unittest.mock import patch
         import shutil
         # A real fixture checkout: wrapper location owns its script root.
@@ -250,13 +250,10 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.no_claude_env = True
         self.hook_cwd = self.root / "scripts"
         import shlex
-        codex_registration = json.loads((REPO / ".codex/hooks.json").read_text())
-        command = next(h["command"] for g in codex_registration["hooks"]["Stop"] for h in g["hooks"]
-                       if "stop-transcript-sweep.sh" in h.get("command", ""))
         # Claude's real registration requires its supplied plugin/project root.
         # The shared wrapper itself also works without those host variables.
         direct = "bash " + shlex.quote(str(self.root / "hooks/stop-transcript-sweep.sh")) + " all"
-        for name, registration in (("codex", command), ("direct-wrapper", direct)):
+        for name, registration in (("direct-wrapper", direct),):
             with self.subTest(host=name):
                 self.record.unlink(missing_ok=True)
                 with patch(__name__ + "._hook_command", return_value=registration):
@@ -275,7 +272,7 @@ class StopSweepHostContractTests(unittest.TestCase):
     def test_large_registered_payload_preserves_billing_and_event_identity(self):
         from unittest.mock import patch
         subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
-        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+        for hooks_path in (HOOKS_JSON,):
             for size in (128 * 1024 + 1, 1024 * 1024 + 1):
                 with self.subTest(host=str(hooks_path), size=size):
                     self.record.unlink(missing_ok=True)
@@ -403,7 +400,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         source = sessions / 'rollout-discovered.jsonl'
         metadata = {'type':'session_meta', 'payload':{'id':'abc', 'cwd':str(self.workdir)}}
         payload = json.dumps({'cwd':str(self.workdir), 'session_id':'abc'})
-        for hooks_path in (HOOKS_JSON, REPO / '.codex/hooks.json'):
+        for hooks_path in (HOOKS_JSON,):
             with self.subTest(host=str(hooks_path)):
                 self.record.unlink(missing_ok=True)
                 source.write_text(json.dumps(metadata) + '\n' + json.dumps(
@@ -545,7 +542,7 @@ class StopSweepHostContractTests(unittest.TestCase):
                 except ProcessLookupError: pass
 
     def test_trace_has_no_foreground_stop_registration(self):
-        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+        for hooks_path in (HOOKS_JSON,):
             with self.subTest(host=str(hooks_path)):
                 data = json.loads(hooks_path.read_text())
                 commands = [h.get("command", "") for g in data["hooks"]["Stop"] for h in g["hooks"]]
@@ -563,7 +560,7 @@ class StopSweepHostContractTests(unittest.TestCase):
         self.assertGreater(self.transcript.stat().st_size, 17_000_000)
         from unittest.mock import patch
         subprocess.run(["git","init","-q",str(self.root)],check=True,capture_output=True)
-        for hooks_path in (HOOKS_JSON, REPO / ".codex/hooks.json"):
+        for hooks_path in (HOOKS_JSON,):
             with self.subTest(host=str(hooks_path)):
                 started = time.monotonic()
                 with patch(__name__ + ".HOOKS_JSON", hooks_path):

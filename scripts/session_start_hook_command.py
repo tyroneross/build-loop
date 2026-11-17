@@ -8,7 +8,7 @@ stale or disabled, --fallback runs the LEGACY commands with their own budgets
 and merges their output by the same rule. LEGACY also remains the parity oracle.
 No fallback interpreter is started on the fresh native path.
 
---write / --check generate hooks/hooks.json and hooks/codex.json.
+--write / --check generate Claude hooks/hooks.json only. Codex ships no hooks.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
-FILES = (HOOKS_DIR / "hooks.json", HOOKS_DIR / "codex.json")
+FILES = (HOOKS_DIR / "hooks.json",)  # Codex registrations are intentionally empty.
 
 _R = '"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/'
 LEGACY = (

@@ -18,7 +18,7 @@ class HookReliabilityTests(unittest.TestCase):
     def test_both_hosts_avoid_startup_maintenance(self):
         removed = ('retrieval', 'worktree-gc', 'git-hooks', 'plugin-drift', 'plugin-heal', 'memory', 'extensions', 'session-start-closeout')
         for name in ('hooks/hooks.json', 'hooks/codex.json', '.codex/hooks.json'):
-            commands = json.dumps(json.loads((ROOT / name).read_text())['hooks']['SessionStart'])
+            commands = json.dumps(json.loads((ROOT / name).read_text())['hooks'].get('SessionStart', []))
             for item in removed:
                 self.assertNotIn(item, commands)
 

@@ -1,12 +1,12 @@
 # Build Loop
 
-Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
+Select the smallest sufficient workflow using [workflow selection](skills/build-loop/references/workflow-selection.md): direct work for bounded operations, fixed chains for known dependent steps, and adaptive orchestration when uncertainty or risk requires it. File count alone does not select the full loop. This rule applies to Build Loop itself and consuming repositories. Required acceptance checks, independent review, isolation, and authority gates apply on every path. Judge workflow improvements by demonstrated user value against the same model using native tools; completion, extra checks, or lower cost alone do not prove better results.
 
 **After any issue, reassess before retrying.** Return to Assess and follow the
 [canonical search-and-batch rule](skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
 before rerunning the failed build or operation.
 
-**Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
+**Adaptive orchestration:** Assess → Plan → Execute → Review → Iterate, with mandatory Phase 6 Learn. Direct work and fixed chains follow the selector and stop at the requested outcome.
 
 ## UI container rule for every host
 
@@ -98,9 +98,16 @@ fetch`, `pull`, `push` and `clone` with `https://github.com`; `ls-remote`,
 `remote update`, aliases and other hosts need `-c credential.helper=`. ssh is
 refused when it may search the Keychain (`UseKeychain yes` in any ssh config
 it reads, `-o UseKeychain=yes`, `ssh-add --apple-use-keychain`); pass
-`-o UseKeychain=no`. `gh` and `claude` are refused except `--help`,
-`--version` and `<sub> --help`: gh keeps its token in the Keychain and a
-plaintext token is a forbidden substitute; Claude Code keeps its login there.
+`-o UseKeychain=no`.
+Owner updates (2026-11-08 and 2026-11-11) supersede the old blanket CLI ban:
+Claude may use its configured login. Normal `gh api`, `release`, `run`, `workflow`,
+`search`, `label`, `status`, `browse`, `repo view/list`, `pr view/list/diff/checks`
+and `issue view/list` may use the
+existing configured login, including incidental Keychain access. This does not
+authorize token extraction, credential changes (`gh auth`), extensions, unknown
+aliases, plaintext storage, or direct Keychain operations. Git-launching gh commands
+remain refused; use the inspected Git transport route. Stop on a new login
+or unlock request; retry only after relevant state or explicit authorization changes.
 The policy fails closed where it cannot see what runs: a program name built
 by shell expansion (`$'security'`, `sec${X}urity`, globs), `unset HOME` or
 `source` before a git network command, and shell bodies (`git submodule
@@ -591,9 +598,9 @@ For each fix:
 
 Log iteration state to `.build-loop/state.json`.
 
-### Phase 6: Learn (mandatory; always runs and always reports)
+### Phase 6: Learn (mandatory for adaptive orchestration)
 
-Runs after Review sub-step G (Report) on **every** build. Cheap detector + `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` always fire. A `## Learn` outcome line is always emitted. Three outcome states:
+Runs after Review sub-step G (Report) on every **adaptive** build. Direct work and fixed chains do not start cross-run mining solely because Build Loop routed the task. Cheap detector + `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` always fire. A `## Learn` outcome line is always emitted. Three outcome states:
 
 Run `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Dispatch only returned `work_orders[]`, attach results through `attest`, and require `status: complete` with `run_close_lint.py --require-learn`. The receipt is `.build-loop/learn/<run-id>.json`.
 
@@ -671,9 +678,9 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 
 2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
 
-3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`). ⚠ VERIFIED DORMANT under `codex exec` 0.139.0 (live probe 2026-06-12, `--dangerously-bypass-hook-trust`): codex fired global/built-in hooks but never the repo-level file. Until codex honors repo-level hooks, the working Codex path is the global `~/.codex/hooks.json` (the shim self-gates on `.build-loop/`, so a global install is safe — but global installs are user-opt-in, not shipped).
+3. **Codex wiring.** Build Loop intentionally ships no automatic Codex hooks: `hooks/codex.json` and `.codex/hooks.json` are explicit empty manifests. The plugin manifest keeps the empty Codex file to prevent fallback discovery of Claude hooks. Claude retains `hooks/hooks.json`. Existing installed caches or global hook registrations are separate state; source changes do not remove them.
 
-**Codex closeout + run-recording fallbacks (do these MANUALLY when hooks do not fire).** Because repo-level Codex hooks are dormant under `codex exec` (verified above), the `Stop`/`SessionStart` shim that auto-records a run does NOT run on its own in a Codex session. Unless the global `~/.codex/hooks.json` is installed AND confirmed firing, a Codex run must perform these steps by hand before declaring the run done (resolve `${RUNTIME_PLUGIN_ROOT}` to the build-loop repo root — see the Codex Execution Adapter):
+**Codex explicit execution and closeout.** Select the workflow first. Direct work inspects, acts, verifies and reports. Fixed chains retain their acceptance checks, independent review and run record. Neither path creates a six-phase ledger or starts Learn solely to compensate for absent hooks. For adaptive orchestration and resumed runs with existing obligations, perform the following applicable steps explicitly before declaring completion (resolve `${RUNTIME_PLUGIN_ROOT}` to the loaded Build Loop root). Do not rely on global hooks or install them as a workaround.
 
 1. **Append the run record** — `python3 "$root"/scripts/append_run.py …` so Phase 6 Learn's `runs[]` sees this run. Without it, the run is invisible to the recurring-pattern detector and the milestone log. Pass `--push-range <base>..<head>` whenever the run pushed: `append_run` corroborates `--commit` against that range and records `pending` rather than a SHA it cannot reach (this manual path is where the 2026-07-09 wrong-SHA record came from).
 2. **Run the judgment gate** — `python3 "$root"/scripts/judgment_gate.py --workdir "$PWD" --run-id <run-id> --agent-tool-available false --json`. On a stakes-gated run that stayed at the inline floor, it surfaces the skipped-Frontier-judgment WARN that the Stop hook would otherwise have surfaced.
@@ -681,7 +688,7 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 4. **Finalize branch hygiene after merge and positive owner release** — from the integrating/primary worktree run `python3 "$root/scripts/collapse_run.py" --workdir "$PWD" --run-id <exact-run-id> --branch <exact-branch> --strict --merged-only --owner-released --release-source codex-manual --json`. Do not declare branch hygiene clean unless `strict_success:true`, `bundle_verified:true`, a terminal receipt, and `errors:[]` are present.
 5. **Phase 6 Learn recording** — run `python3 "$root/scripts/learn/__main__.py" run --workdir "$PWD" --run-id <run-id> --source manual --json`; complete returned work orders and emit its `learn_line`.
 
-These are idempotent with the hook path (the marker is the inline sentinel; `runs[]` membership is the Phase-D sentinel), so a later host that DOES fire the hook will not double-record. The rule: **never let "the hook will catch it" stand in for run recording or branch finalization under Codex** — confirm the hook fired, or do the five steps by hand.
+These operations retain their idempotence with legacy hook paths. Execute the obligations of the selected workflow explicitly; absent hooks never waive acceptance, independent review, authority or branch-recovery requirements.
 
 ## Post-Build
 

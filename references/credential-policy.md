@@ -15,10 +15,19 @@ work. Do not automatically unlock it or trigger authentication prompts.
 
 On macOS, Git network commands must not invoke `osxkeychain` or the plaintext
 `store` helper. Public, anonymous reads can explicitly disable credential
-helpers. Prefer connected tools for authenticated writes. The Bash policy refuses `gh` authentication-capable commands on
-macOS, including token-present invocations: shell text cannot prove that their
-effective environment will prevent stored-credential fallback. Help and version
-commands remain available. Use connected tools and the host model interface.
+helpers. Prefer connected tools when they support the requested operation.
+Owner update, 2026-11-11: normal `gh api`, `release`, `run`, `workflow`, `search`,
+`label`, `status`, `browse`, `repo view/list`, `pr view/list/diff/checks` and
+`issue view/list` commands may use the
+existing configured login, including incidental Keychain access. This supersedes
+the earlier blanket gh restriction. The requested operation still needs its own
+authorization. Direct credential extraction or changes (`gh auth`), extensions,
+and unknown aliases remain refused; help/version remain available. Git-launching
+commands such as `gh repo clone` and `gh pr checkout` remain refused; use the
+existing inspected Git transport route. GH_BROWSER/GH_PAGER/GH_EDITOR commands
+are checked by the credential classifier too. Never extract
+tokens or use plaintext storage. If login or unlock is requested, stop that path;
+retry only after relevant state or explicit authorization changes.
 Model capacity is not permission to change credentials.
 
 Owner update, 2026-11-08. Claude commands may use the configured login. The

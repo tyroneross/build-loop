@@ -34,10 +34,10 @@ these are execution structures within that owner.
   isolation, recovery, and closeout requirements apply to every path. A lighter
   path changes orchestration overhead, not acceptance. If repository instructions
   require six phases for the task, select adaptive orchestration.
-  In Build Loop's own repository, the current AGENTS.md/CLAUDE.md mandates
-  intentionally keep significant multi-step changes on adaptive orchestration.
-  Fixed chains are available in consuming repositories without that mandate;
-  this selector does not amend or override those repository instructions.
+  Build Loop's own repository uses the same task-shape selection as consuming
+  repositories; significant multi-step work does not automatically select adaptive
+  orchestration. This selector does not amend or override those repository instructions
+  that explicitly require a stronger workflow for a particular risk or task.
 - Existing risk classification and model-tier pins apply on every path, including
   database/migration, auth/secrets, production, and destructive operations. Load
   their applicable contracts before acting; when the effect or required checks

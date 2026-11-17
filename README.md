@@ -41,9 +41,13 @@ $build-loop add billing settings with tests
 $build-loop tests pass locally but fail in CI
 ```
 
-Build Loop assesses the repository, plans the work, executes it, reviews the result, fixes failures, and records reusable lessons. It resumes relevant incomplete work automatically and preserves unrelated work before starting fresh.
+Build Loop selects the smallest sufficient workflow: direct execution for bounded work, a fixed chain for known steps, or adaptive assessment, planning, execution, review, iteration, and learning when uncertainty or risk requires it. Every path preserves required checks and review. It resumes relevant incomplete work automatically and preserves unrelated work before starting fresh.
+
+Workflow improvements must demonstrate user value against the same model using native tools. Evaluate result quality and user corrections alongside latency and token use; completing the workflow alone does not establish an improvement.
 
 It asks for confirmation only before a production release, an irreversible deletion, or a major user-impacting decision.
+
+Codex runs Build Loop explicitly through its skill; this source package registers no automatic Codex hooks. Claude retains hook adapters with Rust paths for session startup, edit hints, tool tracing, and Bash supervision, plus Rust Stop context preflight. Existing installed caches and global hook settings require separate updates.
 
 ## npm fallback
 

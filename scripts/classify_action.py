@@ -22,8 +22,12 @@ The decision tree below makes priority explicit so two rules can't fire at once.
 Read-only short-circuit. Most operator pain comes from `vercel curl`,
 `vercel logs`, `git status`, `cat`, `grep`, etc. being classified `unknown` by
 deployment_policy and routed to `confirm`. Read-only commands are mechanically
-SAFE regardless of environment — they cannot mutate prod by definition. The
-read-only matcher fires before any other rule.
+SAFE regardless of environment — they cannot mutate prod by definition.
+
+Compound commands. A command line is split into its parts (`&&`, `||`, `;`,
+`|`, `&`, newlines, `$(...)`, backticks, subshells; quotes respected) and is
+rated by its most severe part. It is read-only only when EVERY part is; an
+unparseable command (heredoc, unbalanced quote) is never read-only.
 
 CLI:
   python3 classify_action.py --workdir . --command "vercel curl --deployment x.com /"
@@ -131,6 +135,63 @@ READ_ONLY_SUB_SUBVERBS: dict[tuple[str, str], frozenset[str]] = {
 }
 
 
+# Git sub-verbs above that also have writing forms. A sub-verb is read-only only
+# when none of its writing flags or writing first-positionals is present.
+_GIT_WRITE_FLAGS: dict[str, frozenset[str]] = {
+    "branch": frozenset({
+        "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy",
+        "-f", "--force", "-u", "--set-upstream-to", "--unset-upstream",
+        "--edit-description",
+    }),
+    "tag": frozenset({
+        "-d", "--delete", "-f", "--force", "-a", "--annotate", "-s", "--sign",
+        "-u", "--local-user", "-m", "--message", "-F", "--file",
+    }),
+    "config": frozenset({
+        "--unset", "--unset-all", "--add", "--replace-all", "--remove-section",
+        "--rename-section", "-e", "--edit",
+    }),
+}
+# First positional argument that makes the sub-verb write (`git remote add`).
+# None means: any positional other than the listed READ forms writes.
+_GIT_WRITE_POSITIONALS: dict[str, frozenset[str]] = {
+    "remote": frozenset({"add", "remove", "rm", "rename", "set-url", "set-head",
+                         "set-branches", "prune", "update"}),
+    "reflog": frozenset({"expire", "delete", "drop"}),
+    "config": frozenset({"set", "unset", "rename-section", "remove-section", "edit"}),
+}
+_GIT_CONFIG_VALUE_OPTS = frozenset({"-f", "--file", "--blob", "--type", "--default"})
+
+
+def _git_subverb_writes(sub: str, args: list[str]) -> bool:
+    """True when `git <sub> <args>` uses a writing form of a read-only sub-verb."""
+    write_flags = _GIT_WRITE_FLAGS.get(sub, frozenset())
+    positionals: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg.startswith("--"):
+            if arg.split("=", 1)[0] in write_flags:
+                return True
+        elif arg.startswith("-") and len(arg) > 1:
+            # Short-flag cluster: `-Df` carries -D.
+            if any(f"-{ch}" in write_flags for ch in arg[1:]):
+                return True
+        else:
+            positionals.append(arg)
+        if sub == "config" and arg in _GIT_CONFIG_VALUE_OPTS:
+            skip_next = True
+    if positionals and positionals[0] in _GIT_WRITE_POSITIONALS.get(sub, frozenset()):
+        return True
+    if sub == "config":
+        # `git config key` reads; `git config key value` writes.
+        reads = positionals and positionals[0] in ("get", "list")
+        return not reads and len(positionals) > 1
+    return False
+
+
 def _tokens(command: str) -> list[str]:
     try:
         return shlex.split(command)
@@ -138,20 +199,23 @@ def _tokens(command: str) -> list[str]:
         return command.split()
 
 
-def _is_read_only(command: str) -> bool:
-    """Return True when the command is mechanically read-only."""
+def _part_is_read_only(command: str) -> bool:
+    """Return True when ONE simple command (no separators) only inspects state."""
     cmd = command.strip()
     if not cmd:
         return False
-    # Skip leading parens / semicolons used in compound commands
-    head = cmd.split(None, 1)[0].lstrip("(").rstrip(";")
+    words = cmd.split()
+    # A brace group or function definition left in a part is not a simple command.
+    if any(w in ("{", "}") or w.endswith("()") for w in words):
+        return False
+    head = words[0]
     if head in READ_ONLY_FIRST_TOKENS:
         return True
 
     tokens = _tokens(cmd)
     if not tokens:
         return False
-    first = tokens[0].lstrip("(").rstrip(";")
+    first = tokens[0]
     sub = tokens[1] if len(tokens) > 1 else ""
     sub2 = tokens[2] if len(tokens) > 2 else ""
 
@@ -167,9 +231,197 @@ def _is_read_only(command: str) -> bool:
     # One-level whitelist (e.g. `git status`, `vercel logs`)
     sub_set = READ_ONLY_SUBVERBS.get(first)
     if sub_set is not None and sub in sub_set:
+        if first == "git" and _git_subverb_writes(sub, tokens[2:]):
+            return False
         return True
 
     return False
+
+
+def _is_read_only(command: str) -> bool:
+    """Return True when EVERY part of the command is mechanically read-only.
+
+    An unparseable command (unbalanced quotes, heredoc, ...) is never read-only.
+    """
+    parts = split_command(command)
+    if not parts or len(parts) > MAX_PARTS:
+        return False
+    return all(_part_is_read_only(p) for p in parts)
+
+
+# ---------------------------------------------------------------------------
+# A1b. Compound-command splitting
+# ---------------------------------------------------------------------------
+#
+# A shell command line is judged by its most severe part, so every part must be
+# found: `ls && rm -rf ~/x` is two commands, and the first word says nothing
+# about the second. The splitter is deliberately small and explicit (shlex
+# cannot keep separators). It returns None for anything it does not
+# understand; callers must then judge the whole string WITHOUT the read-only
+# shortcut, never fall back to "read-only".
+
+class _Unparseable(Exception):
+    pass
+
+
+# Reserved words that open a compound statement; the command follows them.
+_LEADING_KEYWORDS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!", "{", "time"})
+# Reserved words that only close a compound statement.
+_CLOSING_KEYWORDS = frozenset({"fi", "done", "}", "esac"})
+
+
+# `name () {` / `function name {` — the header defines, the body runs later.
+_FUNCTION_HEADER = re.compile(
+    r"^(?:function\s+[^\s(){}]+\s*(?:\(\s*\))?|[^\s(){}]+\s*\(\s*\))\s*(?:\{\s*)?"
+)
+
+
+def _normalize_part(text: str) -> str:
+    part = _FUNCTION_HEADER.sub("", text.strip(), count=1)
+    while part:
+        head, _, rest = part.partition(" ")
+        if head in _LEADING_KEYWORDS:
+            part = rest.strip()
+            continue
+        break
+    while part.endswith((" }", ";}")) or part == "}":
+        part = part[:-1].rstrip()
+    return "" if part in _CLOSING_KEYWORDS else part
+
+
+def _find_backtick_end(s: str, i: int) -> int:
+    """Index of the backtick closing the one at s[i]."""
+    j = i + 1
+    while j < len(s):
+        if s[j] == "\\":
+            j += 2
+            continue
+        if s[j] == "`":
+            return j
+        j += 1
+    raise _Unparseable("unterminated backtick")
+
+
+# Nesting deeper than this is not ordinary shell; refusing it keeps recursion
+# depth independent of the input.
+MAX_NESTING = 16
+# More parts than this are not judged one by one (see _is_read_only).
+MAX_PARTS = 64
+
+
+def _scan(s: str, i: int, closer: str | None, parts: list[str], depth: int = 0) -> int:
+    """Append the parts found from s[i] on; return the index after `closer`."""
+    if depth > MAX_NESTING:
+        raise _Unparseable("nesting too deep")
+    buf: list[str] = []
+
+    def flush() -> None:
+        part = _normalize_part("".join(buf))
+        if part:
+            parts.append(part)
+        buf.clear()
+
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            if s.startswith("\\\n", i):  # line continuation
+                i += 2
+                continue
+            buf.append(s[i:i + 2])
+            i += 2
+        elif s.startswith("$'", i):  # ANSI-C quoting: backslash escapes the quote
+            j = i + 2
+            while j < n and s[j] != "'":
+                j += 2 if s[j] == "\\" else 1
+            if j >= n:
+                raise _Unparseable("unterminated $' quote")
+            buf.append(s[i:j + 1])
+            i = j + 1
+        elif c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                raise _Unparseable("unterminated single quote")
+            buf.append(s[i:j + 1])
+            i = j + 1
+        elif c == '"':
+            j = i + 1
+            while True:
+                if j >= n:
+                    raise _Unparseable("unterminated double quote")
+                if s[j] == "\\":
+                    j += 2
+                elif s[j] == '"':
+                    break
+                elif s[j] == "`":
+                    end = _find_backtick_end(s, j)
+                    _scan(s[j + 1:end], 0, None, parts, depth + 1)
+                    j = end + 1
+                elif s.startswith("$(", j):
+                    j = _scan(s, j + 2, ")", parts, depth + 1)
+                else:
+                    j += 1
+            buf.append(s[i:j + 1])
+            i = j + 1
+        elif c == "`":
+            end = _find_backtick_end(s, i)
+            _scan(s[i + 1:end], 0, None, parts, depth + 1)
+            buf.append(s[i:end + 1])
+            i = end + 1
+        elif s.startswith("$(", i):
+            j = _scan(s, i + 2, ")", parts, depth + 1)
+            buf.append(s[i:j])
+            i = j
+        elif c == "(":
+            j = _scan(s, i + 1, ")", parts, depth + 1)
+            if "".join(buf).strip():  # `<(cmd)`, `f()`, `a=(1 2)`: keep the text
+                buf.append(s[i:j])
+            i = j
+        elif c == ")":
+            if closer != ")":
+                raise _Unparseable("unbalanced ')'")
+            flush()
+            return i + 1
+        elif s.startswith("<<<", i):
+            buf.append("<<<")
+            i += 3
+        elif s.startswith("<<", i):
+            raise _Unparseable("heredoc")
+        elif c == "#" and (not buf or (len(buf[-1]) == 1 and buf[-1].isspace())):
+            while i < n and s[i] != "\n":  # comment runs to end of line
+                i += 1
+        elif s.startswith(("&&", "||"), i):
+            flush()
+            i += 2
+        elif c == "&" and (s[i + 1:i + 2] == ">" or (buf and buf[-1][-1:] in ("<", ">"))):
+            buf.append(c)  # redirection: `&>file`, `2>&1`, `<&3`
+            i += 1
+        elif c in ";|&\n\r":
+            flush()
+            i += 1
+        else:
+            buf.append(c)
+            i += 1
+    if closer is not None:
+        raise _Unparseable(f"missing {closer!r}")
+    flush()
+    return i
+
+
+def split_command(command: str) -> list[str] | None:
+    """Return the simple commands in a shell command line, or None if unparseable.
+
+    Splits on `&&`, `||`, `;`, `|`, `&` and newlines, and adds the bodies of
+    `$(...)`, backticks and `(...)` subshells as parts of their own. Separators
+    inside quotes do not split. Heredocs, unbalanced quotes or parentheses and
+    unterminated substitutions return None.
+    """
+    parts: list[str] = []
+    try:
+        _scan(command, 0, None, parts)
+    except (_Unparseable, RecursionError):
+        return None
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -319,38 +571,21 @@ def classify(
     files_touched = files_touched or []
     envelope = envelope or {}
 
-    has_command = bool(command.strip())
-    target = _deployment_target(command) if has_command else "n/a"
-    irreversible = _is_irreversible(command) if has_command else False
-    read_only = _is_read_only(command) if has_command else False
-
-    # 1. PRODUCTION — irreversible + production
-    if irreversible and target == "production":
-        return _envelope(
-            "PRODUCTION",
-            reason=f"irreversible command targets production ({target})",
-            matched_rule="irreversible+production",
-            delegated_to="classify_action",
-        )
-
-    # 2. RISKY — irreversible + non-production (force-push to feature, etc.)
-    if irreversible:
-        return _envelope(
-            "RISKY",
-            reason="irreversible command targeting non-production — isolate to branch",
-            matched_rule="irreversible+non-production",
-            delegated_to="classify_action",
-        )
-
-    # 3. PRODUCTION — non-irreversible production deploy command
-    # Read-only inspection of prod (e.g. `vercel logs --prod`) is NOT production.
-    if target == "production" and not read_only:
-        return _envelope(
-            "PRODUCTION",
-            reason="command targets production deployment",
-            matched_rule="deployment_policy:production",
-            delegated_to="deployment_policy",
-        )
+    # Rules 1-4 judge each part of a compound command and keep the most severe
+    # verdict; rule 4 (read-only) needs EVERY part read-only. The whole string
+    # is judged as one more candidate, so splitting can never lower a verdict.
+    read_only = False
+    if command.strip():
+        parts = split_command(command)
+        read_only = _is_read_only(command)
+        candidates = list(dict.fromkeys([command] + [p for p in (parts or []) if p != command.strip()]))
+        worst: tuple[int, dict[str, Any]] | None = None
+        for text in candidates:
+            verdict = _command_verdict(text, read_only if text == command else _part_is_read_only(text))
+            if verdict and (worst is None or verdict[0] > worst[0]):
+                worst = verdict
+        if worst:
+            return worst[1]
 
     # 4. SAFE — read-only short-circuit
     if read_only:
@@ -391,6 +626,41 @@ def classify(
         matched_rule=None,
         delegated_to=None,
     )
+
+
+def _command_verdict(command: str, read_only: bool) -> tuple[int, dict[str, Any]] | None:
+    """Rules 1-3 for one command text: (severity rank, envelope), or None."""
+    target = _deployment_target(command)
+    irreversible = _is_irreversible(command)
+
+    # 1. PRODUCTION — irreversible + production
+    if irreversible and target == "production":
+        return 3, _envelope(
+            "PRODUCTION",
+            reason=f"irreversible command targets production ({target})",
+            matched_rule="irreversible+production",
+            delegated_to="classify_action",
+        )
+
+    # 2. RISKY — irreversible + non-production (force-push to feature, etc.)
+    if irreversible:
+        return 1, _envelope(
+            "RISKY",
+            reason="irreversible command targeting non-production — isolate to branch",
+            matched_rule="irreversible+non-production",
+            delegated_to="classify_action",
+        )
+
+    # 3. PRODUCTION — non-irreversible production deploy command
+    # Read-only inspection of prod (e.g. `vercel logs --prod`) is NOT production.
+    if target == "production" and not read_only:
+        return 2, _envelope(
+            "PRODUCTION",
+            reason="command targets production deployment",
+            matched_rule="deployment_policy:production",
+            delegated_to="deployment_policy",
+        )
+    return None
 
 
 def _envelope(

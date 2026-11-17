@@ -555,5 +555,133 @@ class BranchDeletionConfirmTests(unittest.TestCase):
                 self.assertEqual(self._env(cmd)["action"], expected)
 
 
+class CompoundCommandTests(unittest.TestCase):
+    """A compound command gets the scrutiny of its most severe part.
+
+    The gate used to return `auto` for anything whose FIRST word was read-only
+    (`ls && rm -rf ~/x`), and its own confirm/block globs are anchored at the
+    start of the string, so `echo hi && npm publish` never met `npm publish*`.
+    Commands come from the rule tables (see test_classify_action.derived_commands).
+    """
+
+    RANK = {"auto": 0, "warn": 1, "confirm": 2, "block": 3}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        sys.path.insert(0, str(HERE))
+        import autonomy_gate
+        from test_classify_action import READ_ONLY_PREFIXES, derived_commands
+
+        cls.gate = autonomy_gate
+        cls.prefixes = READ_ONLY_PREFIXES
+        cls.commands = derived_commands()
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.workdir = Path(cls._tmp.name)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def _action(self, command: str) -> str:
+        return self.gate.classify(self.workdir, "PreToolUse:Bash", command)["action"]
+
+    def test_no_read_only_prefix_lowers_the_gate_action(self) -> None:
+        rated = [(c, self._action(c)) for c in self.commands]
+        rated = [(c, a) for c, a in rated if self.RANK[a] > 0]
+        self.assertGreaterEqual(len(rated), 15, rated)
+        failures = []
+        for command, alone in rated:
+            for shape in self.prefixes:
+                compound = shape.format(command)
+                got = self._action(compound)
+                if self.RANK[got] < self.RANK[alone]:
+                    failures.append(f"{compound!r}: {got} < {alone} (alone)")
+        self.assertEqual(failures, [])
+
+    def test_named_commands(self) -> None:
+        cases = {
+            "echo hi && npm publish": "confirm",
+            "ls && rm -rf ~/Documents/example": "confirm",
+            "ls && rm -rf ~": "block",
+            "ls; git reset --hard HEAD~5": "auto",   # alone: auto (no rule names it)
+            "cat x && git branch -D feature": "auto",  # alone: auto (no rule names it)
+        }
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                env = self.gate.classify(self.workdir, "PreToolUse:Bash", command)
+                self.assertEqual(env["action"], expected)
+                self.assertNotEqual(env["matched_rule"], "read_only")
+                self.assertEqual(env["command"], command)
+
+    def test_read_only_compounds_stay_auto(self) -> None:
+        for command in ("ls && pwd", "git status; git log --oneline -3", "cat a | grep b", 'echo "a && b"'):
+            with self.subTest(command=command):
+                env = self.gate.classify(self.workdir, "PreToolUse:Bash", command)
+                self.assertEqual((env["action"], env["matched_rule"]), ("auto", "read_only"))
+
+    def test_policy_patterns_apply_to_every_part(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wd = Path(tmp)
+            (wd / ".build-loop").mkdir()
+            (wd / ".build-loop" / "config.json").write_text(json.dumps(
+                {"autonomy": {"blockFor": ["danger-block*"], "confirmFor": ["danger-confirm*"]}}))
+            for command, expected in (("echo ok && danger-block now", "block"),
+                                      ("ls; danger-confirm x", "confirm"),
+                                      ("danger-confirm x && danger-block y", "block")):
+                with self.subTest(command=command):
+                    self.assertEqual(self.gate.classify(wd, "PreToolUse:Bash", command)["action"], expected)
+
+
+class ReviewFixGateTests(unittest.TestCase):
+    """Deep nesting and huge part counts must not crash or stall the gate."""
+
+    RANK = {"auto": 0, "warn": 1, "confirm": 2, "block": 3}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        sys.path.insert(0, str(HERE))
+        import autonomy_gate
+
+        cls.gate = autonomy_gate
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.workdir = Path(cls._tmp.name)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def test_deep_nesting_is_at_least_confirm(self) -> None:
+        # main returned `confirm` for both; a crash here left the hook's stdout
+        # empty, which it reads as allow.
+        for depth in (50, 990, 1200):
+            deep = "echo " + "$(" * depth + "true" + ")" * depth
+            for head in ("rm -rf ~", "npm publish"):
+                with self.subTest(depth=depth, head=head):
+                    env = self.gate.classify(self.workdir, "PreToolUse:Bash", f"{head} ; {deep}")
+                    self.assertGreaterEqual(self.RANK[env["action"]], self.RANK["confirm"])
+
+    def test_deep_nesting_through_the_cli_prints_an_envelope(self) -> None:
+        deep = "echo " + "$(" * 1200 + "true" + ")" * 1200
+        result = run(self.workdir, "PreToolUse:Bash", f"rm -rf ~ ; {deep}")
+        self.assertEqual(envelope(result)["action"], "confirm")
+
+    def test_five_hundred_parts_is_fast_and_confirms(self) -> None:
+        import time
+        command = " ; ".join(f"npm run deploy-{i}" for i in range(500))
+        start = time.monotonic()
+        env = self.gate.classify(self.workdir, "PreToolUse:Bash", command)
+        self.assertLess(time.monotonic() - start, 3.0)
+        self.assertGreaterEqual(self.RANK[env["action"]], self.RANK["confirm"])
+
+    def test_repeated_parts_are_judged_once(self) -> None:
+        from unittest import mock
+        calls = []
+        real = self.gate._invoke_deployment_policy
+        with mock.patch.object(self.gate, "_invoke_deployment_policy",
+                               side_effect=lambda w, c: calls.append(c) or real(w, c)):
+            self.gate.classify(self.workdir, "PreToolUse:Bash", " ; ".join(["npm run deploy"] * 30))
+        self.assertEqual(len(calls), 2)  # whole string + one distinct part
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

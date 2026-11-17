@@ -344,23 +344,66 @@ def classify(
     # `vercel logs`, `git status`, etc. being routed to deployment_policy → unknown
     # → confirm. Read-only inspection cannot mutate prod by definition; skip the
     # whole routing chain. classify_action.py owns the read-only matcher.
+    # classify_action._is_read_only requires EVERY part of a compound command to
+    # be read-only, so `ls && rm -rf ~/x` does not short-circuit here.
     try:
         import classify_action  # local import to avoid circular imports at module load
-        if classify_action._is_read_only(command):
-            autonomy, _ = load_autonomy_config(workdir)
-            return _envelope(
-                "auto",
-                "read_only",
-                "default",
-                "read-only command; safe to execute",
-                action_label,
-                command,
-                _extract_flags(autonomy),
-            )
     except Exception:
-        # classify_action not yet installed in older deployments — fall through.
-        pass
+        # classify_action not yet installed in older deployments — judge whole string.
+        return _classify_one(workdir, action_label, command)
+    # Any failure in the splitter or the read-only matcher means "not read-only":
+    # the whole-string rules below still run, as for an unparseable command.
+    try:
+        read_only = classify_action._is_read_only(command)
+        parts = classify_action.split_command(command) or []
+    except Exception:
+        read_only, parts = False, []
+    if read_only:
+        autonomy, _ = load_autonomy_config(workdir)
+        return _envelope(
+            "auto",
+            "read_only",
+            "default",
+            "read-only command; safe to execute",
+            action_label,
+            command,
+            _extract_flags(autonomy),
+        )
 
+    # The glob patterns below are anchored at the start of the string, so a
+    # compound command is judged part by part (plus the whole string, so
+    # splitting never lowers a verdict) and the most severe action wins.
+    worst = _classify_one(workdir, action_label, command)
+    if len(parts) > classify_action.MAX_PARTS:
+        # Too many parts to judge one by one inside the hook's time limit
+        # (each deploy-like part costs a subprocess): ask, unless already stricter.
+        if _ACTION_RANK.get(worst["action"], 2) < _ACTION_RANK["confirm"]:
+            autonomy, _ = load_autonomy_config(workdir)
+            worst = _envelope("confirm", "too_many_parts", "default",
+                              f"command has more than {classify_action.MAX_PARTS} parts; confirm",
+                              action_label, command, _extract_flags(autonomy))
+        return worst
+    for part in dict.fromkeys(parts):  # one judgement per distinct part text
+        try:
+            if part == command.strip() or classify_action._part_is_read_only(part):
+                continue
+        except Exception:
+            pass
+        env = _classify_one(workdir, action_label, part)
+        if _ACTION_RANK.get(env["action"], 2) > _ACTION_RANK.get(worst["action"], 2):
+            worst = dict(env, command=command)
+    return worst
+
+
+_ACTION_RANK = {"auto": 0, "warn": 1, "confirm": 2, "block": 3}
+
+
+def _classify_one(
+    workdir: Path,
+    action_label: str,
+    command: str,
+) -> dict[str, Any]:
+    """Steps 1-8 for one command text (no read-only short-circuit)."""
     # Step 1: deployment_policy delegation
     # When deployment_policy returns an "unknown" target, fall through to
     # autonomy_gate's own pattern matching — DEFAULT_CONFIRM_FOR still catches

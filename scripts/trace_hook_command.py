@@ -16,10 +16,9 @@ stdin to EOF before its only append, so a Python run after it reads nothing
 and writes nothing. The brace group sends the shell's own "Killed: 9" job
 message to /dev/null.
 
-``python3 scripts/trace_hook_command.py --write`` rewrites hooks.json and the
-Codex copy hooks/codex.json (which must equal hooks.json minus
-PostToolUseFailure; scripts/test_hook_repair_deadlines.py asserts it);
-``--check`` exits 1 when either differs (also asserted by
+``python3 scripts/trace_hook_command.py --write`` rewrites Claude hooks.json.
+Codex ships no hooks.
+``--check`` exits 1 when the Claude registration differs (also asserted by
 tests/hook_parity/test_trace_parity.py).
 """
 from __future__ import annotations
@@ -30,7 +29,7 @@ from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 HOOKS_JSON = HOOKS_DIR / "hooks.json"
-FILES = (HOOKS_JSON, HOOKS_DIR / "codex.json")
+FILES = (HOOKS_JSON,)  # Codex registrations are intentionally empty.
 EVENTS = {"start": "PreToolUse", "end": "PostToolUse", "error": "PostToolUseFailure"}
 MARKER = "/scripts/tool_trace.py"
 

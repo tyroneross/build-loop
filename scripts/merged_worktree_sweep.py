@@ -13,7 +13,10 @@ or at least archived automatically and listed for deletion, with a patch saved.
 For every linked worktree in `git worktree list --porcelain` (any location;
 never the primary checkout):
 
-  1. Skip and report locked, prunable and bare entries.
+  1. Skip and report locked, prunable and bare entries. A worktree that checks
+     out a base branch (e.g. `main` in a linked worktree while the primary sits
+     on a feature branch) is skipped as `base_checkout`: it is trivially
+     "merged" and removing it would destroy the canonical checkout.
   2. MERGED when `git merge-base --is-ancestor <HEAD> <base>` holds for the
      default branch (local and remote-tracking: origin/HEAD's target, else
      main, else master; `--base` overrides). Anything else is UNMERGED and is
@@ -38,15 +41,17 @@ never the primary checkout):
           --force`, `git worktree prune`, and `git branch -d` (plain -d, which
           refuses an unmerged branch; never -D).
 
-Modes: --archive-only (default; steps a-c, nothing removed, archived
-worktrees listed as ready to remove), --act (a-d), --dry-run (touches
-nothing). Free space is read from os.statvfs before and after; `du` overstates
-APFS clones.
+Modes: --dry-run (default; touches nothing), --archive-only (steps a-c,
+nothing removed, archived worktrees listed as ready to remove), --act (a-d).
+--only/--exclude PATH (repeatable) restrict the sweep to worktrees at/under
+those paths; filtered-out ones are reported as `excluded`. Free space is read
+from os.statvfs before and after; `du` overstates APFS clones.
 
 CLI::
 
     python3 scripts/merged_worktree_sweep.py --repo <path>
         [--dry-run | --archive-only | --act] [--base <ref>] [--json]
+        [--only PATH ...] [--exclude PATH ...]
         [--max-worktrees N] [--budget-s S] [--min-idle-minutes M] [--no-sizes]
 
 Exit 0 = no step failed. Exit 1 = at least one worktree hit an error (patch
@@ -456,9 +461,10 @@ def remove(wt: Path, primary: Path, branch: str | None, *, expected_head: str | 
 
 # ── sweep ────────────────────────────────────────────────────────────────────
 
-def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str | None = None,
+def sweep(repo: str | os.PathLike[str], *, mode: str = "dry-run", base: str | None = None,
           max_worktrees: int = DEFAULT_MAX_WORKTREES, budget_s: float = 0.0,
-          min_idle_minutes: float = DEFAULT_MIN_IDLE_MINUTES, sizes: bool = True) -> dict[str, Any]:
+          min_idle_minutes: float = DEFAULT_MIN_IDLE_MINUTES, sizes: bool = True,
+          only: list[str] | None = None, exclude: list[str] | None = None) -> dict[str, Any]:
     started = time.monotonic()
     deadline = started + budget_s if budget_s > 0 else None
 
@@ -472,10 +478,13 @@ def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str
     entries = parse_porcelain(listing.stdout)
     primary = Path(_real(entries[0]["path"])) if entries else repo_path
     bases = resolve_base_refs(primary, base)
+    only_n = [_real(o) for o in only or []]
+    exclude_n = [_real(x) for x in exclude or []]
     report: dict[str, Any] = {
         "schema": SCHEMA, "mode": mode, "repo": str(repo_path), "primary": str(primary),
         "base_refs": bases, "linked_total": max(0, len(entries) - 1), "inspected": 0,
         "skipped_locked": [], "skipped_prunable": [], "skipped_bare": [], "unmerged": [],
+        "base_checkout": [], "excluded": [], "only": only_n, "exclude": exclude_n,
         "fresh": [], "recently_active": [], "busy": [], "unchecked": [], "ready_to_remove": [],
         "removed": [], "errors": [], "free_bytes_before": free_bytes(primary),
     }
@@ -489,11 +498,17 @@ def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str
     now = datetime.now(timezone.utc)
     idle_s = min_idle_minutes * 60
     tips = merged_tips(primary, bases)
+    protected = set(bases) | {b[len("origin/"):] for b in bases if b.startswith("origin/")}
     merged: list[dict[str, Any]] = []
-    for idx, entry in enumerate(entries[1:]):
+    for entry in entries[1:]:
         rec = {"path": entry["path"], "branch": entry.get("branch"), "head": entry.get("head")}
-        if idx >= max_worktrees or remaining() <= 0:
-            rec["reason"] = "inspection cap reached" if idx >= max_worktrees else "time budget exhausted"
+        real = _real(entry["path"])
+        if (only_n and not any(_inside(real, o) for o in only_n)) or any(_inside(real, x) for x in exclude_n):
+            report["excluded"].append(rec)
+            continue
+        capped = report["inspected"] >= max_worktrees
+        if capped or remaining() <= 0:
+            rec["reason"] = "inspection cap reached" if capped else "time budget exhausted"
             report["unchecked"].append(rec)
             continue
         report["inspected"] += 1
@@ -510,6 +525,10 @@ def sweep(repo: str | os.PathLike[str], *, mode: str = "archive-only", base: str
             continue
         wt = Path(_real(entry["path"]))
         if wt == primary or not rec["head"]:
+            continue
+        if entry.get("branch") in protected:
+            rec["reason"] = f"checks out base branch {entry['branch']}"
+            report["base_checkout"].append(rec)
             continue
         merged_into = is_merged(primary, rec["head"], bases, tips)
         if merged_into is None:
@@ -609,6 +628,8 @@ def render_text(r: dict[str, Any]) -> str:
                       + ("" if i.get("branch_deleted") or not i.get("branch")
                          else f" branch kept: {i.get('branch_note', '')}"))
     section("Errors", r["errors"], lambda i: f"{i['path']}: {i.get('error')}")
+    section("Base branch checkout (never swept)", r["base_checkout"],
+            lambda i: f"{i['path']} ({i.get('branch')})")
     section("Busy (process cwd inside)", r["busy"], lambda i: f"{i['path']}: {i['reason']}")
     section("Merged, process check not run (left alone)", [i for i in r["unchecked"] if i.get("merged_into")],
             lambda i: f"{i['path']} ({i.get('branch') or 'detached'}): {i.get('reason')}")
@@ -618,6 +639,7 @@ def render_text(r: dict[str, Any]) -> str:
             lambda i: f"{i['path']} idle {i['idle_minutes']} min")
     section("Fresh (no commits yet, left alone)", r["fresh"], lambda i: i["path"])
     section("Unmerged (report only)", r["unmerged"], lambda i: f"{i['path']} ({i.get('branch') or 'detached'})")
+    section("Excluded by --only/--exclude", r["excluded"], lambda i: i["path"])
     section("Locked (skipped)", r["skipped_locked"], lambda i: f"{i['path']}: {i.get('reason')}")
     section("Prunable (skipped)", r["skipped_prunable"], lambda i: f"{i['path']}: {i.get('reason')}")
     section("Bare (skipped)", r["skipped_bare"], lambda i: i["path"])
@@ -630,10 +652,12 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Archive merged linked worktrees and free them.")
     p.add_argument("--repo", required=True, help="Any checkout of the repository")
     m = p.add_mutually_exclusive_group()
-    m.add_argument("--dry-run", dest="mode", action="store_const", const="dry-run", help="Touch nothing")
+    m.add_argument("--dry-run", dest="mode", action="store_const", const="dry-run", help="Default: touch nothing")
     m.add_argument("--archive-only", dest="mode", action="store_const", const="archive-only",
-                   help="Default: patch + copy records + archive; no removal")
+                   help="Patch + copy records + archive; no removal")
     m.add_argument("--act", dest="mode", action="store_const", const="act", help="Also remove + delete branch")
+    p.add_argument("--only", action="append", help="Restrict to worktrees at/under PATH (repeatable)")
+    p.add_argument("--exclude", action="append", help="Skip worktrees at/under PATH (repeatable)")
     p.add_argument("--base", help="Base ref instead of the default branch")
     p.add_argument("--max-worktrees", type=int, default=DEFAULT_MAX_WORKTREES)
     p.add_argument("--budget-s", type=float, default=0.0, help="Overall time budget (0 = none)")
@@ -642,9 +666,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
     try:
-        report = sweep(args.repo, mode=args.mode or "archive-only", base=args.base,
+        report = sweep(args.repo, mode=args.mode or "dry-run", base=args.base,
                        max_worktrees=args.max_worktrees, budget_s=args.budget_s,
-                       min_idle_minutes=args.min_idle_minutes, sizes=not args.no_sizes)
+                       min_idle_minutes=args.min_idle_minutes, sizes=not args.no_sizes,
+                       only=args.only, exclude=args.exclude)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

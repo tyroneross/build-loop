@@ -57,24 +57,37 @@ def registrations(name):
 
 
 def test_retrospective_runs_at_session_end_in_every_registered_adapter():
-    for manifest in ("hooks/hooks.json", "hooks/codex.json", ".codex/hooks.json"):
+    for manifest in ("hooks/hooks.json",):
         entries = [(event, handler) for event, handler in registrations(manifest)
                    if "session_end_retro_sweep.py" in handler["command"]]
         assert len(entries) == 1, manifest
         assert entries[0][0] == "SessionEnd", manifest
 
 
-def test_repository_codex_retains_turn_consumers():
-    commands = [handler["command"] for event, handler in registrations(".codex/hooks.json")
-                if event == "Stop"]
-    assert len(commands) == 3
-    assert any('closeout.sh" stop' in command for command in commands)
-    assert any('agent_rally.py" stop' in command for command in commands)
-    assert any('stop-transcript-sweep.sh" all' in command for command in commands)
+def test_codex_has_no_automatic_hook_registrations():
+    manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
+    # Keep an explicit empty file so discovery cannot fall back to Claude hooks.
+    assert manifest["hooks"] == "./hooks/codex.json"
+    for name in (manifest["hooks"], ".codex/hooks.json"):
+        assert json.loads((ROOT / name).read_text()) == {"hooks": {}}
+
+
+def test_registration_generators_cannot_restore_codex_hooks(tmp_path, monkeypatch):
+    import session_start_hook_command as startup
+    import trace_hook_command as trace
+    for generator in (startup, trace):
+        assert [p.name for p in generator.FILES] == ["hooks.json"]
+        copied = tmp_path / "hooks.json"
+        copied.write_bytes((ROOT / "hooks/hooks.json").read_bytes())
+        codex = tmp_path / "codex.json"
+        codex.write_text('{"hooks": {}}')
+        monkeypatch.setattr(generator, "FILES", (copied,))
+        assert generator.main(["--write"]) == 0
+        assert codex.read_text() == '{"hooks": {}}'
 
 
 def test_startup_has_one_registered_response_per_plugin():
-    for manifest in ("hooks/hooks.json", "hooks/codex.json"):
+    for manifest in ("hooks/hooks.json",):
         startup = [h for event, h in registrations(manifest) if event == "SessionStart"]
         assert len(startup) == 1
         assert "hook session-start" in startup[0]["command"]

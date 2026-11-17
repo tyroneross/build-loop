@@ -1,14 +1,14 @@
 # Build Loop Plugin
 
-Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes.
+Select the smallest sufficient workflow using [workflow selection](skills/build-loop/references/workflow-selection.md): direct work for bounded operations, fixed chains for known dependent steps, and adaptive orchestration when uncertainty or risk requires it. File count alone does not select the full loop. This rule applies to Build Loop itself and consuming repositories. Required acceptance checks, independent review, isolation, and authority gates apply on every path. Judge workflow improvements by demonstrated user value against the same model using native tools; completion, extra checks, or lower cost alone do not prove better results.
 
 **After any issue, reassess before retrying.** Return to Assess and follow the
 [canonical search-and-batch rule](skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
 before rerunning the failed build or operation.
 
-**Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
+**Adaptive phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory within adaptive orchestration: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
 
-Phase 6 uses one proof-bearing command: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Complete its returned work orders through `attest`; a complete receipt is required.
+For adaptive orchestration, Phase 6 uses one proof-bearing command: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Complete its returned work orders through `attest`; a complete receipt is required.
 
 Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report.
 

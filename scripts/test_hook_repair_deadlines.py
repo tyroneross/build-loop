@@ -127,14 +127,8 @@ class CodexPackagingTests(unittest.TestCase):
     def test_host_manifest_uses_supported_events_and_session_end_deadline(self):
         root = Path(__file__).resolve().parent.parent
         shared = json.loads((root / 'hooks/hooks.json').read_text())
-        expected = json.loads(json.dumps(shared))
-        expected['hooks'].pop('PostToolUseFailure', None)
-        for group in expected['hooks'].get('SessionEnd', []):
-            for handler in group.get('hooks', []):
-                if isinstance(handler.get('timeout'), (int, float)):
-                    handler['timeout'] = min(handler['timeout'], 3)
         manifest = json.loads((root / '.codex-plugin/plugin.json').read_text())
         self.assertEqual(manifest['hooks'], './hooks/codex.json')
         actual = json.loads((root / manifest['hooks']).read_text())
-        self.assertEqual(actual, expected)
+        self.assertEqual(actual, {"hooks": {}})
         self.assertIn('PostToolUseFailure', shared['hooks'])

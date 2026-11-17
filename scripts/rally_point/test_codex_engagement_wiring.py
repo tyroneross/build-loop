@@ -1,4 +1,8 @@
-"""Regression tests for Codex Rally engagement hook wiring."""
+"""Regression tests for retained Claude Rally engagement hook wiring.
+
+Codex intentionally has no automatic hooks. Manifest absence and generator
+non-restoration are covered by test_hook_registration_contract; explicit probe
+and watcher behavior remain covered by test_session_probe."""
 
 from __future__ import annotations
 
@@ -10,46 +14,9 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[2]
-CODEX_HOOKS = REPO / ".codex" / "hooks.json"
 CLAUDE_SESSION_HOOK = REPO / "hooks" / "session-start-rally-point.sh"
 CLAUDE_PRE_EDIT_HOOK = REPO / "hooks" / "pre-edit-rally-point.sh"
 CLAUDE_PLUGIN_HOOKS = REPO / "hooks" / "hooks.json"
-
-
-def _commands_for(event: str) -> list[str]:
-    data = json.loads(CODEX_HOOKS.read_text(encoding="utf-8"))
-    commands: list[str] = []
-    for matcher in data.get("hooks", {}).get(event, []):
-        for hook in matcher.get("hooks", []):
-            command = hook.get("command")
-            if isinstance(command, str):
-                commands.append(command)
-    return commands
-
-
-def test_codex_session_start_probe_starts_watcher() -> None:
-    """Presence without --start-watch recreates the dormant-engagement failure."""
-    probe_commands = [
-        cmd
-        for cmd in _commands_for("SessionStart")
-        if "session_probe.py" in cmd and "--tool codex" in cmd
-    ]
-
-    assert probe_commands, "Codex SessionStart must invoke session_probe.py"
-    assert any("--mode hook" in cmd for cmd in probe_commands)
-    assert all("--session-id" in cmd for cmd in probe_commands)
-    assert all("CODEX_THREAD_ID" in cmd for cmd in probe_commands), (
-        "Codex SessionStart must reuse the host thread id so sibling Codex "
-        "sessions do not collapse into one Rally actor."
-    )
-    assert any("--start-watch" in cmd for cmd in probe_commands), (
-        "Codex SessionStart must start the coordination watcher; "
-        "rally presence alone does not keep Codex engaged."
-    )
-    assert any("--watch-parent-pid" in cmd and "PPID" in cmd for cmd in probe_commands), (
-        "Codex SessionStart must tie the watcher to the long-lived host parent; "
-        "using session_probe.py as the parent lets the watcher exit when the hook returns."
-    )
 
 
 def test_claude_session_start_watcher_uses_long_lived_parent(tmp_path: Path) -> None:
@@ -172,15 +139,3 @@ def test_claude_event_session_ids_reach_start_and_pre_edit_without_env(
             if record["script"] == script and "--session-id" in record["argv"]
         }
         assert {"claude-event-a", "claude-event-b"}.issubset(seen)
-
-
-def test_codex_stop_targets_the_same_session_actor_as_start() -> None:
-    stop_commands = _commands_for("Stop")
-    commands = [cmd for cmd in stop_commands if "actor_identity.py" in cmd]
-
-    assert commands, "Codex Stop must resolve the exact SessionStart Rally actor"
-    assert all("CODEX_THREAD_ID" in cmd for cmd in commands)
-    assert all("agent_rally.py" in cmd and " stop " in cmd for cmd in commands)
-    assert all('--tool \"$actor\"' in cmd for cmd in commands)
-    assert all('--session-id \"$rally_session\"' in cmd for cmd in commands)
-    assert all("rally stop codex" not in cmd for cmd in stop_commands)

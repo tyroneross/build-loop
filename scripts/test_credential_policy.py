@@ -77,22 +77,22 @@ class CredentialPolicyTests(unittest.TestCase):
     def test_approved_environment_route_does_not_read_values(self):
         self.assertIsNotNone(command_reason('gh auth login', platform='darwin', environment={'GH_TOKEN': 'synthetic'}))
         self.assertIsNone(command_reason('claude auth login', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
-        self.assertIsNotNone(command_reason('gh api repos/a/b', platform='darwin', environment={'GH_TOKEN': 'synthetic'}))
+        self.assertIsNone(command_reason('gh api repos/a/b', platform='darwin', environment={'GH_TOKEN': 'synthetic'}))
         self.assertIsNone(command_reason('claude -p hello', platform='darwin', environment={'ANTHROPIC_API_KEY': 'synthetic'}))
 
-    def test_command_environment_removal_cannot_fall_back_to_stored_auth(self):
+    def test_gh_service_commands_may_use_stored_auth_after_environment_removal(self):
         for command, environment in [
             ('GH_TOKEN=$MISSING gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('env -uGH_TOKEN gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('unset GH_TOKEN; gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('env -u GH_TOKEN -u GITHUB_TOKEN gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
             ('env -i gh api repos/a/b', {'GH_TOKEN': 'synthetic'}),
-            ('GH_TOKEN= gh auth token', {'GH_TOKEN': 'synthetic'}),
             ("env -i bash -lc 'gh api repos/a/b'", {'GH_TOKEN': 'synthetic'}),
         ]:
             with self.subTest(command=command):
-                self.assertIsNotNone(command_reason(command, platform='darwin', helpers=[], environment=environment))
-        self.assertIsNotNone(command_reason('env MODE=test gh api repos/a/b', platform='darwin', helpers=[], environment={'GH_TOKEN': 'synthetic'}))
+                self.assertIsNone(command_reason(command, platform='darwin', helpers=[], environment=environment))
+        self.assertIsNone(command_reason('env MODE=test gh api repos/a/b', platform='darwin', helpers=[], environment={'GH_TOKEN': 'synthetic'}))
+        self.assertIsNotNone(command_reason('GH_TOKEN= gh auth token', platform='darwin', helpers=[], environment={'GH_TOKEN': 'synthetic'}))
 
     def test_system_wrapper_never_dispatches_or_creates_request(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -544,19 +544,45 @@ class CredentialPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.reason(command))
 
-    def test_gh_is_refused_even_when_a_token_file_exists(self):
+    def test_gh_credential_extraction_is_refused_even_when_a_token_file_exists(self):
         # MAJ-06: a plaintext oauth_token for ANY host disabled gh protection
         # for every host. The owner rule bans plaintext substitution too.
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, 'hosts.yml').write_text('example.com:\n    oauth_token: synthetic\n'
                                               'github.com:\n    user: someone\n')
             env = {'GH_CONFIG_DIR': tmp}
-            for command in ['gh auth token --hostname github.com', 'gh pr list', 'gh api user']:
+            for command in ['gh auth token --hostname github.com', 'gh auth login', 'gh auth setup-git']:
                 with self.subTest(command=command):
                     reason = command_reason(command, platform='darwin', helpers=[], environment=env)
                     self.assertIsNotNone(reason)
-                    self.assertIn('Keychain', reason)
+                    self.assertIn('Credential extraction', reason)
             self.assertIsNone(command_reason('gh pr --help', platform='darwin', helpers=[], environment=env))
+
+    def test_gh_normal_service_commands_use_configured_login_without_probing(self):
+        with patch('credential_policy.subprocess.run', side_effect=AssertionError('executed')):
+            for command in ['gh api user --jq .login', 'gh release list -R owner/repo',
+                            'gh release create v1.2.3 --target abc --notes-file notes.md',
+                            'gh pr list', 'gh run view 123', 'gh repo view',
+                            'command gh api user', '/opt/homebrew/bin/gh issue list',
+                            'env GH_PROMPT_DISABLED=1 gh api user']:
+                with self.subTest(command=command):
+                    self.assertIsNone(self.reason(command))
+            for command in ['gh auth token', 'gh auth login --insecure-storage',
+                            'gh extension exec secret-reader', 'gh unknown-alias',
+                            'gh repo clone owner/repo -- --config credential.helper=osxkeychain',
+                            'gh pr checkout 123',
+                            "GH_BROWSER='security dump-keychain' gh browse -R owner/repo",
+                            "GH_PAGER='security dump-keychain' gh pr list",
+                            "GH_EDITOR='security dump-keychain' gh release create v1.0",
+                            'gh api user; gh auth token', 'gh api user && security dump-keychain',
+                            'gh release list | security find-generic-password -w']:
+                with self.subTest(command=command):
+                    self.assertIsNotNone(self.reason(command))
+            for name in ['GH_BROWSER', 'GH_PAGER', 'GH_EDITOR', 'BROWSER', 'PAGER',
+                         'GIT_EDITOR', 'VISUAL', 'EDITOR']:
+                with self.subTest(inherited=name):
+                    self.assertIsNotNone(command_reason('gh release list', platform='darwin',
+                        helpers=[], environment={name: 'security dump-keychain'}))
 
     def test_direct_keychain_tools_name_the_trigger(self):
         for command, trigger in [('security find-generic-password -w', '`security`'),
@@ -611,8 +637,9 @@ class CredentialPolicyTests(unittest.TestCase):
         self.assertIsNotNone(self.decide(self.GH_SETUP, 'git clone --recurse-submodules https://github.com/o/r.git'))
         self.assertIsNotNone(self.decide(self.GH_SETUP,
                                          'git clone -c credential.helper=osxkeychain https://github.com/o/r.git'))
-        # gh CLI itself stays refused.
-        for command in ['gh repo clone o/r', 'gh auth status', 'gh auth git-credential get']:
+        # Normal gh operations now have separate owner approval; auth stays refused.
+        self.assertIsNotNone(self.reason('gh repo clone o/r'))
+        for command in ['gh auth status', 'gh auth git-credential get']:
             with self.subTest(command=command):
                 self.assertIsNotNone(self.reason(command))
 
