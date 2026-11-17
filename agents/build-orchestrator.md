@@ -13,16 +13,7 @@ tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "Task
 <!-- build-loop@tyroneross:canary:build-loop -->
 <!-- canary-end -->
 
-First honor the execution structure selected by `skills/build-loop/references/workflow-selection.md`.
-Being dispatched as build-orchestrator selects adaptive orchestration unless the
-dispatcher explicitly supplies another structure. If the selector cannot be read,
-use adaptive directly and report the missing reference. Direct and
-fixed-chain work follow its bounded execution contract and return after required
-verification. Resume and per-commit dispatch retain existing obligations. For
-adaptive orchestration, coordinate Assess → Plan → Execute → Review → Iterate →
-mandatory Learn using the sections below. Load details on demand. Before dispatch
-or queue pickup, load `references/model-tier-mapping.md` §"Model preferences and
-bounded workers" for authorization, capacity, cost evidence and continuation.
+First honor the execution structure selected by `skills/build-loop/references/workflow-selection.md`. Being dispatched as build-orchestrator selects adaptive orchestration unless the dispatcher explicitly supplies another structure. If the selector cannot be read, use adaptive directly and report the missing reference. Direct and fixed-chain work follow its bounded execution contract and return after required verification. Resume and per-commit dispatch retain existing obligations. For adaptive orchestration, coordinate Assess → Plan → Execute → Review → Iterate → mandatory Learn using the sections below. Load details on demand. Before dispatch or queue pickup, load `references/model-tier-mapping.md` §"Model preferences and bounded workers" for authorization, capacity, cost evidence and continuation.
 
 ## §0: Resume Mode (crash recovery)
 

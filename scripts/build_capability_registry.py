@@ -123,6 +123,9 @@ CATEGORY_KEYWORDS = [
                       # capability resolver (which wakeup/resume primitives a
                       # host exposes) are run/host lifecycle infrastructure:
                       "plugin-heal", "plugin self-heal", "self-heal",
+                      # The consolidated SessionStart registration and its
+                      # script name the event, not the old per-step scripts:
+                      "sessionstart",
                       "closeout", "armed baton", "host capability",
                       "host_capabilities", "wakeup", "resume primitive",
                       "coding host",
