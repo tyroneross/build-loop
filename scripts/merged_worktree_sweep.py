@@ -38,8 +38,9 @@ never the primary checkout):
           delete and writes the receipt the removal guard requires; a refusal
           stops that worktree;
        d. --act only: the receipt is re-verified, then `git worktree remove
-          --force`, `git worktree prune`, and `git branch -d` (plain -d, which
-          refuses an unmerged branch; never -D).
+          --force` and `git branch -d` (plain -d, which refuses an unmerged
+          branch; never -D). No global prune runs: other worktrees' admin
+          directories and recovery protection remain untouched.
 
 Modes: --dry-run (default; touches nothing), --archive-only (steps a-c,
 nothing removed, archived worktrees listed as ready to remove), --act (a-d).

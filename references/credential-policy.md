@@ -34,9 +34,14 @@ Owner update, 2026-11-08. Claude commands may use the configured login. The
 credential policy permits ordinary Claude invocations and their literal command
 wrappers. Normal login credential-helper use needs no separate approval.
 
-The Bash dispatcher and both system-access wrappers reject recognized Keychain
-commands before dispatch. The dispatcher applies this restriction even when
-convenience hooks are disabled. The classifier checks command text and Git
+Claude Code registers the Bash dispatcher, which rejects recognized Keychain
+commands before dispatch even when convenience hooks are disabled. Codex ships
+no automatic Build Loop hooks: agents must invoke the credential-policy checker
+or dispatcher explicitly before credential-capable commands and honor deny or
+unavailable results. This is a required agent protocol, not automatic Codex tool
+interception. Both system-access wrappers enforce the same restriction when
+invoked. Legacy Codex envelope handling in the dispatcher remains callable;
+it does not establish automatic registration or host-level enforcement. The classifier checks command text and Git
 helper configuration, including scoped helpers. Dynamic inline Git environment
 overrides and shell directory changes require an inspectable configuration path.
 Use Git's explicit `-C` option instead of `cd` or `env -C` for network commands,
