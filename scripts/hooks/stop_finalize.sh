@@ -11,7 +11,7 @@
 #   1. agent_id present => subagent stop, emit {}
 #   2. state.json missing or phase != "report" => not a build-loop run, emit {}
 #   3. Idempotency: session_id already in runs[] => emit {}
-#   4. Invoke write_run_entry.py (or minimal inline append if absent)
+#   4. Append a minimal lifecycle marker under the state lock
 #   5. Check latest scorecard for failed F-criteria not held => advisory by default
 #
 # Always exits 0 (hook contract: non-zero = hook failure, not a build block).
@@ -31,11 +31,19 @@ INPUT=$(cat)
 # Keep event bytes off argv/environment: valid large payloads can exceed exec
 # limits. fd 3 carries the program; stdin carries the original JSON pipe.
 
-# Steps 1-3 in ONE interpreter start (was five): parse the event and its host,
-# then read state.json phase + the idempotency check from the event's cwd. Output
-# is one tab-separated line; cwd is last so it may contain spaces.
-read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID HAS_STATE PHASE ALREADY CWD <<EOF_VARS
-$(printf '%s' "$INPUT" | python3 /dev/fd/3 3<<'PY'
+# Prefer the bounded native read-only preflight. INPUT remains available for
+# Python fallback on large/unusual payloads. Policy and writes stay in Python.
+_STOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_STOP_ROOT="$_STOP_DIR/../.."
+STOP_CONTEXT=""
+if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$_STOP_ROOT/bin/native/bl" ] \
+    && { read -r _STOP_BUILT < "$_STOP_ROOT/bin/native/bl.sources"; } 2>/dev/null \
+    && { read -r _STOP_TREE < "$_STOP_ROOT/crates/SOURCES.digest"; } 2>/dev/null \
+    && [ -n "$_STOP_TREE" ] && [ "$_STOP_BUILT" = "$_STOP_TREE" ]; then
+    STOP_CONTEXT=$(printf '%s' "$INPUT" | "$_STOP_ROOT/bin/native/bl" hook stop-context) || STOP_CONTEXT=""
+fi
+if [ -z "$STOP_CONTEXT" ]; then
+    STOP_CONTEXT=$(printf '%s' "$INPUT" | python3 /dev/fd/3 3<<'PY'
 import json, os, sys
 try:
     d = json.load(sys.stdin)
@@ -83,6 +91,9 @@ print(
 )
 PY
 )
+fi
+read -r HOST_TOOL STOP_HOOK_ACTIVE AGENT_ID SESSION_ID HAS_STATE PHASE ALREADY CWD <<EOF_VARS
+$STOP_CONTEXT
 EOF_VARS
 
 # Convert "-" sentinels back to empty strings
@@ -150,113 +161,87 @@ fi
 # Here we append only the honest minimal marker {run_id, date, session_id} — a
 # run-lifecycle boundary, no fabricated data. Idempotency (Step 3) already
 # guards against a duplicate append for the same session.
-RUN_ENTRY_STATUS=$(python3 <<'PY' 2>/dev/null
-import json, fcntl, os, tempfile, time
+# Recording, scorecard inspection and response encoding share one interpreter.
+# The writer still rechecks session idempotency inside its existing flock.
+python3 <<'PY'
+import json, fcntl, os, tempfile, time, glob, re
 from datetime import datetime, timezone
 
-state_path = os.environ['_BL_STATE_FILE']
-session_id = os.environ.get('_BL_SESSION_ID', '')
-now = datetime.now(timezone.utc).isoformat()
-run_id = 'run-' + now[:10] + '-' + session_id[:8] if session_id else 'run-' + now[:10]
+def record_marker():
+    state_path = os.environ['_BL_STATE_FILE']
+    session_id = os.environ.get('_BL_SESSION_ID', '')
+    now = datetime.now(timezone.utc).isoformat()
+    run_id = 'run-' + now[:10] + '-' + session_id[:8] if session_id else 'run-' + now[:10]
 
-lock_path = state_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except BlockingIOError:
-            time.sleep(0.1)
-    else:
-        print('lock_timeout', end='')
-        raise SystemExit(0)
-
-    with open(state_path) as f:
-        data = json.load(f)
-    if 'runs' not in data or not isinstance(data['runs'], list):
-        data['runs'] = []
-    if session_id and any(isinstance(r, dict) and r.get('session_id') == session_id for r in data['runs']):
-        print('already_recorded', end='')
-        raise SystemExit(0)
-    data['runs'].append({'run_id': run_id, 'date': now, 'session_id': session_id})
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode='w', dir=os.path.dirname(state_path), delete=False, suffix='.tmp'
-    )
-    json.dump(data, tmp, indent=2)
-    tmp.close()
-    os.replace(tmp.name, state_path)
-    print('marker:' + run_id, end='')
-except Exception as e:
-    print('marker_error:' + str(e), end='')
-finally:
+    lock_path = state_path + '.lock'
+    lock_fd = open(lock_path, 'w')
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
-    lock_fd.close()
-PY
-) || RUN_ENTRY_STATUS="marker_error"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+        else:
+            return 'lock_timeout'
 
-# Step 5: check scorecard for failed F-criteria not held
-EVALS_DIR="${WORKDIR}/.build-loop/evals"
-FCRIT_BLOCK=""
+        with open(state_path) as f:
+            data = json.load(f)
+        if 'runs' not in data or not isinstance(data['runs'], list):
+            data['runs'] = []
+        if session_id and any(isinstance(r, dict) and r.get('session_id') == session_id for r in data['runs']):
+            return 'already_recorded'
+        data['runs'].append({'run_id': run_id, 'date': now, 'session_id': session_id})
 
-if [ -d "$EVALS_DIR" ]; then
-    LATEST_SCORECARD=$(ls -t "${EVALS_DIR}"/*-scorecard.md 2>/dev/null | head -1) || LATEST_SCORECARD=""
-
-    if [ -n "$LATEST_SCORECARD" ] && [ -f "$LATEST_SCORECARD" ]; then
-        export _BL_SCORECARD="$LATEST_SCORECARD"
-        FCRIT_BLOCK=$(python3 <<'PY' 2>/dev/null
-import os, re
-try:
-    text = open(os.environ['_BL_SCORECARD']).read()
-except Exception:
-    raise SystemExit(0)
-held_ids = set()
-held_match = re.search(r'##\s+Held\s*\n(.*?)(?:\n##|\Z)', text, re.DOTALL)
-if held_match:
-    for m in re.findall(r'\b(F_\w+|Q_\w+)\b', held_match.group(1)):
-        held_ids.add(m)
-failed = []
-for m in re.finditer(r'\b(F_\w+|Q_\w+)\b.*?verdict[:\s]+fail', text, re.IGNORECASE):
-    crit_id = re.search(r'\b(F_\w+|Q_\w+)\b', m.group(0))
-    if crit_id:
-        cid = crit_id.group(1)
-        if cid not in held_ids:
-            failed.append(cid)
-if failed:
-    print(failed[0])
-PY
-) || FCRIT_BLOCK=""
-    fi
-fi
-
-# Emit the response JSON
-export _BL_FCRIT_BLOCK="$FCRIT_BLOCK"
-export _BL_RUN_ENTRY_STATUS="$RUN_ENTRY_STATUS"
-export _BL_STOP_HOOK_BLOCKING="${BUILD_LOOP_STOP_HOOK_BLOCKING:-}"
-
-python3 <<'PY'
-import json, os
-fcrit = os.environ.get('_BL_FCRIT_BLOCK', '')
-status = os.environ.get('_BL_RUN_ENTRY_STATUS', 'unknown')
-blocking_raw = os.environ.get('_BL_STOP_HOOK_BLOCKING', '').strip().lower()
-blocking = blocking_raw in {'1', 'true', 'yes', 'on'}
-if fcrit and blocking:
-    print(json.dumps({
-        'decision': 'block',
-        'reason': f'F-criterion {fcrit} failed; build cannot finalize'
-    }))
-elif fcrit:
-    print(json.dumps({
-        'systemMessage': (
-            f'build-loop run entry {status}; F-criterion {fcrit} failed. '
-            'Advisory only; continue investigation and do not claim done until validation passes.'
+        tmp = tempfile.NamedTemporaryFile(
+            mode='w', dir=os.path.dirname(state_path), delete=False, suffix='.tmp'
         )
-    }))
+        json.dump(data, tmp, indent=2)
+        tmp.close()
+        os.replace(tmp.name, state_path)
+        return 'marker:' + run_id
+    except Exception as e:
+        return 'marker_error:' + str(e)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_fd.close()
+
+def failed_criterion():
+    directory = os.path.join(os.path.dirname(os.environ['_BL_STATE_FILE']), 'evals')
+    try:
+        cards = glob.glob(os.path.join(directory, '*-scorecard.md'))
+        cards.sort(key=lambda p: (-os.lstat(p).st_mtime_ns, os.path.basename(p)))
+        if not cards:
+            return ''
+        with open(cards[0]) as file:
+            text = file.read()
+    except (OSError, UnicodeError):
+        return ''
+    held = re.search(r'##\s+Held\s*\n(.*?)(?:\n##|\Z)', text, re.DOTALL)
+    held_ids = set(re.findall(r'\b(F_\w+|Q_\w+)\b', held.group(1))) if held else set()
+    for match in re.finditer(r'\b(F_\w+|Q_\w+)\b.*?verdict[:\s]+fail', text, re.IGNORECASE):
+        criterion = re.search(r'\b(F_\w+|Q_\w+)\b', match.group(0)).group(1)
+        if criterion not in held_ids:
+            return criterion
+    return ''
+
+try:
+    status = record_marker()
+except Exception:
+    status = 'marker_error'
+fcrit = failed_criterion()
+blocking = os.environ.get('BUILD_LOOP_STOP_HOOK_BLOCKING', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+if fcrit and blocking:
+    print(json.dumps({'decision': 'block', 'reason': f'F-criterion {fcrit} failed; build cannot finalize'}))
+elif fcrit:
+    print(json.dumps({'systemMessage': (
+        f'build-loop run entry {status}; F-criterion {fcrit} failed. '
+        'Advisory only; continue investigation and do not claim done until validation passes.'
+    )}))
 else:
     print(json.dumps({'systemMessage': f'build-loop run entry {status}; no failed F-criterion was found; validation is not certified by this hook'}))
 PY

@@ -35,6 +35,7 @@ mod profile;
 mod route_cmd;
 mod run;
 mod session_start;
+mod stop_context;
 mod sys;
 mod trace;
 mod tool_state;
@@ -144,6 +145,9 @@ fn main() {
     let _ = STARTED.set(started);
     std::panic::set_hook(Box::new(|_| {}));
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["hook", "stop-context"] {
+        stop_context::main();
+    }
     if args.len() >= 2 && args[0] == "hook" && args[1] == "trace" {
         trace_main(started, &args[2..]);
     }

@@ -90,6 +90,7 @@ MIRRORED = (
     "scripts/tool_state_paths.py",
     "scripts/codex_hook_trust_check.py",
     "scripts/hooks/pre_bash_dispatch.sh",
+    "scripts/hooks/stop_finalize.sh",
 )
 # Every path whose change changes the digest; also the artifact guard's watch list.
 WATCHED = ("Cargo.toml", "Cargo.lock", "crates/") + MIRRORED
