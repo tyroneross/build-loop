@@ -20,7 +20,7 @@ the missing reference; do not loop back to the failed read.
 
 ## Routing
 
-**`/build-loop:run` is the ONLY human-facing command.** Type it with any request in plain language — or just describe what you need — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode and have no other commands to learn; optional control flags (`--resume`, `--parallel`, `--no-regrets`) exist but are never required. Everything below is reached by intent, not by a separate command; agents/build-loop invoke these internally.
+**`/build-loop:run` is the ONLY human-facing command.** Type it with any request in plain language — or just describe what you need — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode and have no other commands to learn. Optional control flags (`--resume`, `--parallel`, `--no-regrets`) exist but are never required. Everything below is reached by intent, not by a separate command; agents/build-loop invoke these internally.
 
 Intent → internal mode:
 
