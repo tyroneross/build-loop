@@ -293,10 +293,11 @@ seeding an EMPTY lead seat and self-relinquishing one's OWN seat stay breadcrumb
 class. The in-process `decay.py` / `liveness.py` are now pure window/weight math
 helpers (lead-lease sizing, adaptive presence window), not behavioral mirrors.
 
-**Codex parity.** A codex session emits the same presence record claude does, via
-the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
-codex`, so it ages and decays identically — now enforced by the single Rust
-reaper both tools share, not by a cross-language golden fixture.
+**Codex parity.** Build Loop ships no automatic Codex hooks (`.codex/hooks.json`
+and `hooks/codex.json` are empty since 2026-11-17), so a Codex session writes
+presence only through the manual preflight (`rally enter`, or `session_probe.py
+--tool codex`). A recorded Codex presence ages and decays identically to Claude's,
+enforced by the single Rust reaper both tools share.
 
 **Session-end self-release (primary).** Every host Stop hook passes its base tool
 and stable session id to `scripts/agent_rally.py stop`. The facade resolves the

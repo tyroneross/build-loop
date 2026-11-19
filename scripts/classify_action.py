@@ -131,8 +131,48 @@ READ_ONLY_SUB_SUBVERBS: dict[tuple[str, str], frozenset[str]] = {
     ("gh", "run"): frozenset({"list", "view", "watch"}),
     ("gh", "workflow"): frozenset({"list", "view"}),
     ("gh", "repo"): frozenset({"list", "view", "clone"}),
+    ("gh", "label"): frozenset({"list"}),
+    ("gh", "auth"): frozenset({"status"}),
+    ("gh", "ssh-key"): frozenset({"list"}),
+    ("gh", "gpg-key"): frozenset({"list"}),
     ("vercel", "env"): frozenset({"ls", "list", "pull"}),
 }
+
+# `gh api` sends GET unless a method flag says otherwise; any field or input
+# flag switches the default to POST (gh api --help).
+_GH_API_METHOD_FLAGS = ("-X", "--method")
+_GH_API_BODY_FLAGS = ("-f", "-F", "--field", "--raw-field", "--input")
+
+
+def _gh_api_is_read(args: list[str]) -> bool:
+    """Return True only when `gh api <args>` is a GET that changes nothing."""
+    method = None
+    has_body = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in _GH_API_METHOD_FLAGS:
+            method = args[i + 1] if i + 1 < len(args) else ""
+            i += 1
+        elif arg.startswith("--method="):
+            method = arg.split("=", 1)[1]
+        elif arg.startswith("-X") and len(arg) > 2:
+            method = arg[2:]
+        elif arg in _GH_API_BODY_FLAGS:
+            has_body = True
+            i += 1
+        elif arg.startswith(tuple(f + "=" for f in _GH_API_BODY_FLAGS)) or (
+                arg[:2] in ("-f", "-F") and len(arg) > 2):
+            has_body = True
+        i += 1
+    if "graphql" in args:
+        # GraphQL always POSTs: a query reads; a mutation, or a query read
+        # from a file we cannot inspect, may write.
+        text = " ".join(args).lower()
+        return "mutation" not in text and "=@" not in text
+    if method is not None:
+        return method.upper() == "GET"
+    return not has_body
 
 
 # Git sub-verbs above that also have writing forms. A sub-verb is read-only only
@@ -224,6 +264,9 @@ def _part_is_read_only(command: str) -> bool:
     # one-level whitelist — we treat the second level as authoritative for that
     # sub-verb. Prevents false positives like `vercel env rm` matching the
     # one-level "env" entry when the two-level entry restricts to {ls,list,pull}.
+    if first == "gh" and sub == "api":
+        return _gh_api_is_read(tokens[2:])
+
     two = (first, sub)
     if two in READ_ONLY_SUB_SUBVERBS:
         return sub2 in READ_ONLY_SUB_SUBVERBS[two]

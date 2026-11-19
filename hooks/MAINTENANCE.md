@@ -42,6 +42,11 @@ Architecture edit observers run on successful PostToolUse Edit/Write events. The
 
 ## Registration inventory (2026-11-15)
 
+> Historical for Codex: since 2026-11-17 `hooks/codex.json` and `.codex/hooks.json`
+> are empty manifests (Build Loop ships no automatic Codex hooks; AGENTS.md "Codex
+> wiring"). The X and R columns below record what those surfaces held before; only
+> the C (Claude) rows are live.
+
 Inventory baseline: `1f951408`. `hooks/hooks.json` is the Claude plugin surface;
 `.codex-plugin/plugin.json` selects `hooks/codex.json` for Codex. The repository
 `.codex/hooks.json` is a separate, trusted project configuration: it must work

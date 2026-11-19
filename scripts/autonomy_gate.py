@@ -104,6 +104,13 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     # Merging a pull request writes to the branch it targets. `git push origin main`
     # already confirms; the PR-merge shape reached the same branch as `auto`.
     "gh pr merge*",
+    # `gh api` writes (2026-11-19). Read-only `gh api` calls (plain GET) stop at
+    # the read-only short-circuit before this list, so this matches only calls
+    # that send -X/--method other than GET or a field/input body: deleting refs,
+    # merging, changing settings. They had classified `auto` as "no pattern matched".
+    "gh api *",
+    "gh repo delete*",
+    "gh release delete*",
     # Destructive DATA deletion. Archive (reversible) is auto; the purge confirms.
     "DROP TABLE*",
     "DROP DATABASE*",

@@ -501,6 +501,21 @@ class MigrationAndPrMergeConfirmTests(unittest.TestCase):
         data = self._action("gh pr merge 24 --squash --delete-branch")
         self.assertEqual(data["action"], "confirm", msg=str(data))
 
+    def test_gh_api_writes_confirm_and_reads_stay_auto(self) -> None:
+        """Measured 2026-11-19: `gh api -X DELETE ...` returned auto as read-only."""
+        for cmd in (
+            "gh api -X DELETE repos/a/b/git/refs/heads/x",
+            "gh api --method PUT repos/a/b/pulls/5/merge",
+            "gh api repos/a/b/labels -f name=x",
+            "gh repo delete a/b --yes",
+            "gh release delete v1 -y",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._action(cmd)["action"], "confirm")
+        for cmd in ("gh api repos/a/b", "gh api -X GET search/issues -f q=x"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self._action(cmd)["action"], "auto")
+
     def test_local_and_rehearsal_shapes_stay_auto(self) -> None:
         """The widening must not gate local development or unrelated commands."""
         for cmd in (
