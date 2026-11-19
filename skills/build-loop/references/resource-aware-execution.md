@@ -44,6 +44,33 @@ workers (owner policy, 2026-11-19), and every lower live cap remains binding.
 
 ### Wide waves (more than 4 workers)
 
+Fan-out exists to finish planned work faster. Use it when the plan has already
+split the work into chunks that can run at the same time, and the split does
+not raise total tokens. Exploration happens once, in Assess and Plan, by the
+lead; workers receive what it found in their brief and do not re-explore the
+repo. A worker may explore only inside its own chunk, toward its `done_when`.
+
+Two token rules follow from that:
+
+- **No extra total tokens.** Splitting adds one worker setup (system prompt,
+  tools, brief) per extra worker. `parallelism.py` limits that overhead to 10%
+  of the sequential total (`parallelism.maxFanoutOverhead`, setup estimate
+  `parallelism.workerSetupTokens`, default 20,000, TAG:ASSUMED until measured).
+  Large chunks fan out freely; small chunks stay with one worker. The check runs
+  on measured usage; without a measurement the profile reports
+  `token_overhead_check: unchecked_no_measurement`.
+- **Width is not throttled by tokens in flight.** Running chunks at once does
+  not change their total, so no default cap applies. Set
+  `parallelism.cloudTokenBudget` only to respect a provider rate limit.
+
+Each chunk runs on the cheapest model tier that can do it. A chunk with a
+written spec is execution work, so its `tier` defaults to `code` (Sonnet, or
+Terra on Codex). Set `pattern` for mechanical chunks (rename, format, bulk
+edit) and raise a chunk to `thinking` or `frontier` only when it carries real
+design judgment; database chunks stay at `frontier`. The lead keeps
+orchestration and integration. `check-partition` returns each chunk's resolved
+tier; resolve its model with `scripts/model_index.py resolve --tier <tier>`.
+
 Flexible width up to 20 is allowed only when the work is clearly segmented and
 the host is being watched. The supervisor enforces both; prose alone is not the
 gate.
@@ -56,7 +83,10 @@ gate.
    - `interface`: what it exposes or consumes at its boundary (function, schema,
      CLI contract, event);
    - `integration`: where its output is combined and checked with the others
-     (the integration test, merge step, or owner that verifies the joint result).
+     (the integration test, merge step, or owner that verifies the joint result);
+   - `done_when`: the concrete finish condition (a passing test, a produced
+     file), so no chunk is open-ended exploration;
+   - `tier` (optional, default `code`): the model tier for this chunk.
 
    Without a valid map the wave stays at 4, and the response lists each error.
    With a valid map, independent work equals the number of chunks.
@@ -82,11 +112,6 @@ gate.
    peak load, samples under pressure).
 3. **Growth stays gradual.** The first wave is at most 4; one worker is added per
    two stable telemetry windows, and any pressure halves concurrency.
-
-Cloud waves are also limited by the per-wave token budget
-(`parallelism.cloudTokenBudget`, default 96,000). At default heuristics that
-budget alone allows about 4 Code-tier workers, so a wider cloud wave also needs
-a larger budget in `.build-loop/config.json`.
 
 The role supplies an advisory effort when `--effort` is omitted. Today
 `agentic_execution/T3` prefers `high`, so Codex execution resolves to Terra-high

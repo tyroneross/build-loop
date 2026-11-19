@@ -4,16 +4,24 @@
 """
 parallelism.py — resource-aware subagent fan-out ceiling for build-loop.
 
-Cloud inference is token-led: measured per-worker usage wins, then a conservative
-model-size x output-size heuristic supplies the missing estimate. Local inference
-is CPU-led: larger local models reserve more cores per worker. Both paths still
-honor the project cap, CPU headroom, and the hard safety ceiling.
+Fan-out buys speed on work the plan already split; it must not raise total
+tokens. Running N planned chunks in parallel costs the same work tokens as
+running them in sequence, plus one worker setup (system prompt, tools, brief)
+per extra worker. The token check therefore limits that setup overhead
+(default 10% of the sequential total) instead of capping tokens in flight.
+Measured per-worker usage drives the check; without a measurement it is
+reported as unchecked. Local inference is CPU-led: larger local models reserve
+more cores per worker. Every path honors the project cap, CPU headroom, and the
+hard safety ceiling. An explicit ``cloudTokenBudget`` (or ``--token-budget``)
+still caps tokens in flight, for provider rate limits.
 
 Config schema (.build-loop/config.json):
     {
       "parallelism": {
         "maxImplementers": 8,
-        "cloudTokenBudget": 96000
+        "workerSetupTokens": 20000,
+        "maxFanoutOverhead": 0.10,
+        "cloudTokenBudget": null
       }
     }
 
@@ -43,7 +51,13 @@ DEFAULT_MAX: int = 8    # default project preference; never a dispatch target
 # Waves wider than this need a validated work partition (disjoint owned files,
 # an interface per chunk, and a named integration point) plus a fresh CPU sample.
 SEGMENTATION_FREE_LIMIT: int = 4
-DEFAULT_CLOUD_TOKEN_BUDGET: int = 96_000
+# Per-worker fixed cost (system prompt, tool schemas, brief) that a single
+# sequential worker pays once. TAG:ASSUMED until measured; override with
+# parallelism.workerSetupTokens.
+DEFAULT_WORKER_SETUP_TOKENS: int = 20_000
+# Owner policy 2026-11-19: fan-out may add at most this share of the sequential
+# token total. Override with parallelism.maxFanoutOverhead.
+DEFAULT_MAX_FANOUT_OVERHEAD: float = 0.10
 
 MODEL_SIZES = ("small", "medium", "large", "xlarge")
 OUTPUT_SIZES = ("small", "medium", "large")
@@ -107,11 +121,32 @@ def _config_max(workdir: Path) -> int:
     return _positive_int(_parallelism_config(workdir).get("maxImplementers"), DEFAULT_MAX)
 
 
-def _config_token_budget(workdir: Path) -> int:
-    return _positive_int(
-        _parallelism_config(workdir).get("cloudTokenBudget"),
-        DEFAULT_CLOUD_TOKEN_BUDGET,
-    )
+def _config_token_budget(workdir: Path) -> int | None:
+    """Optional in-flight token cap for provider rate limits; off by default."""
+    value = _parallelism_config(workdir).get("cloudTokenBudget")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _config_overhead(workdir: Path) -> tuple[int, float]:
+    config = _parallelism_config(workdir)
+    setup = _positive_int(config.get("workerSetupTokens"), DEFAULT_WORKER_SETUP_TOKENS)
+    ratio = config.get("maxFanoutOverhead")
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0 < ratio <= 1:
+        ratio = DEFAULT_MAX_FANOUT_OVERHEAD
+    return setup, float(ratio)
+
+
+def token_neutral_cap(tokens_per_worker: int, setup_tokens: int, max_overhead: float) -> int | None:
+    """Largest N whose extra setup tokens stay within ``max_overhead`` of sequential.
+
+    Sequential total = N*work + setup; parallel total = N*(work + setup), so
+    the extra cost is (N-1)*setup. Returns None when every N qualifies.
+    """
+    work = max(0, tokens_per_worker - setup_tokens)
+    denominator = setup_tokens - max_overhead * work
+    if denominator <= 0:
+        return None
+    return max(1, int(setup_tokens * (1 + max_overhead) // denominator))
 
 
 def classify_execution_location(
@@ -238,11 +273,13 @@ def resolve_fanout(
     tokens_per_worker = measured or estimate_tokens_per_worker(size, output, effort_level)
     token_source = "measured" if measured is not None else "heuristic"
 
-    # Cloud calls always get an internal wave budget. Local calls use CPU by
-    # default and apply a token cap only when the caller supplied one explicitly.
+    # Tokens in flight are capped only when a budget is configured or passed
+    # (provider rate limits); concurrency alone does not change total tokens.
     applied_token_budget = token_budget
     if applied_token_budget is None and location == "cloud":
         applied_token_budget = _config_token_budget(workdir)
+    setup_tokens, max_overhead = _config_overhead(workdir)
+    overhead_cap = token_neutral_cap(tokens_per_worker, setup_tokens, max_overhead) if measured is not None else None
     token_cap = (
         max(1, applied_token_budget // tokens_per_worker)
         if isinstance(applied_token_budget, int) and applied_token_budget > 0
@@ -263,6 +300,8 @@ def resolve_fanout(
         caps["shared_capacity"] = available_shared_capacity
     if token_cap is not None:
         caps["token"] = token_cap
+    if overhead_cap is not None:
+        caps["token_overhead"] = overhead_cap
     effective = max(0, min(caps.values()))
 
     return {
@@ -291,6 +330,10 @@ def resolve_fanout(
         "tokens_per_worker": tokens_per_worker,
         "token_estimate_source": token_source,
         "token_cap": token_cap,
+        "worker_setup_tokens": setup_tokens,
+        "max_fanout_overhead": max_overhead,
+        "token_overhead_cap": overhead_cap,
+        "token_overhead_check": "measured" if measured is not None else "unchecked_no_measurement",
         "limiting_factors": sorted(name for name, cap in caps.items() if cap == effective),
         "effective_max": effective,
     }
