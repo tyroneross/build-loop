@@ -729,6 +729,8 @@ def test_gh_reads_are_read_only(command: str) -> None:
     "gh api repos/a/b/issues --input body.json",
     "gh api graphql -f query='mutation { addStar }'",
     "gh api graphql -F query=@q.graphql",
+    "gh api graphql --input q.json",
+    "gh api graphql -F query=\"$(cat q.graphql)\"",
     "gh label create bug",
     "gh auth logout",
     "gh ssh-key add k.pub",

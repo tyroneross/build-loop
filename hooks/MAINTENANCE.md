@@ -23,7 +23,8 @@ depends on that verdict.
 
 ## SessionStart: one registration with bounded recovery
 
-`hooks.json` and `codex.json` each register one SessionStart command, generated
+`hooks.json` registers one SessionStart command (`codex.json` is empty since
+2026-11-17; Build Loop ships no automatic Codex hooks), generated
 by `scripts/session_start_hook_command.py` (`--write` / `--check`). A fresh
 `bin/native/bl` handles the event. Missing, stale or explicitly disabled binaries
 use the generator's recovery-only `--fallback` mode: tool-state first, then the

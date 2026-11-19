@@ -166,10 +166,11 @@ def _gh_api_is_read(args: list[str]) -> bool:
             has_body = True
         i += 1
     if "graphql" in args:
-        # GraphQL always POSTs: a query reads; a mutation, or a query read
-        # from a file we cannot inspect, may write.
+        # GraphQL always POSTs: a query reads; a mutation, or a query we
+        # cannot see (read from a file or built by the shell), may write.
         text = " ".join(args).lower()
-        return "mutation" not in text and "=@" not in text
+        hidden = ("=@", "--input", "$(", "`")
+        return "mutation" not in text and not any(h in text for h in hidden)
     if method is not None:
         return method.upper() == "GET"
     return not has_body
