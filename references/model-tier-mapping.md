@@ -51,7 +51,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
 - **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
 - **Anthropic default:** Claude Opus 5 (`opus`; the alias auto-tracks the latest Opus generation). Since the 2026-07-28 promotion the same id serves Frontier and Thinking on the Anthropic side — the tiers still differ by ROLE and by what may substitute into each cell, not by model.
-- **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol for genuinely ambiguous escalation; GPT-5.6 Terra for ordinary orchestration with bounded contracts and deterministic verification; GPT-5.4 and Gemini 2.5 Pro remain fallback seeds
+- **Verified equivalents (2026 Q3, advisory):** GPT-6.1 Sol for genuinely ambiguous escalation; GPT-6.1 Terra for ordinary orchestration with bounded contracts and deterministic verification; GPT-5.4 and Gemini 2.5 Pro remain fallback seeds
 - **Local equivalents:** none yet — Thinking-tier work needs frontier-class context length and judgment; local models lag
 
 ### Code tier
@@ -107,17 +107,17 @@ python3 scripts/sync_host_models.py apply --in-family [--dry-run]   # explicit; 
 
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying. Treat model + thinking level/mode as the comparison identity: capture the exact source-reported or runtime-configured value and its evidence. If a document omits row-level effort, record `unknown` and mark the ranking effort-confounded rather than inferring a default. Build Loop bake-offs preserve this metadata in the existing `abc-comparison/v2` observation artifact. Prompt Model Benchmark Lab owns normalization and aggregation; structured retention there is pending, so preserve raw observations and do not aggregate across thinking settings.
 
-## GPT-5.6 Codex routing and approved agents
+## Codex routing and approved agents
 
 Codex resolves these assignments live from each agent's `(segment, tier)` role. The names below are approval groups, not hand-pinned frontmatter; `scripts/test_resolve_agent_model.py` prevents routing drift.
 
 | Model | Approved Build Loop roles | Default thinking level | Escalate when |
 |---|---|---|---|
-| **Sol** | `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer` | `medium`; `high` for adversarial or security verdicts | Use `xhigh` only after evidence that medium/high missed; `max` is rare. Ultra is reserved for work with meaningful independent streams. |
-| **Terra** | `build-orchestrator`, `assessment-orchestrator`, `implementer`, domain assessors, `ui-validator`, `alignment-checker`, `synthesis-critic`, `retrospective-synthesizer`, `self-improvement-architect`, `leak-scanner` | `medium`; `high` for a complex bounded chunk or first retry | Move to Sol when the specification becomes ambiguous, the work becomes high-consequence, or repeated verified attempts fail. |
+| **Sol** | `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `database-assessor`, `overfitting-reviewer`, `promotion-reviewer` | `medium`; `high` for adversarial or security verdicts | Use `xhigh` only after evidence that medium/high missed; `max` is rare. Ultra is reserved for work with meaningful independent streams. |
+| **Terra** | `build-orchestrator`, `assessment-orchestrator`, `implementer`, domain assessors (except `database-assessor`, Sol), `ui-validator`, `alignment-checker`, `synthesis-critic`, `retrospective-synthesizer`, `self-improvement-architect`, `leak-scanner` | `medium`; `high` for a complex bounded chunk or first retry | Move to Sol when the specification becomes ambiguous, the work becomes high-consequence, or repeated verified attempts fail. |
 | **Luna** | `mock-scanner`, `recurring-pattern-detector`, `transcript-pattern-miner`; bounded extraction/classification helpers | `low` or `medium` | Move to Terra when rule application or multi-step transformation appears; move to Sol for novel judgment or a gating verdict. |
 
-Use the lowest thinking level that passes the real verifier. Code-tier execution starts at `high` for Terra and Sonnet because first-pass correctness usually costs fewer total tokens than rework; explicit dispatch effort can still override it. Deterministic scripts remain preferred over Luna when they fully express the rule. All three GPT-5.6 models retain the same least-privilege, confirmation, sandboxing, and independent-verification controls; the system card classifies the family as High capability in cybersecurity and biological/chemical risk.
+Use the lowest thinking level that passes the real verifier. Code-tier execution starts at `high` for Terra and Sonnet because first-pass correctness usually costs fewer total tokens than rework; explicit dispatch effort can still override it. Deterministic scripts remain preferred over Luna when they fully express the rule. All three models retain the same least-privilege, confirmation, sandboxing, and independent-verification controls; the system card classifies the family as High capability in cybersecurity and biological/chemical risk.
 
 **Claude verification split:** the split is by TIER, not by model id. `plan-critic`, `independent-auditor`, and `security-reviewer` sit in Governance/Evaluation **T1**; `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` sit in **T2**. Since 2026-07-28 both cells resolve to `opus` on Anthropic, so the split shows up in what may substitute (T1 also lists `fable`) and in escalation behavior, not in today's resolved id. On Codex, all eight still resolve to Sol through the segment-specific Governance/Evaluation cells.
 

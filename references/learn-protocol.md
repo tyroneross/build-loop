@@ -18,7 +18,7 @@ Agent-only stages return as `work_orders[]`; the caller dispatches the named rol
 | **Deferred** | debug-only (`closeout: false` in dispatch envelope) OR budget-exhausted (`budget_check.py` envelope `action == "finalize_and_stop"` at Phase 6 entry) | Detector + consolidation; write `.build-loop/proposals/learn-deferred-<run-id>.md` marker with `{reason, runs_count, budget_action}`; skip Sonnet draft + Opus signoff so Learn never blows the budget ceiling | `Learn: deferred — <reason>` |
 | **Full** | `runs[] >= 3` AND detector returned a pattern AND not deferred | All steps below 4–9 fire | `Learn: <N> patterns drafted` (or `Learn: 0 patterns above threshold (N runs scanned)` when detector returned nothing) |
 
-Deprecated `autoSelfImprove: false` is read for migration safety only: when present and `false`, log a one-line `state.json.warnings[]` entry (`"autoSelfImprove: false is deprecated; ignored (migration no-op)"`) and proceed as if the key were absent. Decision-3 of the design: promotion to `active/` still requires explicit `/build-loop:promote-experiment` — that safety boundary is unchanged.
+Deprecated `autoSelfImprove: false` is read for migration safety only: when present and `false`, log a one-line `state.json.warnings[]` entry (`"autoSelfImprove: false is deprecated; ignored (migration no-op)"`) and proceed as if the key were absent. Decision-3 of the design: promotion to `active/` still requires an explicit promote request through `/build-loop:run` — that safety boundary is unchanged.
 
 ## Steps
 
@@ -26,8 +26,8 @@ Deprecated `autoSelfImprove: false` is read for migration safety only: when pres
 2. Read the receipt. No patterns means no agent dispatch and zero LLM cost for Learn.
 3. Dispatch only roles returned in `work_orders[]`. `self-improvement-architect` writes an experimental artifact. `implementer` realizes a returned enforcement specification. `promotion-reviewer` reviews a drafted or sample-eligible artifact.
 4. Attach each result with `attest`. Architect completion requires an existing repository-relative artifact. Reviewer completion requires a verdict. Failed or pending work keeps the receipt incomplete.
-5. Emit the receipt's `learn_line`, then run `scripts/run_close_lint.py --require-learn`. Promotion to `active/` remains user-confirmed through `/build-loop:promote-experiment`.
+5. Emit the receipt's `learn_line`, then run `scripts/run_close_lint.py --require-learn`. Promotion to `active/` remains user-confirmed through an explicit promote request through `/build-loop:run`.
 
 ## Constraints
 
-Never write outside `.build-loop/` and the canonical `build-loop-memory/` helper paths. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
+Never write outside `.build-loop/` and the canonical `build-loop-memory/` helper paths. Cross-project promotion (into the plugin repo) stays behind an explicit promote request for `<name>` through `/build-loop:run` — user-invoked only.

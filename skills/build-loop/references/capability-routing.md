@@ -84,7 +84,7 @@ The order is the contract: row 1 short-circuits before any author runs; row 2 is
 | 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report | sub-steps A-G; B-D can route to Iterate; F drains non-destructive items via autonomy_gate; G runs only on final pass |
 | 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; orchestrator stuck-iteration cascade (evidence-gap repair → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) |
-| 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | optional; requires `runs[] >= 3`; auto-promote opt-in |
+| 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | mandatory in adaptive orchestration (accruing / deferred / full; pattern drafting needs `runs[] >= 3`); auto-promote opt-in |
 
 ### Capability routing table
 
@@ -105,7 +105,7 @@ The order is the contract: row 1 short-circuits before any author runs; row 2 is
 | Bug-pattern memory | `build-loop:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
 | Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
 | DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |
-| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Review-F reports), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
+| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Review-G reports), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
 | Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to prompt-builder's own 3-level scheme (frontier/mid/small — its labels, not taxonomy rungs) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
@@ -114,7 +114,7 @@ The order is the contract: row 1 short-circuits before any author runs; row 2 is
 | Architecture scan / impact trace (Assess + Review) | `build-loop:architecture-scan` (Assess refresh), `build-loop:architecture-impact` (blast-radius), `build-loop:architecture-rules` (Review violation check), `build-loop:architecture-dead` (orphan scan) — read `.navgator/architecture/` JSON; native skills sourced from NavGator with provenance and drift-detection via `build-loop:sync-skills` | `gator:*` commands if installed | Read component → edit → re-read downstream |
 | Debugger memory-first gate (Review + Iterate) | `build-loop:debugging-memory` — verdict gate (`KNOWN_FIX` / `LIKELY_MATCH` / `WEAK_SIGNAL` / `NO_MATCH`) with strict direct-apply triple-gate (file + version + secondary signal) and Review-F outcome feedback. Orchestrator owns the when-to-fire policy (Review-B + every Iterate attempt) and routes to this skill. | `build-loop:debug-loop` direct (when memory says enter the loop or 3 same-criterion failures) | `fallbacks.md#debug` |
 | Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer` — generates stack-appropriate structured logging / OTel with ephemeral-by-default policy (Mechanism A: `DEBUG_TRACE=1` runtime gate; Mechanism B: `git-stash` throwaway). Invoked reactively when an Iterate attempt flags `evidence_gap: true`. Orchestrator runs the passive Assess scan inline (no skill call needed) and only loads this skill when instrumentation is actually being added. | — | `fallbacks.md#logging-fallback` (inline Tier-1 zero-dep JSON logger per stack) |
-| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures and manual interventions; drafts experimental skills/agents to `.build-loop/skills/experimental/`. Auto-promote to `.build-loop/skills/active/` requires opt-in (`autoPromote: true`) plus effective non-confounded sample ≥ 8; regressions and inconclusive results write proposals to `.build-loop/proposals/` for user confirmation — never auto-remove. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
+| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures and manual interventions; drafts experimental skills/agents to `.build-loop/skills/experimental/`. Auto-promote to `.build-loop/skills/active/` requires opt-in (`autoPromote: true`) plus effective non-confounded sample ≥ 8; regressions and inconclusive results write proposals to `.build-loop/proposals/` for user confirmation — never auto-remove. Cross-project promotion by asking `/build-loop:run` to promote `<name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 | Claude Code plugin authoring / review | `plugin-builder` (personal skill), `plugin-dev:*` family | `build-loop:plugin-hygiene-lessons.md` enforces manifest/hook/marketplace rules in Review-D | Read `plugin-hygiene-lessons.md` verbatim |
 
@@ -137,7 +137,7 @@ Tie-breaker: if signals are mixed (an Apple project with both `ios/` and a macOS
 
 ## Trigger Conditions
 
-Some capabilities should fire proactively based on goal phrasing or files touched. Phase 1 ASSESS sets these flags in `.build-loop/state.json.triggers`, and Phase 4 EXECUTE consults them before dispatching each subagent.
+Some capabilities should fire proactively based on goal phrasing or files touched. Phase 1 ASSESS sets these flags in `.build-loop/state.json.triggers`, and Phase 3 EXECUTE consults them before dispatching each subagent.
 
 **data-plane-worktrees** (mutable non-Git state isolation)
 

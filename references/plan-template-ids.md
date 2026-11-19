@@ -9,7 +9,7 @@ Per plan §15.2 of `~/.claude/plans/assess-build-loop-how-logical-quilt.md`.
 Build-loop plans describe work as a series of tasks (chunks, commits, steps). Without stable IDs, downstream agents have no anchor:
 
 - **Implementers** can't write `current_task_id` to `.build-loop/working-state/current.json`
-- **commit-auditor** can't cite `spec_ref: plan:T-N` in its variance verdicts
+- **independent-auditor** can't cite `spec_ref: plan:T-N` in its variance verdicts
 - **alignment-checker** can't reference plan tasks in `matched_anchors`
 - **Self-improvement-architect** can't mine task-duration patterns across runs
 
@@ -93,4 +93,4 @@ This lets the orchestrator pass `task_ids_in_scope: ["T-1", "T-2"]` to the c1 im
 
 Plans without T-N IDs continue to work — the convention is opt-in. Phase 6 Learn pattern detection will surface plans that would benefit most (high judge_decisions churn, frequent alignment misses) so authors can retrofit one plan at a time.
 
-The `commit-auditor` and `alignment-checker` agents read working-state if present but fall back gracefully when `current_task_id` is empty (cite by file path + line range instead of task ID).
+The `independent-auditor` and `alignment-checker` agents read working-state if present but fall back gracefully when `current_task_id` is empty (cite by file path + line range instead of task ID).

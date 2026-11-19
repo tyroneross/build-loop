@@ -182,9 +182,9 @@ Dispatch the `optimize-runner` agent. It executes:
 10. If not converged → step 1
 ```
 
-## Phase 3: REVIEW (Opus + Sonnet)
+## Phase 3: REVIEW (Opus)
 
-1. Dispatch `overfitting-reviewer` (Sonnet, read-only): check for removed safety features, fragile shortcuts, test-gaming
+1. Dispatch `overfitting-reviewer` (Opus, read-only): check for removed safety features, fragile shortcuts, test-gaming
 2. Generate summary: iterations, kept/reverted, improvement %, top changes
 3. Archive: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --archive --workdir "$PWD"`
 
@@ -196,12 +196,12 @@ Dispatch the `optimize-runner` agent. It executes:
 | Hypothesis generation | Sonnet (pinned) | High volume, 5x cheaper |
 | Metric/guard execution | Bash | No LLM |
 | Keep/revert | Deterministic | Numeric comparison |
-| Overfitting review | Sonnet (read-only) | Pattern matching |
+| Overfitting review | Opus (read-only) | Adversarial judgment |
 | Final report | Opus | Judgment |
 
 ## Integration with Build-Loop
 
-Phase 4.7 (AUTO-OPTIMIZE): after Phase 4 Execute completes and commits, check for optimization targets. Run sequentially (not parallel with Phase 4).
+Review sub-step C (Optimize, opt-in, only with a mechanical metric): after Phase 3 Execute commits and Review sub-steps A-B pass, check for optimization targets. Run sequentially, not in parallel with other Review sub-steps. See `skills/build-loop/references/phase-4-review.md`.
 
 Reached via `/build-loop:run [target]` + optimize language (no separate command).
 

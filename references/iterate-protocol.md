@@ -38,7 +38,7 @@ At the START of every Iterate attempt, run the cascade in order. Stop at the fir
    - Re-run the failed Review-B criterion with `DEBUG_TRACE=1 <test-command>` (Mechanism A) or with the stash applied (Mechanism B).
    - If output is now informative, proceed to Iterate with the log evidence as fresh context.
    - If still silent after instrumentation, escalate to user.
-   - At Review-F, the orchestrator MUST verify no `build-loop:trace/<session-id>` stash entries remain and no unguarded trace calls landed unless the user explicitly approved keep-in-diff via `AskUserQuestion`.
+   - At Review-G, the orchestrator MUST verify no `build-loop:trace/<session-id>` stash entries remain and no unguarded trace calls landed unless the user explicitly approved keep-in-diff via `AskUserQuestion`.
 
 2. **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (the failure may have shifted shape after the prior fix attempt). Same verdict-handling rules as Review-B.
 
@@ -58,7 +58,7 @@ Build the work list for this pass — Validate failures + queue entries, in this
 4. Optimization findings (Sub-step C).
 5. UI coverage-gap queue entries (`dimension: test-coverage`) — repo-native additions, processed last.
 
-Entries with `architecture_impact: true` are deferred to Review-F for explicit user confirmation, NOT included in this pass. Do NOT defer based on patch size — code is cheap, AI agents build fast. The only deferral signal is architecture impact.
+Entries with `architecture_impact: true` are deferred to Review-G for explicit user confirmation, NOT included in this pass. Do NOT defer based on patch size — code is cheap, AI agents build fast. The only deferral signal is architecture impact.
 
 ## Partition for fan-out
 
@@ -73,12 +73,12 @@ In either mode, each implementer dispatch (or inline pass) MUST include: (1) abs
 - `fixed` → mark queue entry done (delete the .md).
 - `partial` → keep entry, schedule re-pass next iteration.
 - `scope_breach` → ask user before extending scope.
-- `deferred_architecture` → move entry to Review-F deferred list.
+- `deferred_architecture` → move entry to Review-G deferred list.
 - `evidence_stale` → re-run `ux_triage.py --clear` to regenerate the queue, then re-pass.
 - `plan_malformed` → same as `evidence_stale`; log the malformed entry's id to `.build-loop/state.json.malformedPlans[]`.
 - `needs_dependency` → ask user (same routing as `scope_breach`); never auto-add deps.
-- `failed` → if attempts on this entry < 2, re-pass with the implementer's `notes` injected as `additional_context`; if attempts >= 2, escalate the implementer to Opus per `Skill("build-loop:model-tiering")` §Escalation Triggers and re-pass once more; if still `failed`, surface in Review-F as ❓ Unfixed.
-- `concurrent_modification_detected` → abort the current parallel batch immediately, surface in Review-F.
+- `failed` → if attempts on this entry < 2, re-pass with the implementer's `notes` injected as `additional_context`; if attempts >= 2, escalate the implementer to Opus per `Skill("build-loop:model-tiering")` §Escalation Triggers and re-pass once more; if still `failed`, surface in Review-G as ❓ Unfixed.
+- `concurrent_modification_detected` → abort the current parallel batch immediately, surface in Review-G.
 
 For Validate failures (no queue entry), construct an inline plan in the same shape and treat it identically.
 
@@ -130,7 +130,7 @@ When autonomous execution is enabled **and** the no-regrets boundary command ret
       - **`aligned`** — schedule the item for Phase 2 → 3 → 4. Treat as a one-item plan: feed alignment-checker's `reason` + `matched_anchors` to plan-critic as part of the brief so plan-critic knows why this item earned alignment.
       - **`misaligned`** — `mv` the item to `.build-loop/followup/<basename>`. Append a markdown footer to the moved file: `\n\n---\n_Deferred by alignment-checker: <reason>. Violated: <comma-separated violated_non_goals>._\n`.
       - **`uncertain`** — emit `PushNotification` with item path + `uncertainty_evidence`. `TaskCreate` a follow-up task captioned `Review uncertain queue item: <basename>`. Do NOT block — continue loop with remaining items.
-   d. **Per-item cap — Phase A logs only.** Plan §14.6 — per-item ≤ 3 same-verdict cap enforced in Phase C. Phase A logs a one-line warning when the same item gets the same verdict ≥ 3 times: `[autonomous] item <basename> received <verdict> for 3rd time — Phase C will force misaligned`.
+   d. **Per-item cap — enforced by `scripts/autonomy_supervisor.py`.** Plan §14.6. The supervisor requires an independent audit at the 3rd identical unresolved verdict for the same item and quarantines the item at the 5th (`audit_at=3`, `limit=5`, fixed). Log a one-line warning at the 3rd: `[autonomous] item <basename> received <verdict> for 3rd time — independent audit required`.
    e. **Record item telemetry (fail-open).** Append one `item_iteration` row so `task_surface.py` and dry-run review show per-item attempt history with the tier that judged it: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/exec_state.py item-iteration --workdir "$PWD" --item-id <basename> --status <started|deferred|stopped> --validator alignment-checker --tier code` — status maps from the verdict (`aligned`→`started`, `misaligned`→`deferred`, `uncertain`→`stopped`); `--tier code` is the alignment-checker's tier and resolves the model via `model_overrides`. A non-zero exit is logged and skipped — telemetry never wedges the loop.
 3. **Commit + advance.** When an `aligned` item finishes Phase 2 → 4, record completion telemetry: `exec_state.py item-iteration --workdir "$PWD" --item-id <basename> --status passed --validator independent-auditor --tier frontier` (the item's Review-A verdict tier — same `--tier frontier`→`fable` resolution the agent-ledger records, so the two lanes join on `item-id`). Then the standard Phase 3 commit step runs. Increment `state.execution.budget.commits_since_push`. **Push behavior in Phase A is unchanged from today** (manual) — `scripts/autonomous_push.py` ships in Phase B. The `budget_check.py` envelope's `should_push_now` field is informational only in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
 

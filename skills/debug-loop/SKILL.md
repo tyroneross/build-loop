@@ -1,6 +1,6 @@
 ---
 name: debug-loop
-description: Iteratively investigate and fix a live, currently-broken bug. Use when a fix didn't hold, `/build-loop:debug` is invoked, or the user wants it debugged right now. Not for checking whether this bug happened before (use `debugging-memory` first) or a post-fix blameless analysis (use `root-cause-analysis`).
+description: Iteratively investigate and fix a live, currently-broken bug. Use when a fix didn't hold, the user asks `/build-loop:run` to debug it, or the user wants it debugged right now. Not for checking whether this bug happened before (use `debugging-memory` first) or a post-fix blameless analysis (use `root-cause-analysis`).
 version: 1.1.0
 user-invocable: false
 ---

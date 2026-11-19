@@ -15,10 +15,10 @@ This is the **static** tier — pure text/JSON validation, zero runtime dependen
 
 ## When this skill fires
 
-- **User direct** — `/build-loop:test [test-name]` or any of: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests"
+- **User direct** — ask `/build-loop:run` to test the plugin (optionally naming a test) or any of: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests"
 - **Orchestrator intent routing** — TEST mode (4th mode alongside Build / Optimize / Research) — `agents/build-orchestrator.md` §Intent Routing
-- **Orchestrator auto-dispatch in Phase 4 Review-B Validate** (always on, since v0.7.3; advisory-not-blocking since v0.7.4) — when Phase 3 Execute's diff touches any plugin metadata path: `*.claude-plugin/*.json`, `commands/*.md`, `skills/*/SKILL.md`, `agents/*.md`, `.mcp.json`, `hooks/hooks.json`, or any path referenced by `mcpServers`. Findings are written to `.build-loop/state.json.pluginTests` and surfaced in the Review-F Report — they do NOT block the build or auto-route to Iterate. Static-analysis is heuristic (regex over markdown frontmatter); the user decides whether each finding is a real defect or a false positive.
-- **Pre-publish gate** when bumping a plugin version (the human-driven equivalent of the auto-dispatch — run `/build-loop:test --strict` before pushing)
+- **Orchestrator auto-dispatch in Phase 4 Review-B Validate** (always on, since v0.7.3; advisory-not-blocking since v0.7.4) — when Phase 3 Execute's diff touches any plugin metadata path: `*.claude-plugin/*.json`, `commands/*.md`, `skills/*/SKILL.md`, `agents/*.md`, `.mcp.json`, `hooks/hooks.json`, or any path referenced by `mcpServers`. Findings are written to `.build-loop/state.json.pluginTests` and surfaced in the Review-G Report — they do NOT block the build or auto-route to Iterate. Static-analysis is heuristic (regex over markdown frontmatter); the user decides whether each finding is a real defect or a false positive.
+- **Pre-publish gate** when bumping a plugin version (the human-driven equivalent of the auto-dispatch — ask `/build-loop:run` for a strict plugin test run before pushing)
 
 ## What's tested
 
@@ -47,8 +47,7 @@ for t in scripts/test_skill_resolution.py scripts/test_plugin_manifest.py \
   python3 "$t"
 done
 
-# Or via the slash command
-/build-loop:test
+# Or ask /build-loop:run to "test the plugin"
 ```
 
 Each script is independent — running one without the others is fine. Each follows the build-loop pytest-stdlib convention from `scripts/test_plan_verify.py` (subprocess-against-sibling-script + tempfile fixtures + `unittest.TestCase`).
@@ -56,10 +55,10 @@ Each script is independent — running one without the others is fine. Each foll
 ## Exit codes
 
 - `0` — all tests pass
-- `1` — at least one test failed (advisory in Review-B; hard CI gate when invoked via `/build-loop:test --strict` or run directly in CI)
+- `1` — at least one test failed (advisory in Review-B; hard CI gate when run in strict mode via `/build-loop:run` or run directly in CI)
 - `2` — runner error (test script itself crashed)
 
-The orchestrator records findings under `.build-loop/state.json.pluginTests` and surfaces a one-line summary in the Review-F Report. **It does not gate the build on plugin-tests results.** Why: static-analysis findings are heuristic (regex/pattern matches over markdown frontmatter) and false positives are common — 3 hit on initial rollout (legitimate user-invocable bridge, filesystem-based pre-flight, PRD-absence prose). A blocking gate that flaps gets disabled, which destroys the value. Surfacing as advisory keeps the signal alive while letting the user judge edge cases.
+The orchestrator records findings under `.build-loop/state.json.pluginTests` and surfaces a one-line summary in the Review-G Report. **It does not gate the build on plugin-tests results.** Why: static-analysis findings are heuristic (regex/pattern matches over markdown frontmatter) and false positives are common — 3 hit on initial rollout (legitimate user-invocable bridge, filesystem-based pre-flight, PRD-absence prose). A blocking gate that flaps gets disabled, which destroys the value. Surfacing as advisory keeps the signal alive while letting the user judge edge cases.
 
 For pre-publish checks, run with `--strict` to make the CLI exit non-zero on any finding (without involving the orchestrator).
 
@@ -84,7 +83,6 @@ Don't migrate to pytest, vitest, or Playwright. The stdlib pattern keeps the har
 ## Cross-references
 
 - `agents/build-orchestrator.md` §Intent Routing — TEST mode classification
-- `commands/test.md` — slash-command surface (`/build-loop:test`)
 - `scripts/collision_scan.py` — the static detector that `test_skill_resolution.py` wraps
 - `KNOWN-ISSUES.md` 2026-05-02 entry — testing survey across 13 projects that informed this design
 - `agents/ui-validator.md`, `skills/build-loop/phases/ui-validation.md`, and `references/ibr-ui-verification-policy.md` — default UI validation route. Authoring a new `.ibr-test.json` remains plan-authorized or explicit.

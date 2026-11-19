@@ -10,7 +10,7 @@ tools: ["Read", "Bash"]
 
 # Capability shortlist
 
-Anthropic's Tool Search guidance recommends <=8 candidates per dispatch. The build-loop repo currently exposes ~112 surfaces (20 agents + 34 skills + 14 commands + 5 hooks + ~39 scripts) and no build-loop MCP server. Without filtering, the orchestrator chooses from a haystack on every phase.
+Anthropic's Tool Search guidance recommends <=8 candidates per dispatch. The build-loop repo exposes well over a hundred surfaces (agents, skills, commands, hooks, scripts; see `docs/SKILL-INDEX.md` and `agents/` for the current list) and no build-loop MCP server. Without filtering, the orchestrator chooses from a haystack on every phase.
 
 This skill is a deterministic, structured matcher: **(phase, intent text) → ≤8 capability entries**, drawn from the registry written by `scripts/build_capability_registry.py`.
 

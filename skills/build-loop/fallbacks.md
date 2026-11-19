@@ -226,7 +226,7 @@ Emit a risk flag when:
 - Lessons/recurrence matching (`.navgator/lessons/`) — this is NavGator-specific storage
 - Post-change architectural rule enforcement (`navgator rules`) — requires full component classification
 
-When any of the above would materially affect the build (e.g. large refactor touching 20+ files, or a build that edits product LLM prompts), recommend installing NavGator rather than pushing forward with the fallback. Note this in the Review-F report as `⚠️ NavGator would improve confidence here`.
+When any of the above would materially affect the build (e.g. large refactor touching 20+ files, or a build that edits product LLM prompts), recommend installing NavGator rather than pushing forward with the fallback. Note this in the Review-G report as `⚠️ NavGator would improve confidence here`.
 
 ---
 
@@ -261,7 +261,7 @@ const text = body
   .trim();
 ```
 
-**Always note LLM cost** in the Review-F report when this fallback runs. Flag that installing `scraper-app` would eliminate the token spend.
+**Always note LLM cost** in the Review-G report when this fallback runs. Flag that installing `scraper-app` would eliminate the token spend.
 
 Do not fetch URLs the user did not explicitly provide or that aren't core to the task. Never fetch from private networks.
 

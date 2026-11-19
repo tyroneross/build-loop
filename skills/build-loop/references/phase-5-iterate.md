@@ -82,7 +82,7 @@ In both modes, each pass returns the same structured outcome (status + files_cha
 - `evidence_stale` → regenerate via `ux_triage.py --clear`, then re-pass
 - `plan_malformed` → same as `evidence_stale` (regenerate); log id to `.build-loop/state.json.malformedPlans[]`
 - `needs_dependency` → classify the concrete dependency change with `classify_action.py`; SAFE/RISKY follows its normal branch route, while DECISION/PRODUCTION surfaces with impact
-- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate per `model-tiering`; after 3 identical verdicts quarantine and continue
+- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate per `model-tiering`; at the 3rd identical unresolved verdict run an independent audit, at the 5th quarantine and continue
 - `concurrent_modification_detected` → abort current parallel batch (orchestrator partition bug; never transient)
 
 Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.

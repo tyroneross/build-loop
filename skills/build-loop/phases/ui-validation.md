@@ -36,7 +36,7 @@ Static portion runs via `ux_triage.py`. Agent-driven portion runs alongside via 
 | Data accuracy beyond current scope | Hardcoded percent/dollar/year literals in JSX, "as of <date>" strings | `fact-checker` agent: walk full rendered surface, not just changed files |
 | Usability heuristics | Status badges using background color, lists without empty/error branch | LLM judge sub-prompt for hierarchy/empty-state/status-clarity (confidence ≥ medium only) |
 
-Each `blocker` or `major` finding becomes a queue entry from `templates/ux-fix-plan.md`. Minor findings → Review-F report only. `architecture_impact: true` entries pause for user confirmation in Review-F before Iterate dequeues.
+Each `blocker` or `major` finding becomes a queue entry from `templates/ux-fix-plan.md`. Minor findings → Review-G report only. `architecture_impact: true` entries pause for user confirmation in Review-F before Iterate dequeues.
 
 ## Build-loop designer and validator ordering
 

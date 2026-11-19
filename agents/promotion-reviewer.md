@@ -10,7 +10,7 @@ description: |
   </example>
 
   <example>
-  Context: User runs `/build-loop:promote-experiment auto-rollback-on-drift` manually.
+  Context: User asks `/build-loop:run` to promote the experiment `auto-rollback-on-drift`.
   user: "Promote this experiment"
   assistant: "I'll run promotion-reviewer first to surface any policy variances, then present the verdict + diff for user confirmation."
   </example>

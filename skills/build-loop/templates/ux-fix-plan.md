@@ -37,4 +37,4 @@ files_touched:
 - `architecture_impact: false` entries are auto-fixable in the next Iterate
   cycle, parallelized when independent (`files_touched` disjoint).
 - `severity: minor` entries never reach this template — they live in the
-  Review-F report only.
+  Review-G report only.

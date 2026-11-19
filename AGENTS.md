@@ -172,7 +172,7 @@ python3 scripts/agent_rally.py stop --workdir "$PWD" \
 
 **Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
-**Codex heartbeat parity:** codex sessions emit presence via `session_probe.py --tool codex` (wired in `.codex/hooks.json` `SessionStart`), so their presence/claims/lead decay identically to claude sessions — parity proven by `scripts/rally_point/heartbeat_parity_vectors.json`.
+**Codex heartbeat parity:** Build Loop ships no automatic Codex hooks (`hooks/codex.json` and `.codex/hooks.json` are empty manifests). A codex session writes presence through the explicit Rally calls above (`session_probe.py --tool codex` or `rally`), so its presence/claims/lead decay identically to claude sessions — parity proven by `scripts/rally_point/heartbeat_parity_vectors.json`.
 
 ## Skill index — how to find the right skill
 
@@ -204,7 +204,7 @@ Direct language — clear verb, clear outcome (the leverage stack): fix clarity 
 | 3 | **Execute** | Build it — dispatch parallel work for independent file groups | Working implementation |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report — seven ordered sub-steps, single exit point | Scorecard + evidence; routes to Iterate on failure |
 | 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) | Updated scorecard |
-| 6 | **Learn** (mandatory) | Always runs after Review-G; emits a `## Learn` outcome line (accruing / deferred / full). Detects recurring patterns across runs (incl. retro enforce-candidates as a second signal source), auto-drafts experimental skills/agents with A/B tracking; promotion to `active/` still requires explicit `/build-loop:promote-experiment` | Experimental artifacts + synthesis |
+| 6 | **Learn** (mandatory) | Always runs after Review-G; emits a `## Learn` outcome line (accruing / deferred / full). Detects recurring patterns across runs (incl. retro enforce-candidates as a second signal source), auto-drafts experimental skills/agents with A/B tracking; promotion to `active/` still requires an explicit promote request through `/build-loop:run` | Experimental artifacts + synthesis |
 
 ## Run Modes
 
@@ -248,7 +248,7 @@ When a primitive is unavailable and no equivalent applies, do not silently skip 
 ## Core Principles
 
 - **KISS + DRY — code and output (governing).** Before adding a rule, gate, schema, script, agent, or report section, first try to (a) delete something, (b) extend something that exists, or (c) do nothing. A new mechanism must earn its place against a *named, observed* failure in this repo — not a cited statistic. Prefer one rule covering many cases over many narrow rules; one source of truth over duplicated logic. For output: say it once in the fewest words that keep the evidence; omit empty sections; headline first. Fewer rules and fewer lines is the default; growth is the justified exception. When this tensions with the principles below, simplify. **Every issue is a systems issue:** when something doesn't work, debugging finishes only when the *system* is updated so the class can't recur (durable guidance/check/simplification/restructure addressing root cause + meta-point, never a surface patch). Default corrective move is to reduce complexity (fewer lines/deps/steps) or, when size is irreducible, better structure (split large files, progressive disclosure) to minimize cognitive load. Scalable means simple over compact — every node (rule, script, agent, step, dep) is a failure site.
-- **Tools on demand.** Detect what's available, use what's needed. Don't assume any tool exists. Native debugging skills are bundled inside build-loop; `/build-loop:debug <symptom>` is always available, and the orchestrator auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate attempts 2 and 3. Standalone Coding Debugger is optional for cross-project incident memory.
+- **Tools on demand.** Detect what's available, use what's needed. Don't assume any tool exists. Native debugging skills are bundled inside build-loop; asking `/build-loop:run` to debug a symptom is always available, and the orchestrator auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate attempts 2 and 3. Standalone Coding Debugger is optional for cross-project incident memory.
 - **North star first.** Understand the app/repo purpose, primary users, core workflows, and update intent before planning. Every subtask should explain how it contributes to that purpose.
 - **Beauty in the basics.** Core flows, real data, clear hierarchy, useful states, working controls, and accurate information matter more than extra surface area.
 - **Modular by default, not by dogma.** Prefer high cohesion, loose coupling, stable interfaces, and scalable boundaries unless a simpler or integrated approach better serves the use case. Document `MODULARITY EXCEPTION: <reason>` when taking that path.
@@ -613,7 +613,7 @@ Full-flow steps:
 - **Detect**: pattern detector scans (a) `state.json.runs[]` for recurring `phase_failure` + `manual_intervention` + `security_finding` signals, (b) `.build-loop/proposals/enforce-from-retro/*.md` for `enforce_recurrence` patterns (the same normalized candidate signature across ≥ 2 distinct run-ids — wires the post-push retrospective's enforce-candidates into Learn's cross-run detector).
 - **Draft**: for each kept pattern, architect agent writes experimental SKILL.md with A/B Experiment section (sample target 8 non-confounded runs).
 - **Signoff**: Opus reviews each draft; APPROVE / REVISE (1 retry) / DISCARD.
-- **Sample sweep**: for existing experimental artifacts with sample complete, eligible for promotion (only when `autoPromote: true` config is set AND effective non-confounded sample ≥ 8 AND non-regression). Promotion to `active/` still requires explicit `/build-loop:promote-experiment <name>` user confirmation. Regressions and inconclusive results write proposals, never auto-delete.
+- **Sample sweep**: for existing experimental artifacts with sample complete, eligible for promotion (only when `autoPromote: true` config is set AND effective non-confounded sample ≥ 8 AND non-regression). Promotion to `active/` still requires an explicit promote request for `<name>` through `/build-loop:run`, plus user confirmation. Regressions and inconclusive results write proposals, never auto-delete.
 
 User controls: `rm -rf .build-loop/skills/experimental/<name>/`, `.build-loop/skills/.demoted` blocklist. The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error, but the value is logged as a one-line `state.json.warnings[]` entry and ignored.
 

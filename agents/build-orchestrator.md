@@ -162,7 +162,7 @@ Record ref goals and observable success criteria before implementation; assess o
 
 ### Phase 6: Learn (mandatory)
 
-Full protocol: `references/learn-protocol.md`. After the run record lands, invoke `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <run-id> --source review-g --json`. Dispatch each returned `work_orders[]` role using its payload. Attach architect output with `attest --artifact <path>`; this creates the promotion-reviewer order. Attach reviewer output with `attest --verdict <verdict>`. Emit the receipt's complete `learn_line`, then run `run_close_lint.py ... --require-orchestrator --require-learn`. A pending or error receipt keeps the report open. Outcomes are **accruing** (`Learn: accruing (N/3 runs)`), **deferred** (`Learn: deferred — <reason>`), or **full**. Promotion to `active/` still requires explicit `/build-loop:promote-experiment`.
+Full protocol: `references/learn-protocol.md`. After the run record lands, invoke `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <run-id> --source review-g --json`. Dispatch each returned `work_orders[]` role using its payload. Attach architect output with `attest --artifact <path>`; this creates the promotion-reviewer order. Attach reviewer output with `attest --verdict <verdict>`. Emit the receipt's complete `learn_line`, then run `run_close_lint.py ... --require-orchestrator --require-learn`. A pending or error receipt keeps the report open. Outcomes are **accruing** (`Learn: accruing (N/3 runs)`), **deferred** (`Learn: deferred — <reason>`), or **full**. Promotion to `active/` still requires an explicit promote request through `/build-loop:run`.
 
 ## Capability Routing
 

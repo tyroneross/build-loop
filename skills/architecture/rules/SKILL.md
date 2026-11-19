@@ -43,7 +43,7 @@ Run NavGator's rules engine to detect architectural violations using the `mcp__p
 ## Decision
 
 - **Blocking findings** → route back to Phase 5 Iterate with the violation as a fresh criterion
-- **Warning findings** → log to `.build-loop/issues/` and surface in Review-F Report
+- **Warning findings** → log to `.build-loop/issues/` and surface in Review-G Report
 - **No new violations** → continue Review pipeline; report "No new architectural violations introduced"
 
 ## Report Format
