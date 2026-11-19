@@ -7,7 +7,8 @@ when_to_use: |
   - A dispatched ad-hoc audit (Codex, NavGator, a security pass) returns findings in conversation
   - You are about to ask the user "which of these should I add to the backlog?" — DON'T; capture is automatic
   - You need to know where session findings persist and how they dedup
-namespace: .build-loop/backlog/  (review-queue overflow: .build-loop/proposals/)
+namespace: >-
+  .build-loop/backlog/  (review-queue overflow: .build-loop/proposals/)
 companion_scripts:
   - scripts/scan_findings/__main__.py — Stop-hook deterministic findings sweep
   - scripts/scan_findings/detect.py — detector (severity-label + structured-JSON extraction)

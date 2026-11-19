@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2cb899b0b2acccf02fe953f737de6dfb1e11a7f2ceec65ac7d7ad59712588310"
+    "content_sha256": "a21f90d708e174f1c9adf60c041271f1bd6dc82acdee7620a517c30ac59b0bae"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1094,7 +1094,7 @@
         "file": "skills/ibr-bridge/SKILL.md"
       },
       "knowledge": {
-        "description": "Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an MADR\", \"capture this choice\", \"regenerate the decisions index\", \"validate knowledge\", \"migrate feedback to decisions\", or \"recall <topic>\". ALSO the read-only review surface (review mode): \"review my decisions\", \"show review queue\", \"check decision rot\", \"list open conflicts\", \"find stale procedures\", or `/k…",
+        "description": ">- Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an MADR\", \"capture this choice\", \"regenerate the decisions index\", \"validate knowledge\", \"migrate feedback to decisions\", or \"recall <topic>\". ALSO the read-only review surface (review mode): \"review my decisions\", \"show review queue\", \"check decision rot\", \"list open conflicts\", \"find stale procedures\", or …",
         "file": "skills/knowledge/SKILL.md"
       },
       "logging-tracer": {
