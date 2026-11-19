@@ -118,12 +118,12 @@ Required before Phase 2 done:
 
 ### Sub-step A — Critic
 
-- Dispatch `commit-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`) with full `rubric_criteria_ids` and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. Replaces retired `sonnet-critic` per plan §15.1.
+- Dispatch `independent-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`) with full `rubric_criteria_ids` and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/independent-auditor.md`. Replaces retired `commit-auditor` and `sonnet-critic`.
 - **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Verify major variances and non-auto-fixable findings; confirmed issues within the authorized goal route to repair under C-REPAIR. Only unresolved scope decisions or genuine blockers go to Sub-step G Report for user review.
 - **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
-- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 5, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json`, verify the finding, and repair confirmed issues within the authorized goal before completion.
+- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Opus, read-only) in parallel with `independent-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json`, verify the finding, and repair confirmed issues within the authorized goal before completion.
 - **If the build diff touches Agent Client Protocol code** (changed path matches `acp` or `agent-client-protocol`, or diff text contains `session/prompt`, `session/new`, `session/cancel`, `session/update`, `session/request_permission`, or `agentclientprotocol`; exact command in `skills/build-loop/references/phase-4-review.md` Sub-step A step 1c), load `Skill("build-loop:acp-practice")` and run `skills/acp-practice/references/review-checklist.md`. `❌` → Iterate; `⚠️ untested` → listed in Review-G.
 - **Failure-path and test-evidence questions** (from real reviews, 2026-11-11): the critic asks each question that applies to the diff and treats a "no" as a finding. Each entry: rule, the failure that taught it, how to check, bad/good.
   - **R1 Completion flags follow confirmed success.** Failure: a macOS app set `legacyChecked = true` before a Keychain delete and discarded the delete's `Bool`; one locked-Keychain launch left a synced secret forever. Check: is every persisted done/checked/migrated marker written after the operation, on its success branch only, with "nothing to do" kept apart from "failed" so failures retry? Lead: `rg -n '(Checked|Done|Migrated|Completed)\s*=\s*true'`. Bad: `flag = true; _ = delete()`. Good: `if delete() in (.deleted, .notFound) { flag = true }`.
@@ -181,7 +181,7 @@ If Phase 3 Execute's diff contains any of these path globs, run `Skill("build-lo
 - `.mcp.json` or any path referenced by `mcpServers` in plugin.json
 - `hooks/hooks.json`
 
-Concretely run from the repo root: `for t in scripts/test_skill_resolution.py scripts/test_plugin_manifest.py scripts/test_mcp_registration.py scripts/test_trigger_phrases.py scripts/test_bridge_preflight.py; do python3 "$t" || EXIT=1; done; exit ${EXIT:-0}`. **Findings are advisory, not blocking.** Record results to `.build-loop/state.json.pluginTests` as `{exit, failingScripts: [...], details}`. Surface a one-line summary in the Review-F Report. Do NOT route to Iterate on exit 1; do NOT gate the build.
+Concretely run from the repo root: `for t in scripts/test_skill_resolution.py scripts/test_plugin_manifest.py scripts/test_mcp_registration.py scripts/test_trigger_phrases.py scripts/test_bridge_preflight.py; do python3 "$t" || EXIT=1; done; exit ${EXIT:-0}`. **Findings are advisory, not blocking.** Record results to `.build-loop/state.json.pluginTests` as `{exit, failingScripts: [...], details}`. Surface a one-line summary in the Review-G Report. Do NOT route to Iterate on exit 1; do NOT gate the build.
 
 #### Memory-first gate (always on)
 
@@ -201,7 +201,7 @@ Runs on every Review-B criterion failure with an error-like signal (exception, t
 3. **Invoke `Skill("build-loop:debugging-memory")`** with `{ symptom, budget: 2500 }` — native skill. Returns verdict `KNOWN_FIX | LIKELY_MATCH | WEAK_SIGNAL | NO_MATCH`.
 4. **Act on verdict** — memory is a hypothesis, not a patch. Default for every verdict is route to Iterate as adapted plan. Direct-apply for `KNOWN_FIX` requires the strict triple-gate enforced inside the `debugging-memory` skill.
 5. **Record the gate** in `.build-loop/state.json.debuggerGates.review_b`.
-6. **Fallback when MCP unavailable**: paste `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` into the gate. Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
+6. **Fallback when MCP unavailable**: paste `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` into the gate. Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-G.
 
 ### Sub-step C — Optimize (opt-in)
 
@@ -213,7 +213,7 @@ Dispatch `fact-checker` + `mock-scanner` in parallel. The `mock-scanner` pass in
 
 **Plus the new gates from `skills/build-loop/references/phase-4-review.md` §Sub-step D**:
 
-- **Gate 6 — Version-Bump Advisor** (when `pluginWork: true`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. State `hold` (default) → one-line note in Review-F. State `suggest` (marker `.build-loop/release-pending.md` exists) → propose semver and ask user before any plugin.json edit. Never auto-bump.
+- **Gate 6 — Version-Bump Advisor** (when `pluginWork: true`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. State `hold` (default) → one-line note in Review-G. State `suggest` (marker `.build-loop/release-pending.md` exists) → propose semver and ask user before any plugin.json edit. Never auto-bump.
 - **Gate 7 — UX Triage** (when `uiTarget != null`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Each `blocker`/`major` finding becomes a queue entry in `.build-loop/ux-queue/`. Then dispatch `performance-assessor` (full-app sweep) and `fact-checker` (broader file glob, full rendered surface) in parallel for the agent-augmentation portion; merge their findings into the same queue.
 - **Gate 8 — UI Coverage-Gap** (when `uiTarget != null`): compare changed surfaces against existing project test files and the UI input/output contract. For each critical surface without render/interaction coverage, add a queue entry with `dimension: test-coverage` and a repo-native proposed test plan. Do not auto-draft `.ibr-test.json` files.
 

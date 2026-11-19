@@ -38,6 +38,6 @@ Scan production code paths for:
 ## Resolution
 
 - Blocking issues (fake data rendered to users, data supporting user decisions, or private data shipping in public surfaces) -> route back to Phase 5 (Iterate). Do not halt the run; the orchestrator should invoke the appropriate implementer, auditor, or specialist agent to fix the issue and then re-run validation.
-- Warnings (TODO in comments, minor language issues) → include in Review-F report
+- Warnings (TODO in comments, minor language issues) → include in Review-G report
 
 Prefer `.gitignore` plus untracking for runtime/generated files, archive or private-store relocation over deletion for useful evidence, and redaction/scrubbing over removing useful public documentation.

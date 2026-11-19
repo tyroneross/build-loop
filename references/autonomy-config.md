@@ -4,23 +4,13 @@
 
 ## Purpose
 
-`scripts/autonomy_gate.py` is the generalized action classifier that lets Phase 4.5 Auto-Resolve drain non-destructive open items (guidance fixes, cache resyncs, lint cleanups, open-rec executions) without prompting the operator. The existing `scripts/deployment_policy.py` already handles push/deploy/release commands; this gate handles everything else, and delegates to deployment_policy when a command looks deployment-flavored. Together they form the complete autonomy boundary: deployment_policy is authoritative for deploy targets, autonomy_gate is authoritative for everything else.
+`scripts/autonomy_gate.py` is the generalized action classifier that lets Phase 4 Review-F Auto-Resolve drain non-destructive open items (guidance fixes, cache resyncs, lint cleanups, open-rec executions) without prompting the operator. The existing `scripts/deployment_policy.py` already handles push/deploy/release commands; this gate handles everything else, and delegates to deployment_policy when a command looks deployment-flavored. Together they form the complete autonomy boundary: deployment_policy is authoritative for deploy targets, autonomy_gate is authoritative for everything else.
 
 ## Default policy
 
-### confirmFor — 7 built-in patterns
+### confirmFor — defaults in `DEFAULT_CONFIRM_FOR`
 
-These patterns require operator confirmation (`exit 1`). They are active whenever a repo does NOT supply its own `confirmFor` list:
-
-```
-npm publish*
-git push --force*
-git push * main
-git push * master
-production deploy*
-DROP TABLE*
-rm -rf /*
-```
+The default confirm patterns (`exit 1`) live in `scripts/autonomy_gate.py` as `DEFAULT_CONFIRM_FOR`; read that constant for the current list. They are active whenever a repo does NOT supply its own `confirmFor` list.
 
 Matching uses `fnmatch.fnmatch` (Unix-shell-style globs, case-insensitive).
 
@@ -28,16 +18,16 @@ Matching uses `fnmatch.fnmatch` (Unix-shell-style globs, case-insensitive).
 
 No commands are flagged by default. Repos may add patterns to `warnFor` to observe match-rate without blocking (`exit 0`). The canonical workflow is to ship a candidate pattern as `warnFor` first, observe 10+ builds via `state.json.runs[].autonomyEvents[]`, then promote to `confirmFor` if the match-rate justifies it.
 
-### blockFor — empty by default
+### blockFor — defaults in `DEFAULT_BLOCK_FOR`
 
-No commands are hard-blocked by default. Repos may add patterns to `blockFor` to create absolute vetoes (`exit 2`).
+The default hard-block patterns (`exit 2`, catastrophic commands) live in `scripts/autonomy_gate.py` as `DEFAULT_BLOCK_FOR`. Block patterns are checked first, so a block match wins over any confirm or warn match. Repos may set `blockFor` to replace them (see Replacement semantics).
 
 ### Boolean flags
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `autoFixGuidance` | `true` | Phase 4.5 may auto-apply guidance-class fixes without operator confirmation |
-| `autoExecuteOpenRecs` | `true` | Phase 4.5 may auto-execute open recommendations without operator confirmation |
+| `autoFixGuidance` | `true` | Phase 4 Review-F may auto-apply guidance-class fixes without operator confirmation |
+| `autoExecuteOpenRecs` | `true` | Phase 4 Review-F may auto-execute open recommendations without operator confirmation |
 
 These flags are read by the skill body and orchestrator (Chunks B/C). `autonomy_gate.py` surfaces them in the envelope's `flags` key but does not act on them directly.
 
@@ -72,7 +62,7 @@ All five fields are optional. Omitting `confirmFor`, `warnFor`, or `blockFor` le
 
 `confirmFor`, `warnFor`, and `blockFor` **REPLACE** the defaults — they do not extend them. This is intentional: repos that need a smaller or entirely different set of guarded commands should not be forced to fight the defaults.
 
-To extend the defaults, copy the 7 default `confirmFor` patterns into your config and add your custom patterns alongside them:
+To keep the defaults and add to them, copy the current `DEFAULT_CONFIRM_FOR` patterns from `scripts/autonomy_gate.py` into your config and add your custom patterns alongside them (example shape; the first entries stand in for the defaults):
 
 ```json
 {
@@ -96,15 +86,14 @@ To extend the defaults, copy the 7 default `confirmFor` patterns into your confi
 The gate applies rules in this order, stopping at the first match:
 
 1. **deployment_policy first** — if the command contains deploy/push/release keywords, shell out to `python3 scripts/deployment_policy.py --workdir <path> --command <command>`. Use its verdict directly. `list_source: "deployment_policy"`.
-2. **Repo blockFor next** — if any `blockFor` glob from `.build-loop/config.json` matches the command, return `block` (`exit 2`). `list_source: "config"`.
+2. **blockFor next** — the repo `blockFor` list if set in `.build-loop/config.json` (`list_source: "config"`), otherwise `DEFAULT_BLOCK_FOR` (`list_source: "default"`). Match → `block` (`exit 2`). Block wins over confirm and warn.
 3. **Repo confirmFor next** — if any `confirmFor` glob from config matches, return `confirm` (`exit 1`). `list_source: "config"`. **confirmFor wins over warnFor on a tie** — checked first.
-4. **Repo warnFor next** — if any `warnFor` glob from config matches, return `warn` (`exit 0`). `list_source: "config"`. (NEW)
-5. **Default confirmFor next** — if no repo `confirmFor` was provided, check the 7 default patterns. Match → `confirm` (`exit 1`). `list_source: "default"`.
-6. **Default warnFor next** — if no repo `warnFor` was provided, check the default warn list (empty). Match → `warn` (`exit 0`). `list_source: "default"`. (NEW, no-op by default)
-7. **Default blockFor next** — if no repo `blockFor` was provided, check the default block list (empty). Match → `block` (`exit 2`). `list_source: "default"`.
+4. **Repo warnFor next** — if any `warnFor` glob from config matches, return `warn` (`exit 0`). `list_source: "config"`.
+5. **Default confirmFor next** — if no repo `confirmFor` was provided, check `DEFAULT_CONFIRM_FOR`. Match → `confirm` (`exit 1`). `list_source: "default"`.
+6. **Default warnFor next** — if no repo `warnFor` was provided, check `DEFAULT_WARN_FOR` (empty). Match → `warn` (`exit 0`). `list_source: "default"`.
 8. **Otherwise** — return `auto` (`exit 0`). `list_source: "default"` or `"config"` depending on whether a config file exists.
 
-Note: repo `confirmFor`, `warnFor`, and `blockFor` only apply when explicitly set in config. If `confirmFor` is absent from config, step 3 is skipped and step 5 applies. If `confirmFor` is present (even as `[]`), step 5 is skipped entirely. Same logic applies to `warnFor` (step 4 vs step 6) and `blockFor` (step 2 vs step 7).
+Note: repo `confirmFor`, `warnFor`, and `blockFor` only apply when explicitly set in config. If `confirmFor` is absent from config, step 3 is skipped and step 5 applies. If `confirmFor` is present (even as `[]`), step 5 is skipped entirely. Same logic applies to `warnFor` (step 4 vs step 6) and `blockFor` (repo list or default, both applied at step 2).
 
 ## Relationship to deployment_policy.py
 

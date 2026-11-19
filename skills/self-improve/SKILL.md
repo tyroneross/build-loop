@@ -303,13 +303,7 @@ Write to `.build-loop/experiments/decisions.jsonl` (append-only) one entry per a
 
 ## Cross-Project Promotion
 
-Auto-promote stays inside the project. Moving an experimental or active artifact into the build-loop plugin repo — where it affects every user on every project — requires explicit invocation:
-
-```
-/build-loop:promote-experiment <name>
-```
-
-The command reads the experiment's track record across this and other projects (if global `~/.build-loop/experiments/` index exists), checks the artifact quality, stamps the destination SKILL.md, asks the user for confirmation carrying the §Promotion exposure statement block, and commits to the plugin repo on a feature branch for user review. Full protocol: `.agents/skills/source-command-promote-experiment/SKILL.md`.
+Auto-promote stays inside the project. Moving an experimental or active artifact into the build-loop plugin repo — where it affects every user on every project — requires an explicit promote request (ask `/build-loop:run` to promote the experiment `<name>`). The promotion flow reads the experiment's track record across this and other projects (if global `~/.build-loop/experiments/` index exists), checks the artifact quality, stamps the destination SKILL.md, asks the user for confirmation carrying the §Promotion exposure statement block, and commits to the plugin repo on a feature branch for user review. Full protocol: `.agents/skills/source-command-promote-experiment/SKILL.md`.
 
 ## Removal
 

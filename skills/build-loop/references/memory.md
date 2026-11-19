@@ -63,8 +63,8 @@ Three work/knowledge artifact types, each with a clear WRITE → READ → TRACK 
 ### When to write memory
 
 - User states a preference or convention: save immediately.
-- A build surfaces a new tool/library/deployment pattern worth reusing: save after Review-F.
-- A project-specific gotcha or decision emerges: save during Review-F Report.
+- A build surfaces a new tool/library/deployment pattern worth reusing: save after Review-G.
+- A project-specific gotcha or decision emerges: save during Review-G Report.
 - Do NOT save: ephemeral task details, things already derivable from code or git log, state that changes per build.
 
 ### When to read memory

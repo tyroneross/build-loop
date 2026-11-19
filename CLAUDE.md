@@ -6,7 +6,7 @@ Select the smallest sufficient workflow using [workflow selection](skills/build-
 [canonical search-and-batch rule](skills/build-loop/SKILL.md#question-led-inspections-and-investigations)
 before rerunning the failed build or operation.
 
-**Adaptive phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory within adaptive orchestration: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
+**Adaptive phases**: Assess → Plan → Execute → Review → Iterate (5 attempts in classic mode, 25 in autonomous mode, configurable; see `skills/build-loop/references/autonomous-and-per-commit-modes.md`). Mandatory within adaptive orchestration: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
 
 For adaptive orchestration, Phase 6 uses one proof-bearing command: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Complete its returned work orders through `attest`; a complete receipt is required.
 
@@ -75,7 +75,7 @@ Build-loop supports two dispatch modes, both first-class:
 - **Mode A — Top-level / fan-out (default):** invoked via `/build-loop:run` Skill from the user session. Thinking-tier orchestrator dispatches Code-tier implementer subagents in parallel: up to 4 without a work map, up to 20 with a validated work map and a CPU monitor (`skills/build-loop/references/resource-aware-execution.md` §"Wide waves"). Best for parallel-safe features (≥3 independent chunks) and large features (≥10 commits).
 - **Mode B — Inline / single-context (preserved):** invoked via `Agent(subagent_type="build-loop:build-orchestrator", ...)`. Thinking-tier orchestrator handles all phases inline (no fan-out, no-sub-sub-agents rule). Best for small/medium features (≤6 commits), cross-cutting refactors, and as the comparison baseline for dispatch-mode A/B testing.
 
-Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The orchestrator auto-detects which mode it's in (`agents/build-orchestrator.md:529-530`). **Mode B is not deprecated** — it's the canonical baseline for tier-mix telemetry and works better for cross-cutting work where single-context visibility beats fan-out parallelism.
+Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The orchestrator auto-detects which mode it's in. **Mode B is not deprecated** — it's the canonical baseline for tier-mix telemetry and works better for cross-cutting work where single-context visibility beats fan-out parallelism.
 
 See `references/model-tier-mapping.md` §"Dual-mode A/B test design" for the full design.
 
@@ -131,7 +131,7 @@ Architecture and debugging are load-bearing for nearly every build, so build-loo
 
 Each `skills/architecture/` SKILL.md carries `source:` (relative path from the sibling-repos root) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks the architecture tree, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md. (The former `skills/debugging/{memory,store,assess}` skills were folded into `debugging-memory` on 2026-07, pool-consolidation Inc 5; they are native/adapted with no canonical upstream, so drift-detection for them is retired.)
 
-The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are now deprecation stubs that point at the native skills; remove after one release cycle. The orchestrator (`agents/build-orchestrator.md`) calls native skills directly — Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are now deprecation stubs that point at the native skills; remove after one release cycle. The orchestrator (`agents/build-orchestrator.md`) calls native skills directly — Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-G Report, and Phase 5 Iterate cross-layer pre-step.
 
 **Why native, not bridges**: bridges drift silently against their upstream source; native sourced skills have provenance, are version-tracked, and can be audited with one script.
 
@@ -197,4 +197,4 @@ This project uses build-loop-native debugging memory. Standalone Coding Debugger
 - "debug memory stats" → memory statistics
 - "scan recent sessions for debugging work" → session scan
 
-The system learns through explicit Review-F storage and Learn-phase promotion.
+The system learns through explicit Review-G storage and Learn-phase promotion.

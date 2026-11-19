@@ -26,10 +26,10 @@ Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.p
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
 |---|---|---|---|
-| **Frontier** | Opus 5 | **Phase 2 Plan synthesis via the Advisor dispatch ladder when stakes-gated**, plus every gating verification agent (`plan-critic`, `independent-auditor`, `security-reviewer`). Fable is the SECOND T1 entry, reached only via `scripts/frontier_gate.py` for planning on tightly-coupled repos | GPT-5.6 Sol; future models that clear the Thinking-tier contract and prior ceiling |
-| **Thinking** | Opus 5 | Coordination and escalation, plus medium-risk verification (`scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, `promotion-reviewer`) | GPT-5.6 Terra for routine orchestration; GPT-5.6 Sol for the Governance/Evaluation T2 cell and genuinely ambiguous escalation |
-| **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-5.6 Terra, qwen2.5-coder-32B (local); any model within the Code-tier benchmark tolerance |
-| **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | GPT-5.6 Luna, Haiku-class or local small/fast models that handle bounded structured work |
+| **Frontier** | Opus 5 | **Phase 2 Plan synthesis via the Advisor dispatch ladder when stakes-gated**, plus every gating verification agent (`plan-critic`, `independent-auditor`, `security-reviewer`). Fable is the SECOND T1 entry, reached only via `scripts/frontier_gate.py` for planning on tightly-coupled repos | GPT-6.1 Sol; future models that clear the Thinking-tier contract and prior ceiling |
+| **Thinking** | Opus 5 | Coordination and escalation, plus medium-risk verification (`scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, `promotion-reviewer`) | GPT-6.1 Terra for routine orchestration; GPT-6.1 Sol for the Governance/Evaluation T2 cell and genuinely ambiguous escalation |
+| **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-6.1 Terra, qwen2.5-coder-32B (local); any model within the Code-tier benchmark tolerance |
+| **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | GPT-6 Luna, Haiku-class or local small/fast models that handle bounded structured work |
 
 **Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Frontier tier that's clearing the Thinking-tier contract AND scoring above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
 
@@ -61,7 +61,7 @@ The role-and-task table below uses tier names. The Anthropic-default mapping in 
 
 When a task asks which API model or provider should run a downstream workload, research the provider's current official docs (api-registry first, then WebSearch) and cite them. Build Loop keeps no provider snapshot, because a dated copy goes stale within weeks. A provider model does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark.
 
-### GPT-5.6 Codex policy
+### Codex policy (Sol / Terra / Luna)
 
 - **Sol** is approved for planning synthesis and gating verification agents: `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, and `promotion-reviewer`.
 - **Terra** is approved for ordinary orchestration, bounded implementation, domain assessment, advisory review, and Learn drafting. It is the Codex default for `build-orchestrator`, `assessment-orchestrator`, and `implementer`.
@@ -263,9 +263,9 @@ The T0–T2 rows are source-verified against the Anthropic Claude Code team's 20
 
 ## How the build-loop uses this
 
-**Fable plans and handles the highest-consequence verification. Opus coordinates and handles bounded verification. Sonnet executes. Haiku recognizes.**
+**Fable plans (via the Advisor ladder). Opus coordinates and verifies. Sonnet executes. Haiku recognizes.**
 
-Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips. The orchestrator (**Opus**) coordinates; Phase 3 implementers run on **Sonnet** at high effort. Verification then splits by consequence: **Fable** for `plan-critic`, `independent-auditor`, and `security-reviewer`; **Opus** for `scope-auditor`, `fix-critique`, `fact-checker`, `overfitting-reviewer`, and `promotion-reviewer`; **Sonnet** for the advisory `alignment-checker` and `synthesis-critic`. On Codex, both governance verification cells resolve to GPT-5.6 Sol. Execution retries Sonnet at `xhigh` before escalating to Opus; planning misses route back to Fable.
+Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips. The orchestrator (**Opus**) coordinates; Phase 3 implementers run on **Sonnet** at high effort. Verification runs on **Opus**: `plan-critic`, `independent-auditor`, and `security-reviewer` at the Frontier tier, and `scope-auditor`, `fix-critique`, `fact-checker`, `overfitting-reviewer`, and `promotion-reviewer` at the Thinking tier; **Sonnet** for the advisory `alignment-checker` and `synthesis-critic`. On Codex, both governance verification cells resolve to GPT-6.1 Sol. Execution retries Sonnet at `xhigh` before escalating to Opus; planning misses route back to the Advisor.
 
 Haiku is only used for Phase 7B mock scanning and recurring-pattern detection across `runs[]`. Never for reasoning tasks.
 
@@ -273,7 +273,7 @@ Haiku is only used for Phase 7B mock scanning and recurring-pattern detection ac
 
 Not every agent should hard-pin its model. Use this rule:
 
-- **Pin** (`model: fable | opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. `plan-critic`, `independent-auditor`, and `security-reviewer` pin Fable. `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` pin Opus. `mock-scanner` pins Haiku; orchestrators pin Opus; `implementer` pins Sonnet.
+- **Pin** (`model: fable | opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. `plan-critic`, `independent-auditor`, and `security-reviewer` pin Opus (Frontier tier). `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` pin Opus. `mock-scanner` pins Haiku; orchestrators pin Opus; `implementer` pins Sonnet.
 - **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `root-cause-investigator` — recommended Opus on causal-tree work, but inherit honors whatever tier the user picked upstream.
 - **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks. The deliberate exceptions documented above (`alignment-checker`, `synthesis-critic` on Sonnet despite being verification-shaped) are exactly this kind of cost-vs-judgment pin and can be lifted if telemetry says so.
 

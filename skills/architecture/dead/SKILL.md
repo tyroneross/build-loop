@@ -17,7 +17,7 @@ Detect orphaned components — those NavGator tracks but with zero incoming AND 
 
 ## When to Activate
 
-- Phase 4 Review-F Report: orphan scan after build completes — diff against the Phase 1 Assess baseline to surface NEW orphans introduced this build
+- Phase 4 Review-G Report: orphan scan after build completes — diff against the Phase 1 Assess baseline to surface NEW orphans introduced this build
 - User asks "find dead code", "any orphaned components", "what's unused"
 
 ## Pre-flight

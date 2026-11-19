@@ -280,7 +280,7 @@ OpenAI Agents SDK ships an `input_filter` primitive on its `handoff(...)` call: 
 
 1. Each Phase 3 dispatch site in `agents/build-orchestrator.md` builds a candidate brief from the full context superset.
 2. Before dispatching, the orchestrator MAY apply a per-chunk `filter` callable to the brief's context blocks (architecture slice, memory recall, prior envelopes). The callable returns a scoped subset — e.g. only memory entries whose `domain` matches `files_owned`, or only prior envelopes from chunks the current chunk has a dependency edge to.
-3. The implementer brief carries an `applied_filter` annotation (one line: `applied_filter: <name>; dropped: <N entries>`) so commit-auditor knows what was suppressed.
+3. The implementer brief carries an `applied_filter` annotation (one line: `applied_filter: <name>; dropped: <N entries>`) so independent-auditor knows what was suppressed.
 4. Default behavior is the identity filter (no scoping); filters are opt-in per-chunk in the plan via `chunk[*].brief_filter:` field. The orchestrator's catalogue of built-in filters lives in `references/brief-filters.md` (TBD; not required for this step).
 
 **Why this matters for the envelope schema**: `capabilities_used[]` / `capabilities_rejected[]` are the implementer's view of brief utility. `applied_filter` is the orchestrator's view. Together they let Phase 6 Learn answer "did we send the right context?" without the implementer having to enumerate everything it ignored.

@@ -20,7 +20,7 @@ Quick flow:
 2. **Read** — no patterns means no agent dispatch. Agent-only work appears in `work_orders[]` with the exact role and payload.
 3. **Dispatch** — call only returned roles. Architects draft experimental skills or agents. Implementers realize enforcement specifications. Promotion reviewers judge drafted or sample-eligible artifacts.
 4. **Attest** — attach repository-relative artifacts and reviewer verdicts with the CLI. Pending or failed work keeps Phase 6 open.
-5. **Close** — emit `learn_line`, enforce `run_close_lint.py --require-learn`, and leave promotion to explicit `/build-loop:promote-experiment` confirmation.
+5. **Close** — emit `learn_line`, enforce `run_close_lint.py --require-learn`, and leave promotion to an explicit promote request through `/build-loop:run` and user confirmation.
 
 **Decision update before closeout:** Reconcile the plan's `## Decision History` update action with what the run actually decided. For a substantive product, design, or architecture choice, append an evidence-backed entry to the private local running log with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/decision_log.py" --workdir "$PWD" --run-id "<run-id>" --title "..." --decision "..." --rationale "..." --status decided --evidence "<source>"` (add `--supersedes "<prior heading>"` when reversing one). Set status to `executed` only after implementation is verified, or `deferred` when the choice is postponed. This writer is atomic, idempotent, and preserves old entries. Record a newly discovered decision even if the plan initially said `Update: none`, and correct the plan disposition and rerun `plan_verify.py --run-id`. If no decision was made, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/decision_log.py" --workdir "$PWD" --run-id "<run-id>" --none-reason "<why>"`; do not manufacture an entry. Both paths write a per-run receipt. Final `run_close_lint.py --require-learn` checks the matching Phase 1 packet, verified plan action, and decision update receipt. For decisions that also belong in cross-run canonical memory, use `skills/knowledge/SKILL.md` and link its returned file in the local entry. Never copy private decision text into tracked source or a Git commit message.
 
@@ -43,7 +43,7 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 - Remove any artifact: `rm -rf .build-loop/skills/experimental/<name>/` or `active/<name>/`
 - Block re-promotion of a name: add it to `.build-loop/skills/.demoted`
 - Inspect tracking: `cat .build-loop/experiments/<name>.jsonl`
-- Promotion to `active/` STILL requires explicit `/build-loop:promote-experiment <name>` (decision-3 safety boundary preserved — auto-promote of unreviewed drafts never happens).
+- Promotion to `active/` STILL requires an explicit promote request for `<name>` through `/build-loop:run` (decision-3 safety boundary preserved — auto-promote of unreviewed drafts never happens).
 - Auto-promote defaults to OFF — set `"autoPromote": true` to enable (requires effective sample ≥ 8).
 
 **The A/B metric a production run records.** Each `applied` row in `.build-loop/experiments/<name>.jsonl` carries `metric_value` = the run's Review-G outcome on a 0..1 scale: `pass` 1.0, `partial` 0.5, `fail` 0.0. It is defined once in `scripts/write_run_entry/iohelpers.py` (`OUTCOME_METRIC_VALUES` / `outcome_metric_value()`) and written automatically by `append_experiment_rows()`, so the orchestrator supplies nothing; a caller with a better metric passes `metric_value=` explicitly. The sample sweep counts only rows with a numeric value and reports the rest as `metric_missing` (plus `metric_missing_detail` per artifact) on the receipt's `sample_sweep` stage, so an unmeasurable sample reads differently from a small one. Promotion then gates on the DELTA against a control arm (runs in the same window that did not apply the artifact), never on the observed level alone; control runs are bounded to the last 90 days and fewer than 8 in-window is reported as `control_missing`; a caller-supplied metric keeps the level comparison, since the control arm speaks run outcomes. Before this, the sole production writer hardcoded `metric_value: None` and the consumer filtered on it, so the evidence path was inert and reported the same thing a young experiment reports. Full definition + history: `skills/self-improve/SKILL.md` §`metric_value`.
@@ -54,7 +54,7 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 
 **What this phase will NOT do**:
 - Modify the build-loop plugin repo
-- Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
+- Promote artifacts cross-project without an explicit promote request for `<name>` through `/build-loop:run`
 - Run more than once per build
 
 ## Automatic retrospective input

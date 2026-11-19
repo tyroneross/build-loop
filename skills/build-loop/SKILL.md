@@ -20,7 +20,7 @@ the missing reference; do not loop back to the failed read.
 
 ## Routing
 
-**`/build-loop:run` is the ONLY human-facing command.** Type it with any request in plain language — or just describe what you need — and the orchestrator classifies intent and routes to the right internal mode. No flags, no picking a mode, no other commands to learn. Everything below is reached by intent, not by a separate command; agents/build-loop invoke these internally.
+**`/build-loop:run` is the ONLY human-facing command.** Type it with any request in plain language — or just describe what you need — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode and have no other commands to learn; optional control flags (`--resume`, `--parallel`, `--no-regrets`) exist but are never required. Everything below is reached by intent, not by a separate command; agents/build-loop invoke these internally.
 
 Intent → internal mode:
 
@@ -33,7 +33,7 @@ Intent → internal mode:
 - **Retrospective**: recursive learning retrospective on a build/project — "retrospective", "retro", "what did we learn", "review this project's trajectory" (delegates to `recursive-retrospective`). *Example: "I need a root cause and a retrospective" → run does both.*
 - **Plan / spec**: "write a plan", "spec this" → spec-writing + plan-verify.
 - **Repository maintenance / closeout**: repository structure, duplicate source, sibling consolidation, build artifacts, branches, worktrees, stashes, or local-main closeout → `repo-maintenance` (`repo-closeout` remains a temporary compatibility alias).
-- **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
+- **PRD**: "start a PRD", "spec out a new app" → `prd-builder` authors a new PRD (outside an active run); `prd-bridge` only reads an existing `docs/prd-*.md`.
 - **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
 - **Drain proposals**: "drain proposals", "review the proposal backlog", "what proposals are open" → the `drain-proposals` skill. Interactive and never auto-applies; every item needs an explicit apply / reject / defer.
 - **Daydream / mine coding patterns**: "daydream", "find reusable patterns", "learn from coding sessions", or "mine transcripts for improvements" → `daydream`. Scan explicit local evidence, separate corrections from added scope and verified success, segment by recorded model/effort/harness, draft improvements, and export observational evidence to Benchmark Lab when requested. Preserve coverage gaps and the existing experiment/promotion lifecycle.
@@ -425,7 +425,7 @@ private-memory receipt blocks the documentation review from passing.
 
 **Independent commit auditor — boundary gate + dispatched judge.** Single consolidated auditor (2026-05-23 — replaces retired `commit-auditor` and earlier retired `sonnet-critic`). Two surfaces share the same context-gathering procedure and verdict taxonomy: (1) a PreToolUse Bash hook fires `scripts/audit_before_commit.py` on every `git commit` regardless of who initiates it (manual, Codex, build-loop, IDE) — deterministic packet-builder, hard-blocks (exit 2) on staged secrets and merge-conflict markers, bypass via `BUILDLOOP_AUDIT_BYPASS=1`; (2) the `independent-auditor` agent dispatches at Phase 3 chunk-close (chunk advisory) and Phase 4 Review-A (build scope) for LLM-grade judgment. Four verdicts: `yay (approve)` / `nay (reject)` / `suggest_correction` / `look_again`. **Auditor dispatch ladder (GAP-1):** a *nested* orchestrator (dispatched as a subagent, or per-commit mode) has no Agent tool and cannot dispatch the auditor — it walks `dispatched-agent → peer-host (rally / codex exec) → not-run:parent-must-dispatch`, records the chosen rung in `auditor_status`, and **never** lets inline self-reasoning masquerade as the independent auditor. A `not-run:parent-must-dispatch` run is not review-complete: the nested orchestrator writes a machine-checkable **owed-verification manifest** (`.build-loop/owed-verification.json` via `scripts/owed_verification.py write`) and flips `state.json.review_incomplete = true`, so under the parent-dispatch contract the dispatching parent MUST dispatch the owed verifiers and `clear` the manifest before Report — the manifest replaces "parent remembers" with a gate (`owed_verification.py check`). Full reference: `skills/build-loop/references/independent-auditor.md` + `references/phase-4-review.md` §"Sub-step A" + `agents/independent-auditor.md`.
 
-## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
+## Phase 5: Iterate — Fix Review Failures + UX Queue (5 attempts classic, 25 autonomous)
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
@@ -435,7 +435,7 @@ Key steps: prioritized work list (Validate failures → blocker UX → major UX 
 
 ## Phase 6: Learn — Cross-Build Pattern Detection (mandatory; always runs and always reports)
 
-Detect recurring patterns across recent runs, auto-draft experimental skills/agents. **Always runs after Review-G** (v0.30.0+) and always emits a `## Learn` outcome line. Three outcome states: **accruing** (`runs[] < 3` → `Learn: accruing (N/3 runs)`), **deferred** (debug-only `closeout: false` or budget-exhausted → write `learn-deferred-<run-id>.md` marker → `Learn: deferred — <reason>`), or **full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred). Promotion to `active/` still requires explicit `/build-loop:promote-experiment` (safety boundary). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
+Detect recurring patterns across recent runs, auto-draft experimental skills/agents. **Always runs after Review-G** (v0.30.0+) and always emits a `## Learn` outcome line. Three outcome states: **accruing** (`runs[] < 3` → `Learn: accruing (N/3 runs)`), **deferred** (debug-only `closeout: false` or budget-exhausted → write `learn-deferred-<run-id>.md` marker → `Learn: deferred — <reason>`), or **full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred). Promotion to `active/` still requires an explicit promote request through `/build-loop:run` (safety boundary). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
 
 One command owns the sequence and proof: `python3 scripts/learn/__main__.py run --workdir "$PWD" --run-id <recorded-run-id> --source review-g --json`. Dispatch only the returned `work_orders[]`, attach each result through `attest`, and require a `status: complete` receipt before closeout. This keeps zero-pattern runs deterministic and token-free.
 

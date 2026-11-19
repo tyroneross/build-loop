@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'."
+description: "Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', 'compose a handoff'."
 user-invocable: false
 ---
 
@@ -266,7 +266,7 @@ Combines with any of the flags above.
 
 ## Usage — `--launch` (fresh session)
 
-The command surface (`/build-loop:compose-handoff --launch`) handles this. The skill provides
+The command layer (asking `/build-loop:run` for a handoff with `--launch`) handles this. The skill provides
 the doc; the command layer handles host-specific launch.
 
 **What `--launch` does:**

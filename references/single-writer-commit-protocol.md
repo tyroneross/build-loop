@@ -58,7 +58,7 @@ For each implementer return envelope with `status: fixed | partial | completed`:
    - **`verdict: "pass"`**: log one line: `[SynthesisCritic] ✅ pass — N subjective dim(s) graded`. Proceed to step 7.
    - **`verdict: "flag"`**: log a WARN line per flagged dimension (e.g. `[SynthesisCritic] ⚠️  copy_tone — claimed "calm-precision, no exclamation points"; observed "Done!" in NewsBanner.tsx`). Append the full JSON to `.build-loop/state.json.synthesisCriticFlags[]` for Phase 6 Learn pattern detection. **Do NOT block.** Do NOT route to Iterate. Do NOT alter the implementer's `f_criteria`. The critic is WARN-only by contract — flagged dims surface for the operator to triage but never gate the build.
    - **Critic outage** (subagent dispatch fails or returns non-JSON): log `[SynthesisCritic] ⚠️  critic unavailable — subjective dims ungraded this commit` and proceed. Same WARN-only posture.
-7. **Commit-auditor advisory verdict** (NEW 2026-05-12, plan §12.7 P5): after step 5 settles, decide whether to dispatch `commit-auditor` (Opus, advisory).
+7. **Independent-auditor advisory verdict** (NEW 2026-05-12, plan §12.7 P5; `commit-auditor` retired into `independent-auditor` 2026-05-23): after step 5 settles, decide whether to dispatch `independent-auditor` (Opus, advisory).
 
    **Trivial bypass** (skip dispatch when ALL of these hold):
    - `(lines_added + lines_removed) < 20` for this commit (`git diff --shortstat <sha>~1..<sha>`)
@@ -66,16 +66,16 @@ For each implementer return envelope with `status: fixed | partial | completed`:
    - `state.json.planVerify.exit == 0` (last known)
    - `state.json.scopeAudit.last_verdict == "green"` (last known)
 
-   When bypassed: append `{judge_id: "commit-auditor", checkpoint_id: "<run_id>:<chunk_id>:pre-commit", verdict: "approve", confidence: 1.0, spec_alignment: "aligned", variances: [], bypass_reason: "trivial", policy_refs: []}` directly to a temp `judge_decisions.json` (collected for Phase 4 Review-F `--judge-decisions-json` flush). Log one line: `[CommitAuditor] bypass — trivial (lines=N, no spec-touch)`.
+   When bypassed: append `{judge_id: "independent-auditor", checkpoint_id: "<run_id>:<chunk_id>:pre-commit", verdict: "approve", confidence: 1.0, spec_alignment: "aligned", variances: [], bypass_reason: "trivial", policy_refs: []}` directly to a temp `judge_decisions.json` (collected for Phase 4 Review-G `--judge-decisions-json` flush). Log one line: `[IndependentAuditor] bypass — trivial (lines=N, no spec-touch)`.
 
-   **Otherwise dispatch**: `Agent(subagent_type="build-loop:commit-auditor", prompt=...)` with the brief shape documented in `agents/commit-auditor.md` (chunk_id, diff_sha, diff_stat, files_owned, plan_path, rubric_criteria_ids, constitution_loaded_rule_ids, triggers, recent_judge_decisions). Run in parallel with step 6 synthesis-critic when both are firing — they read the diff independently and write to non-overlapping state fields.
+   **Otherwise dispatch**: `Agent(subagent_type="build-loop:independent-auditor", prompt=...)` with the brief shape documented in `agents/independent-auditor.md` (chunk_id, diff_sha, diff_stat, files_owned, plan_path, rubric_criteria_ids, constitution_loaded_rule_ids, triggers, recent_judge_decisions). Run in parallel with step 6 synthesis-critic when both are firing — they read the diff independently and write to non-overlapping state fields.
 
    **Verdict routing** (advisory only — NEVER blocks):
    - `approve` — log one line, append to `judge_decisions[]`, proceed.
    - `rethink` — log WARN per variance; surface to the implementer's next-iteration brief if Phase 5 fires; do not auto-revert. Implementer's eventual response goes in `implementer_response` field of the same judge_decisions entry (orchestrator updates after Phase 5 attempt or commit).
    - `new_approach` — log WARN, surface to Phase 4 Report's `## Notes from judges`, route to next phase normally. If the implementer disputes and proceeds, that's a logged disagreement, not a halt. Two consecutive `new_approach` on the same chunk → orchestrator surfaces via PushNotification + TaskCreate "[BUILD-LOOP] Judge requesting re-plan on chunk <id> — your review needed" but the build continues independent chunks; chunk-id's dependents pause until user input or the next phase transition allows them to resume.
 
-   **Auditor outage** (dispatch fails or returns non-JSON): log `[CommitAuditor] ⚠️  unavailable — chunk un-audited this commit` and proceed. Same advisory posture.
+   **Auditor outage** (dispatch fails or returns non-JSON): log `[IndependentAuditor] ⚠️  unavailable — chunk un-audited this commit` and proceed. Same advisory posture.
 
 8. **Repeat sequentially** for each remaining implementer in this batch. Sequential by design — the pre-commit hook is the only serializer; implementers' parallel work landed on a clean working tree, but the commits themselves serialize through the hook.
 
