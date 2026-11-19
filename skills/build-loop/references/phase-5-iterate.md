@@ -71,7 +71,7 @@ ceiling, current concurrency, and stable-window count. Obey `pause_new_work`,
 `reduce_concurrency`, `steady`, or `recover_one`; finish in-flight chunks before
 reducing admission. Missing signals retain current concurrency.
 
-- **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 5, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
+- **Top-level mode** (orchestrator invoked directly via the user's session): dispatch `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (scoped tools=[Read, Write, Edit, Bash, Glob, Grep]), up to `admission.next_concurrency` from `autonomy_supervisor.py fanout`. Fan-out width follows `references/resource-aware-execution.md` §"Wide waves": up to 4 workers without a work map; up to 20 only with a validated work map and a fresh CPU sample. Sequential groups process after the parallel batch.
 - **Subagent mode** (orchestrator was itself spawned via `Agent(...)` so the no-sub-sub-agents rule applies): degrade to **inline-implementer mode** — iterate the queue serially, apply each fix following the implementer's protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed). No parallelism, same quality bar. The orchestrator surfaces the degradation in Review-F.
 
 In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing covers all 9 implementer return values:
@@ -105,7 +105,7 @@ Per attempt:
    - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `build-loop:debugging-memory` `{op:"assess"}`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
    - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
-4. **Partition for parallel fan-out**: group by disjoint `files_touched`; use `autonomy_supervisor.py fanout` for the binding dynamic admission count. The absolute ceiling is 150, while independent work, shared capacity, provider errors, cost, memory, disk, load, latency, and measured thermal stability normally set a lower limit.
+4. **Partition for parallel fan-out**: group by disjoint `files_touched`; use `autonomy_supervisor.py fanout` for the binding dynamic admission count. The absolute ceiling is 20 (more than 4 needs a validated work map and a CPU monitor), while independent work, shared capacity, provider errors, cost, memory, disk, load, latency, and measured thermal stability normally set a lower limit.
 5. **Execute fixes**; for UI files, run the UI re-validate hook before continuing.
 6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
    - When the completed queue file has `source: autonomy-dashboard`, read its

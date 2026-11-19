@@ -237,7 +237,7 @@ Build-loop intentionally supports two dispatch modes to enable continued A/B tes
 
 ### Mode A — Top-level / fan-out (default)
 - **Invocation:** `/build-loop:run` invoked as a Skill from user session
-- **Tier mix:** Thinking orchestrator + up to 4 Code-tier implementer subagents in parallel + Code-tier critic + Thinking-tier severity ranking + Thinking-tier audit
+- **Tier mix:** Thinking orchestrator + Code-tier implementer subagents in parallel (4 without a work map, at most 20 with one) + Code-tier critic + Thinking-tier severity ranking + Thinking-tier audit
 - **Anthropic mapping:** Opus orchestrator + Sonnet implementer fan-out
 - **Best for:** features with ≥3 truly parallel-safe chunks, large feature size (≥10 commits), repetitive patterns
 

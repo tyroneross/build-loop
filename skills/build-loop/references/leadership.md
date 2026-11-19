@@ -54,7 +54,7 @@ State the posture you're operating under when it materially shapes the turn ("op
 ## Parallel-work doctrine (decentralized execution)
 
 - Decompose into **MECE** chunks (disjoint file ownership) so workers don't collide; the orchestrator owns git (single-writer) and workers never commit.
-- Fan-out width follows the autonomy supervisor's adaptive admission envelope. Start at no more than four, then recover one worker after stable telemetry windows; reduce or pause on provider, host, cost, thermal, latency, or failure pressure. The absolute ceiling is 150, while independent MECE work and all lower resource caps remain binding. Use one worker for a single fact-find.
+- Fan-out width follows the autonomy supervisor's adaptive admission envelope. Start at no more than four, then recover one worker after stable telemetry windows; reduce or pause on provider, host, cost, thermal, latency, or failure pressure. The absolute ceiling is 20; more than 4 needs a validated work map and a CPU monitor (`resource-aware-execution.md` §"Wide waves"), and independent MECE work and all lower resource caps remain binding. Use one worker for a single fact-find.
 - **Risky-but-reversible parallel work → isolated worktrees, merge back.** Two writers on one worktree race on HEAD/index — isolate, then collapse to main at close (Phase D / `collapse_run.py`).
 - Workers return condensed structured results; the orchestrator (Thinking tier) synthesizes and verifies — cheaper-tier output is never trusted unchecked.
 

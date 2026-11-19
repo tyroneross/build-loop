@@ -38,8 +38,11 @@ import model_taxonomy
 # Constants
 # ---------------------------------------------------------------------------
 
-HARD_CEILING: int = 150  # absolute admission ceiling; resource caps stay binding
-DEFAULT_MAX: int = 8    # new default, up from the prior hardcoded 4
+HARD_CEILING: int = 20  # absolute admission ceiling (owner policy 2026-11-19); resource caps stay binding
+DEFAULT_MAX: int = 8    # default project preference; never a dispatch target
+# Waves wider than this need a validated work partition (disjoint owned files,
+# an interface per chunk, and a named integration point) plus a fresh CPU sample.
+SEGMENTATION_FREE_LIMIT: int = 4
 DEFAULT_CLOUD_TOKEN_BUDGET: int = 96_000
 
 MODEL_SIZES = ("small", "medium", "large", "xlarge")

@@ -64,7 +64,7 @@ Entries with `architecture_impact: true` are deferred to Review-F for explicit u
 
 Group entries by disjoint `files_touched` (no overlapping files). Dispatch mechanism depends on whether you can spawn subagents:
 
-**Top-level mode**: dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)`. Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
+**Top-level mode**: dispatch `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` up to the supervisor's admitted count. Fan-out width follows `references/resource-aware-execution.md` §"Wide waves": up to 4 workers without a work map; up to 20 only with a validated work map and a fresh CPU sample. Sequential groups process after the parallel batch.
 
 **Subagent mode**: the `Agent` tool is unavailable to you. Do NOT halt — degrade gracefully to inline-implementer mode. Iterate the queue serially, applying each entry's `proposed_fix` yourself. Surface the degradation in your Phase 4 Sub-step F Report.
 

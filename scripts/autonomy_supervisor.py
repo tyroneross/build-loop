@@ -15,6 +15,7 @@ evidence about future supervision needs; it is never the goal or a stop rule.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import math
@@ -24,13 +25,14 @@ import shutil
 import statistics
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
-from parallelism import HARD_CEILING, resolve_fanout  # noqa: E402
+from parallelism import HARD_CEILING, SEGMENTATION_FREE_LIMIT, resolve_fanout  # noqa: E402
 from tool_trace import ingestion_incomplete, summarize as summarize_tool_traces  # noqa: E402
 
 AUTONOMY_DIR = Path(".build-loop/autonomy")
@@ -38,6 +40,15 @@ HISTORY_PATH = AUTONOMY_DIR / "task-history.jsonl"
 MANIFEST_PATH = AUTONOMY_DIR / "queue-manifest.json"
 CONVERGENCE_PATH = AUTONOMY_DIR / "convergence.json"
 BACKPRESSURE_PATH = AUTONOMY_DIR / "backpressure.json"
+HOST_LOAD_PATH = AUTONOMY_DIR / "host-load.jsonl"
+MONITOR_FRESH_SECONDS = 90
+MONITOR_MAX_DURATION_SECONDS = 7200
+CPU_PRESSURE_PERCENT = 90.0
+# Queue items per run are not workers; they keep their own bound.
+QUEUE_HARD_CEILING = 150
+# Leases written before the 2026-11-19 worker ceiling of 20 may name up to 150;
+# accept them while they expire instead of declaring the shared store corrupt.
+LEGACY_LEASE_CEILING = 150
 STATE_PATH = Path(".build-loop/state.json")
 DEFAULT_QUEUE_LIMIT = 12
 DEFAULT_AUDIT_VERDICT_COUNT = 3
@@ -259,7 +270,7 @@ def resolve_queue_limit(
             result = max(1, math.ceil(result / 2))
         elif thermal == "nominal" and load < 0.5 and memory < 70:
             result = math.ceil(result * 1.25)
-    result = max(1, min(HARD_CEILING, result))
+    result = max(1, min(QUEUE_HARD_CEILING, result))
     if isinstance(available_count, int) and available_count >= 0:
         return min(result, max(1, available_count))
     return result
@@ -443,8 +454,8 @@ def snapshot_queue(workdir: Path, goal: str, limit: int | None = None) -> dict[s
             configured=configured,
             signals=live_signals,
         )
-    if limit < 1 or limit > HARD_CEILING:
-        raise ValueError(f"limit must be between 1 and {HARD_CEILING}")
+    if limit < 1 or limit > QUEUE_HARD_CEILING:
+        raise ValueError(f"limit must be between 1 and {QUEUE_HARD_CEILING}")
     selected = ranked[:limit]
     run_id = _current_run_id(workdir)
     state = _read_json(workdir / STATE_PATH, {})
@@ -665,6 +676,7 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
     thermal = str(signals.get("thermal_state", "nominal")).lower()
     error_streak = max(0, int(signals.get("error_streak", 0)))
     load_ratio = max(0.0, float(signals.get("load_ratio", 0)))
+    cpu_percent = max(0.0, float(signals.get("cpu_percent") or 0))
     latency_p95 = max(0.0, float(signals.get("latency_p95_ms", 0)))
     latency_baseline = max(0.0, float(signals.get("latency_baseline_ms", 0)))
     cost_used = max(0.0, float(signals.get("cost_used", 0)))
@@ -690,6 +702,8 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
         pressure.append("worker_error_streak")
     if load_ratio >= 0.9:
         pressure.append("host_load_at_or_above_90_percent")
+    if cpu_percent >= CPU_PRESSURE_PERCENT:
+        pressure.append("host_cpu_at_or_above_90_percent")
     if latency_baseline and latency_p95 >= latency_baseline * 2:
         pressure.append("p95_latency_doubled")
     if cost_ceiling and cost_ratio >= 0.8:
@@ -702,7 +716,8 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
         action, next_concurrency, reasons = "pause_new_work", 0, ["capacity_exhausted"]
     elif concurrency > maximum:
         action, next_concurrency, reasons = "reduce_concurrency", maximum, pressure
-    elif (concurrency == 0 and pressure == ["host_load_at_or_above_90_percent"]
+    elif (concurrency == 0 and pressure
+          and set(pressure) <= {"host_load_at_or_above_90_percent", "host_cpu_at_or_above_90_percent"}
           and signals.get("execution_location") == "cloud"):
         # Load average includes runnable and waiting local processes; it is not
         # cloud inference utilization. Preserve progress with one cloud worker,
@@ -725,6 +740,7 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
         "reasons": reasons,
         "cost_ratio": round(cost_ratio, 3) if cost_ceiling else None,
         "load_ratio": round(load_ratio, 3),
+        "cpu_percent": round(cpu_percent, 1) if signals.get("cpu_percent") is not None else None,
         "latency_ratio": round(latency_p95 / latency_baseline, 3) if latency_baseline else None,
     }
 
@@ -761,6 +777,20 @@ def _thermal_state(output: str) -> str:
     return "unknown"
 
 
+def _cpu_percent(cpu_count: int) -> float | None:
+    """Whole-host CPU use as a percent of all cores, from one `ps` read.
+
+    `ps -A -o %cpu=` reports each process's recent share of one core; the sum
+    divided by the core count approximates host utilisation. Returns None when
+    `ps` is unavailable so callers treat CPU as unknown rather than idle.
+    """
+    output = _probe(["ps", "-A", "-o", "%cpu="])
+    values = [float(token) for token in output.split() if re.fullmatch(r"\d+(?:\.\d+)?", token)]
+    if not values:
+        return None
+    return round(min(100.0, sum(values) / max(1, cpu_count)), 1)
+
+
 def host_signals(workdir: Path) -> dict[str, Any]:
     """Collect portable host pressure with optional macOS thermal detail."""
     cpu_count = max(1, os.cpu_count() or 1)
@@ -775,6 +805,7 @@ def host_signals(workdir: Path) -> dict[str, Any]:
 
     signals: dict[str, Any] = {
         "load_ratio": round(load_ratio, 3),
+        "cpu_percent": _cpu_percent(cpu_count),
         "disk_free_gb": round(disk_free_gb, 2),
         "thermal_state": _thermal_state(_probe(["pmset", "-g", "therm"])),
         "signal_source": "host_probe",
@@ -818,6 +849,7 @@ def _update_pressure_state(workdir: Path, signals: dict[str, Any]) -> dict[str, 
             and float(signals.get("memory_percent", 0)) < 75
             and float(signals.get("disk_free_gb", 999)) >= 5
             and float(signals.get("load_ratio", 0)) < 0.75
+            and float(signals.get("cpu_percent") or 0) < 75
             and str(signals.get("thermal_state", "unknown")).lower() in {"nominal", "unknown"}
             and cost_ratio < 0.7
             and (not baseline or not latency or latency < baseline * 1.5)
@@ -854,9 +886,187 @@ def _update_pressure_state(workdir: Path, signals: dict[str, Any]) -> dict[str, 
     return state
 
 
+def _owned_path(value: str) -> str:
+    text = value.strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.rstrip("/")
+
+
+def _owned_overlap(first: str, second: str) -> bool:
+    """True when two owned paths or globs can name the same file."""
+    if first == second or not first or not second:
+        return True
+    if first.startswith(second + "/") or second.startswith(first + "/"):
+        return True
+    return fnmatch.fnmatch(first, second) or fnmatch.fnmatch(second, first)
+
+
+def validate_partition(partition: Any) -> dict[str, Any]:
+    """Check that a wide wave is split into clearly bounded, integrable chunks.
+
+    Every chunk needs an ``id``, the files or paths it alone ``owns``, the
+    ``interface`` it exposes or consumes, and the ``integration`` point where
+    its output is combined and checked with the others. Owned paths must not
+    overlap between chunks. The result never raises; callers degrade to the
+    unsegmented limit when ``valid`` is false.
+    """
+    if not isinstance(partition, list) or not partition:
+        return {"valid": False, "chunks": 0, "errors": ["partition must be a non-empty list of chunks"], "overlaps": []}
+    errors: list[str] = []
+    owned: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
+    for index, chunk in enumerate(partition):
+        if not isinstance(chunk, dict):
+            errors.append(f"chunk {index}: must be an object")
+            continue
+        chunk_id = str(chunk.get("id") or "").strip()
+        label = chunk_id or f"#{index}"
+        if not chunk_id:
+            errors.append(f"chunk {label}: id is required")
+        elif chunk_id in seen:
+            errors.append(f"chunk {label}: duplicate id")
+        seen.add(chunk_id)
+        paths = [_owned_path(item) for item in chunk.get("owns") or [] if isinstance(item, str) and item.strip()]
+        if not paths:
+            errors.append(f"chunk {label}: owns must list at least one file or path")
+        for key, meaning in (("interface", "the interface it exposes or consumes"),
+                             ("integration", "where its output is combined and checked")):
+            if not str(chunk.get(key) or "").strip():
+                errors.append(f"chunk {label}: {key} is required ({meaning})")
+        owned.append((label, paths))
+    overlaps: list[str] = []
+    for left in range(len(owned)):
+        for right in range(left + 1, len(owned)):
+            for first in owned[left][1]:
+                hit = next((second for second in owned[right][1] if _owned_overlap(first, second)), None)
+                if hit is not None:
+                    overlaps.append(f"{owned[left][0]} and {owned[right][0]} both own {first if first == hit else first + ' / ' + hit}")
+                    break
+    if overlaps:
+        errors.append(f"{len(overlaps)} owned-path overlap(s) between chunks")
+    return {"valid": not errors, "chunks": len(owned), "errors": errors[:20], "overlaps": overlaps[:20]}
+
+
+def _last_host_sample(workdir: Path) -> dict[str, Any] | None:
+    path = workdir / HOST_LOAD_PATH
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 8192))
+            lines = handle.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("ts"):
+            return row
+    return None
+
+
+def cpu_monitor_status(workdir: Path, now: datetime | None = None) -> dict[str, Any]:
+    """Report whether a host-load monitor sampled recently enough to trust."""
+    row = _last_host_sample(workdir)
+    age = None
+    if row:
+        try:
+            sampled = datetime.fromisoformat(str(row["ts"]).replace("Z", "+00:00"))
+            age = ((now or datetime.now(timezone.utc)) - sampled).total_seconds()
+        except (KeyError, ValueError):
+            age = None
+    fresh = age is not None and 0 <= age <= MONITOR_FRESH_SECONDS
+    return {
+        "fresh": fresh,
+        "last_sample_at": row.get("ts") if row else None,
+        "age_seconds": round(age, 1) if age is not None else None,
+        "last_cpu_percent": row.get("cpu_percent") if row else None,
+        "last_load_ratio": row.get("load_ratio") if row else None,
+        "path": str(workdir / HOST_LOAD_PATH),
+        "start_command": (
+            "python3 scripts/autonomy_supervisor.py --workdir . monitor "
+            "--duration-seconds <wave length> --interval-seconds 15"
+        ),
+    }
+
+
+def monitor_host(
+    workdir: Path,
+    *,
+    duration_seconds: int = 900,
+    interval_seconds: int = 15,
+    current_concurrency: int | None = None,
+    max_samples: int | None = None,
+) -> dict[str, Any]:
+    """Sample host CPU, load, memory and heat into a bounded JSONL log.
+
+    Runs at most MONITOR_MAX_DURATION_SECONDS and then exits; it never loops
+    unbounded. Each row records the backpressure action the supervisor would
+    take at that moment, so a reader can see when a wide wave strained the host.
+    """
+    duration = max(1, min(MONITOR_MAX_DURATION_SECONDS, int(duration_seconds)))
+    interval = max(5, min(300, int(interval_seconds)))
+    path = workdir / HOST_LOAD_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + duration
+    samples = 0
+    peak_cpu = 0.0
+    peak_load = 0.0
+    actions: dict[str, int] = {}
+    last: dict[str, Any] = {}
+    while True:
+        signals = host_signals(workdir)
+        concurrency = max(0, int(current_concurrency)) if current_concurrency is not None else 0
+        assessed = backpressure_action({
+            **signals,
+            "current_concurrency": concurrency,
+            "max_concurrency": max(concurrency, HARD_CEILING),
+        })
+        last = {
+            "ts": _now(),
+            "monitor_pid": os.getpid(),
+            "current_concurrency": concurrency,
+            **signals,
+            "action": assessed["action"],
+            "reasons": assessed["reasons"],
+        }
+        _append_jsonl(path, last)
+        samples += 1
+        peak_cpu = max(peak_cpu, float(signals.get("cpu_percent") or 0))
+        peak_load = max(peak_load, float(signals.get("load_ratio") or 0))
+        actions[assessed["action"]] = actions.get(assessed["action"], 0) + 1
+        if max_samples is not None and samples >= max_samples:
+            break
+        if time.monotonic() + interval > deadline:
+            break
+        time.sleep(interval)
+    return {
+        "samples": samples,
+        "path": str(path),
+        "peak_cpu_percent": round(peak_cpu, 1),
+        "peak_load_ratio": round(peak_load, 3),
+        "actions": actions,
+        "last": last,
+    }
+
+
 def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
-    """Let the supervisor admit only the capacity justified by work and telemetry."""
+    """Let the supervisor admit only the capacity justified by work and telemetry.
+
+    Waves wider than SEGMENTATION_FREE_LIMIT also need a validated partition
+    (see validate_partition) and a fresh host-load sample (see monitor_host).
+    """
     ready_items = max(0, int(request.get("independent_items", 1)))
+    segmentation = (
+        validate_partition(request["partition"]) if "partition" in request
+        else {"valid": False, "chunks": None, "errors": ["no partition supplied"], "overlaps": []}
+    )
+    if segmentation["valid"]:
+        ready_items = segmentation["chunks"]
+    segmentation_cap = HARD_CEILING if segmentation["valid"] else SEGMENTATION_FREE_LIMIT
     hints = {
         key: request[key]
         for key in (
@@ -874,6 +1084,12 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         independent_items=ready_items,
         **hints,
     )
+    if capacity["effective_max"] > segmentation_cap:
+        capacity = {
+            **capacity,
+            "effective_max": segmentation_cap,
+            "limiting_factors": sorted(set(capacity.get("limiting_factors", [])) | {"segmentation"}),
+        }
     signals = host_signals(workdir)
     trace = summarize_tool_traces(
         workdir,
@@ -897,6 +1113,7 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
             "decision_owner": "autonomy_supervisor",
             "absolute_ceiling": HARD_CEILING,
             "capacity": capacity,
+            "segmentation": segmentation,
             "admission": {
                 "action": "pause_new_work",
                 "current_concurrency": current,
@@ -929,10 +1146,23 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         }
     else:
         pressure = assessed
+    monitor = cpu_monitor_status(workdir)
+    wide_limit = max(SEGMENTATION_FREE_LIMIT, current)
+    if pressure["next_concurrency"] > wide_limit and not monitor["fresh"]:
+        pressure = {
+            **pressure,
+            "action": "hold_for_cpu_monitor",
+            "next_concurrency": wide_limit,
+            "reasons": list(pressure.get("reasons", [])) + [
+                f"cpu_monitor_required_above_{SEGMENTATION_FREE_LIMIT}"
+            ],
+        }
     return {
         "decision_owner": "autonomy_supervisor",
         "absolute_ceiling": HARD_CEILING,
         "capacity": capacity,
+        "segmentation": segmentation,
+        "cpu_monitor": monitor,
         "admission": pressure,
         "observed_signals": signals,
     }
@@ -963,7 +1193,7 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         for key, row in state.get("leases", {}).items():
             if (not isinstance(row, dict) or type(row.get("workers")) is not int
                     or type(row.get("shared_capacity")) is not int
-                    or not 0 < row["workers"] <= row["shared_capacity"] <= HARD_CEILING
+                    or not 0 < row["workers"] <= row["shared_capacity"] <= LEGACY_LEASE_CEILING
                     or not isinstance(row.get("workdir"), str)):
                 raise ValueError("invalid capacity lease; inspect the shared store before dispatch")
             try:
@@ -983,7 +1213,7 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
             if request.get("renew_only"):
                 raise ValueError("reservation expired or missing; stop workers before acquiring a new wave")
             # Concurrent users cannot raise the shared ceiling while leases exist.
-            capacity = min([capacity] + [row["shared_capacity"] for row in leases.values()])
+            capacity = min([capacity, HARD_CEILING] + [row["shared_capacity"] for row in leases.values()])
             active = sum(row["workers"] for row in leases.values())
             decision = select_fanout(workdir, {
                 **request, "shared_capacity": capacity, "active_elsewhere": active,
@@ -1070,6 +1300,13 @@ def main(argv: list[str] | None = None) -> int:
     pressure.add_argument("--signals", required=True)
     fanout = sub.add_parser("fanout")
     fanout.add_argument("--request", required=True)
+    monitor = sub.add_parser("monitor", help="Sample host CPU/load/memory/heat into .build-loop/autonomy/host-load.jsonl for a bounded time")
+    monitor.add_argument("--duration-seconds", type=int, default=900)
+    monitor.add_argument("--interval-seconds", type=int, default=15)
+    monitor.add_argument("--current-concurrency", type=int, default=None)
+    monitor.add_argument("--max-samples", type=int, default=None)
+    partition = sub.add_parser("check-partition", help="Validate a wave partition JSON file or literal")
+    partition.add_argument("--partition", required=True)
     for name in ("reserve-fanout", "release-fanout"):
         reservation = sub.add_parser(name)
         reservation.add_argument("--request", required=True)
@@ -1114,6 +1351,17 @@ def main(argv: list[str] | None = None) -> int:
             result = release_fanout(workdir, _payload(args.request))
         elif args.command == "fanout":
             result = select_fanout(workdir, _payload(args.request))
+        elif args.command == "monitor":
+            result = monitor_host(
+                workdir,
+                duration_seconds=args.duration_seconds,
+                interval_seconds=args.interval_seconds,
+                current_concurrency=args.current_concurrency,
+                max_samples=args.max_samples,
+            )
+        elif args.command == "check-partition":
+            payload = _payload(args.partition)
+            result = validate_partition(payload.get("partition", payload) if isinstance(payload, dict) else payload)
         else:
             result = task_profile(workdir, args.goal)
     except (OSError, ValueError, TimeoutError) as exc:

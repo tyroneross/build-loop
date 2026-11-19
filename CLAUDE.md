@@ -72,7 +72,7 @@ Selection and prompting are separate axes, and both are now data-driven. `refere
 
 Build-loop supports two dispatch modes, both first-class:
 
-- **Mode A — Top-level / fan-out (default):** invoked via `/build-loop:run` Skill from the user session. Thinking-tier orchestrator dispatches up to 4 Code-tier implementer subagents in parallel. Best for parallel-safe features (≥3 independent chunks) and large features (≥10 commits).
+- **Mode A — Top-level / fan-out (default):** invoked via `/build-loop:run` Skill from the user session. Thinking-tier orchestrator dispatches Code-tier implementer subagents in parallel: up to 4 without a work map, up to 20 with a validated work map and a CPU monitor (`skills/build-loop/references/resource-aware-execution.md` §"Wide waves"). Best for parallel-safe features (≥3 independent chunks) and large features (≥10 commits).
 - **Mode B — Inline / single-context (preserved):** invoked via `Agent(subagent_type="build-loop:build-orchestrator", ...)`. Thinking-tier orchestrator handles all phases inline (no fan-out, no-sub-sub-agents rule). Best for small/medium features (≤6 commits), cross-cutting refactors, and as the comparison baseline for dispatch-mode A/B testing.
 
 Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The orchestrator auto-detects which mode it's in (`agents/build-orchestrator.md:529-530`). **Mode B is not deprecated** — it's the canonical baseline for tier-mix telemetry and works better for cross-cutting work where single-context visibility beats fan-out parallelism.

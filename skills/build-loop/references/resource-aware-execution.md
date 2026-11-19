@@ -39,8 +39,49 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parallelism.py" \
 Persist the envelope at `state.json.execution.fanout`. `effective_max` is
 capacity, not a dispatch target. Pass it to `autonomy_supervisor.py fanout`;
 the supervisor applies provider/host/cost/failure backpressure and chooses the
-next wave. Dispatch only across a MECE partition. The absolute safety ceiling
-is 150, while every lower live cap remains binding.
+next wave. Dispatch only across a MECE partition. The absolute ceiling is 20
+workers (owner policy, 2026-11-19), and every lower live cap remains binding.
+
+### Wide waves (more than 4 workers)
+
+Flexible width up to 20 is allowed only when the work is clearly segmented and
+the host is being watched. The supervisor enforces both; prose alone is not the
+gate.
+
+1. **Work map.** Pass `partition` to `autonomy_supervisor.py fanout` (or check it
+   first with `check-partition`). Each chunk names:
+   - `id`: unique chunk name;
+   - `owns`: the files or paths only this chunk may change (no overlap with any
+     other chunk, including directory-prefix and glob overlap);
+   - `interface`: what it exposes or consumes at its boundary (function, schema,
+     CLI contract, event);
+   - `integration`: where its output is combined and checked with the others
+     (the integration test, merge step, or owner that verifies the joint result).
+
+   Without a valid map the wave stays at 4, and the response lists each error.
+   With a valid map, independent work equals the number of chunks.
+2. **CPU monitoring.** Before admitting a fifth worker, start the bounded monitor
+   for the length of the wave:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autonomy_supervisor.py" --workdir "$PWD" \
+     monitor --duration-seconds <wave length, max 7200> --interval-seconds 15 \
+     --current-concurrency <workers running>
+   ```
+
+   It appends CPU %, load, memory, disk and thermal state, plus the action the
+   supervisor would take, to `.build-loop/autonomy/host-load.jsonl`. Growth past
+   4 requires a sample less than 90 seconds old; otherwise admission returns
+   `hold_for_cpu_monitor`. CPU at or above 90% reduces concurrency the same way
+   load, memory and thermal pressure do. The run report states peak CPU and load
+   from that log for any wave wider than 4.
+3. **Growth stays gradual.** The first wave is at most 4; one worker is added per
+   two stable telemetry windows, and any pressure halves concurrency.
+
+Cloud waves are also limited by the per-wave token budget
+(`parallelism.cloudTokenBudget`, default 96,000). At default heuristics that
+budget alone allows about 4 Code-tier workers, so a wider cloud wave also needs
+a larger budget in `.build-loop/config.json`.
 
 The role supplies an advisory effort when `--effort` is omitted. Today
 `agentic_execution/T3` prefers `high`, so Codex execution resolves to Terra-high
