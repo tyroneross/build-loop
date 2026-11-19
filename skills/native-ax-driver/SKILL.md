@@ -73,7 +73,7 @@ The Swift binary compiles on first use to the **consumer project's** `.build-loo
 |---|---|---|
 | `swift` on PATH | `command -v swift` | `RuntimeError: \`swift\` not found on PATH` from `ensure_binary()` |
 | Xcode CLT installed | `xcode-select -p` | First `swift build` fails with missing-SDK error |
-| AX permission for parent process | `python3 native_driver.py preflight` | Binary exits `77` with the canonical "Accessibility permission required" message; no prompt is shown (see `request-permission`) |
+| AX permission for parent process | `python3 native_driver.py preflight` | `preflight` returns `2`; binary-backed commands (`scan`, actions, `resolve`) exit `77` with the canonical "Accessibility permission required" message; no prompt is shown (see `request-permission`) |
 | Target app running | `python3 native_driver.py apps` | `findMainWindow` returns nil; binary exits with "No windows found for pid …" |
 
 The parent process needing AX permission is whichever process invoked Claude Code (Terminal, iTerm, VS Code, etc.). The driver binary itself does not need to be in the AX list — permission inherits from the parent.

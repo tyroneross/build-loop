@@ -108,7 +108,11 @@ func requireAccessibilityTrust(promptRequested: Bool, recordURL: URL = defaultPe
         do {
             try recordAccessibilityPrompt(recordURL: recordURL)
         } catch {
-            fputs("Warning: could not write \(recordURL.path): \(error.localizedDescription)\n", stderr)
+            // Without a record the next request would prompt again, breaking the
+            // at-most-once promise. Refuse to prompt and report how to fix it.
+            fputs("Error: could not write \(recordURL.path): \(error.localizedDescription). Not showing the Accessibility prompt because it could not be recorded.\n", stderr)
+            fputs(accessibilityUntrustedMessage(askedAt: nil, recordURL: recordURL) + "\n", stderr)
+            exit(accessibilityUntrustedExitCode)
         }
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         if AXIsProcessTrustedWithOptions(prompt) { return }
