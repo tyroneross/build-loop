@@ -23,7 +23,8 @@ depends on that verdict.
 
 ## SessionStart: one registration with bounded recovery
 
-`hooks.json` and `codex.json` each register one SessionStart command, generated
+`hooks.json` registers one SessionStart command (`codex.json` is empty since
+2026-11-17; Build Loop ships no automatic Codex hooks), generated
 by `scripts/session_start_hook_command.py` (`--write` / `--check`). A fresh
 `bin/native/bl` handles the event. Missing, stale or explicitly disabled binaries
 use the generator's recovery-only `--fallback` mode: tool-state first, then the
@@ -41,6 +42,11 @@ Codex must review the changed registration; this change grants no trust.
 Architecture edit observers run on successful PostToolUse Edit/Write events. The historical `pre-edit-architecture.sh` filename remains for direct-call compatibility; it no longer runs before the write.
 
 ## Registration inventory (2026-11-15)
+
+> Historical for Codex: since 2026-11-17 `hooks/codex.json` and `.codex/hooks.json`
+> are empty manifests (Build Loop ships no automatic Codex hooks; AGENTS.md "Codex
+> wiring"). The X and R columns below record what those surfaces held before; only
+> the C (Claude) rows are live.
 
 Inventory baseline: `1f951408`. `hooks/hooks.json` is the Claude plugin surface;
 `.codex-plugin/plugin.json` selects `hooks/codex.json` for Codex. The repository

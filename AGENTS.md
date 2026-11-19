@@ -172,7 +172,7 @@ python3 scripts/agent_rally.py stop --workdir "$PWD" \
 
 **Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
-**Codex heartbeat parity:** Build Loop ships no automatic Codex hooks (`hooks/codex.json` and `.codex/hooks.json` are empty manifests). A codex session writes presence through the explicit Rally calls above (`session_probe.py --tool codex` or `rally`), so its presence/claims/lead decay identically to claude sessions — parity proven by `scripts/rally_point/heartbeat_parity_vectors.json`.
+**Codex presence:** Build Loop ships no automatic Codex hooks (see Codex wiring below), so a Codex session announces itself only when it runs the manual preflight above and releases its seat only through `agent_rally.py stop`. Once recorded, its presence and claims decay by the same rules as Claude's (`scripts/rally_point/heartbeat_parity_vectors.json`).
 
 ## Skill index — how to find the right skill
 

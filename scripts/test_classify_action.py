@@ -696,3 +696,45 @@ def test_deep_nesting_is_unparseable_not_a_crash(depth: int) -> None:
 def test_too_many_parts_is_not_read_only() -> None:
     assert not classify_action._is_read_only(" ; ".join(["ls"] * (classify_action.MAX_PARTS + 1)))
     assert classify_action._is_read_only(" ; ".join(["ls"] * classify_action.MAX_PARTS))
+
+
+# ---------------------------------------------------------------------------
+# `gh api` reads vs writes (2026-11-19). `gh api` is a general GitHub API
+# client: GET by default, POST when a field/input flag is given, any verb via
+# -X/--method. Rating the whole sub-verb read-only let the autonomy gate auto-run
+# `gh api -X DELETE ...` and log it as a read.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("command", [
+    "gh api repos/a/b",
+    "gh api repos/a/b --jq .name",
+    "gh api -X GET search/issues -f q=x",
+    "gh api --method get repos/a/b",
+    "gh label list",
+    "gh auth status",
+])
+def test_gh_reads_are_read_only(command: str) -> None:
+    assert classify_action._is_read_only(command)
+
+
+@pytest.mark.parametrize("command", [
+    "gh api -X DELETE repos/a/b/git/refs/heads/x",
+    "gh api --method PUT repos/a/b/pulls/5/merge",
+    "gh api -XPOST repos/a/b/issues",
+    "gh api --method=PATCH repos/a/b",
+    "gh api repos/a/b/labels -f name=x",
+    "gh api repos/a/b/labels -Fname=x",
+    "gh api repos/a/b/labels --field=name=x",
+    "gh api repos/a/b/issues --input body.json",
+    "gh api graphql -f query='mutation { addStar }'",
+    "gh api graphql -F query=@q.graphql",
+    "gh api graphql --input q.json",
+    "gh api graphql -F query=\"$(cat q.graphql)\"",
+    "gh label create bug",
+    "gh auth logout",
+    "gh ssh-key add k.pub",
+    "gh gpg-key delete 1",
+])
+def test_gh_writes_are_not_read_only(command: str) -> None:
+    assert not classify_action._is_read_only(command)
