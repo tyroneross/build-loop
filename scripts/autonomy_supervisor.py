@@ -35,6 +35,7 @@ from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
 from parallelism import (  # noqa: E402
     HARD_CEILING, SEGMENTATION_FREE_LIMIT, normalize_owned_path, owned_paths_overlap, resolve_fanout,
 )
+import model_taxonomy  # noqa: E402
 from tool_trace import ingestion_incomplete, summarize as summarize_tool_traces  # noqa: E402
 
 AUTONOMY_DIR = Path(".build-loop/autonomy")
@@ -911,16 +912,21 @@ def validate_partition(partition: Any) -> dict[str, Any]:
     """Check that a wide wave is split into clearly bounded, integrable chunks.
 
     Every chunk needs an ``id``, the files or paths it alone ``owns``, the
-    ``interface`` it exposes or consumes, and the ``integration`` point where
-    its output is combined and checked with the others. Owned paths must not
-    overlap between chunks. The result never raises; callers degrade to the
-    unsegmented limit when ``valid`` is false.
+    ``interface`` it exposes or consumes, the ``integration`` point where its
+    output is combined and checked with the others, and ``done_when``: the
+    concrete finish condition that keeps a worker from open-ended exploration.
+    An optional ``tier`` (legacy ``code``/``pattern``/``thinking``/``frontier``
+    or a ladder rung) picks the cheapest model that can do the chunk; it
+    defaults to ``code`` because a chunk with a written spec is execution work.
+    Owned paths must not overlap between chunks. The result never raises;
+    callers degrade to the unsegmented limit when ``valid`` is false.
     """
     if not isinstance(partition, list) or not partition:
-        return {"valid": False, "chunks": 0, "errors": ["partition must be a non-empty list of chunks"], "overlaps": []}
+        return {"valid": False, "chunks": 0, "errors": ["partition must be a non-empty list of chunks"], "overlaps": [], "tiers": {}}
     errors: list[str] = []
     owned: list[tuple[str, list[str]]] = []
     seen: set[str] = set()
+    tiers: dict[str, str] = {}
     for index, chunk in enumerate(partition):
         if not isinstance(chunk, dict):
             errors.append(f"chunk {index}: must be an object")
@@ -938,9 +944,15 @@ def validate_partition(partition: Any) -> dict[str, Any]:
         elif any(path in {"", ".", "*", "**"} for path in paths):
             errors.append(f"chunk {label}: owns names the whole repository; list the files or directories it alone changes")
         for key, meaning in (("interface", "the interface it exposes or consumes"),
-                             ("integration", "where its output is combined and checked")):
+                             ("integration", "where its output is combined and checked"),
+                             ("done_when", "the concrete condition that finishes the chunk")):
             if not str(chunk.get(key) or "").strip():
                 errors.append(f"chunk {label}: {key} is required ({meaning})")
+        tier = str(chunk.get("tier") or "code").strip()
+        try:
+            tiers[label] = model_taxonomy.normalize_tier(tier)
+        except ValueError:
+            errors.append(f"chunk {label}: unknown tier {tier!r}; use code, pattern, thinking, frontier or T0-T5")
         owned.append((label, paths))
     overlaps: list[str] = []
     for left in range(len(owned)):
@@ -952,7 +964,7 @@ def validate_partition(partition: Any) -> dict[str, Any]:
                     break
     if overlaps:
         errors.append(f"{len(overlaps)} owned-path overlap(s) between chunks; a glob overlaps everything under its literal prefix, so list files explicitly when chunks share a directory")
-    return {"valid": not errors, "chunks": len(owned), "errors": errors[:20], "overlaps": overlaps[:20]}
+    return {"valid": not errors, "chunks": len(owned), "errors": errors[:20], "overlaps": overlaps[:20], "tiers": tiers}
 
 
 def _last_host_sample(workdir: Path) -> dict[str, Any] | None:

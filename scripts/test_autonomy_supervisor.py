@@ -437,7 +437,10 @@ def test_supervisor_fanout_consumes_ledger_measurements(repo: Path, monkeypatch)
     result = supervisor.select_fanout(repo, {'independent_items': 8, 'model': 'gpt-6.1-terra',
                                             'ledger_path': str(ledger)})
     assert result['capacity']['tokens_per_worker'] == 48000
-    assert result['capacity']['effective_max'] == 2
+    # 48k-token chunks with 20k setup each: splitting would add more than 10%
+    # to total tokens, so the work stays with one worker.
+    assert result['capacity']['effective_max'] == 1
+    assert result['capacity']['limiting_factors'] == ['token_overhead']
 
 
 def test_shared_reservations_hold_capacity_until_release(repo: Path, monkeypatch) -> None:
@@ -581,6 +584,7 @@ def _chunks(count: int) -> list[dict[str, object]]:
             "owns": [f"src/module_{index}/"],
             "interface": f"module_{index}.run() returns Result",
             "integration": "integration test tests/test_pipeline.py run by the lead after the wave",
+            "done_when": f"tests/test_module_{index}.py passes",
         }
         for index in range(count)
     ]
@@ -594,7 +598,15 @@ _COOL = {
 
 def test_partition_accepts_disjoint_chunks_with_interfaces_and_integration() -> None:
     result = supervisor.validate_partition(_chunks(3))
-    assert result == {"valid": True, "chunks": 3, "errors": [], "overlaps": []}
+    assert result == {"valid": True, "chunks": 3, "errors": [], "overlaps": [],
+                      "tiers": {"c0": "T3", "c1": "T3", "c2": "T3"}}
+
+
+def test_partition_assigns_each_chunk_its_own_model_tier() -> None:
+    chunks = _chunks(3)
+    chunks[1]["tier"] = "pattern"
+    chunks[2]["tier"] = "frontier"
+    assert supervisor.validate_partition(chunks)["tiers"] == {"c0": "T3", "c1": "T4", "c2": "T1"}
 
 
 @pytest.mark.parametrize("mutate, message", [
@@ -604,6 +616,8 @@ def test_partition_accepts_disjoint_chunks_with_interfaces_and_integration() -> 
     (lambda c: c[0].update(integration=" "), "integration is required"),
     (lambda c: c[0].update(owns=[]), "owns must list"),
     (lambda c: c[1].update(id="c0"), "duplicate id"),
+    (lambda c: c[2].pop("done_when"), "done_when is required"),
+    (lambda c: c[0].update(tier="sonnet-ish"), "unknown tier"),
 ])
 def test_partition_rejects_unclear_boundaries(mutate, message: str) -> None:
     chunks = _chunks(3)
@@ -691,10 +705,12 @@ def _fresh_monitor(repo: Path, monkeypatch: pytest.MonkeyPatch, cpu: float | Non
 
 
 def _reserve(repo: Path, tmp_store: Path, rid: str, **extra: object) -> dict:
+    # Pin host readings so live machine load cannot change admission in tests.
+    signals = {"load_ratio": 0.1, "cpu_percent": 10.0, **dict(extra.pop("signals", {}) or {})}
     return supervisor.reserve_fanout(repo, {
         "reservation_id": rid, "shared_capacity": 20, "capacity_path": str(tmp_store),
         "execution_location": "cloud", "model_size": "small", "token_budget": 10_000_000,
-        "independent_items": 20, **extra,
+        "independent_items": 20, "signals": signals, **extra,
     })
 
 
@@ -773,7 +789,7 @@ def test_second_wave_overlapping_a_running_wave_waits(repo: Path, tmp_path: Path
     store = tmp_path / "capacity.json"
     first = _reserve(repo, store, "run:w1", partition=_chunks(3))
     assert first["action"] == "reserved"
-    clash = [{"id": "x", "owns": ["src/module_0/new.py"], "interface": "i", "integration": "t"}]
+    clash = [{"id": "x", "owns": ["src/module_0/new.py"], "interface": "i", "integration": "t", "done_when": "d"}]
     second = _reserve(repo, store, "run:w2", partition=clash)
     assert second["action"] == "wait"
     assert "partition_overlaps_running_wave" in second["decision"]["admission"]["reasons"]

@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from parallelism import (
-    DEFAULT_CLOUD_TOKEN_BUDGET,
+    token_neutral_cap,
     DEFAULT_MAX,
     HARD_CEILING,
     classify_execution_location,
@@ -59,24 +59,18 @@ def workdir_with_config(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 class TestEffectiveMaxNoConfig:
-    def test_no_config_adds_conservative_cloud_token_cap(self, tmp_workdir: Path) -> None:
-        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
-        expected = max(1, min(DEFAULT_MAX, HARD_CEILING, token_cap))
-        assert effective_max_implementers(tmp_workdir) == expected
+    def test_no_config_has_no_in_flight_token_cap(self, tmp_workdir: Path) -> None:
+        # Concurrency does not change total tokens, so no default cap applies.
+        assert effective_max_implementers(tmp_workdir) == min(DEFAULT_MAX, HARD_CEILING)
 
 
 class TestEffectiveMaxWithConfig:
-    def test_config_10_capped_by_budget(self, workdir_with_config) -> None:
-        wd = workdir_with_config(10)
-        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
-        expected = max(1, min(10, HARD_CEILING, token_cap))
-        assert effective_max_implementers(wd) == expected
+    def test_config_10_is_honored(self, workdir_with_config) -> None:
+        assert effective_max_implementers(workdir_with_config(10)) == 10
 
     def test_config_50_capped_at_hard_ceiling_or_cloud_token_budget(self, workdir_with_config) -> None:
         wd = workdir_with_config(50)
-        result = effective_max_implementers(wd)
-        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
-        assert result == min(50, HARD_CEILING, token_cap)
+        assert effective_max_implementers(wd) == HARD_CEILING
 
     def test_config_50_remains_cpu_bounded_on_local_machine(self, workdir_with_config) -> None:
         wd = workdir_with_config(50)
@@ -133,7 +127,6 @@ class TestEffectiveMaxFailSoft:
             DEFAULT_MAX,
             14,
             HARD_CEILING,
-            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
         )
 
     def test_missing_parallelism_key(self, tmp_path: Path) -> None:
@@ -146,7 +139,6 @@ class TestEffectiveMaxFailSoft:
             DEFAULT_MAX,
             14,
             HARD_CEILING,
-            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
         )
 
     def test_missing_config_file(self, tmp_workdir: Path) -> None:
@@ -156,7 +148,6 @@ class TestEffectiveMaxFailSoft:
             DEFAULT_MAX,
             14,
             HARD_CEILING,
-            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
         )
 
 
@@ -222,8 +213,8 @@ class TestResourceAwareFanout:
                 tmp_workdir,
                 requested=8,
                 execution_location="cloud",
-                token_budget=100_000,
-                measured_tokens=40_000,
+                token_budget=1_000_000,
+                measured_tokens=400_000,
             )
         assert profile["primary_constraint"] == "token"
         assert profile["token_estimate_source"] == "measured"
@@ -470,3 +461,49 @@ def test_usage_identity_is_scoped_to_run(tmp_path):
     ]
     path.write_text('\n'.join(json.dumps(row) for row in rows))
     assert measured_tokens_per_worker(path, model='terra') == 24000
+
+
+class TestTokenNeutralFanout:
+    """Owner policy 2026-11-19: fan-out buys speed, never extra total tokens."""
+
+    def test_large_chunks_allow_wide_waves(self) -> None:
+        # 500k-token chunks: 20k setup per extra worker is well under 10%.
+        assert token_neutral_cap(500_000, 20_000, 0.10) is None
+
+    def test_small_chunks_are_not_split_across_many_workers(self) -> None:
+        # 60k-token chunks with 20k setup: N=4 adds 60k on 180k sequential (33%).
+        cap = token_neutral_cap(60_000, 20_000, 0.10)
+        assert cap == 1
+        extra = (cap - 1) * 20_000
+        assert extra <= 0.10 * (cap * 40_000 + 20_000)
+
+    def test_cap_is_the_largest_n_within_overhead(self) -> None:
+        cap = token_neutral_cap(150_000, 20_000, 0.10)
+        work = 130_000
+        assert (cap - 1) * 20_000 <= 0.10 * (cap * work + 20_000)
+        assert cap * 20_000 > 0.10 * ((cap + 1) * work + 20_000)
+
+    def test_measured_usage_drives_the_overhead_cap(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=16):
+            profile = resolve_fanout(tmp_workdir, requested=20, execution_location="cloud",
+                                     measured_tokens=60_000, independent_items=20)
+        assert profile["token_overhead_check"] == "measured"
+        assert profile["effective_max"] == 1
+        assert profile["limiting_factors"] == ["token_overhead"]
+
+    def test_heuristic_estimate_is_reported_unchecked(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=16):
+            profile = resolve_fanout(tmp_workdir, requested=12, execution_location="cloud",
+                                     independent_items=12)
+        assert profile["token_overhead_check"] == "unchecked_no_measurement"
+        assert profile["token_overhead_cap"] is None
+        assert profile["effective_max"] == 12
+
+    def test_configured_budget_still_caps_tokens_in_flight(self, tmp_path: Path) -> None:
+        (tmp_path / ".build-loop").mkdir()
+        (tmp_path / ".build-loop" / "config.json").write_text(
+            json.dumps({"parallelism": {"cloudTokenBudget": 1_000_000, "maxImplementers": 20}}))
+        with patch("parallelism.os.cpu_count", return_value=16):
+            profile = resolve_fanout(tmp_path, execution_location="cloud", measured_tokens=500_000)
+        assert profile["token_cap"] == 2
+        assert profile["effective_max"] == 2
