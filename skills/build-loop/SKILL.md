@@ -69,7 +69,7 @@ valid. Optional tools do not become prerequisites.
 
 ### Parallelism config
 
-Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` previews capacity and live backpressure. Before concurrent dispatch, use `reserve-fanout` per `skills/build-loop/references/codex-subagents.md`; a preview alone reserves nothing. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 150. Default project capacity remains 8.
+Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` previews capacity and live backpressure. Before concurrent dispatch, use `reserve-fanout` per `skills/build-loop/references/codex-subagents.md`; a preview alone reserves nothing. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 20. Default project capacity remains 8. Waves wider than 4 need a validated work map (disjoint owned files, an interface, and an integration point per chunk) and a running CPU monitor; see `references/resource-aware-execution.md` §"Wide waves".
 
 To set a project preference, use `.build-loop/config.json`:
 
@@ -77,7 +77,7 @@ To set a project preference, use `.build-loop/config.json`:
 { "parallelism": { "maxImplementers": 8 } }
 ```
 
-The preference never forces that many workers. The supervisor admits only independent chunks supported by live resource and provider telemetry. Values above 150 are clamped; local capacity also preserves two CPU cores for the orchestrator and host OS.
+The preference never forces that many workers. The supervisor admits only independent chunks supported by live resource and provider telemetry. Values above 20 are clamped; local capacity also preserves two CPU cores for the orchestrator and host OS.
 
 ## Autonomous Mode + Per-Commit Mode
 
@@ -429,7 +429,7 @@ private-memory receipt blocks the documentation review from passing.
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
-Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → supervisor-selected adaptive fan-out (default project preference 8; absolute ceiling 150; resource, provider, independent-work, and shared-capacity limits remain binding) → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → independent audit at the third same unresolved verdict → quarantine at the fifth) → UI re-validate hook → overflow to followup/.
+Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → supervisor-selected adaptive fan-out (default project preference 8; absolute ceiling 20; more than 4 only with a validated work map and a CPU monitor; resource, provider, independent-work, and shared-capacity limits remain binding) → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → independent audit at the third same unresolved verdict → quarantine at the fifth) → UI re-validate hook → overflow to followup/.
 
 **Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 

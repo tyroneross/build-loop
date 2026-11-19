@@ -111,5 +111,5 @@ The dashboard explains and records choices. `scripts/autonomy_supervisor.py`
 owns execution policy: missing-information routing, task-shape learning, bounded
 queue manifests, discovered-issue classification, convergence enforcement, and
 live provider/host/cost backpressure. Queue sizing and fan-out are adaptive;
-150 is an absolute ceiling, not a target. The third repeated unresolved verdict
+queue size is capped at 150 items and worker fan-out at 20, both ceilings, not targets. The third repeated unresolved verdict
 requires independent audit and the fifth quarantines the item.

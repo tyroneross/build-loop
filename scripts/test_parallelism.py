@@ -172,8 +172,8 @@ class TestResourceAwareFanout:
                 independent_items=240,
                 shared_capacity=200,
             )
-        assert HARD_CEILING == 150
-        assert profile["effective_max"] == 150
+        assert HARD_CEILING == 20
+        assert profile["effective_max"] == 20
         assert profile["limiting_factors"] == ["hard_ceiling"]
 
     def test_independent_work_and_other_sessions_reduce_admission(self, tmp_workdir: Path) -> None:
@@ -199,8 +199,8 @@ class TestResourceAwareFanout:
                 requested=20,
                 execution_location="local",
                 model_size="small",
-                shared_capacity=150,
-                active_elsewhere=150,
+                shared_capacity=20,
+                active_elsewhere=20,
             )
         assert profile["available_shared_capacity"] == 0
         assert profile["effective_max"] == 0
