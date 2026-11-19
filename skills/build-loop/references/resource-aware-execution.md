@@ -64,17 +64,22 @@ gate.
    for the length of the wave:
 
    ```bash
+   # Start in the background (host background mode, or append `&`); it exits on its own.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autonomy_supervisor.py" --workdir "$PWD" \
      monitor --duration-seconds <wave length, max 7200> --interval-seconds 15 \
      --current-concurrency <workers running>
    ```
 
    It appends CPU %, load, memory, disk and thermal state, plus the action the
-   supervisor would take, to `.build-loop/autonomy/host-load.jsonl`. Growth past
-   4 requires a sample less than 90 seconds old; otherwise admission returns
-   `hold_for_cpu_monitor`. CPU at or above 90% reduces concurrency the same way
-   load, memory and thermal pressure do. The run report states peak CPU and load
-   from that log for any wave wider than 4.
+   supervisor would take, to `.build-loop/autonomy/host-load.jsonl`. Any wave above
+   4 requires a sample less than 90 seconds old that includes a CPU reading;
+   otherwise admission returns `hold_for_cpu_monitor` (or reduces a running wave
+   to 4). CPU at or above 90% reduces concurrency the same way load, memory and
+   thermal pressure do. Reservations from the same worktree count as one wave, so
+   stacking reservations cannot bypass these checks. For any wave wider than 4,
+   the run report includes the output of
+   `autonomy_supervisor.py host-load-summary --since <wave start>` (peak CPU,
+   peak load, samples under pressure).
 3. **Growth stays gradual.** The first wave is at most 4; one worker is added per
    two stable telemetry windows, and any pressure halves concurrency.
 

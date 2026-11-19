@@ -678,3 +678,89 @@ def test_monitor_is_bounded(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None
     result = supervisor.monitor_host(repo, duration_seconds=20, interval_seconds=5)
     assert result["samples"] <= 5
     assert all(seconds == 5 for seconds in sleeps)
+
+
+# --- Independent-review fixes (2026-11-19) ------------------------------------
+
+def _fresh_monitor(repo: Path, monkeypatch: pytest.MonkeyPatch, cpu: float | None = 10.0) -> None:
+    monkeypatch.setattr(supervisor, "host_signals", lambda _w: {
+        "load_ratio": 0.1, "cpu_percent": cpu, "disk_free_gb": 100.0,
+        "thermal_state": "nominal", "signal_source": "test", "memory_percent": 20.0,
+    })
+    supervisor.monitor_host(repo, max_samples=1)
+
+
+def _reserve(repo: Path, tmp_store: Path, rid: str, **extra: object) -> dict:
+    return supervisor.reserve_fanout(repo, {
+        "reservation_id": rid, "shared_capacity": 20, "capacity_path": str(tmp_store),
+        "execution_location": "cloud", "model_size": "small", "token_budget": 10_000_000,
+        "independent_items": 20, **extra,
+    })
+
+
+def test_stacked_reservations_from_one_worktree_cannot_pass_four_without_partition(repo: Path, tmp_path: Path) -> None:
+    store = tmp_path / "capacity.json"
+    total = 0
+    for wave in range(5):
+        result = _reserve(repo, store, f"run:w{wave}")
+        total += result["reservation"]["workers"] if result["action"] == "reserved" else 0
+    assert total <= 4
+
+
+def test_reservation_counts_own_leases_as_current_concurrency(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fresh_monitor(repo, monkeypatch)
+    store = tmp_path / "capacity.json"
+    first = _reserve(repo, store, "run:w1", partition=_chunks(12))
+    assert first["reservation"]["workers"] == 4
+    second = _reserve(repo, store, "run:w2", partition=_chunks(12))
+    # Growth from 4 is gradual (stable windows), never a second fresh ramp of 4.
+    assert second["reservation"]["workers"] <= 1
+
+
+def test_wave_above_four_with_stale_monitor_is_reduced(repo: Path) -> None:
+    result = supervisor.select_fanout(repo, {
+        "partition": _chunks(12), "execution_location": "cloud", "model_size": "small",
+        "token_budget": 10_000_000, "signals": {**_COOL, "current_concurrency": 10},
+    })
+    assert result["admission"]["next_concurrency"] == 4
+    assert result["admission"]["action"] == "reduce_concurrency"
+
+
+def test_monitor_sample_without_cpu_is_not_fresh(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fresh_monitor(repo, monkeypatch, cpu=None)
+    assert supervisor.cpu_monitor_status(repo)["fresh"] is False
+
+
+def test_independent_items_still_bounds_a_valid_partition(repo: Path) -> None:
+    result = supervisor.select_fanout(repo, {
+        "partition": _chunks(12), "independent_items": 3, "execution_location": "cloud",
+        "model_size": "small", "token_budget": 10_000_000, "signals": dict(_COOL),
+    })
+    assert result["capacity"]["effective_max"] == 3
+
+
+@pytest.mark.parametrize("first, second, overlap", [
+    ("src/*.py", "src/a*", True),
+    ("src/**/*.py", "src/lib", True),
+    ("src/a", "src/ab", False),
+    ("app/[id]/page.tsx", "app/i/page.tsx", False),
+    ("docs/*.md", "src/x.py", False),
+    ("src/a*", "src/ab.py", True),
+])
+def test_owned_path_overlap_cases(first: str, second: str, overlap: bool) -> None:
+    assert supervisor.owned_paths_overlap(first, second) is overlap
+
+
+def test_partition_rejects_whole_repo_ownership() -> None:
+    chunks = _chunks(2)
+    chunks[0]["owns"] = ["."]
+    result = supervisor.validate_partition(chunks)
+    assert result["valid"] is False
+    assert any("whole repository" in error for error in result["errors"])
+
+
+def test_host_load_summary_reports_peaks(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fresh_monitor(repo, monkeypatch, cpu=42.0)
+    summary = supervisor.host_load_summary(repo)
+    assert summary["samples"] == 1
+    assert summary["peak_cpu_percent"] == 42.0

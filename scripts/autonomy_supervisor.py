@@ -32,7 +32,9 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
-from parallelism import HARD_CEILING, SEGMENTATION_FREE_LIMIT, resolve_fanout  # noqa: E402
+from parallelism import (  # noqa: E402
+    HARD_CEILING, SEGMENTATION_FREE_LIMIT, normalize_owned_path, owned_paths_overlap, resolve_fanout,
+)
 from tool_trace import ingestion_incomplete, summarize as summarize_tool_traces  # noqa: E402
 
 AUTONOMY_DIR = Path(".build-loop/autonomy")
@@ -43,6 +45,7 @@ BACKPRESSURE_PATH = AUTONOMY_DIR / "backpressure.json"
 HOST_LOAD_PATH = AUTONOMY_DIR / "host-load.jsonl"
 MONITOR_FRESH_SECONDS = 90
 MONITOR_MAX_DURATION_SECONDS = 7200
+HOST_LOAD_MAX_BYTES = 5 * 1024 * 1024
 CPU_PRESSURE_PERCENT = 90.0
 # Queue items per run are not workers; they keep their own bound.
 QUEUE_HARD_CEILING = 150
@@ -784,6 +787,22 @@ def _cpu_percent(cpu_count: int) -> float | None:
     divided by the core count approximates host utilisation. Returns None when
     `ps` is unavailable so callers treat CPU as unknown rather than idle.
     """
+    proc_stat = Path("/proc/stat")
+    if proc_stat.exists():
+        # Linux: ps reports lifetime averages, so measure a short /proc/stat delta.
+        def _read() -> tuple[int, int] | None:
+            try:
+                fields = [int(x) for x in proc_stat.read_text().splitlines()[0].split()[1:]]
+            except (OSError, ValueError, IndexError):
+                return None
+            idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+            return sum(fields), idle
+        first = _read()
+        time.sleep(0.25)
+        second = _read()
+        if first and second and second[0] > first[0]:
+            busy = 1 - (second[1] - first[1]) / (second[0] - first[0])
+            return round(max(0.0, min(100.0, busy * 100)), 1)
     output = _probe(["ps", "-A", "-o", "%cpu="])
     values = [float(token) for token in output.split() if re.fullmatch(r"\d+(?:\.\d+)?", token)]
     if not values:
@@ -849,7 +868,9 @@ def _update_pressure_state(workdir: Path, signals: dict[str, Any]) -> dict[str, 
             and float(signals.get("memory_percent", 0)) < 75
             and float(signals.get("disk_free_gb", 999)) >= 5
             and float(signals.get("load_ratio", 0)) < 0.75
-            and float(signals.get("cpu_percent") or 0) < 75
+            # Unknown CPU does not block recovery up to 4 workers; growth past 4
+            # separately requires a monitor sample with a CPU reading.
+            and (signals.get("cpu_percent") is None or float(signals["cpu_percent"]) < 75)
             and str(signals.get("thermal_state", "unknown")).lower() in {"nominal", "unknown"}
             and cost_ratio < 0.7
             and (not baseline or not latency or latency < baseline * 1.5)
@@ -886,22 +907,6 @@ def _update_pressure_state(workdir: Path, signals: dict[str, Any]) -> dict[str, 
     return state
 
 
-def _owned_path(value: str) -> str:
-    text = value.strip().replace("\\", "/")
-    while text.startswith("./"):
-        text = text[2:]
-    return text.rstrip("/")
-
-
-def _owned_overlap(first: str, second: str) -> bool:
-    """True when two owned paths or globs can name the same file."""
-    if first == second or not first or not second:
-        return True
-    if first.startswith(second + "/") or second.startswith(first + "/"):
-        return True
-    return fnmatch.fnmatch(first, second) or fnmatch.fnmatch(second, first)
-
-
 def validate_partition(partition: Any) -> dict[str, Any]:
     """Check that a wide wave is split into clearly bounded, integrable chunks.
 
@@ -927,9 +932,11 @@ def validate_partition(partition: Any) -> dict[str, Any]:
         elif chunk_id in seen:
             errors.append(f"chunk {label}: duplicate id")
         seen.add(chunk_id)
-        paths = [_owned_path(item) for item in chunk.get("owns") or [] if isinstance(item, str) and item.strip()]
+        paths = [normalize_owned_path(item) for item in chunk.get("owns") or [] if isinstance(item, str) and item.strip()]
         if not paths:
             errors.append(f"chunk {label}: owns must list at least one file or path")
+        elif any(path in {"", ".", "*", "**"} for path in paths):
+            errors.append(f"chunk {label}: owns names the whole repository; list the files or directories it alone changes")
         for key, meaning in (("interface", "the interface it exposes or consumes"),
                              ("integration", "where its output is combined and checked")):
             if not str(chunk.get(key) or "").strip():
@@ -939,7 +946,7 @@ def validate_partition(partition: Any) -> dict[str, Any]:
     for left in range(len(owned)):
         for right in range(left + 1, len(owned)):
             for first in owned[left][1]:
-                hit = next((second for second in owned[right][1] if _owned_overlap(first, second)), None)
+                hit = next((second for second in owned[right][1] if owned_paths_overlap(first, second)), None)
                 if hit is not None:
                     overlaps.append(f"{owned[left][0]} and {owned[right][0]} both own {first if first == hit else first + ' / ' + hit}")
                     break
@@ -978,7 +985,9 @@ def cpu_monitor_status(workdir: Path, now: datetime | None = None) -> dict[str, 
             age = ((now or datetime.now(timezone.utc)) - sampled).total_seconds()
         except (KeyError, ValueError):
             age = None
-    fresh = age is not None and 0 <= age <= MONITOR_FRESH_SECONDS
+    # A sample without a CPU reading cannot vouch for a wide wave.
+    fresh = (age is not None and 0 <= age <= MONITOR_FRESH_SECONDS
+             and row is not None and row.get("cpu_percent") is not None)
     return {
         "fresh": fresh,
         "last_sample_at": row.get("ts") if row else None,
@@ -1011,6 +1020,11 @@ def monitor_host(
     interval = max(5, min(300, int(interval_seconds)))
     path = workdir / HOST_LOAD_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.stat().st_size > HOST_LOAD_MAX_BYTES:
+            path.replace(path.with_suffix(".jsonl.1"))  # keep one previous file
+    except OSError:
+        pass
     deadline = time.monotonic() + duration
     samples = 0
     peak_cpu = 0.0
@@ -1053,6 +1067,33 @@ def monitor_host(
     }
 
 
+def host_load_summary(workdir: Path, since: str | None = None) -> dict[str, Any]:
+    """Peak CPU and load from the monitor log, for the run report."""
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = (workdir / HOST_LOAD_PATH).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and (since is None or str(row.get("ts", "")) >= since):
+            rows.append(row)
+    cpu = [float(r["cpu_percent"]) for r in rows if r.get("cpu_percent") is not None]
+    load = [float(r["load_ratio"]) for r in rows if r.get("load_ratio") is not None]
+    return {
+        "samples": len(rows),
+        "peak_cpu_percent": max(cpu) if cpu else None,
+        "peak_load_ratio": max(load) if load else None,
+        "peak_concurrency": max((int(r.get("current_concurrency") or 0) for r in rows), default=0),
+        "pressure_samples": sum(1 for r in rows if r.get("action") in {"reduce_concurrency", "pause_new_work"}),
+        "first_sample_at": rows[0].get("ts") if rows else None,
+        "last_sample_at": rows[-1].get("ts") if rows else None,
+    }
+
+
 def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
     """Let the supervisor admit only the capacity justified by work and telemetry.
 
@@ -1065,7 +1106,9 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         else {"valid": False, "chunks": None, "errors": ["no partition supplied"], "overlaps": []}
     )
     if segmentation["valid"]:
-        ready_items = segmentation["chunks"]
+        # Chunks bound the width; a caller's smaller independent count (for
+        # example dependent chunks) still wins.
+        ready_items = min(ready_items, segmentation["chunks"]) if "independent_items" in request else segmentation["chunks"]
     segmentation_cap = HARD_CEILING if segmentation["valid"] else SEGMENTATION_FREE_LIMIT
     hints = {
         key: request[key]
@@ -1147,12 +1190,11 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
     else:
         pressure = assessed
     monitor = cpu_monitor_status(workdir)
-    wide_limit = max(SEGMENTATION_FREE_LIMIT, current)
-    if pressure["next_concurrency"] > wide_limit and not monitor["fresh"]:
+    if pressure["next_concurrency"] > SEGMENTATION_FREE_LIMIT and not monitor["fresh"]:
         pressure = {
             **pressure,
-            "action": "hold_for_cpu_monitor",
-            "next_concurrency": wide_limit,
+            "action": "hold_for_cpu_monitor" if current <= SEGMENTATION_FREE_LIMIT else "reduce_concurrency",
+            "next_concurrency": SEGMENTATION_FREE_LIMIT,
             "reasons": list(pressure.get("reasons", [])) + [
                 f"cpu_monitor_required_above_{SEGMENTATION_FREE_LIMIT}"
             ],
@@ -1214,12 +1256,17 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("reservation expired or missing; stop workers before acquiring a new wave")
             # Concurrent users cannot raise the shared ceiling while leases exist.
             capacity = min([capacity, HARD_CEILING] + [row["shared_capacity"] for row in leases.values()])
-            active = sum(row["workers"] for row in leases.values())
+            here = str(workdir.resolve())
+            # Leases from this worktree are this run's own workers: count them as
+            # current concurrency so several reservations cannot add up past the
+            # segmentation and CPU-monitor gates.
+            own = sum(row["workers"] for row in leases.values() if row.get("workdir") == here)
+            elsewhere = sum(row["workers"] for row in leases.values() if row.get("workdir") != here)
             decision = select_fanout(workdir, {
-                **request, "shared_capacity": capacity, "active_elsewhere": active,
-                "signals": {**(request.get("signals") or {}), "current_concurrency": 0},
+                **request, "shared_capacity": capacity, "active_elsewhere": elsewhere,
+                "signals": {**(request.get("signals") or {}), "current_concurrency": own},
             })
-            workers = decision["admission"]["next_concurrency"]
+            workers = max(0, decision["admission"]["next_concurrency"] - own)
             lease = {
                 "reservation_id": reservation_id, "workdir": str(workdir.resolve()),
                 "workers": workers, "shared_capacity": capacity,
@@ -1305,6 +1352,8 @@ def main(argv: list[str] | None = None) -> int:
     monitor.add_argument("--interval-seconds", type=int, default=15)
     monitor.add_argument("--current-concurrency", type=int, default=None)
     monitor.add_argument("--max-samples", type=int, default=None)
+    summary = sub.add_parser("host-load-summary", help="Peak CPU/load from the monitor log, for the run report")
+    summary.add_argument("--since", default=None)
     partition = sub.add_parser("check-partition", help="Validate a wave partition JSON file or literal")
     partition.add_argument("--partition", required=True)
     for name in ("reserve-fanout", "release-fanout"):
@@ -1359,6 +1408,8 @@ def main(argv: list[str] | None = None) -> int:
                 current_concurrency=args.current_concurrency,
                 max_samples=args.max_samples,
             )
+        elif args.command == "host-load-summary":
+            result = host_load_summary(workdir, args.since)
         elif args.command == "check-partition":
             payload = _payload(args.partition)
             result = validate_partition(payload.get("partition", payload) if isinstance(payload, dict) else payload)

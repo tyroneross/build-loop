@@ -326,6 +326,42 @@ def plan_batches(items: list, batch_size: int) -> list[list]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+_WILDCARDS = ("*", "?")  # brackets stay literal: app/[id]/page.tsx is a real path
+
+
+def normalize_owned_path(value: str) -> str:
+    """Normalize an owned path for overlap checks (case-folded on macOS)."""
+    text = str(value).strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    text = text.strip("/")
+    return text.casefold() if sys.platform == "darwin" else text
+
+
+def _literal_prefix(path: str) -> str:
+    cut = min((path.index(ch) for ch in _WILDCARDS if ch in path), default=len(path))
+    return path[:cut]
+
+
+def owned_paths_overlap(first: str, second: str) -> bool:
+    """True when two owned paths or globs could name the same file.
+
+    Conservative by design: a glob overlaps anything that shares its literal
+    prefix before the first wildcard, so a false "overlap" costs one chunk merge
+    while a missed overlap lets two workers race on one file. Literal paths
+    overlap when equal or when one is a directory containing the other.
+    """
+    a, b = normalize_owned_path(first), normalize_owned_path(second)
+    if not a or not b or a in {".", "*", "**"} or b in {".", "*", "**"}:
+        return True
+    if a == b or a.startswith(b + "/") or b.startswith(a + "/"):
+        return True
+    if any(ch in a for ch in _WILDCARDS) or any(ch in b for ch in _WILDCARDS):
+        pa, pb = _literal_prefix(a), _literal_prefix(b)
+        return pa.startswith(pb) or pb.startswith(pa)
+    return False
+
+
 def partition_overlap(assignments: dict[str, list[str]]) -> dict[str, list[str]]:
     """Find files claimed by more than one parallel agent (a MECE violation).
 
@@ -338,19 +374,21 @@ def partition_overlap(assignments: dict[str, list[str]]) -> dict[str, list[str]]
     *assignments* maps agent label -> list of owned paths/globs. Returns a map of
     each overlapping path -> the sorted list of agents that claimed it. Empty dict
     means the partition is clean (safe to fan out in a shared worktree). Comparison
-    is by normalized path string; glob semantics are intentionally not expanded —
-    overlapping globs should be made explicit before dispatch.
+    uses owned_paths_overlap (shared with autonomy_supervisor.validate_partition), so
+    directory containment and glob prefixes count as overlaps.
     """
-    claims: dict[str, list[str]] = {}
-    for agent, paths in assignments.items():
-        for raw in paths:
-            key = str(raw).strip().strip("/")
-            if not key:
-                continue
-            claims.setdefault(key, [])
-            if agent not in claims[key]:
-                claims[key].append(agent)
-    return {path: sorted(agents) for path, agents in claims.items() if len(agents) > 1}
+    owned = [
+        (agent, sorted({str(raw).strip().strip("/") for raw in paths if str(raw).strip().strip("/")}))
+        for agent, paths in assignments.items()
+    ]
+    claims: dict[str, set[str]] = {}
+    for left in range(len(owned)):
+        for right in range(left + 1, len(owned)):
+            for first in owned[left][1]:
+                for second in owned[right][1]:
+                    if owned_paths_overlap(first, second):
+                        claims.setdefault(first, set()).update({owned[left][0], owned[right][0]})
+    return {path: sorted(agents) for path, agents in claims.items()}
 
 
 def describe(workdir: Path, requested: int | None = None, **resource_hints) -> dict:
