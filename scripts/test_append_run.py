@@ -319,3 +319,22 @@ def test_non_git_workdir_still_records_the_run(tmp_path):
     out = _run(tmp_path, "--run-id", "r-nogit", "--goal", "ship X", "--outcome", "done")
     assert out["action"] == "appended"
     assert _state(tmp_path)["runs"][0]["commit"] == ""
+
+
+def test_wide_wave_host_load_is_attached_to_the_run_record(tmp_path, monkeypatch):
+    import autonomy_supervisor
+    import append_run as ar
+
+    monkeypatch.setattr(autonomy_supervisor, "host_load_summary", lambda _w, _s=None: {
+        "samples": 3, "peak_cpu_percent": 71.0, "peak_load_ratio": 0.6,
+        "peak_concurrency": 9, "pressure_samples": 0,
+        "first_sample_at": None, "last_sample_at": None,
+    })
+    args = ar.argparse.Namespace(
+        run_id="r1", goal="g", outcome="done", host="claude_code", commit="abc",
+        files_touched=None, manual_intervention=None, phase=None, extra_json=None,
+    )
+    monkeypatch.setattr(ar, "_apply_provenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(ar, "validate_entry", None)
+    record = ar.build_record(args, tmp_path)
+    assert record["host_load"]["peak_cpu_percent"] == 71.0

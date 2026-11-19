@@ -136,6 +136,20 @@ def build_record(args: argparse.Namespace, workdir: Path) -> dict:
             for k in _IMMUTABLE:
                 extra.pop(k, None)  # identity fields are not overridable
             record.update(extra)
+    # Wide waves (>4 workers) must report host load; the monitor log is the
+    # source. Fail-open: a missing or unreadable log never blocks the write.
+    if "host_load" not in record:
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            import autonomy_supervisor  # noqa: WPS433
+
+            since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+            summary = autonomy_supervisor.host_load_summary(workdir, since)
+            if summary["peak_concurrency"] > autonomy_supervisor.SEGMENTATION_FREE_LIMIT:
+                record["host_load"] = summary
+        except Exception:  # noqa: BLE001
+            pass
     # E3: corroborate the commit + goal the caller handed us. Runs AFTER the
     # --extra-json merge because that merge can set `commit`, and an unvalidated
     # override is the same defect by another door.

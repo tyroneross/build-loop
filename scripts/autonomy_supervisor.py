@@ -951,7 +951,7 @@ def validate_partition(partition: Any) -> dict[str, Any]:
                     overlaps.append(f"{owned[left][0]} and {owned[right][0]} both own {first if first == hit else first + ' / ' + hit}")
                     break
     if overlaps:
-        errors.append(f"{len(overlaps)} owned-path overlap(s) between chunks")
+        errors.append(f"{len(overlaps)} owned-path overlap(s) between chunks; a glob overlaps everything under its literal prefix, so list files explicitly when chunks share a directory")
     return {"valid": not errors, "chunks": len(owned), "errors": errors[:20], "overlaps": overlaps[:20]}
 
 
@@ -1109,6 +1109,9 @@ def select_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         # Chunks bound the width; a caller's smaller independent count (for
         # example dependent chunks) still wins.
         ready_items = min(ready_items, segmentation["chunks"]) if "independent_items" in request else segmentation["chunks"]
+    # reserve_fanout passes the workers this worktree already runs, so the
+    # request's items describe the NEW wave while every cap applies to the total.
+    ready_items += max(0, int(request.get("wave_offset", 0)))
     segmentation_cap = HARD_CEILING if segmentation["valid"] else SEGMENTATION_FREE_LIMIT
     hints = {
         key: request[key]
@@ -1248,9 +1251,20 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
         if existing:
             if existing.get("workdir") != str(workdir.resolve()):
                 raise ValueError("reservation belongs to another worktree")
-            # Idempotent acquisition/renewal never changes an in-flight allocation.
-            existing["expires_at"] = (now + timedelta(seconds=ttl)).isoformat()
-            result = {"reservation": existing, "action": "renewed"}
+            here = str(workdir.resolve())
+            own_total = sum(row["workers"] for row in leases.values() if row.get("workdir") == here)
+            monitor = cpu_monitor_status(workdir)
+            if own_total > SEGMENTATION_FREE_LIMIT and not monitor["fresh"]:
+                # A wide wave keeps running only while the host is being watched.
+                result = {
+                    "reservation": existing, "action": "renew_refused",
+                    "reasons": [f"cpu_monitor_required_above_{SEGMENTATION_FREE_LIMIT}"],
+                    "cpu_monitor": monitor,
+                }
+            else:
+                # Idempotent acquisition/renewal never changes an in-flight allocation.
+                existing["expires_at"] = (now + timedelta(seconds=ttl)).isoformat()
+                result = {"reservation": existing, "action": "renewed"}
         else:
             if request.get("renew_only"):
                 raise ValueError("reservation expired or missing; stop workers before acquiring a new wave")
@@ -1260,17 +1274,36 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
             # Leases from this worktree are this run's own workers: count them as
             # current concurrency so several reservations cannot add up past the
             # segmentation and CPU-monitor gates.
-            own = sum(row["workers"] for row in leases.values() if row.get("workdir") == here)
+            own_leases = [row for row in leases.values() if row.get("workdir") == here]
+            own = sum(row["workers"] for row in own_leases)
             elsewhere = sum(row["workers"] for row in leases.values() if row.get("workdir") != here)
+            new_owns = sorted({
+                normalize_owned_path(path)
+                for chunk in (request.get("partition") or []) if isinstance(chunk, dict)
+                for path in (chunk.get("owns") or []) if isinstance(path, str) and path.strip()
+            })
+            # Disjointness must hold across every live wave from this worktree.
+            clashes = sorted({
+                f"{path} overlaps {held} (held by {row['reservation_id']})"
+                for row in own_leases for held in row.get("owns", [])
+                for path in new_owns if owned_paths_overlap(path, held)
+            })
             decision = select_fanout(workdir, {
                 **request, "shared_capacity": capacity, "active_elsewhere": elsewhere,
+                "wave_offset": own,
                 "signals": {**(request.get("signals") or {}), "current_concurrency": own},
             })
+            if clashes:
+                decision["admission"] = {
+                    **decision["admission"], "action": "wait", "next_concurrency": own,
+                    "reasons": ["partition_overlaps_running_wave"] + clashes[:10],
+                }
             workers = max(0, decision["admission"]["next_concurrency"] - own)
             lease = {
-                "reservation_id": reservation_id, "workdir": str(workdir.resolve()),
+                "reservation_id": reservation_id, "workdir": here,
                 "workers": workers, "shared_capacity": capacity,
                 "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
+                "owns": new_owns,
             }
             if workers > 0:
                 leases[reservation_id] = lease

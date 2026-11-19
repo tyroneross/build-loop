@@ -764,3 +764,37 @@ def test_host_load_summary_reports_peaks(repo: Path, monkeypatch: pytest.MonkeyP
     summary = supervisor.host_load_summary(repo)
     assert summary["samples"] == 1
     assert summary["peak_cpu_percent"] == 42.0
+
+
+# --- Second review round (2026-11-19) ------------------------------------------
+
+def test_second_wave_overlapping_a_running_wave_waits(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fresh_monitor(repo, monkeypatch)
+    store = tmp_path / "capacity.json"
+    first = _reserve(repo, store, "run:w1", partition=_chunks(3))
+    assert first["action"] == "reserved"
+    clash = [{"id": "x", "owns": ["src/module_0/new.py"], "interface": "i", "integration": "t"}]
+    second = _reserve(repo, store, "run:w2", partition=clash)
+    assert second["action"] == "wait"
+    assert "partition_overlaps_running_wave" in second["decision"]["admission"]["reasons"]
+
+
+def test_second_wave_counts_requested_items_on_top_of_running_workers(repo: Path, tmp_path: Path) -> None:
+    store = tmp_path / "capacity.json"
+    first = _reserve(repo, store, "run:w1", independent_items=2)
+    assert first["reservation"]["workers"] == 2
+    second = _reserve(repo, store, "run:w2", independent_items=2, signals={"stable_windows": 2})
+    # 2 running + 2 requested stays within the unsegmented limit of 4.
+    assert second["decision"]["capacity"]["effective_max"] == 4
+
+
+def test_renewing_a_wide_wave_without_a_fresh_monitor_is_refused(repo: Path, tmp_path: Path) -> None:
+    store = tmp_path / "capacity.json"
+    expires = (datetime.now(timezone.utc).replace(microsecond=0)).isoformat()
+    future = datetime.fromisoformat(expires).replace(year=2099).isoformat()
+    store.write_text(json.dumps({"leases": {"run:w1": {
+        "reservation_id": "run:w1", "workdir": str(repo.resolve()), "workers": 8,
+        "shared_capacity": 20, "expires_at": future, "owns": [],
+    }}}))
+    result = _reserve(repo, store, "run:w1", renew_only=True)
+    assert result["action"] == "renew_refused"
