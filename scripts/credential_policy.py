@@ -18,22 +18,11 @@ REFUSAL = (
     "metadata/injection interface or an already authorized service connection. "
     "Do not probe, unlock, migrate, retry authentication, or copy secrets into plaintext storage."
 )
-GIT_CWD_REFUSAL = (
-    "This git network command follows a `cd`, so the credential policy cannot tell which "
-    "repository's credential settings apply. Run it as `git -C <repo> <command>` instead. "
-    "(git fetch/pull/push/clone with https://github.com over the approved gh helper is allowed.)"
-)
 GIT_CONFIG_REFUSAL = (
     "This command changes git configuration or the environment git reads it from (git config / "
     "remote writes, GIT_CONFIG_*, GIT_SSH*, HOME or XDG_CONFIG_HOME via export/unset, `source`) "
     "before a git network command in the same call, so the credential helper and ssh settings it "
     "will use cannot be checked. Run the change and the network command as separate calls."
-)
-GIT_PATH_REFUSAL = (
-    "The credential policy cannot resolve the git directory `{path}` ({why}), so it cannot read "
-    "the git config that decides which credential helper `git {sub}` would use. This is not a "
-    "Keychain finding. Use a literal path that already exists, or run the `mkdir`/variable setup "
-    "as a separate call first."
 )
 GIT_HELPER_REFUSAL = (
     "`git {sub}` could reach {context} whose effective credential helper is `{helper}`, which reads "
@@ -442,6 +431,49 @@ _GIT_CONTEXT_KEYS = (r"^(credential(\..*)?\.helper|remote\..*\.(url|pushurl)"
                      r"|submodule\..*\.url|fetch\.recursesubmodules|core\.sshcommand)$")
 
 
+_NEUTRAL_DIR = "/"  # not a repository: `git config` there reads system + global only
+_GIT_DIR_OPTIONS = {"-C", "--git-dir", "--work-tree"}
+
+
+def _without_git_dirs(prefix):
+    """The git prefix options without -C/--git-dir/--work-tree and their values."""
+    kept, position = [], 0
+    while position < len(prefix):
+        if prefix[position] in _GIT_DIR_OPTIONS:
+            position += 2
+            continue
+        kept.append(prefix[position])
+        position += 1
+    return kept
+
+
+_SHELL_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z_0-9]*)\}|([A-Za-z_][A-Za-z_0-9]*))")
+
+
+def _expand_literal(word, shell_vars):
+    """`word` with $NAME / ${NAME} replaced from literal assignments made earlier
+    in the same command, and a leading ~ expanded; None if anything is left
+    that the shell would still expand."""
+    word = _SHELL_VAR.sub(lambda m: shell_vars.get(m.group(1) or m.group(2), m.group(0)), word)
+    if word == "~" or word.startswith("~/"):
+        word = str(Path.home()) + word[1:]
+    if any(ch in word for ch in "$`*?[") or word.startswith("~"):
+        return None
+    return word
+
+
+def _cd_target(args, shell_vars, base):
+    """Directory a `cd`/`pushd` moves to, if it is a literal existing directory."""
+    args = [a for a in args if a not in {"--", "-L", "-P"}]
+    if len(args) != 1 or args[0] == "-" or base is None:
+        return None
+    word = _expand_literal(args[0], shell_vars)
+    if word is None:
+        return None
+    path = Path(base) / word
+    return str(path.resolve()) if path.is_dir() else None
+
+
 def _git_directory_problem(prefix, cwd):
     """(path, why) for a -C/--git-dir/--work-tree the hook cannot resolve to
     an existing directory, else None. A `$VAR` or a directory created earlier
@@ -606,17 +638,14 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env, gh_approved=False):
         # clone does no repository discovery, so -C only picks where the new
         # repo goes; read config without it (from the hook's cwd, which can only
         # ADD helpers, never hide one).
-        stripped, position = [], 0
-        while position < len(prefix):
-            if prefix[position] in {"-C", "--git-dir", "--work-tree"}:
-                position += 2
-                continue
-            stripped.append(prefix[position])
-            position += 1
-        prefix = stripped
-    problem = _git_directory_problem(prefix, cwd)
-    if problem:
-        return GIT_PATH_REFUSAL.format(path=problem[0], why=problem[1], sub=sub)
+        prefix = _without_git_dirs(prefix)
+    if _git_directory_problem(prefix, cwd):
+        # The repository is unknown (`git -C $DIR` with DIR unset here, or a
+        # directory created later in the same call). Judge the user and system
+        # config, which every repository inherits; repository-local helpers
+        # are the one thing this cannot see (none on this Mac, 2026-11-19).
+        return _git_may_use_keychain(git, _without_git_dirs(prefix), sub, rest,
+                                     _NEUTRAL_DIR, env, gh_approved)
 
     def read(args):
         try:
@@ -748,7 +777,15 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env, gh_approved=False):
         contexts.append(None)
     for context in contexts:
         approved = gh_approved and context is not None and _is_github(context)
-        helper = _keychain_helper(_effective_helpers(pairs, context), approved)
+        judged = pairs
+        if context is None and gh_approved:
+            # A helper scoped to github.com runs only when the remote IS GitHub,
+            # where this subcommand is approved; an unknown remote does not make
+            # it unapproved. Unscoped and other-host helpers still count.
+            judged = [(key, value) for key, value in pairs
+                      if not (key != "credential.helper"
+                              and _is_github(key[len("credential."):-len(".helper")]))]
+        helper = _keychain_helper(_effective_helpers(judged, context), approved)
         if helper:
             where = f"`{context}`" if context else "a remote the hook cannot resolve statically"
             return GIT_HELPER_REFUSAL.format(sub=sub, context=where, helper=helper)
@@ -1089,10 +1126,11 @@ def command_reason(command: str, *, cwd: str | None = None,
     except ValueError:
         return API_REFUSAL if _API.search(command) else None
     # Substitutions are expanded in their surrounding shell context. If this
-    # command contains any directory-changing builtin, do not inspect their
-    # Git helpers against a guessed directory (including earlier substitutions).
-    cwd_uncertain |= any(token in {"cd", "pushd", "popd"}
-                         for segment in segments for token in segment)
+    # command changes directory anywhere, judge their Git commands as being in
+    # an unknown directory (user and system config), not the hook's cwd.
+    statement_cwd_uncertain = cwd_uncertain
+    cwd_uncertain = cwd_uncertain or any(token in {"cd", "pushd", "popd"}
+                                         for segment in segments for token in segment)
     for inner in _substitutions(command):
         if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain)):
             return inner_reason
@@ -1110,11 +1148,18 @@ def command_reason(command: str, *, cwd: str | None = None,
             for token in argv[1:]:
                 if (inner_reason := _exec_env_reason(token, **kwargs)):
                     return f"`{token.split('=', 1)[0]}` is run as a command: " + inner_reason
+    # Directories later statements may run in: the hook's cwd plus every literal
+    # `cd` target (a failed cd leaves the shell where it was, so keep both).
+    # Any cd the hook cannot resolve adds the unknown directory instead.
+    directories = [cwd or os.getcwd()]
+    directory_unknown = statement_cwd_uncertain
+    shell_vars: dict[str, str] = {}
     for argv, following, grouped in statements:
         if argv and argv[0] in {"case", "for", "select"}:
             continue  # `case WORD in`, `for x in WORDS`: no command word
         original_argv = list(argv)
-        command_cwd_uncertain = cwd_uncertain
+        command_cwd_uncertain = directory_unknown or len(directories) > 1
+        statement_dir_unknown = directory_unknown
         effective_environment = dict(environment)
         inline_config = False
         while argv:
@@ -1184,7 +1229,7 @@ def command_reason(command: str, *, cwd: str | None = None,
                                 "check it for Keychain access. Pass the command as separate words.")
                     break
                 if option in {"-C", "--chdir", "-D"} or option.startswith("--chdir="):
-                    command_cwd_uncertain = True
+                    command_cwd_uncertain = statement_dir_unknown = True
                 if wrapper == "env":
                     if option in {"-i", "--ignore-environment"}:
                         effective_environment.clear()
@@ -1195,18 +1240,39 @@ def command_reason(command: str, *, cwd: str | None = None,
                 valued = {"-u", "--unset", "-C", "--chdir"} if wrapper == "env" else {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-R", "--chroot", "-D", "--chdir"} if wrapper == "sudo" else set()
                 if option in valued and argv:
                     argv.pop(0)
-        if not argv:
+        if not argv or Path(argv[0]).name in {"export", "readonly", "declare", "typeset", "local"}:
+            # `R=/path` or `export R=/path` on its own: remember literal values so a
+            # later `git -C $R` or `cd "$R"` in the same command can be resolved.
+            for token in (original_argv if not argv else argv[1:]):
+                name, eq, value = token.partition("=")
+                if eq and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name):
+                    literal = _expand_literal(value, shell_vars)
+                    if literal is None:
+                        shell_vars.pop(name, None)
+                    else:
+                        shell_vars[name] = literal
             continue
         if (kind := _expansion_kind(argv[0])):
             return EXPANSION_REFUSAL.format(word=argv[0], kind=kind)
         exe = Path(argv[0]).name
         if exe in {"cd", "pushd", "popd"}:
-            cwd_uncertain = True
+            base = None if directory_unknown and len(directories) == 1 else directories[-1]
+            target = None if exe == "popd" else _cd_target(argv[1:], shell_vars, base)
+            if target is None:
+                directory_unknown = True
+            elif target not in directories:
+                directories.append(target)
             continue
         if _help_only(exe, _without_redirects(argv[1:])):
             continue
         if exe == "security" or "credential-osxkeychain" in exe:
             return f"`{exe}` reads or changes the macOS Keychain. " + REFUSAL
+        if exe == "notarytool" or (exe == "xcrun" and "notarytool" in argv[1:]):
+            # Keychain profiles are stored with store-credentials and read with
+            # -p/--keychain-profile; --keychain names a keychain file to read.
+            if any(a in {"store-credentials", "-p", "--keychain-profile", "--keychain"}
+                   or a.startswith(("--keychain-profile=", "--keychain=")) for a in argv[1:]):
+                return "`notarytool` reads or stores a Keychain profile. " + REFUSAL
         if exe == "find":
             for position, arg in enumerate(argv):
                 if arg in {"-exec", "-execdir", "-ok", "-okdir"}:
@@ -1310,6 +1376,9 @@ def command_reason(command: str, *, cwd: str | None = None,
         if index < len(argv) and "credential-osxkeychain" in argv[index]:
             return "`git credential-osxkeychain` reads the macOS Keychain. " + REFUSAL
         for position, option in enumerate(prefix[:-1]):
+            if option in _GIT_DIR_OPTIONS and (literal := _expand_literal(prefix[position + 1], shell_vars)):
+                prefix[position + 1] = literal
+        for position, option in enumerate(prefix[:-1]):
             if option == "-c":
                 key, _, value = prefix[position + 1].partition("=")
                 if "$" in prefix[position + 1] or "`" in prefix[position + 1]:
@@ -1340,8 +1409,6 @@ def command_reason(command: str, *, cwd: str | None = None,
             # parent environment; require an explicit, inspectable Git -c form.
             # Say WHY: a bare "Keychain prohibited" here was read as "git
             # networking is banned" (2026-10-22) when the fix was one flag.
-            if command_cwd_uncertain:
-                return GIT_CWD_REFUSAL
             if (inline_config or git_env_changed
                     or any(a.startswith("--config-env") for a in prefix)):
                 return GIT_CONFIG_REFUSAL
@@ -1367,9 +1434,13 @@ def command_reason(command: str, *, cwd: str | None = None,
                         # remote update, lfs, …: judged like a fetch of the
                         # remotes they name (or all remotes).
                         sub, rest = "fetch", [arg for arg in rest[1:] if not arg.startswith("-")]
-                git_reason = _git_may_use_keychain(argv[0], prefix, sub, rest, cwd, effective_environment, gh_approved)
-                if git_reason:
-                    return git_reason
+                # Judge every directory this statement may run in; an unknown
+                # one is judged by the user and system config alone.
+                judged = list(directories) + ([_NEUTRAL_DIR] if statement_dir_unknown else [])
+                for directory in dict.fromkeys(judged):
+                    if (git_reason := _git_may_use_keychain(argv[0], prefix, sub, rest, directory,
+                                                            effective_environment, gh_approved)):
+                        return git_reason
                 continue
             else:
                 configured = list(helpers)

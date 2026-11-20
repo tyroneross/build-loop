@@ -113,7 +113,9 @@ by shell expansion (`$'security'`, `sec${X}urity`, globs), `unset HOME` or
 `source` before a git network command, and shell bodies (`git submodule
 foreach`, `rebase --exec`, `core.pager`, `PAGER=`, `timeout`/`xargs`/`find
 -exec`) are inspected or refused. Every refusal names its trigger and the
-safe alternative; one the policy cannot resolve (`git -C $DIR`) says so.
+safe alternative. A literal `cd` and same-command `NAME=/path` assignments are
+followed; a directory it still cannot resolve is judged by the inherited user
+and system config (2026-11-19).
 
 ## System-access prompts — one request per access need
 

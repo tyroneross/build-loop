@@ -43,9 +43,12 @@ interception. Both system-access wrappers enforce the same restriction when
 invoked. Legacy Codex envelope handling in the dispatcher remains callable;
 it does not establish automatic registration or host-level enforcement. The classifier checks command text and Git
 helper configuration, including scoped helpers. Dynamic inline Git environment
-overrides and shell directory changes require an inspectable configuration path.
-Use Git's explicit `-C` option instead of `cd` or `env -C` for network commands,
-so the metadata check inspects the repository Git will use. Opaque interpreter API references are inspected conservatively; single-quoted
+overrides require an inspectable configuration path. The checker follows a
+literal `cd`/`pushd` and `NAME=/path` assignments made earlier in the same
+command; a directory it cannot resolve is judged by the user and system config
+every repository inherits (2026-11-19). On this Mac `~/.gitconfig` resets
+`credential.helper` above its GitHub sections, so Git reaches no Keychain helper
+outside GitHub. `notarytool` Keychain profiles are refused. Opaque interpreter API references are inspected conservatively; single-quoted
 shell examples remain inert.
 The checker never invokes credential helpers or reads secret
 values. Opaque scripts, applications, and SDK calls remain subject to this same

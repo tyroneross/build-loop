@@ -35,10 +35,6 @@ class CredentialPolicyTests(unittest.TestCase):
 
             r'secu\rity find-generic-password',
             'git -c credential.helper= -c credential.https://github.com.helper=osxkeychain push origin main',
-            'cd /different/repo && git push origin main',
-            'env -C /different/repo git push origin main',
-            "cd /different/repo; bash -c 'git push origin main'",
-            'cd /different/repo && echo "$(git push origin main)"',
 
 
             'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=osxkeychain git push',
@@ -465,16 +461,67 @@ class CredentialPolicyTests(unittest.TestCase):
         self.assertIsNone(self.decide(self.GH_SETUP,
                                       'mkdir -p $S; git -C $S -c credential.helper= clone https://example.com/x.git'))
 
-    def test_unresolvable_git_directory_is_reported_as_such(self):
-        for command, path in [('git -C $R push origin main', '$R'),
-                              ('git -C /nonexistent/build-loop-test fetch', '/nonexistent/build-loop-test'),
-                              ('git --git-dir=$G fetch', None)]:
+    # 2026-11-19: a `cd` before a git network command, or a repo path held in
+    # a shell variable, caused 153 of 266 refusals in 30 days. The policy now
+    # follows literal cd targets and same-command assignments, and judges an
+    # unknown directory by the user and system config every repository inherits.
+    CLEARED = ['credential.helper osxkeychain', 'credential.helper ',
+               'credential.https://github.com.helper ',
+               'credential.https://github.com.helper !/opt/homebrew/bin/gh auth git-credential']
+
+    def test_directory_changes_are_followed_not_refused(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        github = self.GH_SETUP + ['remote.origin.url https://github.com/o/r.git']
+        for command in [f'cd {here} && git push origin main',
+                        f'cd {here}; git fetch origin',
+                        f'R={here}; git -C $R push origin main',
+                        f'export R={here} && cd "$R" && git fetch origin',
+                        f'R={here}; git -C "${{R}}" fetch origin',
+                        'cd /nonexistent-x && git push origin main',
+                        'env -C /different/repo git push origin main',
+                        'git -C $UNSET push origin main']:
             with self.subTest(command=command):
-                reason = self.decide(self.GH_SETUP, command)
-                self.assertIsNotNone(reason)
-                if path:
-                    self.assertIn(f'`{path}`', reason)
-                    self.assertIn('not a Keychain finding', reason)
+                self.assertIsNone(self.decide(github, command))
+
+    def test_unknown_directory_is_judged_by_inherited_config(self):
+        # Without the user-level reset, an unknown directory can still reach the
+        # system osxkeychain helper, so it is refused with the helper named.
+        for command in ['cd /nonexistent-x && git push origin main',
+                        'git -C $UNSET fetch origin',
+                        "cd $SOMEWHERE; bash -c 'git push origin main'",
+                        'cd $SOMEWHERE && echo "$(git push origin main)"']:
+            with self.subTest(command=command):
+                self.assertIn('osxkeychain', self.decide(self.GH_SETUP + ['remote.origin.url https://gitlab.com/o/r.git'], command))
+                self.assertIsNone(self.decide(self.CLEARED + ['remote.origin.url https://gitlab.com/o/r.git'], command))
+
+    def test_unknown_directory_adds_a_check_of_inherited_config(self):
+        # The hook's own repo is safe; the inherited (system + user) config is
+        # not. A cd the hook cannot resolve must be judged against the latter.
+        here = os.path.dirname(os.path.abspath(__file__))
+        safe = self.CLEARED + ['remote.origin.url https://gitlab.com/o/r.git']
+        inherited = ['credential.helper osxkeychain']
+
+        def fake_git(argv, **kwargs):
+            lines = inherited if kwargs.get('cwd') == '/' else safe
+            if '--get-regexp' in argv:
+                out = ''.join(f'{k}\n{v}\0' for k, v in (l.partition(' ')[::2] for l in lines))
+                return subprocess.CompletedProcess(argv, 0, out, '')
+            return subprocess.CompletedProcess(argv, 1, '', '')
+
+        with patch('credential_policy.subprocess.run', side_effect=fake_git):
+            self.assertIsNone(command_reason('git push origin main', cwd=here, platform='darwin', environment={}))
+            self.assertIn('osxkeychain', command_reason('cd $SOMEWHERE && git push origin main', cwd=here,
+                                                        platform='darwin', environment={}))
+            self.assertIn('osxkeychain', command_reason('git -C $UNSET push origin main', cwd=here,
+                                                        platform='darwin', environment={}))
+
+    def test_notarytool_keychain_profiles_are_refused(self):
+        for command in ['xcrun notarytool submit a.zip --keychain-profile p --wait',
+                        'xcrun notarytool history -p p', 'notarytool store-credentials p',
+                        'xcrun notarytool submit a.zip --keychain-profile=p']:
+            with self.subTest(command=command):
+                self.assertIn('Keychain profile', self.reason(command))
+        self.assertIsNone(self.reason('xcrun notarytool --help'))
 
     def test_keychain_helper_refusal_names_context_helper_and_fix(self):
         reason = self.decide(['credential.helper osxkeychain', 'remote.origin.url https://example.com/r.git'],
