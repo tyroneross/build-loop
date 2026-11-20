@@ -154,10 +154,41 @@ _FALLBACK_PROTECTED = {
     "main", "master", "production", "prod", "release", "stable", "trunk", "live",
 }
 
-# The two named pytest escapes (RUN, not collect). Relative to repo root.
+# Named pytest files the fast gate RUNS (not collect). Relative to repo root.
+# Chosen 2026-11-19 (owner approved "20") from GitHub main CI history,
+# 2026-06-09..2026-11-17: the 20 files that most often reached main red, ranked by
+# break-and-fix episodes, excluding calendar-driven, CI-environment-only,
+# timing-sensitive and knock-on failures. About 34 s when each file is timed alone.
 _NAMED_PYTEST_TARGETS = (
-    "tests/test_capability_registry.py",       # test_categories_are_known
-    "scripts/test_agent_surface_policy.py",    # test_agent_surface_policy
+    "tests/test_capability_registry.py",       # 10 breaks; test_categories_are_known
+    "scripts/test_skill_index.py",             # 5
+    "scripts/test_readme_surface_claims.py",   # 4
+    "scripts/test_skill_index_adequacy.py",    # 4
+    "tests/test_orchestrator_skeleton.py",     # 4
+    "tests/test_phase_6_gating_docs.py",       # 3
+    "scripts/test_check_portability.py",       # 3
+    "scripts/test_plugin_manifest.py",         # 3
+    "scripts/architecture_diagram/test_drift_lint.py",  # 2
+    "scripts/test_trigger_phrases.py",         # 2
+    "tests/test_no_legacy_memory_paths.py",    # 2
+    "scripts/test_credential_policy.py",       # 1 (25 red commits)
+    "scripts/test_build_loop_install_cli.py",  # 1 (23)
+    "scripts/test_load_probe.py",              # 1 (14); slowest, ~10.6 s
+    "scripts/test_agent_ledger.py",            # 1 (12)
+    "scripts/test_autonomy_supervisor.py",     # 1 (11)
+    "scripts/test_branch_closeout_gate.py",    # 1 (8)
+    "scripts/test_cost_ledger_hook.py",        # 1 (7); ~6.7 s
+    "scripts/test_plugin_index.py",            # 1 (4)
+    "scripts/test_agent_surface_policy.py",    # 1; test_agent_surface_policy
+)
+
+# CI guard scripts that often turned main red; each runs in under 1 s.
+# (gate name, script, only-if-this-file-exists). The private-slug guard needs the
+# git-ignored .private-slugs denylist, as in CI, and is left out where it is absent.
+_GUARD_SCRIPTS = (
+    ("runtime-memory-guard", "scripts/check_runtime_memory_tracking.py", None),
+    ("private-slug-guard", "scripts/check_private_slugs.py", ".private-slugs"),
+    ("portability-guard", "scripts/check_portability.py", None),
 )
 
 # Canonical deterministic full-suite profile, shared by CI and self-mod checks.
@@ -698,6 +729,15 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
         "requires": [],
         "timeout": 60,
     })
+    for name, script, needs in _GUARD_SCRIPTS:
+        if needs and not (workdir / needs).exists():
+            continue
+        gates.append({
+            "name": name,
+            "argv": [interp, script, "--all"],
+            "requires": [],
+            "timeout": 60,
+        })
     gates.append({
         "name": "methodology-drift-lint",
         "argv": [interp, "scripts/methodology_drift_lint.py", "--strict"],

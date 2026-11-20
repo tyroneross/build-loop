@@ -219,7 +219,9 @@ def test_all_default_gates_run_and_pass_on_green_repo():
     # so a mis-pathed gate (which would surface as 'skip', fail-open) is caught here.
     must_pass = {"named-pytest-gates", "import-manifest-lint",
                  "hook-budget-lint", "hook-hygiene-lint", "methodology-drift-lint",
-                 "skill-index-freshness"}
+                 "skill-index-freshness", "runtime-memory-guard", "portability-guard"}
+    if (REPO / ".private-slugs").exists():
+        must_pass.add("private-slug-guard")
     for name in must_pass:
         assert by_name.get(name) == "pass", f"{name} did not pass: {by_name.get(name)}"
     # collection + freshness hard-require pyyaml; assert PASS when the gate's interp
@@ -244,8 +246,11 @@ def test_shallow_clone_skips_artifact_freshness(monkeypatch):
 def test_named_targets_exist_and_collect():
     """Standing guard closing the exit-5 silent-disarm hole: if a named target is
     renamed/deleted, this fails (in the same suite the gate itself runs)."""
-    for rel in ("tests/test_capability_registry.py", "scripts/test_agent_surface_policy.py"):
+    assert len(gate._NAMED_PYTEST_TARGETS) == 20
+    for rel in gate._NAMED_PYTEST_TARGETS:
         assert (REPO / rel).exists(), f"named gate target missing: {rel}"
+    for _name, script, _needs in gate._GUARD_SCRIPTS:
+        assert (REPO / script).exists(), f"guard script missing: {script}"
 
 
 # ---------------------------------------------------------------------------
