@@ -515,6 +515,57 @@ class CredentialPolicyTests(unittest.TestCase):
             self.assertIn('osxkeychain', command_reason('git -C $UNSET push origin main', cwd=here,
                                                         platform='darwin', environment={}))
 
+    def test_codex_review_shapes_reach_the_repository_git_really_uses(self):
+        # Codex (gpt-6-astra) review of 42a5acb8, 2026-11-19: each shape ran git in
+        # a repository with a local osxkeychain helper while the policy judged a
+        # different directory. Directories are real; config is faked per cwd.
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            start, safe, secret = (os.path.join(root, n) for n in ('start', 'safe', 'secret'))
+            for d in (start, safe, secret, os.path.join(start, 'child'), os.path.join(secret, 'child')):
+                os.makedirs(d)
+            remote = ['remote.origin.url https://gitlab.com/o/r.git']
+
+            def fake_git(argv, **kwargs):
+                where = kwargs.get('cwd') or ''
+                if '-C' in argv:
+                    where = os.path.join(where, argv[argv.index('-C') + 1])
+                where = os.path.realpath(where)
+                local = (['credential.helper osxkeychain']
+                         if where.startswith((os.path.realpath(secret), os.path.realpath(os.path.join(start, 'child'))))
+                         else [])
+                if '--get-regexp' in argv:
+                    lines = self.CLEARED + remote + local
+                    out = ''.join(f'{k}\n{v}\0' for k, v in (l.partition(' ')[::2] for l in lines))
+                    return subprocess.CompletedProcess(argv, 0, out, '')
+                return subprocess.CompletedProcess(argv, 1, '', '')
+
+            def decide(command, environment=None):
+                with patch('credential_policy.subprocess.run', side_effect=fake_git):
+                    return command_reason(command, cwd=start, platform='darwin', environment=environment or {})
+
+            self.assertIsNone(decide(f'cd {safe} && git push origin main'))
+            for command in [
+                f'cd {safe}; cd {start}; cd child; git push origin main',      # revisited directory
+                f'(cd {safe}); cd child; git push origin main',               # subshell cd
+                f'cd {secret} && bash -c "git push origin main"',             # nested shell
+                f'cd {secret} && echo "$(git push origin main)"',             # substitution
+                f'R={secret}; (R={safe}); git -C "$R" push origin main',       # subshell assignment
+                f'R={secret}; false && R={safe}; git -C "$R" push origin main',  # conditional
+                f'R={secret}; R={safe} env; git -C "$R" push origin main',     # command-prefix assignment
+                f'env -C {secret} git push origin main',
+            ]:
+                with self.subTest(command=command):
+                    self.assertIn('osxkeychain', decide(command) or '')
+            self.assertIn('osxkeychain', decide('git -C "$R" push origin main', {'R': secret}) or '')
+
+    def test_github_scope_exemption_covers_only_the_gh_helper(self):
+        for helper in ('osxkeychain', 'store'):
+            with self.subTest(helper=helper):
+                command = ('R=https://github.com/o/private.git; git -c credential.helper= '
+                           f'-c credential.https://github.com.helper={helper} clone "$R"')
+                self.assertIsNotNone(self.decide(self.CLEARED, command))
+
     def test_notarytool_keychain_profiles_are_refused(self):
         for command in ['xcrun notarytool submit a.zip --keychain-profile p --wait',
                         'xcrun notarytool history -p p', 'notarytool store-credentials p',

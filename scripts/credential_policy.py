@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 from urllib.parse import urlsplit
+from contextvars import ContextVar
 
 REFUSAL = (
     "Keychain credential access is prohibited. Use the designated Secrets Vault "
@@ -399,6 +400,11 @@ def _is_github(url) -> bool:
         return False
 
 
+def _is_gh_helper(helper) -> bool:
+    words = helper.strip().lstrip("!").split()
+    return len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]
+
+
 def _keychain_helper(chain, gh_approved=False):
     """The first helper that is osxkeychain or store, in any spelling git
     accepts (`store`, `/path/git-credential-store`, `!git credential-store …`,
@@ -448,30 +454,93 @@ def _without_git_dirs(prefix):
 
 
 _SHELL_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z_0-9]*)\}|([A-Za-z_][A-Za-z_0-9]*))")
+_ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z_0-9]*)=(.*)$", re.S)
+_MAX_VALUES = 16
 
 
-def _expand_literal(word, shell_vars):
-    """`word` with $NAME / ${NAME} replaced from literal assignments made earlier
-    in the same command, and a leading ~ expanded; None if anything is left
-    that the shell would still expand."""
-    word = _SHELL_VAR.sub(lambda m: shell_vars.get(m.group(1) or m.group(2), m.group(0)), word)
-    if word == "~" or word.startswith("~/"):
-        word = str(Path.home()) + word[1:]
-    if any(ch in word for ch in "$`*?[") or word.startswith("~"):
-        return None
-    return word
+def _expand(word, values, environment):
+    """Every literal string `word` may expand to, or None when the shell could
+    produce something the hook cannot list. A variable may hold the value it
+    had on entry (environment) or any literal the command assigns it anywhere;
+    a variable with no known value, or an assignment the hook cannot read,
+    makes the word unknown."""
+    results = [""]
+    position = 0
+    for match in _SHELL_VAR.finditer(word):
+        name = match.group(1) or match.group(2)
+        options = set(values.get(name, ()))
+        if name in environment:
+            options.add(environment[name])
+        if not options or None in options:
+            return None
+        text = word[position:match.start()]
+        results = [r + text + o for r in results for o in sorted(options)][:_MAX_VALUES]
+        position = match.end()
+    expanded = []
+    for result in (r + word[position:] for r in results):
+        if result == "~" or result.startswith("~/"):
+            result = str(Path.home()) + result[1:]
+        if any(ch in result for ch in "$`*?[") or result.startswith("~"):
+            return None
+        expanded.append(result)
+    return expanded
 
 
-def _cd_target(args, shell_vars, base):
-    """Directory a `cd`/`pushd` moves to, if it is a literal existing directory."""
-    args = [a for a in args if a not in {"--", "-L", "-P"}]
-    if len(args) != 1 or args[0] == "-" or base is None:
-        return None
-    word = _expand_literal(args[0], shell_vars)
-    if word is None:
-        return None
-    path = Path(base) / word
-    return str(path.resolve()) if path.is_dir() else None
+def _scan_places(segments, cwd, environment):
+    """(directories, unknown, values) for one command line, ignoring order and
+    shell scope on purpose: a `cd` or assignment inside a subshell, a branch
+    that may not run, or a later statement is still a place a git command may
+    run in. Literal `cd`/`pushd`/`env -C` targets resolve against every
+    directory found so far; anything else marks the directory unknown."""
+    values: dict[str, set] = {}
+    for argv in segments:
+        words = [w for w in argv if w not in _KEYWORDS]
+        if words and Path(words[0]).name in {"export", "readonly", "declare", "typeset", "local"}:
+            words = words[1:]
+        if not words or not all(_ASSIGN.match(w) for w in words):
+            continue  # NAME=value before a command sets only that command's environment
+        for word in words:
+            name, value = _ASSIGN.match(word).groups()
+            values.setdefault(name, set())
+            values[name].update(_expand(value, values, environment) or [None])
+    directories, unknown = [cwd or os.getcwd()], False
+    for argv in segments:
+        words = [w for w in argv if w not in _KEYWORDS]
+        while words and _ASSIGN.match(words[0]):
+            words = words[1:]
+        if not words:
+            continue
+        exe, targets = Path(words[0]).name, None
+        if exe in {"cd", "pushd"}:
+            targets = [w for w in words[1:] if w not in {"--", "-L", "-P"}]
+        elif exe == "popd":
+            unknown = True
+        elif exe == "env":
+            for position, word in enumerate(words[1:], 1):
+                if word in {"-C", "--chdir"}:
+                    targets = words[position + 1:position + 2]
+                elif word.startswith("--chdir="):
+                    targets = [word.split("=", 1)[1]]
+        if targets is None:
+            continue
+        literals = _expand(targets[0], values, environment) if len(targets) == 1 and targets[0] != "-" else None
+        if literals is None:
+            unknown = True
+            continue
+        for literal in literals:
+            for base in ([literal] if literal.startswith("/") else list(directories)):
+                path = (Path(base) / literal).resolve() if base != literal else Path(literal).resolve()
+                if path.is_dir():
+                    if str(path) not in directories:
+                        directories.append(str(path))
+                else:
+                    unknown = True  # missing now: made later in the command, or a typo
+    return directories, unknown, values
+
+
+# Places found by the outer command line, so a nested check (`bash -c '…'`,
+# `$(…)`, a git alias) judges every directory its parent may have moved to.
+_PLACES: ContextVar[tuple] = ContextVar("credential_policy_places", default=((), False))
 
 
 def _git_directory_problem(prefix, cwd):
@@ -784,7 +853,8 @@ def _git_may_use_keychain(git, prefix, sub, rest, cwd, env, gh_approved=False):
             # it unapproved. Unscoped and other-host helpers still count.
             judged = [(key, value) for key, value in pairs
                       if not (key != "credential.helper"
-                              and _is_github(key[len("credential."):-len(".helper")]))]
+                              and _is_github(key[len("credential."):-len(".helper")])
+                              and _is_gh_helper(value))]
         helper = _keychain_helper(_effective_helpers(judged, context), approved)
         if helper:
             where = f"`{context}`" if context else "a remote the hook cannot resolve statically"
@@ -1088,10 +1158,18 @@ def _git_bodies(sub, rest):
             yield "-x", arg[2:]
 
 
-def command_reason(command: str, *, cwd: str | None = None,
-                   helpers: list[str] | None = None, platform: str | None = None,
-                   environment: dict | None = None, cwd_uncertain: bool = False) -> str | None:
+def command_reason(command: str, **kwargs) -> str | None:
     """Known executable forms only; opaque app/script behavior remains protocol-governed."""
+    token = _PLACES.set(_PLACES.get())  # places found here end with this check
+    try:
+        return _command_reason(command, **kwargs)
+    finally:
+        _PLACES.reset(token)
+
+
+def _command_reason(command: str, *, cwd: str | None = None,
+                    helpers: list[str] | None = None, platform: str | None = None,
+                    environment: dict | None = None, cwd_uncertain: bool = False) -> str | None:
     environment = os.environ if environment is None else environment
     platform = sys.platform if platform is None else platform
     command = command.replace("\\\n", "")  # `git \<newline> fetch` is one command
@@ -1125,12 +1203,16 @@ def command_reason(command: str, *, cwd: str | None = None,
         segments = [argv for argv, _, _ in statements]
     except ValueError:
         return API_REFUSAL if _API.search(command) else None
-    # Substitutions are expanded in their surrounding shell context. If this
-    # command changes directory anywhere, judge their Git commands as being in
-    # an unknown directory (user and system config), not the hook's cwd.
-    statement_cwd_uncertain = cwd_uncertain
-    cwd_uncertain = cwd_uncertain or any(token in {"cd", "pushd", "popd"}
-                                         for segment in segments for token in segment)
+    # Every directory a git command here may run in: the hook's cwd, each
+    # literal cd/pushd/env -C target, and any directory an enclosing command
+    # moved to. An unresolvable one is "unknown": judged by the user and system
+    # config every repository inherits (repository-local helpers are the gap).
+    outer_directories, outer_unknown = _PLACES.get()
+    directories, scanned_unknown, shell_values = _scan_places(segments, cwd, environment)
+    directories = list(dict.fromkeys([*directories, *outer_directories]))
+    place_unknown = cwd_uncertain or outer_unknown or scanned_unknown
+    _PLACES.set((tuple(directories), place_unknown))
+    cwd_uncertain = place_unknown or len(directories) > 1
     for inner in _substitutions(command):
         if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain)):
             return inner_reason
@@ -1148,18 +1230,11 @@ def command_reason(command: str, *, cwd: str | None = None,
             for token in argv[1:]:
                 if (inner_reason := _exec_env_reason(token, **kwargs)):
                     return f"`{token.split('=', 1)[0]}` is run as a command: " + inner_reason
-    # Directories later statements may run in: the hook's cwd plus every literal
-    # `cd` target (a failed cd leaves the shell where it was, so keep both).
-    # Any cd the hook cannot resolve adds the unknown directory instead.
-    directories = [cwd or os.getcwd()]
-    directory_unknown = statement_cwd_uncertain
-    shell_vars: dict[str, str] = {}
     for argv, following, grouped in statements:
         if argv and argv[0] in {"case", "for", "select"}:
             continue  # `case WORD in`, `for x in WORDS`: no command word
         original_argv = list(argv)
-        command_cwd_uncertain = directory_unknown or len(directories) > 1
-        statement_dir_unknown = directory_unknown
+        command_cwd_uncertain = cwd_uncertain
         effective_environment = dict(environment)
         inline_config = False
         while argv:
@@ -1229,7 +1304,7 @@ def command_reason(command: str, *, cwd: str | None = None,
                                 "check it for Keychain access. Pass the command as separate words.")
                     break
                 if option in {"-C", "--chdir", "-D"} or option.startswith("--chdir="):
-                    command_cwd_uncertain = statement_dir_unknown = True
+                    command_cwd_uncertain = True
                 if wrapper == "env":
                     if option in {"-i", "--ignore-environment"}:
                         effective_environment.clear()
@@ -1240,29 +1315,13 @@ def command_reason(command: str, *, cwd: str | None = None,
                 valued = {"-u", "--unset", "-C", "--chdir"} if wrapper == "env" else {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-R", "--chroot", "-D", "--chdir"} if wrapper == "sudo" else set()
                 if option in valued and argv:
                     argv.pop(0)
-        if not argv or Path(argv[0]).name in {"export", "readonly", "declare", "typeset", "local"}:
-            # `R=/path` or `export R=/path` on its own: remember literal values so a
-            # later `git -C $R` or `cd "$R"` in the same command can be resolved.
-            for token in (original_argv if not argv else argv[1:]):
-                name, eq, value = token.partition("=")
-                if eq and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name):
-                    literal = _expand_literal(value, shell_vars)
-                    if literal is None:
-                        shell_vars.pop(name, None)
-                    else:
-                        shell_vars[name] = literal
+        if not argv:
             continue
         if (kind := _expansion_kind(argv[0])):
             return EXPANSION_REFUSAL.format(word=argv[0], kind=kind)
         exe = Path(argv[0]).name
         if exe in {"cd", "pushd", "popd"}:
-            base = None if directory_unknown and len(directories) == 1 else directories[-1]
-            target = None if exe == "popd" else _cd_target(argv[1:], shell_vars, base)
-            if target is None:
-                directory_unknown = True
-            elif target not in directories:
-                directories.append(target)
-            continue
+            continue  # resolved up front by _scan_places
         if _help_only(exe, _without_redirects(argv[1:])):
             continue
         if exe == "security" or "credential-osxkeychain" in exe:
@@ -1375,9 +1434,12 @@ def command_reason(command: str, *, cwd: str | None = None,
                 index += 1
         if index < len(argv) and "credential-osxkeychain" in argv[index]:
             return "`git credential-osxkeychain` reads the macOS Keychain. " + REFUSAL
+        # `git -C "$R"`: one prefix per value R may hold here. An unlistable
+        # value stays as written and is judged as an unknown directory.
+        prefixes = [prefix]
         for position, option in enumerate(prefix[:-1]):
-            if option in _GIT_DIR_OPTIONS and (literal := _expand_literal(prefix[position + 1], shell_vars)):
-                prefix[position + 1] = literal
+            if option in _GIT_DIR_OPTIONS and (literals := _expand(prefix[position + 1], shell_values, environment)):
+                prefixes = [[*p[:position + 1], literal, *p[position + 2:]] for p in prefixes for literal in literals]
         for position, option in enumerate(prefix[:-1]):
             if option == "-c":
                 key, _, value = prefix[position + 1].partition("=")
@@ -1436,11 +1498,12 @@ def command_reason(command: str, *, cwd: str | None = None,
                         sub, rest = "fetch", [arg for arg in rest[1:] if not arg.startswith("-")]
                 # Judge every directory this statement may run in; an unknown
                 # one is judged by the user and system config alone.
-                judged = list(directories) + ([_NEUTRAL_DIR] if statement_dir_unknown else [])
+                judged = [*directories, *([_NEUTRAL_DIR] if place_unknown else [])]
                 for directory in dict.fromkeys(judged):
-                    if (git_reason := _git_may_use_keychain(argv[0], prefix, sub, rest, directory,
-                                                            effective_environment, gh_approved)):
-                        return git_reason
+                    for variant in prefixes:
+                        if (git_reason := _git_may_use_keychain(argv[0], variant, sub, rest, directory,
+                                                                effective_environment, gh_approved)):
+                            return git_reason
                 continue
             else:
                 configured = list(helpers)
