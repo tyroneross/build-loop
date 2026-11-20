@@ -47,7 +47,7 @@ these are execution structures within that owner.
 
 | Structure | Use when | Execution |
 |---|---|---|
-| **Direct** | One bounded operation has understood effects and a checkable result. | Inspect context, act, verify, review the full diff against the request, correct what the review or checks find and rerun them, report evidence. No full skill load unless another requirement needs it. |
+| **Direct** | One bounded operation has understood effects and a checkable result. | Inspect context, think through the [build principles](build-principles.md) the change touches, act, verify, review the full diff against the request and those principles, correct what the review or checks find and rerun them, report evidence. No full skill load unless another requirement needs it. |
 | **Fixed chain** | Dependent steps and boundaries are known before execution, including predictable multi-file changes. | State goal and acceptance checks, give a short ordered plan, execute with relevant intermediate checks, verify the integrated result and required reviews, report outcome and limits. Keep execution in the lead session by default. |
 | **Adaptive orchestration** | Investigation changes the decomposition, workstreams need dynamic integration, or risk/uncertainty requires the full protocol. | Load the canonical skill; run Assess, Plan, Execute, Review, Iterate, Learn. Choose each next action from observed tool/test feedback within the accepted goal and budget. |
 
