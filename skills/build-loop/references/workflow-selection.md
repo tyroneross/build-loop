@@ -47,9 +47,16 @@ these are execution structures within that owner.
 
 | Structure | Use when | Execution |
 |---|---|---|
-| **Direct** | One bounded operation has understood effects and a checkable result. | Inspect context, act, verify, report evidence. No full skill load unless another requirement needs it. |
+| **Direct** | One bounded operation has understood effects and a checkable result. | Inspect context, act, verify, review the full diff against the request, correct what the review or checks find and rerun them, report evidence. No full skill load unless another requirement needs it. |
 | **Fixed chain** | Dependent steps and boundaries are known before execution, including predictable multi-file changes. | State goal and acceptance checks, give a short ordered plan, execute with relevant intermediate checks, verify the integrated result and required reviews, report outcome and limits. Keep execution in the lead session by default. |
 | **Adaptive orchestration** | Investigation changes the decomposition, workstreams need dynamic integration, or risk/uncertainty requires the full protocol. | Load the canonical skill; run Assess, Plan, Execute, Review, Iterate, Learn. Choose each next action from observed tool/test feedback within the accepted goal and budget. |
+
+**Every structure keeps a review-and-iterate cycle** (owner rule 2026-11-19). A
+lighter path drops ceremony, never the cycle: after the change, review it against
+the request and acceptance checks, correct each actionable gap, and rerun the
+affected checks until they pass or a stop condition below fires. Direct work's
+floor is the lead reviewing its own full diff; a fixed chain's floor is the
+independent review below; adaptive runs use Phase 4 Review and Phase 5 Iterate.
 
 The fixed-chain review floor is relevant executable acceptance checks plus one
 scoped independent review of the changed files and integrated result. Reuse an
@@ -86,8 +93,9 @@ pass. Before any dispatch, load the repository-root
 `references/model-tier-mapping.md` section "Model preferences and bounded workers";
 use its existing tier pins and capacity/permission checks.
 
-**Evaluator–optimizer** adds iteration when a test, grader, or scoped reviewer can
-identify an actionable gap against acceptance criteria. Correct the gap and rerun
+**Evaluator–optimizer** is the iteration half of that cycle and is always on: when a
+test, grader, or scoped reviewer identifies an actionable gap against acceptance
+criteria, it runs. Correct the gap and rerun
 affected checks. Stop on acceptance, budget exhaustion, or existing non-convergence
 limits. Repeated unchanged feedback requires reassessing the cause. Additional
 review rounds need a named uncertainty; prose approval alone proves no behavior.
