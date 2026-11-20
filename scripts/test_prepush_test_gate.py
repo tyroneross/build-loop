@@ -32,6 +32,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import textwrap
 import types
@@ -651,3 +652,29 @@ def test_linked_worktree_uses_the_main_checkout_venv(tmp_path):
     venv_py.parent.mkdir(parents=True)
     venv_py.write_text("#!/bin/sh\n")
     assert gate._resolve_interpreter(wt) == str(venv_py)
+
+
+def test_gates_cannot_write_to_the_pushing_repo(tmp_path, monkeypatch):
+    """Regression (2026-11-19): git runs pre-push with GIT_DIR set to the pushing
+    repo. Gates inherited it, so tests that built temp repos wrote core.bare=true and
+    user.name=Test into build-loop/.git/config. Gates must not see GIT_DIR."""
+    victim = tmp_path / "victim"
+    subprocess.run(["git", "init", "-q", str(victim)], check=True)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("GIT_DIR", str(victim / ".git"))
+    script = (
+        "import subprocess, sys\n"
+        f"subprocess.run(['git', 'init', '-q', {str(scratch)!r}], check=True)\n"
+        f"subprocess.run(['git', '-C', {str(scratch)!r}, 'config', 'user.name', 'Test'], check=True)\n"
+    )
+    result = gate._run_gate(
+        "leak-probe", [sys.executable, "-c", script],
+        workdir=tmp_path, requires=[], interp=sys.executable,
+    )
+    assert result["status"] == "pass", result
+    leaked = subprocess.run(
+        ["git", "--git-dir", str(victim / ".git"), "config", "--local", "user.name"],
+        capture_output=True, text=True,
+    )
+    assert leaked.stdout.strip() == "", "gate wrote into the pushing repo's config"

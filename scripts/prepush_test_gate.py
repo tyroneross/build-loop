@@ -552,6 +552,27 @@ def _is_shallow_clone(workdir: Path) -> bool:
         return False
 
 
+_GIT_LOCAL_ENV_FALLBACK = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_PREFIX",
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_GRAFT_FILE", "GIT_IMPLICIT_WORK_TREE", "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_INTERNAL_SUPER_PREFIX",
+)
+
+
+def _git_local_env_vars() -> tuple[str, ...]:
+    """Repo-scoped variables git itself names (`git rev-parse --local-env-vars`)."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--local-env-vars"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        out = []
+    return tuple(dict.fromkeys([*out, *_GIT_LOCAL_ENV_FALLBACK]))
+
+
 def _run_gate(
     name: str,
     argv: list[str],
@@ -591,6 +612,11 @@ def _run_gate(
 
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)  # match the suite's env -u PYTHONPATH discipline
+    # Git runs hooks with GIT_DIR (and friends) pointing at the pushing repo. A test
+    # that builds a temp repo would then write to the REAL one: on 2026-11-19 a
+    # pre-push run set core.bare=true and user.name=Test in build-loop/.git/config.
+    for var in _git_local_env_vars():
+        env.pop(var, None)
     if extra_path:
         env["PATH"] = f"{extra_path}{os.pathsep}{env.get('PATH', '')}"
 
