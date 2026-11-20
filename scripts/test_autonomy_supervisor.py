@@ -353,6 +353,8 @@ def test_stable_windows_require_elapsed_observation_time(repo: Path, monkeypatch
 def test_host_signals_measure_load_disk_memory_and_thermal(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor.os, "cpu_count", lambda: 10)
     monkeypatch.setattr(supervisor.os, "getloadavg", lambda: (5.0, 4.0, 3.0))
+    # Linux hosts (CI) have /proc/stat, which is read before the mocked ps.
+    monkeypatch.setattr(supervisor, "_PROC_STAT", repo / "no-proc-stat")
     monkeypatch.setattr(
         supervisor.shutil,
         "disk_usage",

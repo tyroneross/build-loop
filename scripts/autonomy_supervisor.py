@@ -781,6 +781,9 @@ def _thermal_state(output: str) -> str:
     return "unknown"
 
 
+_PROC_STAT = Path("/proc/stat")  # module-level so tests can point it elsewhere
+
+
 def _cpu_percent(cpu_count: int) -> float | None:
     """Whole-host CPU use as a percent of all cores, from one `ps` read.
 
@@ -788,7 +791,7 @@ def _cpu_percent(cpu_count: int) -> float | None:
     divided by the core count approximates host utilisation. Returns None when
     `ps` is unavailable so callers treat CPU as unknown rather than idle.
     """
-    proc_stat = Path("/proc/stat")
+    proc_stat = _PROC_STAT
     if proc_stat.exists():
         # Linux: ps reports lifetime averages, so measure a short /proc/stat delta.
         def _read() -> tuple[int, int] | None:
