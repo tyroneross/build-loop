@@ -558,6 +558,18 @@ class CredentialPolicyTests(unittest.TestCase):
                 with self.subTest(command=command):
                     self.assertIn('osxkeychain', decide(command) or '')
             self.assertIn('osxkeychain', decide('git -C "$R" push origin main', {'R': secret}) or '')
+            # Round 2 (Codex, 622aefab): nested shells, heredocs and partly
+            # unknown variables must still reach the real repository.
+            for command in [
+                f"cd {root}; bash -c 'cd secret; git push origin main'",
+                f"export R={secret}; bash -c 'git -C \"$R\" push origin main'",
+                f"cd {secret}; bash <<'EOF'\ngit push origin main\nEOF",
+                f'R={secret}; git -C "$R" push origin main; R=$UNSET',
+            ]:
+                with self.subTest(command=command):
+                    self.assertIn('osxkeychain', decide(command) or '')
+            many = '; '.join(f'R={"/" * n}' for n in range(1, 17)) + f'; R={secret}; git -C "$R" push origin main'
+            self.assertIsNotNone(decide(many))
 
     def test_github_scope_exemption_covers_only_the_gh_helper(self):
         for helper in ('osxkeychain', 'store'):
@@ -565,6 +577,11 @@ class CredentialPolicyTests(unittest.TestCase):
                 command = ('R=https://github.com/o/private.git; git -c credential.helper= '
                            f'-c credential.https://github.com.helper={helper} clone "$R"')
                 self.assertIsNotNone(self.decide(self.CLEARED, command))
+        # Only the exact gh helper is approved; an appended command is not.
+        command = ("R=https://github.com/o/r.git; git -c credential.helper= -c "
+                   "'credential.https://github.com.helper=!gh auth git-credential ; git credential-osxkeychain get' "
+                   'clone "$R"')
+        self.assertIsNotNone(self.decide(self.CLEARED, command))
 
     def test_notarytool_keychain_profiles_are_refused(self):
         for command in ['xcrun notarytool submit a.zip --keychain-profile p --wait',

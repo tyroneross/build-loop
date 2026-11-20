@@ -401,8 +401,10 @@ def _is_github(url) -> bool:
 
 
 def _is_gh_helper(helper) -> bool:
+    """Exactly `[!][/path/]gh auth git-credential`: anything appended could run
+    another command (`… ; git credential-osxkeychain get`)."""
     words = helper.strip().lstrip("!").split()
-    return len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]
+    return len(words) == 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]
 
 
 def _keychain_helper(chain, gh_approved=False):
@@ -422,7 +424,7 @@ def _keychain_helper(chain, gh_approved=False):
             # approved it ONLY for git fetch/pull/push/clone with https://github.com
             # (AGENTS.md, rulings 2026-10-23 and 2026-10-25); the caller decides that. Any
             # other shell helper is judged as a command.
-            if len(words) >= 3 and Path(words[0]).name == "gh" and words[1:3] == ["auth", "git-credential"]:
+            if _is_gh_helper(text):
                 if gh_approved:
                     continue
                 return text
@@ -455,44 +457,55 @@ def _without_git_dirs(prefix):
 
 _SHELL_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z_0-9]*)\}|([A-Za-z_][A-Za-z_0-9]*))")
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z_0-9]*)=(.*)$", re.S)
-_MAX_VALUES = 16
+_MAX_PLACES = 64
+TOO_MANY_PLACES_REFUSAL = (
+    "This command can run git in more than 64 directory combinations, too many for the "
+    "credential policy to check. Split it, or use literal paths.")
+
+
+class _TooManyPlaces(Exception):
+    pass
 
 
 def _expand(word, values, environment):
-    """Every literal string `word` may expand to, or None when the shell could
-    produce something the hook cannot list. A variable may hold the value it
-    had on entry (environment) or any literal the command assigns it anywhere;
-    a variable with no known value, or an assignment the hook cannot read,
-    makes the word unknown."""
-    results = [""]
-    position = 0
+    """(literals, unknown): every literal `word` may expand to, plus whether it
+    may also expand to something the hook cannot list. A variable may hold its
+    inherited value or any literal the command assigns it anywhere; an
+    unreadable assignment or a variable with no known value adds "unknown"
+    without discarding the values that are known."""
+    results, unknown, position = [""], False, 0
     for match in _SHELL_VAR.finditer(word):
         name = match.group(1) or match.group(2)
         options = set(values.get(name, ()))
         if name in environment:
             options.add(environment[name])
-        if not options or None in options:
-            return None
+        if None in options or not options:
+            unknown = True
+            options.discard(None)
         text = word[position:match.start()]
-        results = [r + text + o for r in results for o in sorted(options)][:_MAX_VALUES]
+        results = [r + text + o for r in results for o in sorted(options)]
+        if len(results) > _MAX_PLACES:
+            raise _TooManyPlaces
         position = match.end()
-    expanded = []
+    literals = []
     for result in (r + word[position:] for r in results):
         if result == "~" or result.startswith("~/"):
             result = str(Path.home()) + result[1:]
         if any(ch in result for ch in "$`*?[") or result.startswith("~"):
-            return None
-        expanded.append(result)
-    return expanded
+            unknown = True
+        else:
+            literals.append(result)
+    return literals, unknown
 
 
-def _scan_places(segments, cwd, environment):
+def _scan_places(segments, cwd, environment, outer_directories=(), outer_values=None):
     """(directories, unknown, values) for one command line, ignoring order and
     shell scope on purpose: a `cd` or assignment inside a subshell, a branch
     that may not run, or a later statement is still a place a git command may
     run in. Literal `cd`/`pushd`/`env -C` targets resolve against every
-    directory found so far; anything else marks the directory unknown."""
-    values: dict[str, set] = {}
+    directory found so far, including an enclosing command's; anything else
+    marks the directory unknown. Raises _TooManyPlaces past the limit."""
+    values = {name: set(found) for name, found in (outer_values or {}).items()}
     for argv in segments:
         words = [w for w in argv if w not in _KEYWORDS]
         if words and Path(words[0]).name in {"export", "readonly", "declare", "typeset", "local"}:
@@ -501,9 +514,12 @@ def _scan_places(segments, cwd, environment):
             continue  # NAME=value before a command sets only that command's environment
         for word in words:
             name, value = _ASSIGN.match(word).groups()
-            values.setdefault(name, set())
-            values[name].update(_expand(value, values, environment) or [None])
-    directories, unknown = [cwd or os.getcwd()], False
+            literals, unknown = _expand(value, values, environment)
+            values.setdefault(name, set()).update(literals)
+            if unknown:
+                values[name].add(None)
+    directories = list(dict.fromkeys([cwd or os.getcwd(), *outer_directories]))
+    unknown = False
     for argv in segments:
         words = [w for w in argv if w not in _KEYWORDS]
         while words and _ASSIGN.match(words[0]):
@@ -523,24 +539,29 @@ def _scan_places(segments, cwd, environment):
                     targets = [word.split("=", 1)[1]]
         if targets is None:
             continue
-        literals = _expand(targets[0], values, environment) if len(targets) == 1 and targets[0] != "-" else None
-        if literals is None:
+        if len(targets) != 1 or targets[0] == "-":
             unknown = True
             continue
+        literals, target_unknown = _expand(targets[0], values, environment)
+        unknown |= target_unknown
         for literal in literals:
-            for base in ([literal] if literal.startswith("/") else list(directories)):
-                path = (Path(base) / literal).resolve() if base != literal else Path(literal).resolve()
+            bases = [None] if literal.startswith("/") else list(directories)
+            for base in bases:
+                path = (Path(base) / literal if base else Path(literal)).resolve()
                 if path.is_dir():
                     if str(path) not in directories:
                         directories.append(str(path))
                 else:
                     unknown = True  # missing now: made later in the command, or a typo
+        if len(directories) > _MAX_PLACES:
+            raise _TooManyPlaces
     return directories, unknown, values
 
 
 # Places found by the outer command line, so a nested check (`bash -c '…'`,
-# `$(…)`, a git alias) judges every directory its parent may have moved to.
-_PLACES: ContextVar[tuple] = ContextVar("credential_policy_places", default=((), False))
+# `$(…)`, a heredoc, a git alias) judges every directory and variable value its
+# parent may have set.
+_PLACES: ContextVar[tuple] = ContextVar("credential_policy_places", default=((), False, {}))
 
 
 def _git_directory_problem(prefix, cwd):
@@ -1174,45 +1195,55 @@ def _command_reason(command: str, *, cwd: str | None = None,
     platform = sys.platform if platform is None else platform
     command = command.replace("\\\n", "")  # `git \<newline> fetch` is one command
     command, bodies = _split_heredocs(command)
-    for quoted, readers, body, opaque in bodies:
-        if opaque:
-            return HEREDOC_EXECUTION_REFUSAL
-        if not quoted:
-            # The shell expands $( ) and backticks in an unquoted body BEFORE
-            # any reader sees it, and quotes inside the body do not protect.
-            for inner in _substitutions(body.replace("'", " ").replace('"', " ")):
-                if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
-                                  environment=environment, cwd_uncertain=cwd_uncertain)):
-                    return inner_reason
-        interpreters = {r for r in readers if r.startswith(_INTERPRETERS)}
-        if not readers <= _DATA_READERS | interpreters:
-            # A shell, eval, source, xargs or unknown reader may execute it.
-            if (inner_reason := API_REFUSAL if _API.search(body) else command_reason(
-                    body, cwd=cwd, helpers=helpers, platform=platform,
-                    environment=environment, cwd_uncertain=cwd_uncertain)):
-                return inner_reason
-            continue
-        if any(r.startswith("python") for r in interpreters) and _python_calls_keychain(body):
-            return API_REFUSAL
-        if interpreters - {r for r in interpreters if r.startswith("python")} and _API.search(body):
-            return API_REFUSAL
     try:
         # Newline is a separator token, so a `#` comment ends at its line
         # instead of swallowing every later command.
         statements = list(_segments(command, with_operators=True))
         segments = [argv for argv, _, _ in statements]
     except ValueError:
-        return API_REFUSAL if _API.search(command) else None
+        segments = None
     # Every directory a git command here may run in: the hook's cwd, each
     # literal cd/pushd/env -C target, and any directory an enclosing command
     # moved to. An unresolvable one is "unknown": judged by the user and system
     # config every repository inherits (repository-local helpers are the gap).
-    outer_directories, outer_unknown = _PLACES.get()
-    directories, scanned_unknown, shell_values = _scan_places(segments, cwd, environment)
-    directories = list(dict.fromkeys([*directories, *outer_directories]))
+    outer_directories, outer_unknown, outer_values = _PLACES.get()
+    try:
+        directories, scanned_unknown, shell_values = _scan_places(
+            segments or [], cwd, environment, outer_directories, outer_values)
+    except _TooManyPlaces:
+        return TOO_MANY_PLACES_REFUSAL
     place_unknown = cwd_uncertain or outer_unknown or scanned_unknown
-    _PLACES.set((tuple(directories), place_unknown))
+    _PLACES.set((tuple(directories), place_unknown, shell_values))
     cwd_uncertain = place_unknown or len(directories) > 1
+    def heredoc_reason():
+        for quoted, readers, body, opaque in bodies:
+            if opaque:
+                return HEREDOC_EXECUTION_REFUSAL
+            if not quoted:
+                # The shell expands $( ) and backticks in an unquoted body BEFORE
+                # any reader sees it, and quotes inside the body do not protect.
+                for inner in _substitutions(body.replace("'", " ").replace('"', " ")):
+                    if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform,
+                                      environment=environment, cwd_uncertain=cwd_uncertain)):
+                        return inner_reason
+            interpreters = {r for r in readers if r.startswith(_INTERPRETERS)}
+            if not readers <= _DATA_READERS | interpreters:
+                # A shell, eval, source, xargs or unknown reader may execute it.
+                if (inner_reason := API_REFUSAL if _API.search(body) else command_reason(
+                        body, cwd=cwd, helpers=helpers, platform=platform,
+                        environment=environment, cwd_uncertain=cwd_uncertain)):
+                    return inner_reason
+                continue
+            if any(r.startswith("python") for r in interpreters) and _python_calls_keychain(body):
+                return API_REFUSAL
+            if interpreters - {r for r in interpreters if r.startswith("python")} and _API.search(body):
+                return API_REFUSAL
+        return None
+
+    if (inner_reason := heredoc_reason()):
+        return inner_reason
+    if segments is None:
+        return API_REFUSAL if _API.search(command) else None
     for inner in _substitutions(command):
         if (inner_reason := command_reason(inner, cwd=cwd, helpers=helpers, platform=platform, environment=environment, cwd_uncertain=cwd_uncertain)):
             return inner_reason
@@ -1438,8 +1469,15 @@ def _command_reason(command: str, *, cwd: str | None = None,
         # value stays as written and is judged as an unknown directory.
         prefixes = [prefix]
         for position, option in enumerate(prefix[:-1]):
-            if option in _GIT_DIR_OPTIONS and (literals := _expand(prefix[position + 1], shell_values, environment)):
-                prefixes = [[*p[:position + 1], literal, *p[position + 2:]] for p in prefixes for literal in literals]
+            if option in _GIT_DIR_OPTIONS and "$" in prefix[position + 1]:
+                try:
+                    literals, dir_unknown = _expand(prefix[position + 1], shell_values, environment)
+                except _TooManyPlaces:
+                    return TOO_MANY_PLACES_REFUSAL
+                prefixes = [[*p[:position + 1], value, *p[position + 2:]] for p in prefixes
+                            for value in literals + ([prefix[position + 1]] if dir_unknown else [])]
+                if len(prefixes) > _MAX_PLACES:
+                    return TOO_MANY_PLACES_REFUSAL
         for position, option in enumerate(prefix[:-1]):
             if option == "-c":
                 key, _, value = prefix[position + 1].partition("=")
