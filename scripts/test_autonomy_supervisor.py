@@ -816,3 +816,41 @@ def test_renewing_a_wide_wave_without_a_fresh_monitor_is_refused(repo: Path, tmp
     }}}))
     result = _reserve(repo, store, "run:w1", renew_only=True)
     assert result["action"] == "renew_refused"
+
+
+def test_host_with_more_than_twenty_slots_still_reserves(repo: Path, tmp_path: Path) -> None:
+    # Review 2026-11-19: shared_capacity 32 raised and the host dispatched nothing.
+    result = _reserve(repo, tmp_path / "capacity.json", "run:big", shared_capacity=32)
+    assert result["reservation"]["shared_capacity"] == supervisor.HARD_CEILING
+    assert result["reservation"]["workers"] >= 1
+
+
+def test_live_worker_count_reads_unexpired_leases_for_this_worktree(repo: Path, tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+    store = tmp_path / "capacity.json"
+    later = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    earlier = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    store.write_text(json.dumps({"leases": {
+        "a": {"workdir": str(repo.resolve()), "workers": 6, "expires_at": later},
+        "b": {"workdir": str(repo.resolve()), "workers": 3, "expires_at": earlier},
+        "c": {"workdir": "/elsewhere", "workers": 9, "expires_at": later},
+    }}))
+    assert supervisor.live_worker_count(repo, store) == 6
+    assert supervisor.live_worker_count(repo, tmp_path / "missing.json") == 0
+
+
+def test_monitor_interval_stays_inside_freshness_window() -> None:
+    assert supervisor.MONITOR_MAX_INTERVAL_SECONDS < supervisor.MONITOR_FRESH_SECONDS
+
+
+def test_cpu_probe_runs_ps_in_c_locale(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(supervisor, "_PROC_STAT", repo / "no-proc-stat")
+    seen: dict = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0, "10.0\n", "")
+
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+    assert supervisor._cpu_percent(1) == 10.0
+    assert seen["env"]["LC_ALL"] == "C"

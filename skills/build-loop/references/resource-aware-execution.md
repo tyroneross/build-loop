@@ -96,9 +96,11 @@ gate.
    ```bash
    # Start in the background (host background mode, or append `&`); it exits on its own.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/autonomy_supervisor.py" --workdir "$PWD" \
-     monitor --duration-seconds <wave length, max 7200> --interval-seconds 15 \
-     --current-concurrency <workers running>
+     monitor --duration-seconds <wave length, max 7200> --interval-seconds 15
    ```
+   Each sample reads this worktree's live leases for the current width, so no
+   `--current-concurrency` is needed. Intervals are capped at 60 s so a sample
+   is always fresher than the 90 s window a wide wave requires.
 
    It appends CPU %, load, memory, disk and thermal state, plus the action the
    supervisor would take, to `.build-loop/autonomy/host-load.jsonl`. Any wave above

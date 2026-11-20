@@ -45,6 +45,7 @@ CONVERGENCE_PATH = AUTONOMY_DIR / "convergence.json"
 BACKPRESSURE_PATH = AUTONOMY_DIR / "backpressure.json"
 HOST_LOAD_PATH = AUTONOMY_DIR / "host-load.jsonl"
 MONITOR_FRESH_SECONDS = 90
+MONITOR_MAX_INTERVAL_SECONDS = 60  # below MONITOR_FRESH_SECONDS with slack for a slow sample
 MONITOR_MAX_DURATION_SECONDS = 7200
 HOST_LOAD_MAX_BYTES = 5 * 1024 * 1024
 CPU_PRESSURE_PERCENT = 90.0
@@ -749,11 +750,12 @@ def backpressure_action(signals: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _probe(command: list[str]) -> str:
+def _probe(command: list[str], env: dict[str, str] | None = None) -> str:
     """Run a short, read-only host probe and fail soft when unavailable."""
     try:
         result = subprocess.run(
             command,
+            env=env,
             capture_output=True,
             check=False,
             text=True,
@@ -807,7 +809,10 @@ def _cpu_percent(cpu_count: int) -> float | None:
         if first and second and second[0] > first[0]:
             busy = 1 - (second[1] - first[1]) / (second[0] - first[0])
             return round(max(0.0, min(100.0, busy * 100)), 1)
-    output = _probe(["ps", "-A", "-o", "%cpu="])
+        # Linux ps reports lifetime averages, not current load: unknown beats wrong.
+        return None
+    # C locale: a comma-decimal locale prints "1,5" and every value is dropped.
+    output = _probe(["ps", "-A", "-o", "%cpu="], env={**os.environ, "LC_ALL": "C"})
     values = [float(token) for token in output.split() if re.fullmatch(r"\d+(?:\.\d+)?", token)]
     if not values:
         return None
@@ -1017,6 +1022,29 @@ def cpu_monitor_status(workdir: Path, now: datetime | None = None) -> dict[str, 
     }
 
 
+def live_worker_count(workdir: Path, capacity_path: Path | None = None) -> int:
+    """Workers this worktree holds right now, from unexpired fan-out leases.
+
+    Read per monitor sample so the logged width follows the running wave
+    instead of the value passed at monitor start. Fails soft to 0.
+    """
+    path = capacity_path or Path("~/.build-loop/worker-capacity.json").expanduser()
+    try:
+        leases = json.loads(path.read_text()).get("leases", {})
+    except (OSError, ValueError, AttributeError):
+        return 0
+    here = str(workdir.resolve())
+    now = datetime.now(timezone.utc)
+    total = 0
+    for row in leases.values() if isinstance(leases, dict) else []:
+        try:
+            if row.get("workdir") == here and datetime.fromisoformat(row["expires_at"]) > now:
+                total += int(row.get("workers") or 0)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    return total
+
+
 def monitor_host(
     workdir: Path,
     *,
@@ -1032,7 +1060,9 @@ def monitor_host(
     take at that moment, so a reader can see when a wide wave strained the host.
     """
     duration = max(1, min(MONITOR_MAX_DURATION_SECONDS, int(duration_seconds)))
-    interval = max(5, min(300, int(interval_seconds)))
+    # Keep sampling inside the freshness window, or a wide wave reads the
+    # monitor as stale between samples and falls back to 4 workers.
+    interval = max(5, min(MONITOR_MAX_INTERVAL_SECONDS, int(interval_seconds)))
     path = workdir / HOST_LOAD_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1048,7 +1078,8 @@ def monitor_host(
     last: dict[str, Any] = {}
     while True:
         signals = host_signals(workdir)
-        concurrency = max(0, int(current_concurrency)) if current_concurrency is not None else 0
+        concurrency = (max(0, int(current_concurrency)) if current_concurrency is not None
+                       else live_worker_count(workdir))
         assessed = backpressure_action({
             **signals,
             "current_concurrency": concurrency,
@@ -1238,8 +1269,10 @@ def reserve_fanout(workdir: Path, request: dict[str, Any]) -> dict[str, Any]:
     if not reservation_id:
         raise ValueError("reservation_id is required (run-id:wave-id)")
     capacity = request.get("shared_capacity")
-    if type(capacity) is not int or not 1 <= capacity <= HARD_CEILING:
+    if type(capacity) is not int or capacity < 1:
         raise ValueError("shared_capacity must be a verified host worker limit")
+    # A host with more slots than the ceiling still dispatches; it gets 20.
+    capacity = min(capacity, HARD_CEILING)
     ttl = request.get("lease_seconds", 300)
     if type(ttl) is not int or not 30 <= ttl <= 3600:
         raise ValueError("lease_seconds must be between 30 and 3600")
