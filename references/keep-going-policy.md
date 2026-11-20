@@ -22,6 +22,20 @@ Every action runs through `python3 scripts/classify_action.py` (**SAFE / RISKY /
 
 Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
 
+## Owner standing approvals (set 2026-11-20 from measured answers)
+
+The owner answered these questions yes every time, or told agents to stop asking. Act, then report what you did. Do not ask.
+
+| Situation | Act this way | Owner evidence |
+|---|---|---|
+| A merge lock or lease blocks a ready branch | Holder inactive or lease expired: take it over and land. Holder active: ask the holder to release, then land. Peer silent about 30 min and the edits merge cleanly: merge and notify the peer. | 9 of 9 yes; "you can always just overwrite the merge lock and fix if you need to" |
+| Worktrees or checkouts sit outside the repo's worktree container, or are idle | Move them under the repo's container. Run `worktree_inventory.py` and archive ignored files before any removal. | 5 of 5 yes; "move all under the repo", "yes, and move idle ones" |
+| Regenerable build output (`build/`, `.build/`, `target/`, `build-rust*/`, compiler caches) in worktrees that are merged, clean and idle over a day | Delete it with the repo's cleanup tool and report free space from `df` before and after. Source, notes and the worktrees stay. | 20 straight yes; "yes, and make it standing" |
+| A trust dialog for a scratch or test folder inside an isolated test copy | Approve it for that folder. | 4 of 4 yes |
+| An OS permission only the owner can grant (Screen Recording, Accessibility) | Name the app and the exact setting once, keep working on everything else, and resume when granted. Do not re-ask each session. | 6 of 6 granted |
+
+When a question is about doing in-scope work (fix a bug, pick the next item, choose a layout, control or technical option), pick the recommended option and proceed. Before fixing a bug, confirm it still reproduces on the latest local main. Before changing shared agent tooling, check other branches and worktrees for overlapping work. Report the choice and the alternative you did not take.
+
 ## Self-heal — reactive fix + proactive self-simplification (C-HEAL / self_heal_safe_issues)
 
 Self-heal is **both reactive and proactive**. It is not only triggered by errors.
