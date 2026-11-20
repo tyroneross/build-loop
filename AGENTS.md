@@ -36,15 +36,21 @@ review scope; a same-vendor fallback is not a cross-vendor review.
 
 ## Autonomy gate — the three things that confirm (governing rule, highest priority)
 
-Once a plan is accepted, the loop does not stop to ask. Exactly three actions require human confirmation; everything else auto-executes:
+Once a plan is accepted, the loop does not stop to ask. Exactly three kinds of action require human confirmation; everything else auto-executes:
 
-1. **Production push** — a deploy/publish/migration that reaches live users (production deploy, `npm publish`, `gh release`, prod DB migration). Preview/testflight/staging deploys are auto.
-2. **Destructive delete** — archive is auto (reversible); an irreversible purge/drop requires confirmation. Prefer archiving over deleting. Build artifacts (node_modules, dist, caches) are regenerable and delete freely.
-3. **Major user-impacting decision** — a product/platform-direction choice the plan marks `user_impact: major`. Implementation-tradeoff DECISIONs do NOT surface.
+1. **Push or publish to a remote** — every `git push` (owner rule 2026-11-19), plus production deploys, `npm publish`, `gh release`, `gh pr merge`, `gh api` writes and production DB migrations. A repo waives the push rule only when the owner says so, recorded as `autonomy.autoPush: true` in `.build-loop/config.json`; production deploys still confirm. Preview, TestFlight and staging deploys are auto.
+2. **Destructive delete** — archive is auto (reversible); an irreversible purge confirms: `rm -rf <path>`, `DROP`/`TRUNCATE`, remote-branch delete, `gh repo delete`. Prefer archiving over deleting. Build artifacts (node_modules, dist, caches) are regenerable and delete freely.
+3. **Major user-impacting decision** — a product/platform-direction choice the plan marks `user_impact: major`, and deferring an acceptance criterion whose probe still fails. Implementation-tradeoff DECISIONs do NOT surface.
 
-Action classification: SAFE → execute on main; RISKY → isolate to branch + log + continue main; DECISION → auto-pick `recommended_default` and log (unless `user_impact: major`); PRODUCTION → confirm (gate 1). Catastrophic-never commands (`rm -rf /`, `rm -rf ~`, force-push to a protected branch) are auto-refused — the loop logs and continues, does not ask.
+`scripts/autonomy_gate.py` (`DEFAULT_CONFIRM_FOR`, `DEFAULT_BLOCK_FOR`) is the executable list; when it and this section disagree, fix whichever is wrong in the same change.
+
+Action classification: SAFE → execute on main; RISKY → isolate to branch + log + continue main; DECISION → auto-pick `recommended_default` and log (unless `user_impact: major`); PRODUCTION → confirm (gate 1). Catastrophic-never commands (`rm -rf /`, `rm -rf ~`, force-push to `main` or `master`) are auto-refused, checked before deployment routing — the loop logs and continues, does not ask.
 
 There is NO gate for code size or complexity. Genuine inability to proceed (missing credential, external blocker) is logged, worked around with available tasks, and reported in the readback — not a stop-and-ask. Oversight is the end-of-run readback, not a mid-run halt.
+
+## Owner instructions update their documents
+
+When the owner gives a new standing instruction or changes a policy, the same turn updates every place that states the old rule: this file, `CLAUDE.md`, `references/`, agent and skill files, the code and tests that enforce it, and the owner's memory. Find stale copies by searching for the old wording before calling the change done. A rule that lives only in the conversation is lost at the next session.
 
 ## Confirmed issues auto-repair
 

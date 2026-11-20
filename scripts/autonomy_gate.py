@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Classify arbitrary build-loop actions against a generalized autonomy policy.
 
-Policy: the ONLY confirmation gate is production pushes/deploys/publishes/migrations.
-Everything else auto-executes. Catastrophic-never commands (filesystem nukes,
+Policy: confirmation fires for (1) any git push (owner rule 2026-11-19, waived per
+repo by `autonomy.autoPush: true`) and production deploys/publishes/migrations,
+(2) irreversible deletes, and (3) major user-impacting decisions. Everything else
+auto-executes. Catastrophic-never commands (filesystem nukes,
 force-pushes to protected branches) are auto-REFUSED (blocked) — the loop logs and
 continues, never prompts.
 
@@ -405,12 +407,55 @@ def classify(
 _ACTION_RANK = {"auto": 0, "warn": 1, "confirm": 2, "block": 3}
 
 
+_GIT_PUSH_RE = re.compile(r"\bgit(?:\s+-[Cc]\s+\S+)*\s+push\b")
+
+
+def _is_git_push(command: str) -> bool:
+    return bool(_GIT_PUSH_RE.search(command))
+
+
 def _classify_one(
     workdir: Path,
     action_label: str,
     command: str,
 ) -> dict[str, Any]:
+    """Classify one command, then apply the owner's push rule.
+
+    Owner rule (2026-11-19): every `git push` needs the owner's approval unless
+    the owner has told the loop otherwise for this repo, recorded as
+    `autonomy.autoPush: true` in `.build-loop/config.json`. A push that the
+    deployment or pattern steps classified `auto` or `warn` is raised to
+    `confirm`; `block` and `confirm` verdicts stand.
+    """
+    env = _classify_one_inner(workdir, action_label, command)
+    if env["action"] in ("auto", "warn") and _is_git_push(command):
+        autonomy, _ = load_autonomy_config(workdir)
+        if not bool(autonomy.get("autoPush", False)):
+            env = dict(env, action="confirm", matched_rule="git push",
+                       list_source="push_policy",
+                       reason="every git push needs the owner's approval "
+                              "(set autonomy.autoPush in .build-loop/config.json to waive)")
+    return env
+
+
+def _classify_one_inner(
+    workdir: Path,
+    action_label: str,
+    command: str,
+) -> dict[str, Any]:
     """Steps 1-8 for one command text (no read-only short-circuit)."""
+    # Step 0: catastrophic-never patterns block before deployment routing, so a
+    # force-push to main is refused even where main is not a production branch.
+    # Measured 2026-11-19: `git push --force origin main` classified `auto` in
+    # this repo because deployment_policy returned early with "non-production".
+    autonomy0, _ = load_autonomy_config(workdir)
+    repo_block0 = _get_pattern_list(autonomy0, "blockFor")
+    matched0 = _matches_any(command, repo_block0 if repo_block0 is not None else DEFAULT_BLOCK_FOR)
+    if matched0:
+        src0 = "config" if repo_block0 is not None else "default"
+        return _envelope("block", matched0, src0, f"matched {src0} blockFor pattern",
+                         action_label, command, _extract_flags(autonomy0))
+
     # Step 1: deployment_policy delegation
     # When deployment_policy returns an "unknown" target, fall through to
     # autonomy_gate's own pattern matching — DEFAULT_CONFIRM_FOR still catches

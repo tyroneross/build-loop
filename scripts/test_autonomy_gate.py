@@ -68,8 +68,27 @@ class AutonomyGateDefaultsTests(unittest.TestCase):
     def test_npm_publish_with_args(self) -> None:
         self._assert_confirm("npm publish --access public")
 
-    def test_git_push_force(self) -> None:
-        self._assert_confirm("git push --force origin main")
+    def test_git_push_force_main_blocks(self) -> None:
+        # Catastrophic-never: refused, not confirmed (AGENTS.md autonomy gate).
+        result = run(self.workdir, "test", "git push --force origin main")
+        self.assertEqual(envelope(result)["action"], "block")
+        self.assertEqual(result.returncode, 2)
+
+    def test_git_push_feature_branch_confirms(self) -> None:
+        # Owner rule 2026-11-19: every push asks unless autoPush is set.
+        self._assert_confirm("git push origin feature/x")
+
+    def test_git_push_with_dash_c_confirms(self) -> None:
+        self._assert_confirm("git -C /tmp/repo push origin feature/x")
+
+    def test_auto_push_config_waives_push_confirm(self) -> None:
+        cfg = self.workdir / ".build-loop"
+        cfg.mkdir()
+        (cfg / "config.json").write_text('{"autonomy": {"autoPush": true}}')
+        result = run(self.workdir, "test", "git push origin feature/x")
+        self.assertEqual(envelope(result)["action"], "auto", msg=str(envelope(result)))
+        # A production branch still confirms through deployment policy.
+        self._assert_confirm("git push origin main")
 
     def test_git_push_main(self) -> None:
         self._assert_confirm("git push origin main")
@@ -560,10 +579,10 @@ class BranchDeletionConfirmTests(unittest.TestCase):
         self.assertEqual(data["action"], "confirm", msg=str(data))
 
     def test_ordinary_pushes_are_unchanged(self) -> None:
-        """The guard must not gate normal pushes or src:dst refspecs."""
+        """Every push confirms (owner rule 2026-11-19); src:dst refspecs are not deletes."""
         for cmd, expected in (
-            ("git push origin feature/x", "auto"),
-            ("git push origin HEAD:refs/heads/scratch", "auto"),
+            ("git push origin feature/x", "confirm"),
+            ("git push origin HEAD:refs/heads/scratch", "confirm"),
             ("git push origin main", "confirm"),
         ):
             with self.subTest(cmd=cmd):
