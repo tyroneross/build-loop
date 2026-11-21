@@ -106,6 +106,8 @@ Full protocol: `references/phase-gate-checklist.md` §"Phase 2 Plan detail" — 
 
 ### Phase 3: Execute (parallel)
 
+At build or benchmark completion, follow [build output retention](../references/build-output-retention.md) for selected artifacts before the original paths change.
+
 Full protocol: `references/phase-3-execute.md` — load before executing. Highlights:
 
 - **Pre-dispatch scope-audit gate (mandatory for `modifies_api: true`)**: halt dispatch until `state.json.scopeAuditorStatus.<chunk_id>` is `"passed"`; run `Agent(subagent_type="build-loop:scope-auditor", ...)`. `verdict: scope_clean` → proceed; `scope_gap_found` → absorb callers or record acceptance in `state.json.scopeGapAccepted[]`.

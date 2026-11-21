@@ -8,6 +8,8 @@ user-invocable: false
 
 # Optimize
 
+When a benchmark will support future comparisons, retain the selected raw samples, test conditions and verifier result at the end of the experiment using [build output retention](../../references/build-output-retention.md).
+
 Improve a number you can measure. Build time. Lines of code. Response time. Token cost. Anything where you can write a one-line command that returns a number.
 
 Two modes.
