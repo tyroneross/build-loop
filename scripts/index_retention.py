@@ -35,7 +35,8 @@ def main():
             f"Recovery copy: {receipt['retained_path']}",
             f"Producer revision: {receipt.get('build_revision') or 'unknown'}. "
             f"Checkout revision: {receipt.get('head_at_capture') or receipt.get('staged_head') or 'unknown'}.",
-            f"Verification: {proof.get('status', 'unchecked')} · {proof.get('tool', '')} · {proof.get('result', '')}", "",
+            # Trailing period: memory_writer rejects bodies whose last line lacks terminal punctuation.
+            f"Verification: {proof.get('status', 'unchecked')} · {proof.get('tool', '')} · {proof.get('result', '')}.", "",
         ])
     writer = Path(__file__).with_name("memory_writer.py")
     command = [sys.executable, str(writer), "--scope", "project", "--project", args.project,
