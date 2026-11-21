@@ -27,7 +27,7 @@ sys.path.insert(0, str(HERE))
 import index_retention  # noqa: E402
 
 SCRIPT = HERE / "index_retention.py"
-WRITER = HERE / "memory_writer.py"
+WRITER = Path(index_retention.__file__).resolve().with_name("memory_writer.py")
 
 
 class _ReceiptFixture(unittest.TestCase):
@@ -106,7 +106,7 @@ class IndexingTests(_ReceiptFixture):
             f"Receipt ret-001. SHA-256 {self.digest}.",
             f"Recovery copy: {self.retained}",
             "Producer revision: abc1234. Checkout revision: def5678.",
-            "Verification: verified · shasum · match",
+            "Verification: verified · shasum · match.\n",
         ):
             self.assertIn(expected, body)
 
@@ -153,6 +153,18 @@ class RejectionTests(_ReceiptFixture):
         self.assert_parser_error(exit_exc, err, "is not an artifact retention receipt")
         run.assert_not_called()
 
+    def test_missing_retained_file_or_digest_is_a_clean_error(self):
+        missing_file = self.receipt("gone.json", retained_path=str(self.tmp / "gone.bin"))
+        no_digest = self.receipt("nodigest.json")
+        data = json.loads(no_digest.read_text())
+        del data["sha256"]
+        no_digest.write_text(json.dumps(data))
+        for receipt in (missing_file, no_digest):
+            with self.subTest(receipt.name):
+                run, exit_exc, _, err = self.run_main(self.argv(receipt))
+                self.assert_parser_error(exit_exc, err, "cannot verify retained copy")
+                run.assert_not_called()
+
     def test_one_bad_receipt_blocks_the_whole_batch(self):
         good = self.receipt()
         bad = self.receipt("bad.json", event="worktree-removed")
@@ -192,6 +204,7 @@ class RealWriterTests(_ReceiptFixture):
                "BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH": "0",
                "BUILD_LOOP_MEMORY_CONTENT": "0"}
         env.pop("BUILD_LOOP_MEMORY_DISABLE", None)
+        env.pop("BUILD_LOOP_MEMORY_BUSY", None)
         argv = [sys.executable, str(SCRIPT), *self.argv(self.receipt())[1:]]
         proc = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)

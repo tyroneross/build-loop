@@ -22,11 +22,15 @@ def main():
         if receipt.get("event") != "artifact-retained":
             parser.error(f"{source} is not an artifact retention receipt")
         proof = receipt.get("verification") or {}
-        with Path(receipt["retained_path"]).open("rb") as retained:
-            digest = hashlib.sha256()
-            for block in iter(lambda: retained.read(1024 * 1024), b""):
-                digest.update(block)
-        if digest.hexdigest() != receipt["sha256"] or (proof and proof.get("sha256") != receipt["sha256"]):
+        try:
+            with Path(receipt["retained_path"]).open("rb") as retained:
+                digest = hashlib.sha256()
+                for block in iter(lambda: retained.read(1024 * 1024), b""):
+                    digest.update(block)
+            expected = receipt["sha256"]
+        except (KeyError, OSError) as exc:
+            parser.error(f"{source}: cannot verify retained copy ({exc!r})")
+        if digest.hexdigest() != expected or (proof and proof.get("sha256") != expected):
             parser.error(f"{source}: retention or verification digest mismatch")
         lines.extend([
             f"## {receipt['relative_path']}", "",
