@@ -86,7 +86,7 @@ def main(argv: list[str]) -> int:
                   f"--retro {result.get('active_path')} --json")
         if result.get("reason"):
             print(f"  reason:  {result['reason']}")
-    return 0 if result.get("status") == "ok" else 0  # never fail the run
+    return 0  # never fail the run
 
 
 if __name__ == "__main__":

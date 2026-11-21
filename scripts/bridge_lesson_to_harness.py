@@ -141,7 +141,7 @@ def _emit_frontmatter(fm: dict) -> str:
         if isinstance(v, dict):
             nested_blocks.append((k, v))
         else:
-            lines.append(f"{k}: {v}" if not isinstance(v, str) else f"{k}: {v}")
+            lines.append(f"{k}: {v}")
     for k, v in nested_blocks:
         lines.append(f"{k}:")
         for nk, nv in v.items():

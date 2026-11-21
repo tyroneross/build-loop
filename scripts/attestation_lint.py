@@ -340,8 +340,8 @@ def normalize_attestation(envelope: dict[str, Any], strict: bool = False) -> lis
             claim = entry.get("applied") or entry.get("claim") or entry.get("value")
             status = entry.get("status")
             if status is None:
-                # Bare "applied" / "deviated" / "n/a" might sit at top-level.
-                status = "applied" if claim else "applied"
+                # No explicit status: treat the entry as applied.
+                status = "applied"
             out.append({
                 "name": str(name),
                 "dimension": dim,

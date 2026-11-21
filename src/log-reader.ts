@@ -248,7 +248,7 @@ function parseJsonlLines(lines: string[], sourceFile: string): LogItem[] {
 
       // Support common structured log formats
       const timestamp = obj.ts
-        ? new Date(typeof obj.ts === 'number' ? obj.ts : obj.ts).toISOString()
+        ? new Date(obj.ts).toISOString()
         : obj.timestamp
           ? new Date(obj.timestamp).toISOString()
           : obj.time
