@@ -2,6 +2,9 @@
 
 # Phase D: Closeout — full protocol
 
+For selected build products and benchmarks, follow [build output retention](build-output-retention.md) while the source paths resolve. Check the receipt and memory reference before worktree closeout.
+
+
 Extracted from `agents/build-orchestrator.md` §"Phase D: Closeout". The agent body keeps a tight summary + a pointer here. Load before running closeout.
 
 ## Summary

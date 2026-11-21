@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ecbee4ea459afd1439ff58cb0095e7f9aab620314454cc3a250d802f1dcbc4df"
+    "content_sha256": "5644c4b13068a7fb12bb27bec63c438cf3b2db6d4d6d6d07c5f6ffaf51db6ac3"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1374,6 +1374,7 @@
       "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",
+      "scripts/index_retention.py": "Index Easy Terminal retention receipts together as one searchable project reference.\"\"\"",
       "scripts/infer_risk_surface.py": "infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.",
       "scripts/inject_dependency_cooldown.py": "Inject a dependency-cooldown config into a JS project (supply-chain gate).",
       "scripts/install_git_hooks.py": "install_git_hooks.py — install / uninstall the build-loop git hooks.",

@@ -2,6 +2,9 @@
 
 # Phase 3: Execute (full protocol)
 
+For selected build products and benchmarks, follow [build output retention](../../../references/build-output-retention.md) while the source paths resolve. Check the receipt and memory reference before worktree closeout.
+
+
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the full Execute phase: parallel subagent dispatch, single-writer git contract, and C5 halt-and-ask backstop.
 
 ## Phase 3: Execute — Build With Agents
