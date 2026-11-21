@@ -60,6 +60,8 @@ build-loop-install --host all
 ```
 <!-- x-release-please-end -->
 
+Agents with local shell access can retain and verify build evidence across model providers using the [shared retention workflow](references/build-output-retention.md).
+
 ## Memory store and sandboxing
 
 Durable memory (decisions, lessons, retrospectives) resolves through one function: `memory_store_root()`. Resolution order is `$BUILD_LOOP_MEMORY_STORE_ROOT` (aliases `$BUILD_LOOP_MEMORY_ROOT`, `$AGENT_MEMORY_ROOT`), else the existing `~/dev/git-folder/build-loop-memory` checkout if present, else `~/.build-loop-memory`.

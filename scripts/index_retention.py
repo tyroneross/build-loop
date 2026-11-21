@@ -17,9 +17,16 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--host", choices=["claude_code", "codex", "gemini", "other"], required=True)
+    parser.add_argument("--host", required=True, help="name of the calling agent host")
     args = parser.parse_args()
     lines = [f"# {args.name}", ""]
+    host = args.host.strip()
+    if not host or not host.isprintable():
+        parser.error("--host must be a single printable name")
+    from memory_writer import VALID_HOSTS
+    writer_host = host if host in VALID_HOSTS else "other"
+    if writer_host != host:
+        lines.extend([f"Agent host: {host}", ""])
     for source in args.receipts:
         try:
             receipt = json.loads(source.read_text())
@@ -54,7 +61,7 @@ def main():
     writer = Path(__file__).with_name("memory_writer.py")
     command = [sys.executable, str(writer), "--scope", "project", "--project", args.project,
                "write", "--type", "reference", "--name", args.name, "--description", args.name,
-               "--host", args.host, "--run-id", args.run_id, "--workdir", args.workdir, "--json"]
+               "--host", writer_host, "--run-id", args.run_id, "--workdir", args.workdir, "--json"]
     result = subprocess.run(command, input="\n".join(lines), text=True, capture_output=True)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

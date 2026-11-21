@@ -8,6 +8,8 @@ before rerunning the failed build or operation.
 
 **Adaptive orchestration:** Assess → Plan → Execute → Review → Iterate, with mandatory Phase 6 Learn. Direct work and fixed chains follow the selector and stop at the requested outcome.
 
+When a build or benchmark produces evidence worth keeping, follow [build output retention](references/build-output-retention.md) before checkout closeout. This procedure works from any host with local shell access.
+
 ## UI container rule for every host
 
 When a task changes rendered text, typography, or layout, inspect the actual

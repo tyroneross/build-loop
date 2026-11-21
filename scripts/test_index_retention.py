@@ -210,7 +210,7 @@ class WriterOutcomeTests(_ReceiptFixture):
 class RealWriterTests(_ReceiptFixture):
     """End-to-end runs of both scripts, pointed at a temporary memory store."""
 
-    def run_real(self, **extra_env):
+    def run_real(self, host="claude_code", **extra_env):
         self.store = self.tmp / "memory-store"
         self.store.mkdir(exist_ok=True)
         env = {**os.environ,
@@ -221,8 +221,20 @@ class RealWriterTests(_ReceiptFixture):
         env.pop("BUILD_LOOP_MEMORY_DISABLE", None)
         if "BUILD_LOOP_MEMORY_BUSY" not in extra_env:
             env.pop("BUILD_LOOP_MEMORY_BUSY", None)
-        argv = [sys.executable, str(SCRIPT), *self.argv(self.receipt())[1:]]
+        argv = [sys.executable, str(SCRIPT), *self.argv(self.receipt())[1:-1], host]
         return subprocess.run(argv, capture_output=True, text=True, env=env, timeout=60)
+
+    def test_host_portability_with_real_writer(self):
+        for host in ("claude_code", "codex", "gemini", "cursor", "muse", "antigravity", "local-runner"):
+            with self.subTest(host=host):
+                proc = self.run_real(host)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                category = host if host in ("claude_code", "codex", "gemini") else "other"
+                self.assertEqual(json.loads(proc.stdout)["source_host"], category)
+                note = next(p for p in self.store.rglob("*.md") if "Receipt ret-001" in p.read_text())
+                if category == "other":
+                    self.assertIn(f"Agent host: {host}\n", note.read_text())
+                self.assertIn(self.digest, note.read_text())
 
     def test_busy_store_exits_nonzero_instead_of_reporting_success(self):
         proc = self.run_real(BUILD_LOOP_MEMORY_BUSY="1")
