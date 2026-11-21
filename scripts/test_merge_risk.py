@@ -23,6 +23,7 @@ import unittest
 import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -469,6 +470,37 @@ class TestConflictCounting(unittest.TestCase):
             "CONFLICT (content): Merge conflict in f2.txt\n"
         )
         self.assertEqual(merge_risk._count_write_tree_conflicts(stdout), 2)
+
+
+@unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
+class TestNonUtf8ConflictOutput(unittest.TestCase):
+    def test_legacy_probe_handles_non_utf8_diff_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            def commit_bytes(content: bytes) -> str:
+                (repo / "data.txt").write_bytes(content)
+                _git(repo, "add", "data.txt")
+                _git(repo, "commit", "-m", "change bytes")
+                return _head_sha(repo)
+
+            base = commit_bytes(b"base\xff\n")
+            _git(repo, "checkout", "-b", "feature")
+            commit_bytes(b"feature\xff\n")
+            _git(repo, "checkout", "main")
+            commit_bytes(b"main\xff\n")
+            before = _head_sha(repo)
+            real_run = subprocess.run
+
+            def legacy_only(args, **kwargs):
+                if "--write-tree" in args:
+                    return subprocess.CompletedProcess(args, 129, "", "unknown option: write-tree")
+                return real_run(args, **kwargs)
+
+            with patch.object(merge_risk.subprocess, "run", side_effect=legacy_only):
+                conflicts, method = merge_risk.probe_conflicts(repo, "main", "feature", base)
+            self.assertEqual((conflicts, method), (1, "legacy"))
+            self.assertEqual(_head_sha(repo), before)
+            self.assertEqual(_git(repo, "status", "--porcelain").stdout, "")
 
 
 if __name__ == "__main__":

@@ -37,6 +37,9 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
+        # Legacy merge-tree output includes file bytes, which need not be
+        # UTF-8. Preserve them while inspecting the ASCII conflict markers.
+        errors="surrogateescape",
         check=check,
         env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
