@@ -106,9 +106,7 @@ Full protocol: `references/phase-gate-checklist.md` §"Phase 2 Plan detail" — 
 
 ### Phase 3: Execute (parallel)
 
-At build or benchmark completion, follow [build output retention](../references/build-output-retention.md) for selected artifacts before the original paths change.
-
-Full protocol: `references/phase-3-execute.md` — load before executing. Highlights:
+Full protocol: `references/phase-3-execute.md` — load before executing; at build or benchmark completion also follow [build output retention](../references/build-output-retention.md) for selected artifacts before the original paths change. Highlights:
 
 - **Pre-dispatch scope-audit gate (mandatory for `modifies_api: true`)**: halt dispatch until `state.json.scopeAuditorStatus.<chunk_id>` is `"passed"`; run `Agent(subagent_type="build-loop:scope-auditor", ...)`. `verdict: scope_clean` → proceed; `scope_gap_found` → absorb callers or record acceptance in `state.json.scopeGapAccepted[]`.
 - **External-source gate**: when a chunk's plan entry names an external repository, vendored tree, or unfamiliar library as the source of its approach (`adapts` / `ports` / `vendors` / `mirrors`), load `Skill("build-loop:repository-intelligence")` and scan the pinned source before dispatch. Pass the implementer the pinned SHA, the portable concepts, and each concept's evidence state (`source-confirmed` / `issue-reported` / `inferred`); an `inferred` concept may not carry a load-bearing decision. Set `triggers.externalSourceAdaptation` so Review-D grades the diff against the same pinned source. Ordinary dependency use does NOT fire this — a documented package API is `api-registry` / Context7 territory. Read-only; the skill never executes the source.

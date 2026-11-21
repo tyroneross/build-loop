@@ -275,6 +275,7 @@ CATEGORY_KEYWORDS = [
                        "ops_state_probe", "operational-state",
                        "operational state", "runtime state")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
+                      "retention receipt",
                       "semantic", "embedding", "embed_backend", "retrieval",
                       "backend health", "backend_health",
                       # Phase B/D additions:
