@@ -153,16 +153,25 @@ class RejectionTests(_ReceiptFixture):
         self.assert_parser_error(exit_exc, err, "is not an artifact retention receipt")
         run.assert_not_called()
 
-    def test_missing_retained_file_or_digest_is_a_clean_error(self):
-        missing_file = self.receipt("gone.json", retained_path=str(self.tmp / "gone.bin"))
+    def test_malformed_receipts_are_clean_errors(self):
         no_digest = self.receipt("nodigest.json")
         data = json.loads(no_digest.read_text())
         del data["sha256"]
         no_digest.write_text(json.dumps(data))
-        for receipt in (missing_file, no_digest):
+        bad_json = self.tmp / "bad.json"
+        bad_json.write_text("{not json")
+        cases = (
+            (self.receipt("gone.json", retained_path=str(self.tmp / "gone.bin")), "cannot verify retained copy"),
+            (no_digest, "malformed receipt (sha256)"),
+            (self.receipt("nullpath.json", retained_path=None), "malformed receipt (retained_path)"),
+            (self.receipt("noid.json", id=""), "malformed receipt (id)"),
+            (self.receipt("badproof.json", verification=[]), "malformed receipt (verification)"),
+            (bad_json, "unreadable receipt"),
+        )
+        for receipt, fragment in cases:
             with self.subTest(receipt.name):
                 run, exit_exc, _, err = self.run_main(self.argv(receipt))
-                self.assert_parser_error(exit_exc, err, "cannot verify retained copy")
+                self.assert_parser_error(exit_exc, err, fragment)
                 run.assert_not_called()
 
     def test_one_bad_receipt_blocks_the_whole_batch(self):

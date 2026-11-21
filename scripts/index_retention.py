@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 
+REQUIRED = ("id", "relative_path", "retained_path", "sha256")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("receipts", nargs="+", type=Path, help="JSON output of worktrees retain --json")
@@ -18,18 +21,24 @@ def main():
     args = parser.parse_args()
     lines = [f"# {args.name}", ""]
     for source in args.receipts:
-        receipt = json.loads(source.read_text())
-        if receipt.get("event") != "artifact-retained":
+        try:
+            receipt = json.loads(source.read_text())
+        except (OSError, ValueError) as exc:
+            parser.error(f"{source}: unreadable receipt ({exc})")
+        if not isinstance(receipt, dict) or receipt.get("event") != "artifact-retained":
             parser.error(f"{source} is not an artifact retention receipt")
-        proof = receipt.get("verification") or {}
+        missing = [key for key in REQUIRED if not isinstance(receipt.get(key), str) or not receipt[key]]
+        proof = {} if receipt.get("verification") is None else receipt["verification"]
+        if missing or not isinstance(proof, dict):
+            parser.error(f"{source}: malformed receipt ({', '.join(missing) or 'verification'})")
+        expected = receipt["sha256"]
         try:
             with Path(receipt["retained_path"]).open("rb") as retained:
                 digest = hashlib.sha256()
                 for block in iter(lambda: retained.read(1024 * 1024), b""):
                     digest.update(block)
-            expected = receipt["sha256"]
-        except (KeyError, OSError) as exc:
-            parser.error(f"{source}: cannot verify retained copy ({exc!r})")
+        except OSError as exc:
+            parser.error(f"{source}: cannot verify retained copy ({exc})")
         if digest.hexdigest() != expected or (proof and proof.get("sha256") != expected):
             parser.error(f"{source}: retention or verification digest mismatch")
         lines.extend([
