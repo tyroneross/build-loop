@@ -1,5 +1,6 @@
 """Index Easy Terminal retention receipts together as one searchable project reference."""
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -21,6 +22,12 @@ def main():
         if receipt.get("event") != "artifact-retained":
             parser.error(f"{source} is not an artifact retention receipt")
         proof = receipt.get("verification") or {}
+        with Path(receipt["retained_path"]).open("rb") as retained:
+            digest = hashlib.sha256()
+            for block in iter(lambda: retained.read(1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != receipt["sha256"] or (proof and proof.get("sha256") != receipt["sha256"]):
+            parser.error(f"{source}: retention or verification digest mismatch")
         lines.extend([
             f"## {receipt['relative_path']}", "",
             receipt.get("purpose") or receipt["consumer"],
@@ -34,7 +41,14 @@ def main():
     command = [sys.executable, str(writer), "--scope", "project", "--project", args.project,
                "write", "--type", "reference", "--name", args.name, "--description", args.name,
                "--host", args.host, "--run-id", args.run_id, "--workdir", args.workdir, "--json"]
-    subprocess.run(command, input="\n".join(lines), text=True, check=True)
+    result = subprocess.run(command, input="\n".join(lines), text=True, capture_output=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    if "memory auto-commit blocked" in result.stderr:
+        raise SystemExit("Reference saved locally. Git-backed search indexing is pending.")
+
 
 
 if __name__ == "__main__":
