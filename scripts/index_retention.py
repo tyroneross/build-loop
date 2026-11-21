@@ -60,6 +60,8 @@ def main():
     sys.stderr.write(result.stderr)
     if result.returncode:
         raise SystemExit(result.returncode)
+    if '"queued": true' in result.stdout:
+        raise SystemExit("Memory store busy: reference queued for the next closeout drain, not yet saved.")
     if "memory auto-commit blocked" in result.stderr:
         raise SystemExit("Reference saved locally. Git-backed search indexing is pending.")
 

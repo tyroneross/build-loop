@@ -202,20 +202,31 @@ class WriterOutcomeTests(_ReceiptFixture):
 
 
 class RealWriterTests(_ReceiptFixture):
-    """End-to-end run of both scripts, pointed at a temporary memory store."""
+    """End-to-end runs of both scripts, pointed at a temporary memory store."""
 
-    def test_real_writer_saves_reference_into_temp_store(self):
-        store = self.tmp / "memory-store"
-        store.mkdir()
+    def run_real(self, **extra_env):
+        self.store = self.tmp / "memory-store"
+        self.store.mkdir(exist_ok=True)
         env = {**os.environ,
-               "BUILD_LOOP_MEMORY_STORE_ROOT": str(store),
+               "BUILD_LOOP_MEMORY_STORE_ROOT": str(self.store),
                "BUILD_LOOP_MEMORY_AUTOCOMMIT": "0",
                "BUILD_LOOP_CONTENT_INDEX_WRITETHROUGH": "0",
-               "BUILD_LOOP_MEMORY_CONTENT": "0"}
+               "BUILD_LOOP_MEMORY_CONTENT": "0", **extra_env}
         env.pop("BUILD_LOOP_MEMORY_DISABLE", None)
-        env.pop("BUILD_LOOP_MEMORY_BUSY", None)
+        if "BUILD_LOOP_MEMORY_BUSY" not in extra_env:
+            env.pop("BUILD_LOOP_MEMORY_BUSY", None)
         argv = [sys.executable, str(SCRIPT), *self.argv(self.receipt())[1:]]
-        proc = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=60)
+        return subprocess.run(argv, capture_output=True, text=True, env=env, timeout=60)
+
+    def test_busy_store_exits_nonzero_instead_of_reporting_success(self):
+        proc = self.run_real(BUILD_LOOP_MEMORY_BUSY="1")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn("reference queued for the next closeout drain", proc.stderr)
+        self.assertEqual(list(self.store.rglob("*.md")), [])
+
+    def test_real_writer_saves_reference_into_temp_store(self):
+        proc = self.run_real()
+        store = self.store
         self.assertEqual(proc.returncode, 0, proc.stderr)
         written = [p for p in store.rglob("*.md") if "Search latency" in p.read_text()]
         self.assertEqual(len(written), 1, sorted(map(str, store.rglob("*"))))
