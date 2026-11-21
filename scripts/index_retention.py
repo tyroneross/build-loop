@@ -60,8 +60,13 @@ def main():
     sys.stderr.write(result.stderr)
     if result.returncode:
         raise SystemExit(result.returncode)
-    if '"queued": true' in result.stdout:
-        raise SystemExit("Memory store busy: reference queued for the next closeout drain, not yet saved.")
+    try:
+        envelope = json.loads(result.stdout)
+    except ValueError:
+        envelope = {}
+    if isinstance(envelope, dict) and "queued" in envelope:
+        raise SystemExit("Memory store busy: reference queued for the next closeout drain, not yet saved."
+                         if envelope["queued"] else "Memory store busy and queueing failed: reference NOT saved.")
     if "memory auto-commit blocked" in result.stderr:
         raise SystemExit("Reference saved locally. Git-backed search indexing is pending.")
 

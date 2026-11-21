@@ -53,7 +53,7 @@ class _ReceiptFixture(unittest.TestCase):
             "consumer": "bench",
             "build_revision": "abc1234",
             "head_at_capture": "def5678",
-            "verification": {"status": "verified", "tool": "shasum", "result": "match",
+            "verification": {"status": "passed", "tool": "shasum", "result": "match",
                              "sha256": self.digest},
         }
         data.update(overrides)
@@ -106,7 +106,7 @@ class IndexingTests(_ReceiptFixture):
             f"Receipt ret-001. SHA-256 {self.digest}.",
             f"Recovery copy: {self.retained}",
             "Producer revision: abc1234. Checkout revision: def5678.",
-            "Verification: verified · shasum · match.\n",
+            "Verification: passed · shasum · match.\n",
         ):
             self.assertIn(expected, body)
 
@@ -136,13 +136,13 @@ class RejectionTests(_ReceiptFixture):
 
     def test_retained_file_digest_mismatch_exits_without_writing(self):
         receipt = self.receipt(sha256="0" * 64,
-                               verification={"status": "verified", "sha256": "0" * 64})
+                               verification={"status": "passed", "sha256": "0" * 64})
         run, exit_exc, _, err = self.run_main(self.argv(receipt))
         self.assert_parser_error(exit_exc, err, "retention or verification digest mismatch")
         run.assert_not_called()
 
     def test_verification_block_digest_mismatch_exits_without_writing(self):
-        receipt = self.receipt(verification={"status": "verified", "sha256": "f" * 64})
+        receipt = self.receipt(verification={"status": "passed", "sha256": "f" * 64})
         run, exit_exc, _, err = self.run_main(self.argv(receipt))
         self.assert_parser_error(exit_exc, err, "retention or verification digest mismatch")
         run.assert_not_called()
@@ -193,6 +193,12 @@ class WriterOutcomeTests(_ReceiptFixture):
         self.assertEqual(out, '{"ok": true}\n')
         self.assertIn("memory auto-commit blocked", err)
 
+    def test_failed_queue_write_exits_nonzero(self):
+        result = subprocess.CompletedProcess([], 0, stdout='{"queued": false, "reason": "disk full"}\n', stderr="")
+        _, exit_exc, _, _ = self.run_main(self.argv(self.receipt()), result)
+        self.assertIsNotNone(exit_exc)
+        self.assertEqual(exit_exc.code, "Memory store busy and queueing failed: reference NOT saved.")
+
     def test_writer_failure_propagates_its_exit_code(self):
         result = subprocess.CompletedProcess([], 3, stdout="", stderr="boom\n")
         _, exit_exc, _, err = self.run_main(self.argv(self.receipt()), result)
@@ -223,6 +229,7 @@ class RealWriterTests(_ReceiptFixture):
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertIn("reference queued for the next closeout drain", proc.stderr)
         self.assertEqual(list(self.store.rglob("*.md")), [])
+        self.assertTrue((self.tmp / ".build-loop" / "pending-promotions" / "queue.jsonl").is_file())
 
     def test_real_writer_saves_reference_into_temp_store(self):
         proc = self.run_real()
