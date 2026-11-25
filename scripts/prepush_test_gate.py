@@ -180,7 +180,7 @@ _NAMED_PYTEST_TARGETS = (
     "scripts/test_cost_ledger_hook.py",        # 1 (7); ~6.7 s
     "scripts/test_plugin_index.py",            # 1 (4)
     "scripts/test_agent_surface_policy.py",    # 1; test_agent_surface_policy
-    "tests/test_native_sources_digest.py",     # 2026-11-21 main red: mirrored file changed via merge, digest stale
+    "tests/test_native_sources_current.py",    # native fast path trusts the binary only on a matching tree digest
 )
 
 # CI guard scripts that often turned main red; each runs in under 1 s.
