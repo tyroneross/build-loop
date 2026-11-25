@@ -247,7 +247,7 @@ def test_shallow_clone_skips_artifact_freshness(monkeypatch):
 def test_named_targets_exist_and_collect():
     """Standing guard closing the exit-5 silent-disarm hole: if a named target is
     renamed/deleted, this fails (in the same suite the gate itself runs)."""
-    assert len(gate._NAMED_PYTEST_TARGETS) == 20
+    assert len(gate._NAMED_PYTEST_TARGETS) == 21
     for rel in gate._NAMED_PYTEST_TARGETS:
         assert (REPO / rel).exists(), f"named gate target missing: {rel}"
     for _name, script, _needs in gate._GUARD_SCRIPTS:
