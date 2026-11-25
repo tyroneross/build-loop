@@ -44,7 +44,10 @@ BL = Path(os.environ.get("BL_BIN") or REPO_ROOT / "target" / "release" / "bl")
 REAL_PYTHON = os.path.realpath(sys.executable)
 SESSION = "11111111-2222-3333-4444-555555555555"
 # Calls the shell hooks make only to compute a value bl computes itself.
-HELPERS = ("-", "-c", "actor_identity.py", "codex_hook_trust_check.py", "session_start_hook_command.py")
+# build_native.py: the registered command's background refresh of
+# bin/native/sources.current, plumbing of the native path, not a hook effect.
+HELPERS = ("-", "-c", "actor_identity.py", "codex_hook_trust_check.py", "session_start_hook_command.py",
+           "build_native.py")
 # The shortest step deadline is 1.2 s (architecture) and 1.5 s elsewhere.
 SLOW_SECONDS = 1.1
 RECORDED_ONLY = ("session_probe.py", "peer_collision.py", "_arch_scan_bg.py")
