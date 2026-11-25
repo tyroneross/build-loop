@@ -454,6 +454,25 @@ class HookBranchGateTests(unittest.TestCase):
         self.assertIn(self.SKIP_MSG, result.stderr)
         self.assertEqual(before, self.snapshot())
 
+    def test_checkout_marks_native_digest_stale(self) -> None:
+        # A branch switch can change files bin/native/bl mirrors with no agent
+        # edit; the binary must stop being trusted until the digest is recomputed.
+        self.seed_main()
+        native = self.src / "bin/native"
+        native.mkdir(parents=True)
+        (native / "bl").write_text("#!/bin/sh\n")
+        (native / "bl").chmod(0o755)
+        (native / "sources.current").write_text("abc\n")
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=str(self.src),
+                       env=self.env(), check=True, capture_output=True)
+        self.assertTrue((native / "sources.current").read_text().startswith("stale "))
+
+    def test_checkout_without_native_binary_writes_nothing(self) -> None:
+        self.seed_main()
+        subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=str(self.src),
+                       env=self.env(), check=True, capture_output=True)
+        self.assertFalse((self.src / "bin/native/sources.current").exists())
+
     def test_branch_override_preserves_selected_source(self) -> None:
         self.seed_main()
         git(self.src, ["worktree", "add", "-b", "feature", str(self.wt)])

@@ -364,8 +364,20 @@ def hook_segment(script_path: Path, host: str) -> str:
     # Sync only from main in the primary checkout: commits on feature branches or
     # in linked worktrees were overwriting the live plugin caches with unmerged code.
     # BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH=1 forces a sync anyway.
+    #
+    # Native hook freshness: a commit, checkout, merge or rebase can change a file
+    # bin/native/bl mirrors without an agent edit, so mark this checkout's tree
+    # digest stale and recompute it in a detached job (same step as
+    # hooks/pre-edit-architecture.sh). Runs on every branch and worktree, since
+    # each checkout has its own bin/native/.
     return f'''{HOOK_MARKER}
 BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -n "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL" ] && [ "${{BUILD_LOOP_NATIVE_HOOKS:-}}" != off ] \\
+    && [ -x "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL/bin/native/bl" ]; then
+  printf 'stale %s\\n' "$$" > "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL/bin/native/sources.current" 2>/dev/null
+  ( python3 "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL/scripts/build_native.py" --write-current \\
+      --dest "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL/bin/native" & ) </dev/null >/dev/null 2>&1
+fi
 if [ -n "$BUILD_LOOP_PLUGIN_CACHE_SYNC_TOPLEVEL" ] && [ "${{BUILD_LOOP_PLUGIN_CACHE_SYNC_DISABLE:-}}" != "1" ]; then
   BUILD_LOOP_PLUGIN_CACHE_SYNC_BRANCH_NAME="$(git symbolic-ref --short -q HEAD 2>/dev/null)"
   BUILD_LOOP_PLUGIN_CACHE_SYNC_GITDIR="$(git rev-parse --absolute-git-dir 2>/dev/null)"
