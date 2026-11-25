@@ -97,11 +97,13 @@ RECOVERY = (
 # Recompute bin/native/sources.current (the tree's digest that GUARD reads) in
 # a detached background job, so a change made between sessions turns the
 # binary off within ~0.3 s without slowing startup. Only when a binary exists:
-# without one nothing reads the file, so no interpreter starts.
+# without one nothing reads the file, so no interpreter starts. No stdin
+# redirect: the event must reach the native entry, the job reads no stdin, and
+# sh gives an asynchronous command /dev/null as stdin anyway.
 REFRESH = " ".join([
     'r="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}";',
     'if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$r/bin/native/bl" ]; then',
-    '( python3 "$r/scripts/build_native.py" --write-current --dest "$r/bin/native" & ) </dev/null >/dev/null 2>&1;',
+    '( python3 "$r/scripts/build_native.py" --write-current --dest "$r/bin/native" & ) >/dev/null 2>&1;',
     'fi;',
 ])
 NATIVE = CHILD_RUNNER + " " + REFRESH + " " + GUARD + (
