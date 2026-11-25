@@ -21,10 +21,11 @@ def fixture(root):
     plugin = root / 'plugin'
     for directory in ['scripts/hooks', 'hooks', 'bin/native', 'crates']:
         (plugin / directory).mkdir(parents=True, exist_ok=True)
-    for name in ['scripts/hooks/stop_finalize.sh', 'hooks/_bounded_hook.sh', 'crates/SOURCES.digest']:
+    for name in ['scripts/hooks/stop_finalize.sh', 'hooks/_bounded_hook.sh']:
         shutil.copy2(ROOT / name, plugin / name)
     (plugin / 'bin/native/bl').symlink_to(BL.resolve())
-    shutil.copy2(ROOT / 'crates/SOURCES.digest', plugin / 'bin/native/bl.sources')
+    for name in ['bl.sources', 'sources.current']:
+        (plugin / 'bin/native' / name).write_text('fixture\n')
     (plugin / 'scripts/agent_rally.py').write_text(
         'import json,os,sys\nfrom pathlib import Path\n'
         'Path(os.environ["STOP_RELEASE"]).write_text(json.dumps(sys.argv[1:]))\n')

@@ -609,8 +609,7 @@ def _plugin(tmp_path: Path, binary: str, *, built: str | None = DIGEST, tree: st
     if built is not None:
         (native / "bl.sources").write_text(built + "\n")
     if tree is not None:
-        (root / "crates").mkdir()
-        (root / "crates" / "SOURCES.digest").write_text(tree + "\n# comment\n")
+        (native / "sources.current").write_text(tree + "\n# comment\n")
     return root
 
 

@@ -3,26 +3,17 @@
 """Tests for scripts/build_native.py install gating and --check.
 
 Build steps are replaced by a recorder, so these run without cargo; the
-digest itself is covered by tests/test_native_sources_digest.py.
+digest and bin/native/sources.current are covered by
+tests/test_native_sources_current.py.
 """
 from __future__ import annotations
 
 import importlib.util
-import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-# Keep the cross-file freshness contract in the build_native.py mapped gate.
-# The canonical assertion lives with the digest suite; importing it preserves
-# one oracle while making source-only port changes exercise it before commit.
-from tests.test_native_sources_digest import (  # noqa: F401
-    test_every_mirrored_file_is_watched_by_the_commit_guard,
-)
-
 
 _SCRIPT = Path(__file__).resolve().parent / "build_native.py"
 _spec = importlib.util.spec_from_file_location("build_native", _SCRIPT)
@@ -38,8 +29,6 @@ def repo(tmp_path):
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_bytes(rel.encode() + b"\n")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    bn.write_digest(repo)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e",
                     "commit", "-q", "-m", "base"], check=True)
@@ -78,6 +67,7 @@ def test_installs_binary_and_sidecar_after_every_step_passes(repo, tmp_path):
     assert (dest / "bl").read_text() == (repo / "target/release/bl").read_text()
     assert (dest / "bl").stat().st_mode & 0o111
     assert (dest / "bl.sources").read_text() == digest + "\n"
+    assert (dest / "sources.current").read_text() == digest + "\n"
     assert bn.installed_status(repo, dest) == (True, f"fresh ({digest[:12]})")
 
 
@@ -99,12 +89,14 @@ def test_failed_launcher_parity_removes_sidecar(repo):
     assert (dest / "bl").exists() and not (dest / "bl.sources").exists()
 
 
-def test_stale_tracked_digest_is_rewritten_by_the_build(repo, tmp_path):
+def test_allow_dirty_build_records_the_dirty_tree_digest(repo, tmp_path):
     target = repo / "scripts/rally_point/hooks.py"
     target.write_bytes(target.read_bytes() + b"#")
     run, _ = _runner()
-    digest = bn.build_and_install(repo, tmp_path / "dest", run, allow_dirty=True)
-    assert bn.tracked_digest(repo) == digest == bn.compute_digest(repo)
+    dest = tmp_path / "dest"
+    digest = bn.build_and_install(repo, dest, run, allow_dirty=True)
+    assert digest == bn.compute_digest(repo)
+    assert bn.read_first_line(dest / "bl.sources") == bn.read_first_line(dest / "sources.current") == digest
 
 
 def test_dirty_watched_file_refuses_install(repo, tmp_path):
@@ -115,12 +107,11 @@ def test_dirty_watched_file_refuses_install(repo, tmp_path):
     with pytest.raises(bn.BuildError, match="uncommitted changes in crates/bl/src/main.rs"):
         bn.build_and_install(repo, dest, run)
     assert calls == [] and not dest.exists()
-    # Staged but uncommitted is dirty too; the digest file alone is not.
+    # Staged but uncommitted is dirty too.
     subprocess.run(["git", "-C", str(repo), "add", "crates/bl/src/main.rs"], check=True)
     assert bn.dirty_sources(repo) == ["crates/bl/src/main.rs"]
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD", "--", "crates/bl/src/main.rs"],
                    check=True)
-    (repo / bn.DIGEST_FILE).write_text("0" * 64 + "\n")
     assert bn.dirty_sources(repo) == []
 
 
@@ -161,10 +152,15 @@ def test_check_turns_stale_when_a_mirrored_file_changes(repo, tmp_path):
     target = repo / "hooks/_bounded_hook.sh"
     target.write_bytes(target.read_bytes() + b"#")
     fresh, reason = bn.installed_status(repo, dest)
-    assert not fresh and "out of date" in reason
-    bn.write_digest(repo)  # what the commit hook does
+    assert not fresh and "other sources than the tree" in reason
+
+
+def test_check_without_current_digest(repo, tmp_path):
+    dest = tmp_path / "dest"
+    bn.build_and_install(repo, dest, _runner()[0])
+    (dest / "sources.current").write_text("stale 1\n")
     fresh, reason = bn.installed_status(repo, dest)
-    assert not fresh and "shell hook runs" in reason
+    assert not fresh and "missing or stale" in reason
 
 
 def test_check_without_sidecar(repo, tmp_path):
@@ -199,39 +195,3 @@ def test_missing_semantic_runner_fails_before_parity(repo, tmp_path):
     with pytest.raises(bn.BuildError, match="no semantic test runner"):
         bn.build_and_install(repo, tmp_path / "dest", run)
     assert "parity harness" not in calls
-
-
-def test_index_batch_drains_large_output_without_blocking_request_writes(tmp_path):
-    """Exercise real Git with request and response streams larger than pipes.
-
-    The outer watchdog owns the whole child group: an inner communicate timeout
-    cannot interrupt the blocking stdin write that caused the macOS regression.
-    """
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    paths = [f"blob-{i:04d}" for i in range(256)]
-    for i, name in enumerate(paths):
-        (tmp_path / name).write_bytes(bytes([i]) * 65536)
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    # Staged bytes must win over later working-tree edits.
-    (tmp_path / paths[0]).write_bytes(b"unstaged")
-    code = """
-import importlib.util, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("build_native", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-paths = [f"blob-{i:04d}" for i in range(256)]
-actual = module._index_bytes(Path(sys.argv[2]), paths)
-assert actual == {name: bytes([i]) * 65536 for i, name in enumerate(paths)}
-"""
-    child = subprocess.Popen([sys.executable, "-c", code, str(_SCRIPT), str(tmp_path)],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             start_new_session=True)
-    try:
-        stdout, stderr = child.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        os.killpg(child.pid, signal.SIGKILL)
-        child.communicate()
-        pytest.fail("staged batch reader deadlocked while writing requests/draining output")
-    assert child.returncode == 0, stderr.decode(errors="replace")
-    assert stdout == b""

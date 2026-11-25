@@ -18,7 +18,7 @@ def test_pre_bash_native_freshness_and_recovery(tmp_path, mode, pid_reused):
     native = tmp_path / 'bin/native/bl'
     native.parent.mkdir(parents=True)
     (tmp_path / 'crates').mkdir()
-    (tmp_path / 'crates/SOURCES.digest').write_text('a\n')
+    (tmp_path / 'bin/native/sources.current').write_text('a\n')
     native.with_name('bl.sources').write_text('b\n' if mode == 'stale' else 'a\n')
     if mode != 'absent':
         rc = {'fallback75': 75, 'exec126':126, 'exec127':127, 'deny2':2}.get(mode, 0)
@@ -53,7 +53,7 @@ def real_launcher(tmp_path):
     shutil.copyfile(NATIVE, native)
     native.chmod(0o755)
     (tmp_path / 'crates').mkdir()
-    for path in ['crates/SOURCES.digest', 'bin/native/bl.sources']:
+    for path in ['bin/native/sources.current', 'bin/native/bl.sources']:
         (tmp_path / path).write_text('fixture\n')
     return hook, native
 

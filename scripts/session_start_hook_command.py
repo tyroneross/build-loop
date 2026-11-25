@@ -73,7 +73,7 @@ GUARD = " ".join([
     'r="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}";',
     'if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$r/bin/native/bl" ]',
     '&& { read -r a < "$r/bin/native/bl.sources"; } 2>/dev/null',
-    '&& { read -r b < "$r/crates/SOURCES.digest"; } 2>/dev/null',
+    '&& { read -r b < "$r/bin/native/sources.current"; } 2>/dev/null',
     '&& [ -n "$b" ] && [ "$a" = "$b" ]; then',
 ])
 # No `exec`: preserve the observer parent while forwarding host cancellation.
@@ -94,7 +94,17 @@ RECOVERY = (
     '_bl_session_child python3 "$r/scripts/session_start_hook_command.py" --fallback "$r" 2>/dev/null; '
     "else printf '{}'; fi"
 )
-NATIVE = CHILD_RUNNER + " " + GUARD + (
+# Recompute bin/native/sources.current (the tree's digest that GUARD reads) in
+# a detached background job, so a change made between sessions turns the
+# binary off within ~0.3 s without slowing startup. Only when a binary exists:
+# without one nothing reads the file, so no interpreter starts.
+REFRESH = " ".join([
+    'r="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}";',
+    'if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$r/bin/native/bl" ]; then',
+    '( python3 "$r/scripts/build_native.py" --write-current --dest "$r/bin/native" & ) </dev/null >/dev/null 2>&1;',
+    'fi;',
+])
+NATIVE = CHILD_RUNNER + " " + REFRESH + " " + GUARD + (
     ' _bl_session_child "$r/bin/native/bl" hook session-start --root "$r" 2>/dev/null; rc=$?; '
     # These codes guarantee the hook never read its event. Do not replay after
     # arbitrary failures: a started worker could already have changed state.

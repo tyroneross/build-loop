@@ -23,6 +23,8 @@ script to delay past its deadline or to fail after partial output.
 """
 from __future__ import annotations
 
+import functools
+import importlib.util
 import json
 import os
 import re
@@ -137,9 +139,20 @@ def build_plugin(root: Path, state: str) -> Path:
         native = plugin / "bin" / "native"
         native.mkdir(parents=True)
         shutil.copy2(BL, native / "bl")
-        digest = (REPO_ROOT / "crates" / "SOURCES.digest").read_text().splitlines()[0]
+        # The SessionStart command refreshes sources.current from the real
+        # tree (scripts/ is a link), so "fresh" must use the real digest.
+        digest = _tree_digest()
+        (native / "sources.current").write_text(digest + "\n")
         (native / "bl.sources").write_text(("0" * 64 if state == "stale" else digest) + "\n")
     return plugin
+
+
+@functools.lru_cache(maxsize=1)
+def _tree_digest() -> str:
+    spec = importlib.util.spec_from_file_location("build_native", REPO_ROOT / "scripts" / "build_native.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.compute_digest(REPO_ROOT)
 
 
 def build_world(root: Path, case: Case, plugin: str | None = None) -> World:

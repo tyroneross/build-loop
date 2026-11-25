@@ -45,10 +45,12 @@ jobs:
       - name: Install Rust stable
         run: rustup toolchain install stable --profile minimal
 
-      - name: Check native source digest
-        run: uv run --python 3.11 python scripts/build_native.py --check-digest
-
       - name: Build and verify native hooks
         # The supported pipeline runs locked release build, Rust tests, all
         # hook parity cases, then installs locally and checks real launchers.
         run: uv run --python 3.11 python scripts/build_native.py
+
+      - name: Prove the installed binary matches the checked-out sources
+        # Recomputes the source digest from the tree (nothing is tracked) and
+        # compares it with the digest the build recorded beside the binary.
+        run: uv run --python 3.11 python scripts/build_native.py --check

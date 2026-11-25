@@ -8,7 +8,8 @@ macOS), so the template uses no bashisms. When ``.build-loop/state.json``
 exists it starts ``bin/native/bl hook trace`` directly, with no extra shell,
 only when the binary is executable, ``BUILD_LOOP_NATIVE_HOOKS`` is not
 ``off`` and line 1 of ``bin/native/bl.sources`` equals line 1 of
-``crates/SOURCES.digest`` (read with builtins). Any guard failure or any
+``bin/native/sources.current`` (untracked; read with builtins; see
+``scripts/build_native.py``). Any guard failure or any
 non-zero exit from the binary (75: did nothing; 126/127: could not start; a
 crash or signal) runs the Python hook exactly as the command did before the
 native path existed. A late fallback cannot duplicate a line: ``bl`` reads
@@ -38,7 +39,7 @@ TEMPLATE = " ".join([
     'r="${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}"; s=75;',
     'if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$r/bin/native/bl" ]',
     '&& { read -r a < "$r/bin/native/bl.sources"; } 2>/dev/null',
-    '&& { read -r b < "$r/crates/SOURCES.digest"; } 2>/dev/null',
+    '&& { read -r b < "$r/bin/native/sources.current"; } 2>/dev/null',
     '&& [ -n "$b" ] && [ "$a" = "$b" ]; then',
     '{ "$r/bin/native/bl" hook trace --workdir "$CLAUDE_PROJECT_DIR" --phase {phase} >/dev/null 2>&1; s=$?; } 2>/dev/null;',
     'fi;',

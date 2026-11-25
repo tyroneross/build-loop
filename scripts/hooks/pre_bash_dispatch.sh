@@ -37,7 +37,7 @@ if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] \
     && [ "${BUILD_LOOP_BOUNDED_HOOK_CHILD:-}" != "$0" ] \
     && [ -x "$_NATIVE_ROOT/bin/native/bl" ] \
     && { read -r BL_BUILT_DIGEST < "$_NATIVE_ROOT/bin/native/bl.sources"; } 2>/dev/null \
-    && { read -r BL_TREE_DIGEST < "$_NATIVE_ROOT/crates/SOURCES.digest"; } 2>/dev/null \
+    && { read -r BL_TREE_DIGEST < "$_NATIVE_ROOT/bin/native/sources.current"; } 2>/dev/null \
     && [ -n "$BL_TREE_DIGEST" ] && [ "$BL_BUILT_DIGEST" = "$BL_TREE_DIGEST" ]; then
     # Hosts cancel the registered shell PID, not necessarily its children.
     # Install before spawn; a signal before PID assignment is forwarded below.

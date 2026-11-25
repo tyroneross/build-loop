@@ -66,9 +66,6 @@ class Artifact:
     # Repo-relative output paths to ``git add`` after a regen (files or dirs).
     outputs: tuple[str, ...]
     why: str = ""
-    # Optional check used by --staged (pre-commit) instead of check_argv, for
-    # artifacts whose freshness must be judged on the index being committed.
-    staged_check_argv: tuple[str, ...] | None = None
 
 
 ARTIFACTS: tuple[Artifact, ...] = (
@@ -82,43 +79,6 @@ ARTIFACTS: tuple[Artifact, ...] = (
                  "architecture/ARCHITECTURE.md",
                  "docs/build-loop-flow-mockup.html"),
         why="auto-discovered components + authored flow → model.json + mockup",
-    ),
-    Artifact(
-        name="native-sources-digest",
-        # Must equal scripts/build_native.py WATCHED (asserted by
-        # tests/test_native_sources_digest.py); kept literal so this guard
-        # runs without build_native.py beside it.
-        watch=("Cargo.toml", "Cargo.lock", "crates/",
-               "hooks/_bounded_hook.sh", "hooks/pre-edit-rally-point.sh",
-               "scripts/hook_payload.py",
-               "scripts/rally_point/actor_identity.py",
-               "scripts/rally_point/backend_adapter.py",
-               "scripts/rally_point/channel_paths.py",
-               "scripts/rally_point/discovery_bridge.py",
-               "scripts/rally_point/hook_budget.py",
-               "scripts/rally_point/hooks.py",
-               "scripts/atomic_io.py",
-               "scripts/rally_point/build_loop_id.py",
-               "scripts/temporal_membership.py", "scripts/tool_trace.py",
-               "scripts/transcript_adapter.py",
-               "hooks/_resolve_python.sh", "hooks/_session_start_lib.sh",
-               "hooks/closeout.sh", "hooks/session-start-architecture.sh",
-               "hooks/session-start-codex-hook-trust.sh",
-               "hooks/session-start-rally-point.sh",
-               "hooks/session-start-tool-state.sh",
-               "scripts/session_start_hook_command.py",
-               "scripts/tool_state_paths.py",
-               "scripts/codex_hook_trust_check.py",
-               "scripts/hooks/pre_bash_dispatch.sh",
-               "scripts/hooks/stop_finalize.sh"),
-        check_argv=("scripts/build_native.py", "--check-digest"),
-        # Judge the commit on index blobs and the staged digest: a build may
-        # have rewritten the working-tree digest without it being staged.
-        staged_check_argv=("scripts/build_native.py", "--check-digest", "--staged"),
-        regen_argv=("scripts/build_native.py", "--write-digest"),
-        outputs=("crates/SOURCES.digest",),
-        why="digest of what bin/native/bl mirrors; the pre-edit and tool-trace "
-            "launchers refuse a binary built from other sources",
     ),
 )
 
@@ -235,11 +195,9 @@ def _script_present(repo: Path, artifact: Artifact) -> bool:
     return (repo / artifact.check_argv[0]).exists()
 
 
-def _run_check(repo: Path, artifact: Artifact, staged: bool = False) -> tuple[bool, str]:
+def _run_check(repo: Path, artifact: Artifact) -> tuple[bool, str]:
     """Return (fresh, detail). fresh=True when the artifact is up to date."""
-    argv = (artifact.staged_check_argv if staged and artifact.staged_check_argv
-            else artifact.check_argv)
-    cp = subprocess.run([sys.executable, *argv],
+    cp = subprocess.run([sys.executable, *artifact.check_argv],
                         cwd=str(repo), capture_output=True, text=True)
     detail = (cp.stdout + cp.stderr).strip()
     return cp.returncode == 0, detail
@@ -382,7 +340,7 @@ def mode_staged(repo: Path) -> int:
             continue
         if not _script_present(repo, artifact):
             continue
-        fresh, _ = _run_check(repo, artifact, staged=True)
+        fresh, _ = _run_check(repo, artifact)
         if fresh:
             continue
         if advisory:

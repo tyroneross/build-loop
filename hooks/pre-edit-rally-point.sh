@@ -29,13 +29,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Absent binary or BUILD_LOOP_NATIVE_HOOKS=off: unchanged behaviour below.
 # Freshness: the binary runs only when bin/native/bl.sources (the digest it
 # was built from, written by scripts/build_native.py) equals line 1 of the
-# tracked crates/SOURCES.digest. A missing, empty or different digest runs
-# the shell hook. `read` and `[` are builtins: no process starts here.
+# untracked bin/native/sources.current (the tree's digest, refreshed at
+# SessionStart and after each agent edit). A missing, empty or different
+# digest runs the shell hook. `read` and `[` are builtins: no process starts here.
 if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] \
     && [ "${BUILD_LOOP_BOUNDED_HOOK_CHILD:-}" != "$0" ] \
     && [ -x "$SCRIPT_DIR/../bin/native/bl" ] \
     && { read -r BL_BUILT_DIGEST < "$SCRIPT_DIR/../bin/native/bl.sources"; } 2>/dev/null \
-    && { read -r BL_TREE_DIGEST < "$SCRIPT_DIR/../crates/SOURCES.digest"; } 2>/dev/null \
+    && { read -r BL_TREE_DIGEST < "$SCRIPT_DIR/../bin/native/sources.current"; } 2>/dev/null \
     && [ -n "$BL_TREE_DIGEST" ] && [ "$BL_BUILT_DIGEST" = "$BL_TREE_DIGEST" ]; then
     "$SCRIPT_DIR/../bin/native/bl" hook pre-edit
     # 126 and 127 mean the binary could not run at all (wrong architecture,

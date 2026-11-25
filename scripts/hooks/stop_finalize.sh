@@ -38,7 +38,7 @@ _STOP_ROOT="$_STOP_DIR/../.."
 STOP_CONTEXT=""
 if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$_STOP_ROOT/bin/native/bl" ] \
     && { read -r _STOP_BUILT < "$_STOP_ROOT/bin/native/bl.sources"; } 2>/dev/null \
-    && { read -r _STOP_TREE < "$_STOP_ROOT/crates/SOURCES.digest"; } 2>/dev/null \
+    && { read -r _STOP_TREE < "$_STOP_ROOT/bin/native/sources.current"; } 2>/dev/null \
     && [ -n "$_STOP_TREE" ] && [ "$_STOP_BUILT" = "$_STOP_TREE" ]; then
     STOP_CONTEXT=$(printf '%s' "$INPUT" | "$_STOP_ROOT/bin/native/bl" hook stop-context) || STOP_CONTEXT=""
 fi

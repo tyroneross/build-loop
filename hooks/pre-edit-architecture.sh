@@ -35,6 +35,20 @@ FRESHNESS_SCRIPT="$SCRIPT_DIR/../scripts/architecture_freshness.py"
 [ -f "$FRESHNESS_SCRIPT" ] || FRESHNESS_SCRIPT="$WORKDIR/scripts/architecture_freshness.py"
 WORKER="$SCRIPT_DIR/_arch_scan_bg.py"
 
+# Native hook freshness (scripts/build_native.py): an edit may change a file
+# bin/native/bl mirrors, so mark the tree digest stale now (printf and `>` are
+# builtins; a distinct marker per edit lets a slower refresh see it was
+# overtaken) and recompute it in a detached job. Only when a binary exists
+# (without one nothing reads the file) and the session works in this plugin
+# checkout: an edit in another project cannot change the plugin's sources, and
+# marking them stale there would turn the binary off for nothing.
+NATIVE_DIR="$SCRIPT_DIR/../bin/native"
+if [ "${BUILD_LOOP_NATIVE_HOOKS:-}" != off ] && [ -x "$NATIVE_DIR/bl" ] \
+    && [ "$(cd "$WORKDIR" 2>/dev/null && pwd -P)" = "$(cd "$SCRIPT_DIR/.." && pwd -P)" ]; then
+    printf 'stale %s\n' "$$" > "$NATIVE_DIR/sources.current" 2>/dev/null
+    ( python3 "$SCRIPT_DIR/../scripts/build_native.py" --write-current --dest "$NATIVE_DIR" & ) </dev/null >/dev/null 2>&1
+fi
+
 # Fast bail-out: arch engine not initialized.
 [ -f "$FILE_MAP" ] || exit 0
 [ -f "$FRESHNESS_SCRIPT" ] || exit 0

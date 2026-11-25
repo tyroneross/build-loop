@@ -17,7 +17,7 @@ def test_startup_recovers_only_when_native_did_not_consume_input(tmp_path, binar
     import session_start_hook_command as registration
     for path in ("bin/native", "crates", "hooks", "scripts"):
         (tmp_path / path).mkdir(parents=True)
-    for path in ("bin/native/bl.sources", "crates/SOURCES.digest"):
+    for path in ("bin/native/bl.sources", "bin/native/sources.current"):
         (tmp_path / path).write_text("a" * 64 + "\n")
     native = tmp_path / "bin/native/bl"
     if binary == "directory":
@@ -229,7 +229,7 @@ def test_registered_startup_cancellation_reaches_supervisor_and_worker(tmp_path,
     for path in ("bin/native", "crates", "hooks", "scripts", ".build-loop", "home", "path"):
         (tmp_path / path).mkdir(parents=True)
     (tmp_path / "path/python3").symlink_to(sys.executable)
-    for path in ("bin/native/bl.sources", "crates/SOURCES.digest"):
+    for path in ("bin/native/bl.sources", "bin/native/sources.current"):
         (tmp_path / path).write_text("fixture\n")
     if runtime == "native":
         binary = Path(os.environ.get("BL_BIN") or ROOT / "target/release/bl")

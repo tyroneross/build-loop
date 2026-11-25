@@ -321,9 +321,9 @@ def _first_line(path: Path) -> str:
 
 
 # The launcher runs bin/native/bl only when its sidecar digest matches the
-# tracked one; against a stale binary these comparisons would pass vacuously.
+# tree's current one; against a stale binary these comparisons would pass vacuously.
 NATIVE_FRESH = NATIVE_BIN.exists() and _first_line(NATIVE_BIN.parent / "bl.sources") == _first_line(
-    harness.REPO_ROOT / "crates" / "SOURCES.digest") != ""
+    NATIVE_BIN.parent / "sources.current") != ""
 
 
 @pytest.mark.skipif(not NATIVE_FRESH, reason="bin/native/bl not installed or stale")
@@ -373,8 +373,7 @@ def _guard_root(tmp_path: Path, *, built: str | None, tree: str | None) -> Path:
     if built is not None:
         (native / "bl.sources").write_text(built)
     if tree is not None:
-        (root / "crates").mkdir()
-        (root / "crates" / "SOURCES.digest").write_text(tree)
+        (native / "sources.current").write_text(tree)
     return root
 
 
